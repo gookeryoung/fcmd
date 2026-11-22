@@ -976,6 +976,66 @@ class TestConvert:
         with pytest.raises(ServeError, match="--python"):
             llmconvert.find_convert_python(lambda cmd, timeout=1.0, env=None: CommandResult(1, "", "no module"))
 
+    def test_find_convert_python_prefers_app_interpreter(self) -> None:
+        """本应用解释器可用时直接返回，不再探测 PATH 上的其它 python。"""
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            return CommandResult(0)
+
+        assert llmconvert.find_convert_python(_run) == sys.executable
+        assert len(calls) == 1
+        assert calls[0][0] == sys.executable
+
+    def test_find_convert_python_falls_back_and_reports(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """本应用解释器缺依赖时回退备用解释器，并在状态行写明改用了哪个。"""
+        seen: list[str] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            if cmd[0] == sys.executable:
+                return CommandResult(1, "", "ModuleNotFoundError: No module named 'torch'")
+            return CommandResult(0)
+
+        monkeypatch.setattr(llmconvert, "_python_candidates", lambda: [sys.executable, "other-python"])
+        assert llmconvert.find_convert_python(_run, on_status=seen.append) == "other-python"
+        assert any("本应用解释器" in item and "torch" in item for item in seen)
+
+    def test_find_convert_python_error_names_app_interpreter_and_install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """全部候选都不可用时，错误信息给出本应用解释器、缺失依赖与安装命令。"""
+        stderr = "ModuleNotFoundError: No module named 'torch'"
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            return CommandResult(1, "", stderr)
+
+        monkeypatch.setattr(llmconvert, "_python_candidates", lambda: [sys.executable, "other-python"])
+        with pytest.raises(ServeError) as info:
+            llmconvert.find_convert_python(_run)
+        message = str(info.value)
+        assert sys.executable in message
+        assert "torch" in message
+        assert "-m pip install torch" in message
+
+    def test_find_convert_python_probes_explicit_only(self) -> None:
+        """设置页 / ``--python`` 指定的解释器只探测它，错误里点名它。"""
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            return CommandResult(1, "", "ModuleNotFoundError: No module named 'safetensors'")
+
+        with pytest.raises(ServeError, match="custom-python"):
+            llmconvert.find_convert_python(_run, python="custom-python")
+        assert [call[0] for call in calls] == ["custom-python"]
+
+    def test_resolve_convert_python_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """解释器优先级：显式参数 > FCMD_CONVERT_PYTHON > 本应用解释器。"""
+        monkeypatch.delenv(llmconvert.CONVERT_PYTHON_ENV, raising=False)
+        assert llmconvert.resolve_convert_python() == sys.executable
+        monkeypatch.setenv(llmconvert.CONVERT_PYTHON_ENV, " env-python ")
+        assert llmconvert.resolve_convert_python() == "env-python"
+        assert llmconvert.resolve_convert_python(" explicit ") == "explicit"
+
     def test_quantize_argv_requires_quant(self, tmp_path: Path) -> None:
         plan = llmconvert.ConvertPlan(
             source=tmp_path,
@@ -1023,6 +1083,137 @@ class TestConvert:
         runner = _conv_runner([], code=1, stderr="ModuleNotFoundError: No module named 'torch'")
         with pytest.raises(ServeError, match="--python"):
             llmconvert.convert_model(plan, runner)
+
+    def test_missing_packages_parses_module_and_transformers_errors(self) -> None:
+        text = "ModuleNotFoundError: No module named 'sentencepiece'"
+        assert llmconvert.missing_packages(text) == ["sentencepiece"]
+        text = (
+            "ImportError: This modeling file requires the following packages that were not found in "
+            "your environment: tiktoken. Run `pip install tiktoken`"
+        )
+        assert llmconvert.missing_packages(text) == ["tiktoken"]
+        assert llmconvert.missing_packages("ValueError: boom") == []
+
+    def test_convert_model_installs_safe_missing_dependency_and_retries(self, tmp_path: Path) -> None:
+        """GLM-4 这类模型要求 tiktoken：自动装进转换解释器后重跑一次。"""
+        plan = llmconvert.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="C:/py/python.exe",
+        )
+        calls: list[list[str]] = []
+        installs: list[list[str]] = []
+        inner = _conv_runner([])
+        state = {"n": 0}
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            if "-m" in cmd and "pip" in cmd:
+                installs.append(list(cmd))
+                return CommandResult(0)
+            state["n"] += 1
+            if state["n"] == 1:
+                return CommandResult(
+                    1,
+                    "",
+                    "ImportError: This modeling file requires the following packages that were not "
+                    "found in your environment: tiktoken. Run `pip install tiktoken`",
+                )
+            return inner(cmd, timeout)
+
+        seen: list[str] = []
+        assert llmconvert.convert_model(plan, _run, on_status=seen.append) == [plan.output]
+        assert installs == [["C:/py/python.exe", "-m", "pip", "install", "tiktoken"]]
+        assert any("tiktoken" in item for item in seen)
+        assert any("重新开始转换" in item for item in seen)
+
+    def test_convert_model_does_not_install_torch(self, tmp_path: Path) -> None:
+        """torch 缺失不自动装（会覆盖用户 CUDA 构建），只给出解释器路径与命令。"""
+        plan = llmconvert.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="C:/py/python.exe",
+        )
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            return CommandResult(1, "", "ModuleNotFoundError: No module named 'torch'")
+
+        with pytest.raises(ServeError) as info:
+            llmconvert.convert_model(plan, _run)
+        assert "C:/py/python.exe" in str(info.value)
+        assert "-m pip install torch" in str(info.value)
+        assert all("pip" not in cmd for cmd in calls)
+
+    def test_convert_model_patches_missing_vocab_size_and_restores_config(self, tmp_path: Path) -> None:
+        """GLM-4 只有 padded_vocab_size：临时补 vocab_size 后重跑，结束后恢复 config。"""
+        source = _hf_source(tmp_path)
+        original = '{"architectures": ["ChatGLMModel"], "padded_vocab_size": 151552}'
+        (source / "config.json").write_text(original, encoding="utf-8")
+        plan = llmconvert.ConvertPlan(
+            source=source,
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+        )
+        inner = _conv_runner([])
+        calls = 0
+        patched: dict[str, object] | None = None
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            nonlocal calls, patched
+            calls += 1
+            if calls == 1:
+                return CommandResult(1, "", "Traceback (most recent call last):\nKeyError: 'vocab_size'")
+            patched = json.loads((source / "config.json").read_text(encoding="utf-8"))
+            return inner(cmd, timeout)
+
+        seen: list[str] = []
+        assert llmconvert.convert_model(plan, _run, on_status=seen.append) == [plan.output]
+        assert patched is not None and patched["vocab_size"] == 151552
+        assert "vocab_size" not in json.loads((source / "config.json").read_text(encoding="utf-8"))
+        assert any("vocab_size" in item for item in seen)
+
+    def test_convert_model_does_not_patch_vocab_size_when_disabled(self, tmp_path: Path) -> None:
+        source = _hf_source(tmp_path)
+        (source / "config.json").write_text('{"padded_vocab_size": 151552}', encoding="utf-8")
+        plan = llmconvert.ConvertPlan(
+            source=source,
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+        )
+        with pytest.raises(ServeError, match="vocab_size"):
+            llmconvert.convert_model(
+                plan,
+                _conv_runner([], code=1, stderr="KeyError: 'vocab_size'"),
+                patch_config=False,
+            )
+        assert json.loads((source / "config.json").read_text(encoding="utf-8")) == {"padded_vocab_size": 151552}
+
+    def test_install_convert_deps_rejects_unknown_and_honors_cancel(self) -> None:
+        import threading
+
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            return CommandResult(0)
+
+        cancel = threading.Event()
+        cancel.set()
+        assert not llmconvert.install_convert_deps("py", ["torch"], _run)
+        assert not llmconvert.install_convert_deps("py", ["tiktoken"], _run, cancel=cancel)
+        assert calls == []
+        assert llmconvert.install_convert_deps("py", ["yaml"], _run)
+        assert calls == [["py", "-m", "pip", "install", "pyyaml"]]
 
     def test_convert_model_quantizes(self, tmp_path: Path) -> None:
         plan = llmconvert.ConvertPlan(
@@ -2428,6 +2619,28 @@ class TestConvertPrecheck:
         source = self._source(tmp_path, {"architectures": ["GPT2LMHeadModel"]}, tokenizer=False)
         with pytest.raises(ServeError, match="令牌器"):
             llmconvert.check_convert_source(source, self._repo(tmp_path))
+
+    def test_remote_code_tokenizer_is_reported_before_running_script(self, tmp_path: Path) -> None:
+        """GLM-4 的 tokenizer 靠 trust_remote_code 加载：提前报错，不拖到脚本跑起来。"""
+        source = self._source(tmp_path, {"architectures": ["ChatGLMModel"]}, tokenizer=False)
+        (source / "tokenizer.model").write_bytes(b"x")
+        (source / "tokenizer_config.json").write_text(
+            json.dumps({"auto_map": {"AutoTokenizer": ["tokenization_chatglm.ChatGLM4Tokenizer", None]}}),
+            encoding="utf-8",
+        )
+        with pytest.raises(ServeError) as info:
+            llmconvert.check_convert_source(source, self._repo(tmp_path, ("ChatGLMModel",)))
+        message = str(info.value)
+        assert "trust_remote_code" in message
+        assert "ChatGLM4Tokenizer" in message
+
+    def test_remote_code_tokenizer_allowed_with_standard_tokenizer_json(self, tmp_path: Path) -> None:
+        """带标准 tokenizer.json 的仓库不需要远程代码，照常通过前置检查。"""
+        source = self._source(tmp_path, {"architectures": ["ChatGLMModel"]})
+        (source / "tokenizer_config.json").write_text(
+            json.dumps({"auto_map": {"AutoTokenizer": ["x.Y", None]}}), encoding="utf-8"
+        )
+        llmconvert.check_convert_source(source, self._repo(tmp_path, ("ChatGLMModel",)))
 
     def test_invalid_config_json(self, tmp_path: Path) -> None:
         source = self._source(tmp_path, {"architectures": ["GPT2LMHeadModel"]})

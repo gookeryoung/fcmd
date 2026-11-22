@@ -233,7 +233,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         grid.addWidget(self.convert_tag, 0, 3)
         grid.addWidget(QLabel("解释器"), 1, 0, Qt.AlignmentFlag.AlignRight)
         self.convert_python = QLineEdit(settings.python, card)
-        self.convert_python.setPlaceholderText("留空自动探测 torch / safetensors / numpy")
+        self.convert_python.setPlaceholderText("留空用本应用解释器（缺 torch / safetensors / numpy 时回退其它 Python）")
         grid.addWidget(self.convert_python, 1, 1, 1, 3)
         grid.addWidget(QLabel("转换脚本"), 2, 0, Qt.AlignmentFlag.AlignRight)
         self.convert_script = QLineEdit(settings.script, card)

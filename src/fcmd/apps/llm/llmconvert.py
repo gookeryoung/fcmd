@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,8 +45,12 @@ __all__ = [
     "ensure_convert_script",
     "find_convert_python",
     "import_source_archive",
+    "install_convert_deps",
     "is_hf_safetensors_dir",
+    "missing_packages",
+    "patched_vocab_size",
     "plan_convert",
+    "resolve_convert_python",
     "root_error_line",
     "summarize_convert_line",
     "supported_architectures",
@@ -61,7 +65,40 @@ CLONE_TIMEOUT = 900.0
 _SOURCE_ATTEMPTS = 5
 _SOURCE_TIMEOUT = 30.0
 _PYTHON_PROBE_TIMEOUT = 60.0
-"""逐个解释器探测 torch 的超时：坏掉的解释器（Windows Store 别名等）不能无限挂住。"""
+"""探测转换解释器的超时：坏掉的解释器（Windows Store 别名等）不能无限挂住。"""
+CONVERT_PYTHON_ENV = "FCMD_CONVERT_PYTHON"
+CONVERT_DEPS = ("torch", "safetensors", "numpy")
+_CONVERT_IMPORT = f"import {', '.join(CONVERT_DEPS)}"
+_MISSING_MODULE_RE = re.compile(r"No module named '([\w.]+)'")
+_REQUIRES_PACKAGES_RE = re.compile(
+    r"requires the following packages that were not found in your environment:\s*([^\n.]+)"
+)
+CONVERT_SAFE_DEPS = frozenset(
+    {
+        "einops",
+        "huggingface-hub",
+        "mistral-common",
+        "numpy",
+        "pillow",
+        "protobuf",
+        "pyyaml",
+        "regex",
+        "safetensors",
+        "sentencepiece",
+        "tiktoken",
+        "tokenizers",
+        "tqdm",
+        "transformers",
+    }
+)
+"""可自动补装的转换依赖：只收纯 Python 包。
+
+``torch`` / ``numpy`` 之外的二进制 / GPU 依赖不进白名单：自动降级或重装 torch 会破坏
+用户已有的 CUDA 环境（llama.cpp 的 requirements 钉的是 CPU 轮子）。白名单外的缺失模块
+只给出带解释器路径的安装提示。
+"""
+_PIP_NAMES = {"yaml": "pyyaml", "pil": "pillow", "mistral_common": "mistral-common"}
+PIP_TIMEOUT = 900.0
 _SOURCE_RETRY_DELAY = 1.0
 _BUILD_TAG_RE = re.compile(r"^b\d+$")
 _ACCESS_VIOLATION = 0xC0000005
@@ -166,6 +203,32 @@ def _tokenizer_missing(source: Path) -> bool:
     return not ((source / "vocab.json").is_file() and (source / "merges.txt").is_file())
 
 
+def _needs_remote_tokenizer_code(source: Path) -> str | None:
+    """模型的 tokenizer 是否只能靠 transformers ``trust_remote_code`` 加载。
+
+    GLM-4-9B 这类仓库把分词器实现放在 ``tokenization_chatglm.py``，并在
+    ``tokenizer_config.json`` 的 ``auto_map`` 里声明；llama.cpp 的
+    ``get_vocab_base`` 调 ``AutoTokenizer.from_pretrained`` 时不传 ``trust_remote_code``，
+    于是直接 ValueError。返回声明的类名（用于提示），不构成该情况时返回 ``None``。
+    """
+    try:
+        tokenizer_config = json.loads((source / "tokenizer_config.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(tokenizer_config, dict):
+        return None
+    auto_map = tokenizer_config.get("auto_map")
+    if not isinstance(auto_map, dict) or "AutoTokenizer" not in auto_map:
+        return None
+    if (source / "tokenizer.json").is_file():
+        return None
+    if (source / "vocab.json").is_file() and (source / "merges.txt").is_file():
+        return None
+    value = auto_map.get("AutoTokenizer")
+    first = value[0] if isinstance(value, list) and value else value
+    return str(first) if first else "tokenizer_config.json 的 auto_map"
+
+
 def check_convert_source(source: Path, repo: Path | None = None, *, tag: str | None = None) -> None:
     """转换前置检查：元数据、令牌器资源与引擎架构支持。
 
@@ -183,6 +246,13 @@ def check_convert_source(source: Path, repo: Path | None = None, *, tag: str | N
         raise ServeError(f"模型配置不是 JSON 对象：{config_path}")
     if _tokenizer_missing(target):
         raise ServeError(f"模型目录缺少转换必需的令牌器文件（{_TOKENIZER_HINT}）：{target}")
+    remote_tokenizer = _needs_remote_tokenizer_code(target)
+    if remote_tokenizer is not None:
+        raise ServeError(
+            f"模型的 tokenizer 依赖 transformers trust_remote_code（{remote_tokenizer}），"
+            "llama.cpp 转换脚本的 get_vocab_base 不传该参数，无法转换："
+            f"{target}；建议直接下载官方 GGUF，或用 --script / 「转换脚本」指定已适配的脚本"
+        )
 
     registered, mapping = _engine_architectures(repo) if repo is not None else (set(), {})
     arches = config.get("architectures")
@@ -563,17 +633,137 @@ def plan_convert(  # noqa: PLR0912, PLR0913, PLR0917
         output=target.resolve(),
         outtype=outtype,
         script=resolved_script,
-        python=python or os.environ.get("FCMD_CONVERT_PYTHON") or sys.executable,
+        python=resolve_convert_python(python),
         quant=quant,
         quantize_exe=quant_exe,
     )
 
 
-def _python_candidates() -> list[str]:
-    """候选解释器：当前解释器 + PATH 上的 python（去重）。
+def resolve_convert_python(python: str | None = None) -> str:
+    """转换脚本使用的解释器：显式参数 > ``FCMD_CONVERT_PYTHON`` > 本应用解释器。
 
-    ``uv run`` 会把虚拟环境放到 PATH 首位，仅看 ``shutil.which`` 找不到系统 conda
-    里的 torch，因此遍历 PATH 中的每个目录。
+    默认就是运行 fcmd 自身的解释器（``sys.executable``），不再按 PATH 随便挑一个：
+    转换脚本与本应用共用同一套站点包与 DLL，混用其它 python 容易因 torch / CUDA
+    版本不一致而失败。
+    """
+    explicit = (python or "").strip()
+    if explicit:
+        return explicit
+    override = os.environ.get(CONVERT_PYTHON_ENV, "").strip()
+    return override or sys.executable
+
+
+def _same_python(left: str, right: str) -> bool:
+    """两个解释器路径是否指向同一个文件（Windows 下大小写不敏感）。"""
+    return os.path.normcase(str(Path(left).resolve())) == os.path.normcase(str(Path(right).resolve()))
+
+
+def _missing_modules(text: str) -> list[str]:
+    """从探测输出里解析缺失的模块名，按转换依赖顺序返回。"""
+    found = {match.group(1).split(".")[0] for match in _MISSING_MODULE_RE.finditer(text)}
+    return [name for name in CONVERT_DEPS if name in found] or sorted(found)
+
+
+def missing_packages(text: str) -> list[str]:
+    """从转换脚本输出中解析缺失的依赖（去重、保持出现顺序）。
+
+    兼容两种报错：直白的 ``ModuleNotFoundError: No module named 'x'``，以及
+    transformers 加载模型自带建模代码时的
+    ``This modeling file requires the following packages that were not found in your
+    environment: tiktoken``（GLM-4 等带 ``auto_map`` 的模型就会这样）。
+    """
+    names: list[str] = []
+    for match in _MISSING_MODULE_RE.finditer(text):
+        names.append(match.group(1).split(".")[0])
+    for match in _REQUIRES_PACKAGES_RE.finditer(text):
+        names.extend(part for part in re.split(r"[,\s]+", match.group(1)) if part)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in names:
+        key = name.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(key)
+    return ordered
+
+
+def _pip_names(modules: Sequence[str]) -> list[str]:
+    """模块名 → pip 包名（``yaml`` → ``pyyaml`` 这类差异单独映射）。"""
+    return [_PIP_NAMES.get(name, name.replace("_", "-")) for name in modules]
+
+
+@contextlib.contextmanager
+def patched_vocab_size(source: Path) -> Iterator[bool]:
+    """临时给 ``config.json`` 补上缺失的 ``vocab_size``，退出时恢复原文。
+
+    llama.cpp 的 chatglm 转换实现写成
+    ``hparams.get("padded_vocab_size", hparams["vocab_size"])``，默认参数会被提前求值，
+    GLM-4-9B 这种只有 ``padded_vocab_size`` 的 config 因此直接 ``KeyError: 'vocab_size'``
+    （上游 bug，不随解释器变化）。这里在转换期间补一个等值的 ``vocab_size``，
+    无论成功失败都会把 config.json 恢复成原始文本。
+
+    ``yield`` 出是否真的做了修补。
+    """
+    config = source / "config.json"
+    try:
+        original = config.read_text(encoding="utf-8")
+        data = json.loads(original)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        yield False
+        return
+    if not isinstance(data, dict) or "vocab_size" in data or "padded_vocab_size" not in data:
+        yield False
+        return
+    data["vocab_size"] = data["padded_vocab_size"]
+    try:
+        config.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        with contextlib.suppress(OSError):
+            config.write_text(original, encoding="utf-8")
+
+
+def install_convert_deps(
+    python: str,
+    modules: Sequence[str],
+    runner: Runner = run_command,
+    *,
+    on_status: Callable[[str], None] | None = None,
+    cancel: threading.Event | None = None,
+) -> bool:
+    """给转换解释器补装缺失依赖，返回是否安装成功。
+
+    只处理 :data:`CONVERT_SAFE_DEPS` 白名单内的包：模型自带建模代码（GLM-4、Mistral
+    等使用 ``auto_map`` 的仓库）会临时要求 ``tiktoken`` / ``transformers`` 这类纯 Python
+    包，它们的缺失与解释器选择无关，重跑一次就能成功；torch 一类的 GPU 依赖不自动
+    安装，否则会覆盖用户现有的 CUDA 构建。
+    """
+    names = _pip_names(modules)
+    if not names or any(name not in CONVERT_SAFE_DEPS for name in names):
+        return False
+    if cancel is not None and cancel.is_set():
+        return False
+    if on_status is not None:
+        on_status(f"转换脚本缺少依赖：{'、'.join(names)}，正在为解释器安装：{python}")
+    result = runner([python, "-m", "pip", "install", *names], timeout=PIP_TIMEOUT)
+    if result.returncode != 0:
+        if on_status is not None:
+            on_status(f"依赖安装失败：{_tail(result.stderr or result.stdout) or format_returncode(result.returncode)}")
+        return False
+    if on_status is not None:
+        on_status("依赖安装完成，重新开始转换")
+    return True
+
+
+def _python_candidates() -> list[str]:
+    """候选解释器：本应用解释器 + PATH 上的 python（去重）。
+
+    本应用解释器永远排第一，只有它缺依赖时才回退到其它候选。
     """
     names = ("python.exe", "python3.exe") if os.name == "nt" else ("python3", "python")
     raw = [sys.executable, shutil.which("python"), shutil.which("python3")]
@@ -597,23 +787,59 @@ def _python_candidates() -> list[str]:
 def find_convert_python(
     runner: Runner = run_command,
     *,
+    python: str | None = None,
     on_status: Callable[[str], None] | None = None,
     cancel: threading.Event | None = None,
 ) -> str:
-    """找到一个已安装 ``torch`` / ``safetensors`` / ``numpy`` 的 Python 解释器。
+    """确定转换脚本的解释器：优先本应用解释器，缺依赖时才回退其它候选。
 
-    每次探测都带超时（坏掉的解释器 / Store 别名不会挂住整个准备阶段），
-    探测进度通过 ``on_status`` 回传给窗口。
+    本应用解释器（``sys.executable``）与转换脚本共用同一套站点包与 DLL，混用 PATH
+    上找到的其它 python 容易因 torch / CUDA 版本不一致而失败，因此它排在第一且一旦
+    可用就直接返回；只有它缺少 ``torch`` / ``safetensors`` / ``numpy`` 时才继续探测
+    PATH 上的候选，并在状态行写明改用了哪个解释器。
+
+    传入 ``python``（设置页 / ``--python`` 显式指定）时只探测它，避免路径写错后拖到
+    转换阶段才报一个看不懂的 ``WinError``。每次探测都带超时（坏掉的解释器 / Store
+    别名不会挂住整个准备阶段），进度通过 ``on_status`` 回传给窗口。
     """
-    for candidate in _python_candidates():
+    explicit = (python or "").strip()
+    app = sys.executable
+    candidates = [explicit] if explicit else _python_candidates()
+    app_result: llmbase.CommandResult | None = None
+    last_text = ""
+    last: str | None = None
+    for candidate in candidates:
         if cancel is not None and cancel.is_set():
             raise ServeError("已取消转换")
+        is_app = _same_python(candidate, app)
+        label = "本应用解释器" if is_app else ("指定解释器" if explicit else "备用解释器")
         if on_status is not None:
-            on_status(f"正在检测转换解释器：{candidate}")
-        result = runner([candidate, "-c", "import torch, safetensors, numpy"], timeout=_PYTHON_PROBE_TIMEOUT)
+            on_status(f"正在检测{label}：{candidate}")
+        result = runner([candidate, "-c", _CONVERT_IMPORT], timeout=_PYTHON_PROBE_TIMEOUT)
         if result.returncode == 0:
+            if not is_app and not explicit and on_status is not None:
+                on_status(f"本应用解释器缺少 {' / '.join(CONVERT_DEPS)}，改用解释器：{candidate}")
             return candidate
-    raise ServeError("未找到已安装 torch / safetensors / numpy 的 Python；请用 --python 指定")
+        last, last_text = candidate, f"{result.stderr}\n{result.stdout}"
+        if is_app:
+            app_result = result
+    missing = _missing_modules(last_text)
+    detail = "、".join(missing) if missing else "、".join(CONVERT_DEPS)
+    install = " ".join(missing or list(CONVERT_DEPS))
+    if explicit:
+        raise ServeError(
+            f"指定的转换解释器不可用（{explicit or last}）：缺少 {detail} 或无法运行；"
+            f'请安装依赖（"{explicit}" -m pip install {install}），或留空改回本应用解释器'
+        )
+    app_text = "" if app_result is None else f"{app_result.stderr}\n{app_result.stdout}"
+    app_missing = _missing_modules(app_text)
+    app_detail = "、".join(app_missing) if app_missing else detail
+    app_install = " ".join(app_missing or missing or list(CONVERT_DEPS))
+    raise ServeError(
+        f"未找到可用的转换解释器：本应用解释器 {app} 缺少 {app_detail}，PATH 上的其它 Python 也不可用；"
+        f'请安装依赖（"{app}" -m pip install {app_install}），'
+        f"或用 --python / {CONVERT_PYTHON_ENV} 指定解释器"
+    )
 
 
 def _tail(text: str, lines: int = 6) -> str:
@@ -645,10 +871,20 @@ def _stack_frames(text: str, limit: int = 3) -> list[str]:
     return frames[-limit:]
 
 
-def _convert_failure(result: llmbase.CommandResult, *, streamed: bool) -> str:
+def _convert_failure(result: llmbase.CommandResult, *, streamed: bool, python: str | None = None) -> str:
     """整理转换失败信息：真正异常行在前，栈只在无实时日志时精简附带。"""
     output = f"{result.stderr}\n{result.stdout}"
-    hint = "；请用 --python 指定已安装 torch / safetensors / numpy 的解释器" if "ModuleNotFoundError" in output else ""
+    missing = _pip_names(missing_packages(output))
+    if missing:
+        where = python or sys.executable
+        hint = (
+            f'；转换解释器 {where} 缺少 {"、".join(missing)}："{where}" -m pip install {" ".join(missing)}，'
+            f"或用 --python / {CONVERT_PYTHON_ENV} 指定已装好依赖的解释器"
+        )
+    elif "ModuleNotFoundError" in output:
+        hint = f"；请用 --python / {CONVERT_PYTHON_ENV} 指定已安装 torch / safetensors / numpy 的解释器"
+    else:
+        hint = ""
     reason = root_error_line(output)
     if reason is None:
         detail = _tail(output) or "无输出"
@@ -682,18 +918,25 @@ def summarize_convert_line(line: str) -> str:
     return f"{line[:index]}{marker}<已省略 {len(template)} 字符的 Jinja 模板，完整内容已写入 GGUF 元数据>"
 
 
-def convert_model(  # noqa: PLR0912 - 取消 / 量化 / 失败分支集中在一处
+def convert_model(  # noqa: PLR0912, PLR0913 - 取消 / 量化 / 失败分支集中在一处
     plan: ConvertPlan,
     runner: Runner = run_command,
     on_output: Callable[[str], None] | None = None,
     *,
     on_status: Callable[[str], None] | None = None,
     cancel: threading.Event | None = None,
+    install_missing: bool = True,
+    patch_config: bool = True,
 ) -> list[Path]:
     """执行转换（可选再量化），返回最终产出的 GGUF 列表。
 
     传入 ``on_output`` 时改为逐行读取转换脚本输出（兼容 tqdm 的 ``\\r`` 进度），
     可实时回调日志；否则沿用一次性捕获的 ``runner``。
+
+    模型自带建模代码要求的纯 Python 依赖（``tiktoken`` / ``transformers`` 等）缺失时，
+    ``install_missing`` 开启会自动装到转换解释器里并重跑一次，不再让用户对着
+    ``ImportError`` 自己找命令；``patch_config`` 开启时，GLM-4 这类只有
+    ``padded_vocab_size`` 的 config 会临时补上 ``vocab_size`` 再重跑（llama.cpp 的上游 bug）。
     """
     if cancel is not None and cancel.is_set():
         raise ServeError("已取消转换")
@@ -717,7 +960,39 @@ def convert_model(  # noqa: PLR0912 - 取消 / 量化 / 失败分支集中在一
     if cancel is not None and cancel.is_set():
         raise ServeError("已取消转换")
     if result.returncode != 0:
-        raise ServeError(_convert_failure(result, streamed=on_output is not None))
+        output = f"{result.stderr}\n{result.stdout}"
+        missed = missing_packages(output)
+        if (
+            install_missing
+            and missed
+            and install_convert_deps(plan.python, missed, runner, on_status=on_status, cancel=cancel)
+        ):
+            return convert_model(
+                plan,
+                runner,
+                on_output,
+                on_status=on_status,
+                cancel=cancel,
+                install_missing=False,
+                patch_config=patch_config,
+            )
+        if patch_config and "KeyError: 'vocab_size'" in output:
+            with patched_vocab_size(plan.source) as patched:
+                if patched:
+                    if on_status is not None:
+                        on_status(
+                            "模型 config.json 缺少 vocab_size，已临时补齐（llama.cpp 脚本的上游 bug），转换完成后恢复"
+                        )
+                    return convert_model(
+                        plan,
+                        runner,
+                        on_output,
+                        on_status=on_status,
+                        cancel=cancel,
+                        install_missing=False,
+                        patch_config=False,
+                    )
+        raise ServeError(_convert_failure(result, streamed=on_output is not None, python=plan.python))
     if plan.quant is None:
         return [plan.output]
 
@@ -765,7 +1040,8 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
     script:
         转换脚本 ``convert_hf_to_gguf.py`` 或本地 llama.cpp 源码 ``.zip``。
     python:
-        运行转换脚本的解释器（需已安装 torch / safetensors / numpy）；缺省自动探测。
+        运行转换脚本的解释器（需已安装 torch / safetensors / numpy）；缺省用运行 fcmd
+        的本应用解释器，它缺依赖时才回退 PATH 上的其它 Python。
     models_root:
         默认输出位置使用的模型目录。
     tag:
@@ -782,7 +1058,7 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
         outtype=outtype,
         quant=quant,
         script=script,
-        python=python or find_convert_python(on_status=report),
+        python=find_convert_python(python=python, on_status=report),
         models_root=models_root,
         tag=tag,
         on_status=report,

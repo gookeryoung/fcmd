@@ -80,6 +80,21 @@ native 主题下是深色字压选中蓝底（几乎看不清），切到已启�
   获取 llama.cpp 源码）现在逐步回传状态行并用忙碌进度条表示进行中；解释器探测单次
   超时 60s，源码包改走与引擎下载相同的 GitHub 镜像候选（`FCMD_GITHUB_MIRROR` 可覆盖、
   直连兜底），镜像候选多时每源重试次数收敛，避免国内网络下首次转换长时间无反馈。
+- llmw 转换改用本应用解释器执行 `convert_hf_to_gguf.py`：解释器顺序固定为
+  「显式参数（设置页 / `--python`）> `FCMD_CONVERT_PYTHON` > 本应用解释器」，本应用
+  解释器可用时不再扫描 PATH 挑别的 python，避免 torch / CUDA 版本不一致导致转换
+  失败；只有它缺 `torch` / `safetensors` / `numpy` 时才回退 PATH 候选，并在状态行
+  写明改用了哪个解释器。设置页填写的解释器改为在准备阶段先探测，路径写错会立刻给出
+  「指定的转换解释器不可用」而不再拖到启动子进程才报 `WinError`；全部候选都不可用时
+  错误信息直接给出本应用解释器路径与 `-m pip install …` 命令。
+- llmw 转换不再因为模型自带代码的额外依赖失败：转换脚本报缺 `tiktoken` /
+  `transformers` 等纯 Python 包时，自动装到当前转换解释器并重跑一次（白名单见
+  `llmconvert.CONVERT_SAFE_DEPS`；`torch` 等 GPU 依赖不自动装，避免覆盖用户的 CUDA
+  构建，只给出带解释器路径的安装命令）。GLM-4 这类只有 `padded_vocab_size` 的
+  `config.json` 会临时补上等值 `vocab_size` 再重跑（llama.cpp chatglm 脚本的默认参数
+  早期求值 bug），无论成败都会恢复原始 config。tokenizer 只能靠 transformers
+  `trust_remote_code` 加载的模型（如 GLM-4-9B 的 `tokenization_chatglm.py`）在准备
+  阶段直接提示无法转换并建议下载官方 GGUF，不再等到脚本跑起来才报 `ValueError`。
 - 内部整理：Qt 绑定兼容层 `_pyside_compat.py` 改名为 `compat.py`（现位于 `gui/compat.py`），导入路径与测试同步更新；行为不变。
 - 修复 llmw 模型列表搜不到 Qwen 等官方仓库：默认「适合本机」此前按 ModelScope 的
   **整仓体积**过滤，而 GGUF 官方仓库（如 `Qwen/Qwen3-8B-GGUF`）的总大小是多份量化

@@ -164,6 +164,25 @@ Card，只保留结果行的卡片边框；QTabWidget 内容区改为无边透�
   「已转换」并禁用。diffusers 多组件目录（如含 `model_index.json` 的
   Qwen-Image 管线）不属于单目录 HF transformers 模型，按钮显示「不可转换」
   并在 tooltip 说明原因。
+- 转换脚本的解释器固定为「显式参数（设置页 / `--python`）> `FCMD_CONVERT_PYTHON` >
+  本应用解释器（`sys.executable`）」：本应用解释器可用时直接用，不再按 PATH 挑别的
+  python（混用会让 torch / CUDA 版本与本应用脱节，是此前「转换经常失败」的主因之一）；
+  只有它缺 `torch` / `safetensors` / `numpy` 时才回退 PATH 候选并在状态行写明改用了
+  哪个解释器。设置页填写的解释器在准备阶段先探测，路径写错立刻报「指定的转换解释器
+  不可用」，不会拖到下载完源码、启动子进程才报 `WinError`；全部候选不可用时错误信息
+  给出本应用解释器路径与 `-m pip install …` 命令。
+- 模型自身带来的阻力分三类处理，不混在解释器问题上：
+  1. 模型自带建模代码要求额外纯 Python 包（GLM-4 要 `tiktoken`）——按
+     `CONVERT_SAFE_DEPS` 白名单自动装到转换解释器并重跑一次，日志写明装了甚么；
+     `torch` 等 GPU 依赖不自动装（llama.cpp requirements 钉的是 CPU 轮子，会覆盖
+     用户已有的 CUDA 构建），只给安装命令；
+  2. `config.json` 只有 `padded_vocab_size`（GLM-4）——llama.cpp 的 chatglm 实现写成
+     `hparams.get("padded_vocab_size", hparams["vocab_size"])`，默认参数被提前求值导致
+     `KeyError: 'vocab_size'`；转换期间临时补等值 `vocab_size`，结束后无论成败都恢复原文；
+  3. tokenizer 只能靠 transformers `trust_remote_code` 加载（`tokenizer_config.json` 的
+     `auto_map.AutoTokenizer` 且无 `tokenizer.json` / BPE 词表）——llama.cpp 的
+     `get_vocab_base` 不传该参数，当前脚本无法转换；前置检查直接提示并建议下载官方
+     GGUF 或用「转换脚本」指定已适配的脚本。
 - 量化不再单独分页：本地全量精度 GGUF 所在行提供「量化」按钮，点击后弹出
   精度选项（`llmqnt.QUANT_TYPES`），选中后按默认输出目录执行一次量化；
   已是量化版本的行把精度标签（如 `Q4_K_M`）与系列 / 任务备注并列放在名称下方，

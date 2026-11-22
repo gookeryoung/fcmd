@@ -2042,7 +2042,9 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
                 self._bridge.progress.emit(text)
 
         cancel = self._convert_cancel
-        python = form.python or llmconvert.find_convert_python(on_status=report, cancel=cancel)
+        # 解释器统一走 find_convert_python：留空用本应用解释器，设置页填了就只探测它，
+        # 路径写错时在准备阶段就报明确错误，不会拖到源码下载 / 启动子进程之后。
+        python = llmconvert.find_convert_python(python=form.python or None, on_status=report, cancel=cancel)
         plan = llmconvert.plan_convert(
             source,
             output=Path(form.output),

@@ -539,10 +539,11 @@ def test_convert_cmd(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixt
 
 
 def test_convert_cmd_with_quant_and_python(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    calls: list[str] = []
+    """显式 ``--python`` 也要先探测：写错的解释器在启动转换前就报明确错误。"""
+    seen: list[dict[str, object]] = []
 
-    def _find(**_kwargs: object) -> str:
-        calls.append("find")
+    def _find(**kwargs: object) -> str:
+        seen.append(kwargs)
         return "auto"
 
     monkeypatch.setattr(llmconvert, "find_convert_python", _find)
@@ -550,7 +551,7 @@ def test_convert_cmd_with_quant_and_python(monkeypatch: pytest.MonkeyPatch, caps
     monkeypatch.setattr(llmconvert, "convert_model", lambda plan, **kwargs: [Path("out.gguf")])
     llmconvert.convert_cmd(Path("src"), python="custom")
     out = capsys.readouterr().out
-    assert calls == []
+    assert [item.get("python") for item in seen] == ["custom"]
     assert "中间文件" in out
 
 
