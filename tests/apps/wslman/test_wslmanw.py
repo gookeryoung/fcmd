@@ -551,6 +551,24 @@ def test_mark_downloaded_matches_archives_in_directory(tmp_path: Path) -> None:
     assert again[0].downloaded is True
 
 
+def test_mark_downloaded_marks_all_entries_sharing_an_archive(tmp_path: Path) -> None:
+    """同名下载项指向同一个归档时，相关条目的「已下载」状态保持一致。"""
+    url = "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-wsl-amd64.wsl"
+    download = wslmanw._images.ImageDownload("x86_64", url)
+    generic = wslmanw._images.ImageEntry(name="Ubuntu", friendly_name="Ubuntu", sources=("cli",), downloads=(download,))
+    versioned = wslmanw._images.ImageEntry(
+        name="Ubuntu-26.04", friendly_name="Ubuntu 26.04 LTS", sources=("cli", "manifest"), downloads=(download,)
+    )
+    (tmp_path / "ubuntu-26.04.1-wsl-amd64.wsl").write_bytes(b"x")
+
+    by_name = {entry.name: entry for entry in wslmanw.mark_downloaded((generic, versioned), tmp_path)}
+
+    assert by_name["Ubuntu"].downloaded is True
+    assert by_name["Ubuntu-26.04"].downloaded is True
+    assert by_name["Ubuntu"].archive.endswith("ubuntu-26.04.1-wsl-amd64.wsl")
+    assert by_name["Ubuntu-26.04"].archive.endswith("ubuntu-26.04.1-wsl-amd64.wsl")
+
+
 def test_mark_downloaded_skips_installed_and_missing_dir(tmp_path: Path) -> None:
     """已安装的条目不需要「可安装」标记；目录不存在时一律未下载。"""
     installed = wslmanw._images.ImageEntry(

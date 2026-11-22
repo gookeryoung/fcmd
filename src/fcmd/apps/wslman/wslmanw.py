@@ -512,18 +512,20 @@ def mark_downloaded(entries: Sequence[_images.ImageEntry], directory: Path) -> t
 
     同一实例有多个架构时优先本机架构（:func:`pick_download`）；归档命名既认
     官方 URL 原名，也认 CLI 的 ``名称-架构.tar``（:func:`match_archive`）。
+
+    多个条目共用同一个归档（如 ``Ubuntu`` 与 ``Ubuntu-26.04`` 指向同一个
+    26.04.1 URL）时全部标为已下载：文件本身同时满足这些条目的下载项，只标第一个
+    会让列表里出现「同名镜像一个已下载、一个未下载」的不一致状态。
     """
     found: dict[str, Path] = {}
     for path in local_archives(directory):
-        matched = match_archive(path, entries)
-        if matched is None:
-            continue
-        entry, download = matched
-        key = entry.name.casefold()
-        preferred = pick_download(entry).arch
-        current = found.get(key)
-        if current is None or download.arch == preferred:
-            found[key] = path
+        matched_all = _match_archives(path, entries)
+        for entry, download in matched_all:
+            key = entry.name.casefold()
+            preferred = pick_download(entry).arch
+            current = found.get(key)
+            if current is None or download.arch == preferred:
+                found[key] = path
     return tuple(
         replace(
             entry,
@@ -600,13 +602,23 @@ def match_archive(
     path: Path, entries: Sequence[_images.ImageEntry]
 ) -> tuple[_images.ImageEntry, _images.ImageDownload] | None:
     """按落盘文件名匹配官方清单：GUI 下载用 URL 原名，CLI 下载用 ``名称-架构.tar``。"""
+    matched = _match_archives(path, entries)
+    return matched[0] if matched else None
+
+
+def _match_archives(
+    path: Path, entries: Sequence[_images.ImageEntry]
+) -> tuple[tuple[_images.ImageEntry, _images.ImageDownload], ...]:
+    """返回落盘文件名能匹配到的全部 ``(条目, 下载项)``；同一条目只取第一个命中项。"""
     name = path.name.casefold()
+    matched: list[tuple[_images.ImageEntry, _images.ImageDownload]] = []
     for entry in entries:
         for download in entry.downloads:
             official = Path(urllib.parse.urlparse(download.url).path).name.casefold()
             if name in {official, f"{entry.name}-{download.arch}.tar".casefold()}:
-                return entry, download
-    return None
+                matched.append((entry, download))
+                break
+    return tuple(matched)
 
 
 def inspect_archive(path: Path, entries: Sequence[_images.ImageEntry]) -> LocalArchive:
