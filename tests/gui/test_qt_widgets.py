@@ -844,3 +844,26 @@ def test_sync_selection_only_touches_old_and_new_rows() -> None:
         assert rows[7].is_selected() is False
     finally:
         view.deleteLater()
+
+
+def test_selected_row_repolishes_child_widgets() -> None:
+    """选中态变化要重抛光子控件：否则依赖祖先 [selected] 的 Ghost 边框不会更新。"""
+    row = _Row()
+    child = QPushButton("配置", row)
+    counter = {"unpolish": 0, "polish": 0}
+
+    class _ChildStyle:
+        def unpolish(self, _widget: object) -> None:
+            counter["unpolish"] += 1
+
+        def polish(self, _widget: object) -> None:
+            counter["polish"] += 1
+
+    child.style = lambda: _ChildStyle()  # type: ignore[method-assign]
+    try:
+        row.set_selected(True)
+        assert counter == {"unpolish": 1, "polish": 1}
+        row.set_selected(False)
+        assert counter == {"unpolish": 2, "polish": 2}
+    finally:
+        row.deleteLater()

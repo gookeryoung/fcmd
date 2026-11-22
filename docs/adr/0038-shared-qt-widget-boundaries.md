@@ -105,7 +105,12 @@ Qt 判定「文本为空」就继续画 placeholder，于是中文组合串和�
 现在两处一起改：`SelectionRow.set_selected` 属性没变直接返回（幂等），
 `RowListWidget.sync_selection(current)` 只处理上一次的当前行与本次当前行；各窗口的
 `currentRowChanged` 回调统一改成调用它，不再自己遍历。行数再多，单次切换的抛光次数
-也恒为 0~2 次。
+也恒为 0~2 次（每行内部再对子控件重抛光一次；子控件数量固定且很少）。
+
+子控件也可能按祖先的 `[selected="true"]` 匹配（行内 Ghost 按钮的选中态边框）。Qt
+只重抛光父控件不会刷新这些后代的 QSS，视觉上就是「选中了但按钮边框还是旧配色」。
+`SelectionRow.set_selected` 因此连带 `findChildren(QWidget)` 一起 `unpolish` / `polish`，
+保证依赖祖先选中态的 Descendant 样式同步更新。
 
 ### D8 为什么统一状态栏
 

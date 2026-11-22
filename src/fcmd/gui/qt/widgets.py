@@ -598,6 +598,12 @@ class SelectionRow:
         self.setProperty("selected", value)
         self.style().unpolish(self)
         self.style().polish(self)
+        # 子控件也可能按祖先的 ``[selected="true"]`` 匹配（如行内 Ghost 按钮），
+        # 只重抛光父级不会刷新它们的 QSS，边框会停在旧配色上；这里连带子控件一起
+        # 重抛光，选中态的所有后代样式才会同步更新。
+        for child in self.findChildren(QWidget):
+            child.style().unpolish(child)
+            child.style().polish(child)
 
 
 _METRICS_SAMPLES = ("000.0 GiB",)
