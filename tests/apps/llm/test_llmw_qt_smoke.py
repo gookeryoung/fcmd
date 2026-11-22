@@ -1158,8 +1158,8 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     assert page.models_path.browse.text() == "更改"
     assert page.engines_path.browse.text() == "更改"
     assert page.download_engine_button.text() == "下载引擎"
-    assert page.import_engine_dir_button.text() == "导入目录"
     assert page.import_engine_archive_button.text() == "导入压缩包"
+    assert not hasattr(page, "import_engine_dir_button")
     assert not hasattr(page, "add_engine_button")
     assert not hasattr(page, "engines_open")
     assert not hasattr(page, "engine_status_tag")
@@ -1175,11 +1175,20 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
 def test_settings_paint_engine_card_matches_llama_layout(window: Any) -> None:
     """sd.cpp 引擎卡对齐推理引擎：刷新在标题行、目录行动作、单行列表 + 空态提示。"""
     window.show_page("settings")
-    card = window.page("settings").paint_engine_card
+    from fcmd.apps.llm._llmw_qt_engine_card import EngineCard
+
+    page = window.page("settings")
+    card = page.paint_engine_card
+    # 与推理引擎共用同一个 EngineCard 类，只是配置不同。
+    assert isinstance(card, EngineCard)
+    assert isinstance(page.engine_card, EngineCard)
+    assert card.config.list_object_name == "PaintEngineList"
+    assert page.engine_card.config.list_object_name == "EngineList"
     assert card.title() == "画图/视频/音频引擎(sd.cpp)"
     assert card.refresh_button.text() == "刷新"
     assert card.refresh_button.parent() is card
     assert card.root_label.objectName() == "Hint"
+    assert card.open_button is not None
     assert card.open_button.text() == "打开"
     assert card.install_button.text() == "安装引擎…"
     assert card.engines_list.objectName() == "PaintEngineList"

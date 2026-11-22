@@ -1,7 +1,7 @@
 """llmw 画图配置：sd.cpp 文生图的纯逻辑、服务调用与配置分区。
 
 画图不再有独立页面：对话页勾选「画图」后用提示词出图；采样 / 输出嵌进对话页的
-「模型与生成配置」窗口（:class:`PaintSampleSection`），引擎安装 / 默认引擎（:class:`PaintEngineCard`）放在设置页，
+「模型与生成配置」窗口（:class:`PaintSampleSection`），引擎安装 / 默认引擎（``build_paint_engine_card``）放在设置页，
 模型组件配置（:class:`PaintEngineSection`）放在运行页「画图」页签，与「对话 / 编程」
 同构：加载方式方块选项、运行选项胶囊开关、高级参数折叠区、只读命令预览与自定义
 启动参数（保存 / 填入）。资产扫描、组件配对、启动参数、请求载荷与出图保存都在
@@ -18,17 +18,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QSpinBox,
@@ -38,20 +36,16 @@ from PySide6.QtWidgets import (
 
 from fcmd.apps.llm import _llmconfig, _llmpaint, _llmpaint_engine, _llmpaint_server
 from fcmd.apps.llm._llmw_models import open_path
+from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineOption
 from fcmd.apps.llm.llmbase import ServeError, format_command, human_size
 from fcmd.gui.qt.widgets import (
-    Card,
     ChoiceGroup,
     Collapsible,
     ElidedLabel,
     FormGrid,
-    RowListWidget,
-    SelectionRow,
-    StatusTag,
     ToggleChip,
     button,
     hint_label,
-    link_button,
 )
 from fcmd.gui.qt.workers import submit, submit_daemon
 
@@ -63,9 +57,9 @@ __all__ = [
     "MODES",
     "SAMPLERS",
     "SIZE_PRESETS",
-    "PaintEngineCard",
     "PaintEngineSection",
     "PaintSampleSection",
+    "build_paint_engine_card",
     "command_preview",
     "components_from_settings",
     "default_settings",
@@ -1125,200 +1119,59 @@ class PaintSampleSection(QWidget):  # pragma: no cover - Qt 控件
             QMessageBox.critical(self, "打开失败", f"无法打开目录：{target}\n{exc}")
 
 
-class _PaintEngineRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
-    """已安装 sd.cpp 引擎行：单行紧凑布局（标签 + 可执行文件 + 默认 / 后端）。
+def build_paint_engine_card(parent: QWidget | None = None) -> EngineCard:
+    """sd.cpp 引擎卡片：复用共享 EngineCard，仅提供 sd.cpp 的配置。"""
 
-    画图 / 视频 / 音频共用同一个引擎目录与同一个默认 tag，行内只有「设为默认」。
-    """
+    def load() -> list[EngineOption]:
+        options: list[EngineOption] = []
+        for engine in _llmpaint_engine.list_sd_engines():
+            backend_tag = _llmpaint_engine.engine_backend(engine)
+            label = _llmpaint_engine.variant_label(backend_tag) if backend_tag else "sd.cpp"
+            tone = "muted" if backend_tag in {"", "cpu"} else "accent"
+            options.append(
+                EngineOption(
+                    tag=engine.tag,
+                    exe=engine.exe,
+                    current=engine.tag == _llmpaint_engine.current_sd_tag(),
+                    display_name=_llmpaint_engine.engine_version(engine.tag),
+                    badge=label,
+                    badge_tone=tone,
+                    badge_tooltip=f"构建后端：{backend_tag or '未标注'}",
+                    tooltip=f"{engine.tag} / {engine.exe} / 后端：{engine.backend or '-'}",
+                )
+            )
+        return options
 
-    useRequested = Signal(str)
-
-    def __init__(
-        self,
-        engine: _llmpaint_engine.SdEngine,
-        *,
-        current: bool,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.engine = engine
-        self.setObjectName("EngineRow")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setProperty("selected", "false")
-        self.setToolTip(f"{engine.tag}\n{engine.exe}\n后端：{engine.backend or '-'}")
-
-        row = QHBoxLayout(self)
-        row.setContentsMargins(10, 4, 10, 4)
-        row.setSpacing(8)
-
-        name = QLabel(_llmpaint_engine.engine_version(engine.tag), self)
-        name.setObjectName("EngineItemName")
-        name.setMaximumWidth(220)
-        name.setToolTip(f"引擎 tag：{engine.tag}")
-        row.addWidget(name, 0)
-
-        exe = ElidedLabel(str(engine.exe), mode=Qt.TextElideMode.ElideMiddle, parent=self)
-        exe.setObjectName("Hint")
-        row.addWidget(exe, 1)
-
-        self.use_button = None
-        if current:
-            mark = StatusTag("默认", tone="success", parent=self)
-            mark.setToolTip("画图 / 视频 / 音频共用该引擎")
-            row.addWidget(mark, 0)
-        else:
-            self.use_button = button("设为默认")
-            self.use_button.setToolTip("把该引擎设为默认 sd.cpp 引擎（画图 / 视频 / 音频共用）")
-            self.use_button.clicked.connect(lambda: self.useRequested.emit(self.engine.tag))
-            row.addWidget(self.use_button, 0)
-
-        backend_tag = _llmpaint_engine.engine_backend(engine)
-        label = _llmpaint_engine.variant_label(backend_tag) if backend_tag else "sd.cpp"
-        tone = "muted" if backend_tag in {"", "cpu"} else "accent"
-        backend = StatusTag(label, tone=tone, parent=self)
-        backend.setToolTip(f"构建后端：{backend_tag or '未标注'}")
-        row.addWidget(backend, 0)
-        self.setMinimumHeight(self.fontMetrics().height() + 14)
-
-
-class PaintEngineCard(Card):  # pragma: no cover - Qt 控件
-    """sd.cpp 引擎卡片：画图 / 视频 / 音频共用一张卡、一个引擎目录、一个默认 tag。
-
-    标题行右侧「刷新」、目录行右侧动作按钮、已安装引擎一律用紧凑单行
-    （标签 + 可执行文件 + 「默认 / 设为默认」+ 后端胶囊），列表高度随内容伸缩、
-    超过 6 行才滚动，空态由提示行承接。安装走 ``PaintEngineDialog``（版本 / 变体
-    下载、本地 zip / 目录导入）。
-
-    「设为默认」写 ``current.json``，三种用途都按它启动，不再有按用途的覆盖 key。
-    """
-
-    changed = Signal()
-    """默认引擎或已安装列表变化，设置页据此同步刷新其它同目录卡片。"""
-
-    def __init__(
-        self,
-        parent: QWidget | None = None,
-        *,
-        title: str = "画图/视频/音频引擎(sd.cpp)",
-    ) -> None:
-        super().__init__(title, parent)
-        self.refresh_button = link_button("刷新", tooltip="重新读取已安装 sd.cpp 引擎与默认引擎")
-        self.add_title_action(self.refresh_button)
-
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
-        row.addWidget(hint_label("引擎目录", wrap=False))
-        self.root_label = ElidedLabel(str(_llmconfig.paint_engines_root()), parent=self)
-        self.root_label.setObjectName("Hint")
-        row.addWidget(self.root_label, 1)
-        self.open_button = button("打开", kind="ghost")
-        self.open_button.setToolTip("在文件管理器中打开 sd.cpp 引擎目录")
-        row.addWidget(self.open_button)
-        self.install_button = button("安装引擎…", kind="ghost")
-        self.install_button.setToolTip("下载 stable-diffusion.cpp 预编译包，或导入本地 zip / 目录")
-        row.addWidget(self.install_button)
-        self.body.addLayout(row)
-
-        self.engines_list = RowListWidget(self)
-        self.engines_list.setObjectName("PaintEngineList")
-        self.engines_list.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
-        self.engines_list.setSpacing(4)
-        self.engines_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.engines_list.setToolTip("双击一行可直接设为默认 sd.cpp 引擎")
-        self.body.addWidget(self.engines_list)
-        self.engines_empty = hint_label("还没有已安装 sd.cpp 引擎；点「安装引擎…」下载或导入。")
-        self.engines_empty.setVisible(False)
-        self.body.addWidget(self.engines_empty)
-
-        self._engines: list[_llmpaint_engine.SdEngine] = []
-        self.open_button.clicked.connect(self._open_root)
-        self.install_button.clicked.connect(self.install)
-        self.refresh_button.clicked.connect(self.refresh)
-        self.engines_list.currentRowChanged.connect(self._on_row_selected)
-        self.engines_list.itemDoubleClicked.connect(self._on_double_clicked)
-        self.refresh()
-
-    def _selected_tag(self) -> str | None:
-        """当前生效的 sd.cpp 引擎 tag（画图 / 视频 / 音频共用 ``current.json``）。"""
-        return _llmpaint_engine.current_sd_tag()
-
-    def refresh(self) -> None:
-        """刷新已安装引擎列表；空态 / 错误态由提示行承接，列表随之收起。"""
-        try:
-            self._engines = _llmpaint_engine.list_sd_engines()
-        except OSError as exc:
-            self._engines = []
-            self.engines_list.clear()
-            self.engines_list.setVisible(False)
-            self.engines_empty.setText(f"sd.cpp 引擎信息不可用：{exc}")
-            self.engines_empty.setVisible(True)
-            return
-
-        selected = self._selected_tag()
-        self.engines_list.clear()
-        for engine in self._engines:
-            list_item = QListWidgetItem(self.engines_list)
-            list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            row = _PaintEngineRow(engine, current=engine.tag == selected, parent=self.engines_list)
-            row.useRequested.connect(self._use)
-            list_item.setSizeHint(QSize(0, row.sizeHint().height()))
-            self.engines_list.setItemWidget(list_item, row)
-        self.engines_list.sync_row_widths()
-        self.engines_list.setVisible(bool(self._engines))
-        self._fit_list()
-        self.engines_empty.setText("还没有已安装 sd.cpp 引擎；点「安装引擎…」下载或导入。")
-        self.engines_empty.setVisible(not self._engines)
-
-    def _fit_list(self) -> None:
-        """把列表高度收到内容高度，超过 6 行后再出现滚动条（与推理引擎一致）。"""
-        count = self.engines_list.count()
-        if count == 0:
-            self.engines_list.setFixedHeight(0)
-            return
-        heights = [self.engines_list.sizeHintForRow(index) for index in range(count)]
-        spacing = self.engines_list.spacing()
-        content = sum(heights) + spacing * (count + 2) + 2
-        cap = max(heights) * 6 + spacing * 8 + 2
-        self.engines_list.setFixedHeight(min(content, cap))
-
-    def _on_row_selected(self, current: int) -> None:
-        """同步行选中态（只重抛光旧 / 新两行）。"""
-        self.engines_list.sync_selection(current)
-
-    def _on_double_clicked(self, item: QListWidgetItem) -> None:
-        """双击引擎行直接设为默认。"""
-        index = self.engines_list.row(item)
-        if 0 <= index < len(self._engines):
-            self._use(self._engines[index].tag)
-
-    def install(self) -> None:
-        """打开 sd.cpp 引擎安装对话框；安装完成后刷新列表。"""
+    def install(card: EngineCard) -> None:
         from fcmd.apps.llm._llmw_qt_paint_engine import PaintEngineDialog
 
-        dialog = PaintEngineDialog(self)
-        dialog.installed.connect(self._on_installed)
+        dialog = PaintEngineDialog(card)
+        dialog.installed.connect(lambda _tag: (card.refresh(), card.changed.emit()))
         dialog.exec()
+        card.refresh()
 
-    def _on_installed(self, _tag: str) -> None:
-        """安装成功后刷新列表；默认 tag 已由安装流程写入 ``current.json``。"""
-        self.refresh()
-        self.changed.emit()
-
-    def _use(self, tag: str) -> None:
-        """把指定 tag 设为默认 sd.cpp 引擎（画图 / 视频 / 音频共用）。"""
-        try:
-            _llmpaint_engine.use_sd_engine(tag)
-        except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "切换 sd.cpp 引擎失败", str(exc))
-            return
-        self.refresh()
-        self.changed.emit()
-
-    def _open_root(self) -> None:
+    def open_root() -> None:
         root = _llmconfig.paint_engines_root()
         try:
             root.mkdir(parents=True, exist_ok=True)
             open_path(root)
         except OSError as exc:
-            QMessageBox.critical(self, "打开失败", f"无法打开目录：{root}\n{exc}")
+            QMessageBox.critical(parent, "打开失败", f"无法打开目录：{root} / {exc}")
+
+    config = EngineCardConfig(
+        title="画图/视频/音频引擎(sd.cpp)",
+        list_object_name="PaintEngineList",
+        empty_text="还没有已安装 sd.cpp 引擎；点「安装引擎…」下载或导入。",
+        load=load,
+        use=_llmpaint_engine.use_sd_engine,
+        install=install,
+        install_text="安装引擎…",
+        install_tooltip="下载 stable-diffusion.cpp 预编译包，或导入本地 zip / 目录",
+        root_text=lambda: str(_llmconfig.paint_engines_root()),
+        open_root=open_root,
+        open_text="打开",
+        open_tooltip="在文件管理器中打开 sd.cpp 引擎目录",
+        row_use_tooltip="把该引擎设为默认 sd.cpp 引擎（画图 / 视频 / 音频共用）",
+        row_current_tooltip="画图 / 视频 / 音频共用该引擎",
+    )
+    return EngineCard(config, parent)
