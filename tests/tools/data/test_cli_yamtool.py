@@ -27,14 +27,12 @@ from fcmd.infras.data import (
     validate_yaml,
     write_yaml,
 )
-
-# 框架日志关键词：verbose 模式下 _make_verbose_callback 打印的状态行含这些中文标记
-_FRAMEWORK_MARKERS = ("开始执行", "成功", "失败", "跳过", "错误:")
+from tests.helpers import strip_framework_lines
 
 
 def _extract_user_lines(out: str) -> list[str]:
-    """从 run_tool 输出中提取用户数据行，过滤框架 verbose 状态行。"""
-    return [line for line in out.splitlines() if line and not any(marker in line for marker in _FRAMEWORK_MARKERS)]
+    """从 run_tool 输出中提取业务数据行，过滤框架的进度 / 提示行。"""
+    return [line for line in strip_framework_lines(out).splitlines() if line]
 
 
 # ============================================================================ #

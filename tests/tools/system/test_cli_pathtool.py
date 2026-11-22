@@ -17,6 +17,7 @@ import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
 from fcmd.infras.fs import normalize_path, path_diff, path_parts, relative_to
+from tests.helpers import strip_framework_lines
 
 
 # ============================================================================ #
@@ -245,9 +246,8 @@ class TestCLISubcommands:
         """norm 规范化路径。"""
         monkeypatch.chdir(tmp_path)
         assert run_tool("pathtool", ["norm", "a/b/../c.txt"]) == 0
-        out = capsys.readouterr().out
-        lines = out.strip().splitlines()
-        path_line = lines[1]
+        out = strip_framework_lines(capsys.readouterr().out)
+        path_line = out.strip().splitlines()[0]
         assert ".." not in path_line
         assert "c.txt" in path_line
         assert str(tmp_path) in path_line

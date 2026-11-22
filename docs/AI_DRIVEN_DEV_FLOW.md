@@ -70,6 +70,19 @@
 慢测试标记：单个用例常驻 > 0.5s（子进程 / 真实 IO / 超时等待 / 大文件生成）时加
 `@pytest.mark.slow`；`make test` 默认跳过慢测试，`make test-all` 与 `make cov` 全跑。
 
+Qt 离屏测试的窗口必须**销毁**而不是只 `close()`：Qt 里 `close()` 只隐藏窗口，
+按需构建的页面 / 菜单 / 对话框常常没有父控件，会一直留在 `QApplication` 的顶层控件表里。
+累积后下一次 `apply_theme` 的 `setStyleSheet` 要为整棵旧树重新 polish（实测单次数秒），
+表现为 xdist 进度条停在 99%→100% 长时间不动。fixture 收尾统一走
+`tests/helpers.py` 的 `qt_top_levels()` / `destroy_qt_top_levels()`。
+
+慢用例在前：`tests/conftest.py` 的 `pytest_collection_modifyitems` 把 `slow` 用例排到
+最前，xdist 先派发它们。否则超时等待 / 性能采样这类 5~11s 的用例掉到队尾，
+前面 99% 的快用例跑完后还要干等它们。同理，真实的“等待超时”用例要用能被
+`subprocess.run` 直接终止的子进程（如 `sys.executable -c "time.sleep(30)"`），
+不要用 `cmd /c ping` / 外部 shell：Windows 上只能杀直接子进程，孙进程占着管道
+会让超时用例白等好几秒。
+
 ### E 集成门禁与文档
 
 `make check`（check-fast + pyrefly linux + cov）。

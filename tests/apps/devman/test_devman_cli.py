@@ -851,7 +851,8 @@ def test_init_dry_run_without_path(
     code, out, _err = _run(capsys, ["init", "--no-path", "--dry-run"])
     assert code == 0
     assert "将生成" in out
-    assert "用户 PATH" not in out
+    # 只看工具自己的 PATH 报告行；框架收尾行会带子命令 help 文案，不含冒号报告
+    assert "用户 PATH:" not in out
 
 
 def test_uninit_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1013,7 +1014,7 @@ def test_uninit_no_path_skips_user_path(
     code, out, _err = _run(capsys, ["uninit", "--no-path"])
     assert code == 0
     assert "已删除 shim" in out
-    assert "用户 PATH" not in out
+    assert "用户 PATH:" not in out
 
 
 def test_uninit_user_path_unchanged(

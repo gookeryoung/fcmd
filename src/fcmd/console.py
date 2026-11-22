@@ -25,9 +25,22 @@ from typing import Any
 
 from rich import box as rich_box
 from rich.console import Console as RichConsole
+from rich.markup import escape as _escape_markup
 from rich.table import Table as RichTable
 
-__all__ = ["Console", "Table", "get_console", "print_error", "print_verbose", "supports_unicode"]
+__all__ = [
+    "Console",
+    "Table",
+    "get_console",
+    "print_command",
+    "print_error",
+    "print_run_summary",
+    "print_step_done",
+    "print_step_failed",
+    "print_step_skipped",
+    "print_verbose",
+    "supports_unicode",
+]
 
 _console: Console | None = None
 
@@ -169,3 +182,46 @@ def print_error(message: str, *, code: str = "RUNTIME_ERROR", hint: str | None =
 def print_verbose(*args: Any, **kwargs: Any) -> None:
     """verbose 模式输出辅助（委托全局 Console）。"""
     get_console().print(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------- #
+# 执行进度：统一的人读措辞
+# ---------------------------------------------------------------------- #
+# 约定（与 ADR 0041 一致）：
+# - 命令回显：``$ git add .``（暗色），不再写「执行命令: / 返回码: 0」；
+# - 每一步结束时一行结果：``完成  提交更改  1.58s`` / ``失败  推送  0.02s``；
+# - 不打印「'内部任务名' 开始执行…」；内部子命令只在 help 里带「（内部）」，
+#   展示时由调用方去掉，用户只看到中文动作名；
+# - 多步成功后补一行 ``共 3 步，用时 1.6s``，替代原来的任务汇总表。
+
+
+def _fmt_duration(duration: float | None) -> str:
+    """步骤耗时后缀（无耗时不显示）。"""
+    return f"  {duration:.2f}s" if duration is not None else ""
+
+
+def print_command(cmd: object) -> None:
+    """命令回显：与 shell 习惯一致的暗色单行 ``$ git add .``。"""
+    get_console().print(f"$ {cmd}", style="dim", markup=False)
+
+
+def print_step_done(label: str, duration: float | None = None) -> None:
+    """单个步骤完成：``完成  提交更改  1.58s``。"""
+    get_console().print(f"[green]完成[/green]  {_escape_markup(label)}[dim]{_fmt_duration(duration)}[/dim]")
+
+
+def print_step_failed(label: str, duration: float | None = None, *, attempts: int = 1) -> None:
+    """单个步骤失败：``失败  提交更改  0.02s``；发生重试时补「重试 N 次」。"""
+    retried = f"（重试 {attempts - 1} 次）" if attempts > 1 else ""
+    get_console().print(f"[red]失败[/red]  {_escape_markup(label)}[dim]{_fmt_duration(duration)}{retried}[/dim]")
+
+
+def print_step_skipped(label: str, reason: str = "") -> None:
+    """单个步骤被跳过：``跳过  上传（上游失败）``。"""
+    detail = f"（{reason}）" if reason else ""
+    get_console().print(f"[yellow]跳过[/yellow]  {_escape_markup(label)}[dim]{detail}[/dim]")
+
+
+def print_run_summary(steps: int, duration: float) -> None:
+    """多步全部完成后的收尾行：``共 3 步，用时 1.61s``。"""
+    get_console().print(f"[dim]共 {steps} 步，用时 {duration:.2f}s[/dim]")

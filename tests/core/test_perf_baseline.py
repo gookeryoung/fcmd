@@ -114,6 +114,9 @@ _RUNS = 6
 # 工具发现/版本路径采样次数：取中位数，降低全量并行跑测时的瞬时抖动影响
 _DISCOVERY_RUNS = 5
 _VERSION_RUNS = 5
+# 汇总报告（无断言、仅供人工查看）只取少量样本：全量门禁里它本就重复测量，
+# 每项都跑满 _RUNS 会在并行跑测的尾部变成 9s 长杆。
+_REPORT_RUNS = 2
 
 
 def _measure(script: str, runs: int = _RUNS, warmup: int = _WARMUP) -> list[float]:
@@ -249,12 +252,16 @@ def test_tool_exec_baseline() -> None:
 
 @pytest.mark.slow
 def test_perf_baseline_report() -> None:
-    """汇总基线并打印报告（不断言，供人工查看与回归对比）。"""
-    cold = _measure(_COLD_START_SCRIPT)
-    version = _measure_wall(["-m", "fcmd", "--version"])
-    disc = _measure(_DISCOVERY_SCRIPT)
-    dag = _measure(_DAG_RUN_SCRIPT)
-    tool = _measure(_TOOL_EXEC_SCRIPT)
+    """汇总基线并打印报告（不断言，供人工查看与回归对比）。
+
+    单项基线已在上面各自的用例里完整采样，这里只为汇总展示，样本数降到
+    ``_REPORT_RUNS``（无断言，min/median 仍能看出量级）。
+    """
+    cold = _measure(_COLD_START_SCRIPT, runs=_REPORT_RUNS, warmup=0)
+    version = _measure_wall(["-m", "fcmd", "--version"], runs=_REPORT_RUNS)
+    disc = _measure(_DISCOVERY_SCRIPT, runs=_REPORT_RUNS, warmup=0)
+    dag = _measure(_DAG_RUN_SCRIPT, runs=_REPORT_RUNS, warmup=0)
+    tool = _measure(_TOOL_EXEC_SCRIPT, runs=_REPORT_RUNS, warmup=0)
 
     report = [
         "",
@@ -271,7 +278,7 @@ def test_perf_baseline_report() -> None:
         _format_stats("tool exec", tool, _TOOL_EXEC_BUDGET_MS),
     ]
     if _qt_available():
-        gui = _measure(_GUI_BUILD_SCRIPT)
+        gui = _measure(_GUI_BUILD_SCRIPT, runs=_REPORT_RUNS, warmup=0)
         report.append(_format_stats("GUI build", gui, _GUI_BUILD_BUDGET_MS))
     else:
         report.append(f"  {'GUI build':<14} skipped（当前环境无法创建 Qt 应用）")

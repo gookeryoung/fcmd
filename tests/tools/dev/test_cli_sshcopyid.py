@@ -21,6 +21,7 @@ import fcmd as fx
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.infras import dev as dev_infra
+from tests.helpers import strip_framework_lines
 
 ensure_tools_discovered()
 
@@ -67,7 +68,7 @@ class TestSshcopyidMissingKey:
             == 0
         )
         assert captured == []
-        out = capsys.readouterr().out
+        out = strip_framework_lines(capsys.readouterr().out)
         assert "部署" not in out
 
 

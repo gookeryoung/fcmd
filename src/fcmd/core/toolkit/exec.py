@@ -28,7 +28,9 @@ import inspect
 import io
 import textwrap
 from collections.abc import Mapping, Sequence
+from dataclasses import replace as dc_replace
 from pathlib import Path
+from subprocess import CalledProcessError
 from typing import Any
 
 from fcmd.core.execution.executors import run
@@ -380,9 +382,22 @@ def _parse_tool_args(
 
 
 def _describe_exception(exc: BaseException) -> str:
-    """把任务异常转成一句人能看懂的话。"""
+    """把任务异常转成一句人能看懂的话。
+
+    - 工具自己抛的 :class:`RuntimeError` 已是中文句子（如「命令执行失败: …（返回码 1）」），
+      直接透传；
+    - ``subprocess`` 的 :class:`~subprocess.CalledProcessError` 转成命令行 + 返回码，
+      不再把 Python 的 ``repr(list)`` 丢给用户；
+    - 其他异常保留类型名，方便反馈时定位。
+    """
     if isinstance(exc, SystemExit):
         return f"工具进程以退出码 {exc.code} 结束"
+    text = str(exc).strip()
+    if isinstance(exc, CalledProcessError):
+        cmd = exc.cmd if isinstance(exc.cmd, str) else " ".join(str(part) for part in exc.cmd or ())
+        return f"命令执行失败: {cmd}（返回码 {exc.returncode}）"
+    if isinstance(exc, RuntimeError) and text:
+        return text
     return f"{type(exc).__name__}: {exc}"
 
 
@@ -410,6 +425,49 @@ def _report_tool_failure(  # noqa: PLR0913 - 与错误信封字段一一对应
     print_error(message, code=code, hint=hint)
 
 
+def _task_name(spec: ToolSpec) -> str:
+    """子命令在 DAG 内的任务名（与 :func:`_build_task_spec` 保持一致）。"""
+    return spec.subcommand if spec.subcommand is not None else spec.name
+
+
+def _display_label(spec: ToolSpec) -> str:
+    """子命令的用户可见动作名。
+
+    优先用子命令的 ``help``（已是中文动词短语），去掉靠后的「（内部）」标记；
+    两者都缺失时回退到子命令名 / 工具名。展示层不再出现 ``'_commit'`` 这类
+    内部标识，也不使用 ``repr`` 的引号。
+    """
+    text = (spec.help or "").strip().rstrip("。")
+    for suffix in ("（内部）", "(内部)"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)].strip()
+    return text or str(spec.subcommand or spec.name)
+
+
+def _make_progress_printer(labels: Mapping[str, str], noop_tasks: frozenset[str]) -> Any:
+    """构造进度回调：把任务事件翻译成用户可读的步骤行。
+
+    - ``noop_tasks``（纯聚合壳任务，如 ``gitt a``）不单独占一行：用户只关心
+      真正干活的那几步；
+    - 不打印开始行，成功路径只留一行结果，减少噪音；
+    - 任务已在函数体内通过 ``print_error`` 报错时不再补「完成」，避免矛盾。
+    """
+    from fcmd.console import print_step_done, print_step_failed, print_step_skipped
+    from fcmd.core.result import has_pending_error
+
+    def _printer(event: Any) -> None:
+        if event.status == TaskStatus.SUCCESS:
+            if event.task in noop_tasks or has_pending_error():
+                return
+            print_step_done(labels.get(event.task, event.task), event.duration)
+        elif event.status == TaskStatus.FAILED:
+            print_step_failed(labels.get(event.task, event.task), event.duration, attempts=event.attempts)
+        elif event.status == TaskStatus.SKIPPED:
+            print_step_skipped(labels.get(event.task, event.task), event.reason or "")
+
+    return _printer
+
+
 def _execute_tool_tasks(
     name: str,
     target: str | None,
@@ -428,6 +486,8 @@ def _execute_tool_tasks(
     json_output = bool(variables.get("json_output", False))
     chain = _collect_with_deps(subs, target)
     task_specs: list[TaskSpec[Any]] = []
+    labels: dict[str, str] = {}
+    noop_tasks: set[str] = set()
     for sc in chain:
         if sc not in subs:
             _report_tool_failure(
@@ -439,22 +499,31 @@ def _execute_tool_tasks(
             )
             return int(ExitCode.FAILURE)
         sc_spec = subs[sc]
+        labels[_task_name(sc_spec)] = _display_label(sc_spec)
+        if _is_aggregate(sc_spec):
+            noop_tasks.add(_task_name(sc_spec))
         task_specs.append(_build_task_spec(sc_spec, variables))
 
     # 构建图并执行
     graph = Graph.from_specs(task_specs, defaults=GraphDefaults())
     strategy = variables.get("strategy") or target_spec.strategy or "dependency"
     # --json 要求 stdout 可整体解析：同时关闭框架的进度/汇总行，避免与 JSON 混排
-    verbose = not variables.get("quiet", False) and not json_output
+    show_progress = not variables.get("quiet", False) and not json_output
+    dry_run = False if "dry_run" in inspect.signature(target_spec.func).parameters else variables.get("dry_run", False)
+    if show_progress:
+        # cmd 任务行会被回显为 ``$ git add .`` 并把子进程输出实时透传到终端，
+        # 便于用户在长命令运行期间看到进展（框架自己的生命周期行由回调接管）。
+        task_specs = [dc_replace(s, verbose=True) if s.cmd is not None else s for s in task_specs]
+        graph = Graph.from_specs(task_specs, defaults=GraphDefaults())
 
     # 工具自己声明 dry_run 时由工具生成结构化计划，框架不跳过任务
-    owns_dry_run = "dry_run" in inspect.signature(target_spec.func).parameters
     try:
         report = run(
             graph,  # type: ignore[bad-argument-type]
             strategy=strategy,  # type: ignore[arg-type]
-            dry_run=False if owns_dry_run else variables.get("dry_run", False),
-            verbose=verbose,
+            dry_run=dry_run,
+            verbose=False,
+            on_event=_make_progress_printer(labels, frozenset(noop_tasks)) if show_progress else None,
         )
     except TaskFailedError as e:
         # continue_on_error=False 时 run() 抛 TaskFailedError，携带 report
@@ -462,12 +531,10 @@ def _execute_tool_tasks(
             name,
             target,
             code="RUNTIME_ERROR",
-            message=f"执行失败: {_describe_exception(e.cause)}",
-            hint="检查入参后重试；若为工具内部错误，请附上上面的一句话与类型反馈",
+            message=_describe_exception(e.cause),
+            hint="检查入参后重试；若是工具内部错误，请附上上面的错误信息反馈",
             json_output=json_output,
         )
-        if verbose and e.report is not None:
-            _print_task_summary(e.report, force=True)
         pending = take_pending_exit_code()
         return int(pending) if pending is not None else int(ExitCode.FAILURE)
     except FcmdError as e:
@@ -492,21 +559,21 @@ def _execute_tool_tasks(
         )
         return int(ExitCode.INTERRUPTED)
 
-    # 已呈现错误时不再打印「成功」汇总：避免与错误行、非零退出码矛盾
-    if verbose and not variables.get("dry_run", False) and not has_pending_error():
-        _print_task_summary(report)
+    # 已呈现错误时不再打印「完成」汇总：避免与错误行、非零退出码矛盾
+    if show_progress and not dry_run and not has_pending_error():
+        _print_task_summary(report, labels=labels, noop_tasks=frozenset(noop_tasks))
 
     if not report.success:
         # continue_on_error=True 时 run() 不抛异常，但必须有错误文本：
         # 「退出 1 却什么都没说」是最坏形态（脚本侧无从判断，人也无从修正）。
         failed = [n for n, r in report.results.items() if r.status == TaskStatus.FAILED]
-        detail = "、".join(failed) if failed else "未知任务"
+        detail = "、".join(labels.get(n, n) for n in failed) if failed else "未知步骤"
         _report_tool_failure(
             name,
             target,
             code="RUNTIME_ERROR",
-            message=f"执行失败: 任务 {detail} 未成功",
-            hint="检查入参后重试；若为工具内部错误，请附上上面的一句话与类型反馈",
+            message=f"{detail} 未完成",
+            hint="检查入参后重试；若是工具内部错误，请附上上面的错误信息反馈",
             json_output=json_output,
         )
         return int(ExitCode.FAILURE)
@@ -518,46 +585,33 @@ def _execute_tool_tasks(
 # ---------------------------------------------------------------------- #
 # 输出
 # ---------------------------------------------------------------------- #
-def _print_task_summary(report: Any, force: bool = False) -> None:
-    """打印任务执行汇总表（多任务场景）。
+def _print_task_summary(
+    report: Any,
+    labels: Mapping[str, str] | None = None,
+    noop_tasks: frozenset[str] = frozenset(),
+) -> None:
+    """多步执行成功后的收尾行：``共 3 步，用时 1.61s``。
 
-    单任务时不打印，避免冗余；多任务时按完成顺序列出各任务的状态与耗时，
-    便于定位瓶颈与优化。``force=True`` 时即使单任务也打印（用于失败诊断）。
+    单步不打印（上面那行「完成 …」已说明结果）；纯聚合壳任务（如 ``gitt a``）
+    不计入步数——它们是编排占位，不是用户眼里的“一步”。
+
+    Parameters
+    ----------
+    report:
+        本次运行报告。
+    labels:
+        任务名 → 用户可读动作名；缺失时回退到任务名（保持向后兼容）。
+    noop_tasks:
+        不计入步数的纯聚合任务名。
     """
-    from fcmd.console import Table, get_console
+    from fcmd.console import print_run_summary
 
-    if not force and len(report.results) <= 1:
+    del labels  # 步骤行已带动作名，收尾行只给步数与耗时
+    steps = [r for name, r in report.results.items() if name not in noop_tasks]
+    if len(steps) <= 1:
         return
-    if not report.results:
-        return
-    console = get_console()
-    table = Table(title="执行汇总", show_header=True, header_style="bold", show_lines=False)
-    table.add_column("任务", style="cyan", no_wrap=True)
-    table.add_column("状态", no_wrap=True, justify="center")
-    table.add_column("耗时", no_wrap=True, justify="right")
-    table.add_column("重试", no_wrap=True, justify="right")
-    total = 0.0
-    for name, r in report.results.items():
-        dur = r.duration
-        if dur is not None:
-            total += dur
-            dur_str = f"{dur:.3f}s"
-        else:
-            dur_str = "-"
-        status_map = {
-            "success": "[green]成功[/green]",
-            "failed": "[red]失败[/red]",
-            "skipped": "[yellow]跳过[/yellow]",
-            "running": "[cyan]运行中[/cyan]",
-            "pending": "[dim]待执行[/dim]",
-        }
-        status_str = status_map.get(r.status.value, r.status.value)
-        attempts_str = str(r.attempts) if r.attempts > 1 else "-"
-        table.add_row(name, status_str, dur_str, attempts_str)
-    # 合计行
-    if total > 0:
-        table.add_row("[bold]合计[/bold]", "", f"[bold]{total:.3f}s[/bold]", "")
-    console.print(table)
+    total = sum(r.duration for r in steps if r.duration is not None)
+    print_run_summary(len(steps), total)
 
 
 def _print_subcommands(name: str, subs: dict[str | None, ToolSpec]) -> None:

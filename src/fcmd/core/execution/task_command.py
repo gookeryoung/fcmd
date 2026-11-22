@@ -25,10 +25,9 @@ def _run_callable_command(cmd: Any, verbose: bool, cwd: Path | None) -> Any:
     if verbose:
         from fcmd.console import get_console
 
-        console = get_console()
-        console.print(f"[cyan]>[/cyan] 执行可调用命令: [bold]{name}[/bold]")
+        get_console().print(f"  运行  {name}", style="dim", markup=False)
         if cwd is not None:
-            console.print(f"  [dim]工作目录: {cwd}[/dim]")
+            get_console().print(f"  目录  {cwd}", style="dim", markup=False)
     try:
         return cmd()
     except Exception as e:
@@ -52,21 +51,19 @@ def _run_subprocess_command(cmd: str | list[str], spec: TaskSpec[Any]) -> None:
     is_list = isinstance(cmd, list)
     if is_list:
         cmd_str = " ".join(arg for arg in cmd)
-        verb = "执行命令"
         label = "命令"
     else:
         cmd_str = cast(str, cmd)
-        verb = "执行 Shell"
         label = "Shell 命令"
 
-    console = None
     if verbose:
-        from fcmd.console import get_console
+        from fcmd.console import print_command
 
-        console = get_console()
-        console.print(f"[cyan]>[/cyan] {verb}: [bold]{cmd_str}[/bold]")
+        print_command(cmd_str)
         if cwd is not None:
-            console.print(f"  [dim]工作目录: {cwd}[/dim]")
+            from fcmd.console import get_console
+
+            get_console().print(f"  目录  {cwd}", style="dim", markup=False)
 
     # 合并环境变量
     run_env: dict[str, str] | None = None
@@ -92,9 +89,10 @@ def _run_subprocess_command(cmd: str | list[str], spec: TaskSpec[Any]) -> None:
     except OSError as e:
         raise RuntimeError(f"{label}执行异常: {cmd_str}: {e}") from e
 
-    if verbose and console is not None:
-        style = "green" if result.returncode == 0 else "red"
-        console.print(f"[{style}]返回码: {result.returncode}[/{style}]")
+    if verbose and result.returncode != 0:
+        from fcmd.console import get_console
+
+        get_console().print(f"  返回码 {result.returncode}", style="dim", markup=False)
 
     _handle_subprocess_result(result, verbose, cmd_str, label)
 
@@ -112,7 +110,7 @@ def _handle_subprocess_result(
             print(result.stdout, end="", flush=True)  # cmd 任务透传 stdout
         return
 
-    err_msg = f"{label}执行失败: `{cmd_str}`, 返回码: {result.returncode}"
+    err_msg = f"{label}执行失败: {cmd_str}（返回码 {result.returncode}）"
     if not verbose and result.stderr and result.stderr.strip():
         err_msg += f"\n{result.stderr.strip()}"
     raise RuntimeError(err_msg)

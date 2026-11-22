@@ -138,3 +138,14 @@ def fcmd(tmp_path: Path, tmp_home: Path) -> Callable[..., CmdResult]:
         return result
 
     return run
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """把 ``slow`` 用例排到最前（稳定排序，组内顺序不变）。
+
+    ``xdist`` 按收集顺序分批派发用例：超时等待 / 子进程 / 性能采样这类单例
+    5~11s 的慢用例若落在队尾，前面 99% 的快用例跑完后，进度条会长时间停在
+    最后几个慢用例上不动。先派发慢用例，它们的执行时间就被后面成百上千个
+    快用例覆盖掉，整轮总时长从「快用例 + 最后一个慢用例」降到「快用例」。
+    """
+    items.sort(key=lambda item: "slow" not in item.keywords)

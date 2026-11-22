@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import subprocess
 import sys
 import typing
 from pathlib import Path
@@ -1770,7 +1771,7 @@ def test_build_parser_optional_list_unknown_inner() -> None:
 
 
 # ---------------------------------------------------------------------- #
-# P18: 执行汇总表（_print_task_summary）
+# P18: 执行收尾行（_print_task_summary）
 # ----------------------------------------------------------------------
 def test_print_task_summary_single_task_no_output(capsys: pytest.CaptureFixture[str]) -> None:
     """单任务时不打印汇总表。"""
@@ -1789,7 +1790,7 @@ def test_print_task_summary_single_task_no_output(capsys: pytest.CaptureFixture[
 
 
 def test_print_task_summary_multi_tasks(capsys: pytest.CaptureFixture[str]) -> None:
-    """多任务时打印汇总表，含任务名/状态/耗时/重试。"""
+    """多步成功后只补一行「共 N 步，用时 X」，不再打印任务汇总表。"""
     from datetime import datetime, timedelta
 
     from fcmd.core.report import RunReport
@@ -1802,28 +1803,40 @@ def test_print_task_summary_multi_tasks(capsys: pytest.CaptureFixture[str]) -> N
     r_a = TaskResult(spec=spec_a, status=TaskStatus.SUCCESS, attempts=1)
     r_a.started_at = now
     r_a.finished_at = now + timedelta(seconds=0.5)
-    r_b = TaskResult(spec=spec_b, status=TaskStatus.FAILED, attempts=3, error=RuntimeError("boom"))
+    r_b = TaskResult(spec=spec_b, status=TaskStatus.SUCCESS, attempts=1)
     r_b.started_at = now
     r_b.finished_at = now + timedelta(seconds=1.2)
 
-    report = RunReport(success=False)
+    report = RunReport()
     report.results["a"] = r_a
     report.results["b"] = r_b
 
     _print_task_summary(report)
     captured = capsys.readouterr()
-    # 汇总表标题
-    assert "执行汇总" in captured.out
-    # 任务名
-    assert "a" in captured.out
-    assert "b" in captured.out
-    # 合计行
-    assert "合计" in captured.out
-    assert "1.700s" in captured.out
+    assert "共 2 步，用时 1.70s" in captured.out
+    # 技术风的任务表 / 重试列已移除
+    assert "执行汇总" not in captured.out
+    assert "重试" not in captured.out
+
+
+def test_print_task_summary_skips_noop_aggregate(capsys: pytest.CaptureFixture[str]) -> None:
+    """纯聚合壳任务不计入步数（``gitt a`` 只数真正干活的 _init/_add/_commit）。"""
+
+    from fcmd.core.report import RunReport
+    from fcmd.core.task import TaskResult, TaskStatus
+    from fcmd.core.toolkit import _print_task_summary
+
+    report = RunReport()
+    for name in ("_init", "_commit", "a"):
+        report.results[name] = TaskResult(spec=TaskSpec(name=name, cmd=["echo"]), status=TaskStatus.SUCCESS, attempts=1)
+
+    _print_task_summary(report, noop_tasks=frozenset({"a"}))
+    captured = capsys.readouterr()
+    assert "共 2 步" in captured.out
 
 
 def test_print_task_summary_skipped_task(capsys: pytest.CaptureFixture[str]) -> None:
-    """跳过的任务在汇总表中显示状态为跳过，耗时为 -。"""
+    """跳过步骤不计耗时，收尾行只统计实际执行的步数。"""
     from fcmd.core.report import RunReport
     from fcmd.core.task import TaskResult, TaskStatus
     from fcmd.core.toolkit import _print_task_summary
@@ -1839,8 +1852,8 @@ def test_print_task_summary_skipped_task(capsys: pytest.CaptureFixture[str]) -> 
 
     _print_task_summary(report)
     captured = capsys.readouterr()
-    assert "执行汇总" in captured.out
-    assert "跳过" in captured.out
+    assert "共 2 步" in captured.out
+    assert "执行汇总" not in captured.out
 
 
 def test_run_tool_summary_on_success_multi_tasks(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1861,7 +1874,10 @@ def test_run_tool_summary_on_success_multi_tasks(capsys: pytest.CaptureFixture[s
     code = run_tool("demo", ["agg"])
     assert code == ToolExitCode.SUCCESS.value
     captured = capsys.readouterr()
-    assert "执行汇总" in captured.out
+    assert "共 2 步" in captured.out
+    # 技术风的任务表已移除，改为逐步骤的人读结果行
+    assert "执行汇总" not in captured.out
+    assert "完成" in captured.out
 
 
 def test_run_tool_no_summary_on_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1882,7 +1898,8 @@ def test_run_tool_no_summary_on_dry_run(capsys: pytest.CaptureFixture[str]) -> N
     code = run_tool("demo", ["agg", "--dry-run"])
     assert code == ToolExitCode.SUCCESS.value
     captured = capsys.readouterr()
-    assert "执行汇总" not in captured.out
+    assert "共 " not in captured.out
+    assert "完成" not in captured.out
 
 
 def test_run_tool_no_summary_on_single_task(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1895,7 +1912,9 @@ def test_run_tool_no_summary_on_single_task(capsys: pytest.CaptureFixture[str]) 
     code = run_tool("solo", [])
     assert code == ToolExitCode.SUCCESS.value
     captured = capsys.readouterr()
-    assert "执行汇总" not in captured.out
+    # 单步不补收尾行，只有一行步骤结果
+    assert "共 " not in captured.out
+    assert captured.out.count("完成") == 1
 
 
 def test_run_tool_summary_on_failure_multi_tasks(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1916,8 +1935,9 @@ def test_run_tool_summary_on_failure_multi_tasks(capsys: pytest.CaptureFixture[s
     code = run_tool("demo", ["agg"])
     assert code == ToolExitCode.FAILURE.value
     captured = capsys.readouterr()
-    assert "执行汇总" in captured.out
-    assert "执行失败" in captured.out
+    assert "失败" in captured.out
+    assert "错误:" in captured.out
+    assert "执行汇总" not in captured.out
 
 
 # ---------------------------------------------------------------------- #
@@ -2022,12 +2042,82 @@ def test_execute_tool_tasks_reports_failed_report(
     code = _tool_exec._execute_tool_tasks("demo", None, {}, spec, {None: spec})
 
     assert code == int(ToolExitCode.FAILURE)
-    assert "执行失败: 任务 a 未成功" in capsys.readouterr().out
+    assert "a 未完成" in capsys.readouterr().out
 
 
 def test_print_task_summary_returns_for_empty_results(capsys: pytest.CaptureFixture[str]) -> None:
     from fcmd.core import _tool_exec
 
-    _tool_exec._print_task_summary(SimpleNamespace(results={}), force=True)
+    _tool_exec._print_task_summary(SimpleNamespace(results={}))
 
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------- #
+# P19: 用户可读的执行进度（隐藏内部任务名 / 命令回显 / 收尾行）
+# ---------------------------------------------------------------------- #
+def test_progress_lines_are_user_facing(capsys: pytest.CaptureFixture[str]) -> None:
+    """进度行只说人话：没有内部任务名、没有「开始执行…」、没有「返回码: 0」。"""
+
+    @tool("demo", subcommand="_step", help="暂存更改（内部）", cmd=_echo_cmd())
+    def step() -> None:
+        pass
+
+    @tool("demo", subcommand="go", help="添加并提交", needs=["_step"], strategy="sequential")
+    def go() -> None:
+        pass
+
+    assert run_tool("demo", ["go"]) == ToolExitCode.SUCCESS.value
+    out = capsys.readouterr().out
+    # 命令回显走 shell 习惯的「$ …」，不再有“执行命令: …”与「返回码: 0」
+    assert "$ " in out
+    assert "返回码" not in out
+    # 用户只看到动作名，看不到 '_step' 这类内部标识与 repr 引号
+    assert "暂存更改" in out
+    assert "'_step'" not in out
+    assert '"' not in out
+    assert "开始执行" not in out
+    # 步骤结果 + 收尾行
+    assert "完成" in out
+    assert "共 1 步" not in out  # 单步不补收尾行（聚合壳任务不计入步数）
+
+
+def test_progress_hidden_step_strips_internal_marker(capsys: pytest.CaptureFixture[str]) -> None:
+    """隐藏子命令的「（内部）」标记不进入用户输出。"""
+
+    @tool("demo", subcommand="_init", help="初始化 Git 仓库（内部）", cmd=_echo_cmd())
+    def init() -> None:
+        pass
+
+    assert run_tool("demo", ["_init"]) == ToolExitCode.SUCCESS.value
+    out = capsys.readouterr().out
+    assert "初始化 Git 仓库" in out
+    assert "内部" not in out
+
+
+def test_progress_quiet_suppresses_framework_lines(capsys: pytest.CaptureFixture[str]) -> None:
+    """``--quiet`` 下框架不输出进度行（工具的 stdout 仍透传）。"""
+
+    @tool("demo", subcommand="a", cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    assert run_tool("demo", ["a", "--quiet"]) == ToolExitCode.SUCCESS.value
+    out = capsys.readouterr().out
+    assert "$ " not in out
+    assert "完成" not in out
+    assert "hello" in out
+
+
+def test_progress_failure_shows_friendly_command(capsys: pytest.CaptureFixture[str]) -> None:
+    """失败时错误只说「命令执行失败: git push（返回码 1）」，不吐 CalledProcessError repr。"""
+
+    @tool("demo", subcommand="p", help="推送")
+    def p() -> None:
+        raise subprocess.CalledProcessError(1, ["git", "push"])
+
+    assert run_tool("demo", ["p"]) == ToolExitCode.FAILURE.value
+    out = capsys.readouterr().out
+    assert "失败" in out
+    assert "命令执行失败: git push（返回码 1）" in out
+    assert "CalledProcessError" not in out

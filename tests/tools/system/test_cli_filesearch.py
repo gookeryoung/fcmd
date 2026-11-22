@@ -21,6 +21,7 @@ from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
 from fcmd.infras.filefilter import IgnoreSpec, should_skip_parts
 from fcmd.infras.fs import search_by_content, search_by_name
 from fcmd.infras.textio import is_binary_file, read_text_lines
+from tests.helpers import strip_framework_lines
 
 
 # ============================================================================ #
@@ -597,7 +598,7 @@ class TestHumanCountAndLimit:
         (tmp_path / "a.py").touch()
         (tmp_path / "b.py").touch()
         assert run_tool("filesearch", ["name", str(tmp_path), "*.py", "--count"]) == 0
-        assert "\n2\n" in capsys.readouterr().out
+        assert strip_framework_lines(capsys.readouterr().out).strip() == "2"
 
     def test_name_limit_human_summary(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """name --limit 截断时脚注提示总量。"""
@@ -612,7 +613,7 @@ class TestHumanCountAndLimit:
         """content --count 只打印总数。"""
         (tmp_path / "a.txt").write_text("hit\nhit\n", encoding="utf-8")
         assert run_tool("filesearch", ["content", str(tmp_path), "hit", "--count"]) == 0
-        assert "\n2\n" in capsys.readouterr().out
+        assert strip_framework_lines(capsys.readouterr().out).strip() == "2"
 
     def test_content_limit_human_summary(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """content --limit 截断时脚注提示总量。"""

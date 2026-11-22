@@ -64,28 +64,27 @@ Strategy = Literal["sequential", "thread", "async", "dependency"]
 # 公共 API
 # ---------------------------------------------------------------------- #
 def _make_verbose_callback(on_event: EventCallback | None) -> EventCallback:
-    """包装 on_event 回调，在 verbose 模式下打印任务生命周期。"""
-    from fcmd.console import get_console  # 下沉导入：verbose 才需要 console（含 ctypes/re 链）
+    """包装 on_event 回调，在 verbose 模式下打印任务进度。
 
-    console = get_console()
+    只在任务**结束**时打一行中文结果（``完成 / 失败 / 跳过``），不打印
+    开始行与内部任务名：成功路径安静，失败路径给出下一步能做什么。
+    与 :mod:`fcmd.console` 的步骤行共用同一套措辞，CLI 与嵌入式调用一致。
+    """
+    from fcmd.console import (  # 下沉导入：verbose 才需要 console（含 ctypes/re 链）
+        print_step_done,
+        print_step_failed,
+        print_step_skipped,
+    )
 
     def _verbose_callback(event: TaskEvent) -> None:
-        dur = f" ({event.duration:.3f}s)" if event.duration is not None else ""
-        if event.status == TaskStatus.RUNNING:
-            console.print(f"[cyan]>[/cyan] [bold]{event.task!r}[/bold] 开始执行...")
-        elif event.status == TaskStatus.SUCCESS:
-            # 已呈现过错误时不再打印「OK … 成功」：避免与错误行、非零退出码
-            # 自相矛盾（同一行输出里既说成功又退 1）。
+        if event.status == TaskStatus.SUCCESS:
+            # 已呈现过错误时不再打印「完成」：避免与错误行、非零退出码自相矛盾。
             if not has_pending_error():
-                console.print(f"[green]OK[/green] [bold]{event.task!r}[/bold] 成功[dim]{dur}[/dim]")
+                print_step_done(event.task, event.duration)
         elif event.status == TaskStatus.FAILED:
-            err = f": {event.error}" if event.error else ""
-            console.print(
-                f"[red]X[/red] [bold]{event.task!r}[/bold] 失败[dim]{dur} (尝试 {event.attempts} 次)[/dim][red]{err}[/red]"
-            )
+            print_step_failed(event.task, event.duration, attempts=event.attempts)
         elif event.status == TaskStatus.SKIPPED:
-            reason = f" ({event.reason})" if event.reason else ""
-            console.print(f"[yellow]-[/yellow] [bold]{event.task!r}[/bold] 跳过[dim]{reason}[/dim]")
+            print_step_skipped(event.task, event.reason or "")
         if on_event is not None:
             on_event(event)
 

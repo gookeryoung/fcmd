@@ -244,11 +244,14 @@ class TestGittoolIsub:
     def test_isub_no_subdirs(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """无子目录时打印提示。"""
+        """无子目录（含只有隐藏目录）时打印提示。"""
         monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
         fcmd.tools.dev.gittool.git_init_sub_dirs()
         captured = capsys.readouterr()
-        assert "无子目录" in captured.out
+        assert "无子目录" in captured.out or "没有可初始化的子目录" in captured.out
+        # .git / .venv 这类隐藏目录不被当成待初始化项目
+        assert not (tmp_path / ".git" / ".git").exists()
 
     def test_isub_with_subdirs(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]

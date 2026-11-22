@@ -153,8 +153,10 @@ def test_run_verbose(capsys: pytest.CaptureFixture[str]) -> None:
     assert report.success
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    # verbose 打印开始/成功标记
-    assert "成功" in combined or "开始执行" in combined
+    # verbose 只打一行人读结果（不再有「开始执行…」与 repr 引号的任务名）
+    assert "完成" in combined
+    assert "开始执行" not in combined
+    assert "'a'" not in combined
 
 
 # ---------------------------------------------------------------------- #
@@ -362,14 +364,13 @@ def test_run_conditions_skip() -> None:
 @pytest.mark.slow
 def test_run_timeout() -> None:
     """超时抛 TaskFailedError，cause 为 TaskTimeoutError。"""
-    if sys.platform == "win32":
-        spec = TaskSpec(
-            name="slow",
-            cmd=["cmd", "/c", "ping", "-n", "10", "127.0.0.1"],
-            timeout=0.3,
-        )
-    else:
-        spec = TaskSpec(name="slow", cmd=["sleep", "10"], timeout=0.3)
+    # Python 子进程做“慢命令”：被超时终止时管道立即可关闭；而 cmd /c ping 这类
+    # 外壳命令的孙进程不会被 subprocess.run 终止，communicate() 要等它跑完（约 9s）。
+    spec = TaskSpec(
+        name="slow",
+        cmd=[sys.executable, "-c", "import time; time.sleep(30)"],
+        timeout=0.3,
+    )
     graph = fcmd.graph(spec)
     with pytest.raises(TaskFailedError) as exc_info:
         fcmd.run(graph, strategy="sequential")

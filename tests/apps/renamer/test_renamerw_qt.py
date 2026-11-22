@@ -27,6 +27,7 @@ from fcmd.apps.renamer.renamerw import RenamerSettings, load_settings, rules_to_
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.app import create_application
+from tests.helpers import destroy_qt_top_levels, qt_top_levels
 
 
 @pytest.fixture()
@@ -41,10 +42,12 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture()
 def window(home: Path) -> Any:
-    """构建默认窗口，测试结束关闭。"""
+    """构建默认窗口，测试结束关闭并销毁（Qt 的 close 不释放对象）。"""
+    stale = qt_top_levels()
     win = RenamerWindow()
     yield win
     win.close()
+    destroy_qt_top_levels(stale)
 
 
 def _make_files(tmp_path: Path, *names: str) -> list[Path]:

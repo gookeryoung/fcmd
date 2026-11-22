@@ -38,7 +38,8 @@ __tool_aliases__ = ["gitt", "git"]
 def git_init_sub_dirs(message: str = "init commit") -> None:
     """遍历当前目录的子目录，对每个子目录执行 git init + add + commit。
 
-    跳过非目录文件。每个子目录独立初始化为 Git 仓库。
+    跳过非目录文件与隐藏目录（``.git`` / ``.venv`` 这类不该被当成项目）；
+    每个子目录独立初始化为 Git 仓库。
 
     Parameters
     ----------
@@ -46,9 +47,9 @@ def git_init_sub_dirs(message: str = "init commit") -> None:
         提交信息（默认 ``init commit``）
     """
     cwd = Path.cwd()
-    sub_dirs = sorted(d for d in cwd.iterdir() if d.is_dir())
+    sub_dirs = sorted(d for d in cwd.iterdir() if d.is_dir() and not d.name.startswith("."))
     if not sub_dirs:
-        print("当前目录无子目录")
+        print("当前目录下没有可初始化的子目录")
         return
     for subdir in sub_dirs:
         subprocess.run(["git", "init"], cwd=subdir, check=False, capture_output=True, text=True)
@@ -85,12 +86,12 @@ def git_add() -> None:
 @fx.tool(
     "gittool",
     subcommand="_commit",
-    help="提交暂存更改（内部）",
+    help="检查并提交更改（内部）",
     needs=["_add"],
     hidden=True,
 )
 def git_commit(message: str = "init commit") -> None:
-    """提交暂存更改（``git status --porcelain`` 为空时 no-op）。
+    """提交暂存更改（``git status --porcelain`` 为空时提示并跳过）。
 
     Parameters
     ----------
@@ -99,6 +100,9 @@ def git_commit(message: str = "init commit") -> None:
     """
     status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=False)
     if not status.stdout.strip():
+        from fcmd.console import get_console
+
+        get_console().print("  没有需要提交的更改", style="dim")
         return
     subprocess.run(["git", "commit", "-m", message], check=True)
 

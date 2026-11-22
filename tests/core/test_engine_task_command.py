@@ -110,8 +110,9 @@ def test_run_command_callable_verbose(capsys: pytest.CaptureFixture[str]) -> Non
     spec.effective_fn()
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    # verbose 打印"执行可调用命令"
-    assert "可调用" in combined or "callable" in combined.lower() or "执行" in combined
+    # verbose 打印一行「运行 <函数名>」，不再输出技术风的「执行可调用命令: …」
+    assert "运行" in combined
+    assert "<lambda>" in combined
 
 
 # ---------------------------------------------------------------------- #
@@ -144,11 +145,10 @@ def test_run_command_with_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.slow
 def test_run_command_timeout() -> None:
     """命令超时抛 RuntimeError。"""
-    if sys.platform == "win32":
-        # Windows: timeout 命令
-        spec = TaskSpec(name="x", cmd=["cmd", "/c", "ping", "-n", "10", "127.0.0.1"], timeout=0.5)
-    else:
-        spec = TaskSpec(name="x", cmd=["sleep", "10"], timeout=0.5)
+    # 用 Python 子进程而不是 ping 等外壳命令：Windows 上 subprocess.run 的超时
+    # 只能终止直接子进程，cmd /c ping 的孙进程仍占着管道，communicate() 得等它
+    # 自己跑完（实测 9s），慢在“等孙进程”而不是超时逻辑。
+    spec = TaskSpec(name="x", cmd=[sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.5)
     with pytest.raises(RuntimeError, match="超时"):
         spec.effective_fn()
 
@@ -157,7 +157,7 @@ def test_run_command_timeout() -> None:
 # verbose + cwd / stderr / OSError
 # ---------------------------------------------------------------------- #
 def test_run_command_verbose_with_cwd(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """verbose 模式 + cwd 打印工作目录。"""
+    """verbose 模式 + cwd 打印工作目录，命令回显为 ``$ …``。"""
     if sys.platform == "win32":
         spec = TaskSpec(name="x", cmd=["cmd", "/c", "echo", "hi"], verbose=True, cwd=tmp_path)
     else:
@@ -165,7 +165,11 @@ def test_run_command_verbose_with_cwd(tmp_path: Path, capsys: pytest.CaptureFixt
     spec.effective_fn()
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "工作目录" in combined
+    assert "目录" in combined
+    assert str(tmp_path) in combined
+    assert "$ " in combined
+    # 成功时不再打印「返回码: 0」这类技术行
+    assert "返回码" not in combined
 
 
 def test_run_command_str_verbose_with_cwd(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -174,7 +178,7 @@ def test_run_command_str_verbose_with_cwd(tmp_path: Path, capsys: pytest.Capture
     spec.effective_fn()
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "工作目录" in combined
+    assert "目录" in combined
 
 
 def test_run_command_failure_with_stderr() -> None:
@@ -198,12 +202,13 @@ def test_run_command_os_error() -> None:
 
 
 def test_run_command_callable_verbose_with_cwd(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """verbose 模式 callable 命令 + cwd 打印工作目录（覆盖 command.py 第 43 行）。"""
+    """verbose 模式 callable 命令 + cwd 打印目录（覆盖 command.py 可调用分支）。"""
     spec = TaskSpec(name="x", cmd=lambda: 1, verbose=True, cwd=tmp_path)
     spec.effective_fn()
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "工作目录" in combined
+    assert "目录" in combined
+    assert str(tmp_path) in combined
 
 
 def test_run_command_timeout_mock(monkeypatch: pytest.MonkeyPatch) -> None:

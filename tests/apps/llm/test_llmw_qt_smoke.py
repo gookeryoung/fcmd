@@ -28,6 +28,7 @@ from fcmd.apps.llm._llmw_qt_window import LlmWindow, create_application
 from fcmd.apps.llm.llmbase import EngineInfo
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
+from tests.helpers import destroy_qt_top_levels, qt_top_levels
 
 
 @pytest.fixture()
@@ -67,10 +68,15 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     create_application([])
     # 与其它 Qt 窗口测试一致：显式应用主题，控件尺寸断言不依赖测试执行顺序。
     _qt_theme.apply_theme(QApplication.instance(), _guitheme.resolve_theme("dark-blue"))
+    stale = qt_top_levels()
     win = LlmWindow(tmp_path / "ui" / "llmw.json")
     win.overview.stop()
     yield win
     win.close()
+    # 关窗不等于销毁：按需构建的页面 / 菜单 / 对话框没有父控件，只 close() 会把
+    # 它们留在 QApplication 里；累积后下一次 apply_theme 的 setStyleSheet 要为整棵
+    # 旧树重新 polish，单次数秒（xdist 尾部 99%→100% 卡住的根因）。
+    destroy_qt_top_levels(stale)
 
 
 def drain_background_tasks(limit: int = 200) -> None:

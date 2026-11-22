@@ -21,23 +21,16 @@ from fcmd.infras.calc import (
     generate_password,
     generate_string,
 )
+from tests.helpers import strip_framework_lines
 
 # ============================================================================ #
 # 工具注册
 # ============================================================================ #
 
-# 框架日志关键词：verbose 模式下 _make_verbose_callback 打印的状态行含这些中文标记
-_FRAMEWORK_MARKERS = ("开始执行", "成功", "失败", "跳过", "错误:")
-
 
 def _extract_user_lines(out: str) -> list[str]:
-    """从 run_tool 输出中提取用户数据行，过滤框架 verbose 状态行。
-
-    框架 verbose 回调会输出类似 ``> 'password' 开始执行...`` 的状态行，
-    其特征为行内含中文状态标记（开始执行/成功/失败/跳过/错误）。
-    直接用 ``startswith('>')`` 过滤会与随机密码以 ``>`` 开头冲突。
-    """
-    return [line for line in out.splitlines() if line and not any(marker in line for marker in _FRAMEWORK_MARKERS)]
+    """从 run_tool 输出中提取业务数据行，过滤框架的进度 / 提示行。"""
+    return [line for line in strip_framework_lines(out).splitlines() if line]
 
 
 class TestRegistration:
