@@ -15,8 +15,8 @@ from fcmd.apps.llm._llmw_flow_registry import default_registry
 __all__ = ["builtin_templates", "default_output_dir"]
 
 _DESCRIPTIONS = {
-    "文生图": "文本提示词 → sd.cpp 文生图 → 保存图片（先在运行页启动画图服务）",
-    "提示词润色 → 出图": "文本 → LLM 润色 → sd.cpp 文生图 → 保存图片（先启动 LLM 与画图服务）",
+    "文生图": "文本提示词 → sd.cpp 文生图 → 保存图片（服务未启动时按运行页图像配置自动启动）",
+    "提示词润色 → 出图": "文本 → LLM 润色 → sd.cpp 文生图 → 保存图片（画图自动启动；LLM 节点需先启动对话模型）",
     "LLM 问答 → 保存": "文本 → LLM 对话 → 保存为 Markdown / 文本文件（先启动 LLM 服务）",
 }
 

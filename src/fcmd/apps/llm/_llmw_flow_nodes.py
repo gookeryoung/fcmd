@@ -59,6 +59,37 @@ def _float_param(params: Mapping[str, Any], name: str, default: float) -> float:
         raise FlowError(f"参数 {name} 必须是数字: {value!r}") from None
 
 
+def _bool_param(params: Mapping[str, Any], name: str, default: bool) -> bool:
+    value = params.get(name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _ensure_paint_service() -> tuple[str, int]:
+    """按运行页「图像」配置启动 / 复用 sd-server，返回实际 host / port。
+
+    只在 GUI 环境可用：配置来自 ``ui/llmw.json`` 的 ``paint`` 字段，启动逻辑复用
+    运行页同一套 :func:`start_paint_service`，因此自动配对的 VAE / 文本编码器会一起生效。
+    """
+    try:
+        from fcmd.apps.llm._llmw_qt_paint import parse_paint_settings, start_paint_service
+        from fcmd.apps.llm._llmw_winsettings import load_settings
+    except ImportError as exc:  # pragma: no cover - 无 Qt 的 CLI / CI 环境
+        raise FlowError("画图服务未就绪，且当前环境无法自动启动（缺少 GUI 配置）") from exc
+    settings = parse_paint_settings(load_settings().paint or {})
+    try:
+        start_paint_service(settings)
+    except Exception as exc:
+        raise FlowError(f"自动启动画图服务失败: {exc}") from exc
+    state, alive = _llmpaint_server.status()
+    if state is None or not alive:
+        raise FlowError("自动启动画图服务失败：服务未登记或未就绪")
+    return state.host, state.port
+
+
 def _optional_path(params: Mapping[str, Any], name: str) -> Path | None:
     text = _text_param(params, name).strip()
     return Path(text).expanduser() if text else None
@@ -102,7 +133,14 @@ def _run_image_txt2img(ctx: FlowContext, inputs: Mapping[str, Any], params: Mapp
     host = _text_param(params, "host", _llmpaint_server.DEFAULT_HOST)
     port = _int_param(params, "port", _llmpaint_server.DEFAULT_PORT)
     if not _llmpaint_server.check_paint_health(host, port):
-        raise FlowError(f"画图服务未就绪: {llmbase.http_base_url(host, port)}，请先在运行页启动画图服务")
+        if not _bool_param(params, "auto_start", True):
+            raise FlowError(
+                f"画图服务未就绪: {llmbase.http_base_url(host, port)}；"
+                "请先在运行页启动画图服务，或在节点开启「服务未运行时自动启动」"
+            )
+        host, port = _ensure_paint_service()
+        if not _llmpaint_server.check_paint_health(host, port):
+            raise FlowError(f"画图服务自动启动后仍未就绪: {llmbase.http_base_url(host, port)}")
     ctx.check_cancelled()
     request = _llmpaint.PaintRequest(
         prompt=prompt,
@@ -190,6 +228,13 @@ def register_builtin_nodes(registry: Any) -> None:
             params=(
                 ParamSpec("host", "地址", default=_llmpaint_server.DEFAULT_HOST),
                 ParamSpec("port", "端口", kind="int", default=_llmpaint_server.DEFAULT_PORT, minimum=1, maximum=65535),
+                ParamSpec(
+                    "auto_start",
+                    "服务未运行时自动启动",
+                    kind="bool",
+                    default=True,
+                    hint="按运行页「图像」配置启动 sd.cpp，自动配对组件也会生效",
+                ),
                 ParamSpec("width", "宽度", kind="int", default=512, minimum=64, maximum=4096),
                 ParamSpec("height", "高度", kind="int", default=512, minimum=64, maximum=4096),
                 ParamSpec("steps", "步数", kind="int", default=25, minimum=1, maximum=200),

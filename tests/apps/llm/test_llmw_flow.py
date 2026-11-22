@@ -251,7 +251,7 @@ def test_image_txt2img_node_success_and_errors(monkeypatch: pytest.MonkeyPatch) 
         _node_run(nodes.IMAGE_TXT2IMG, {"prompt": ""})
     monkeypatch.setattr(nodes._llmpaint_server, "check_paint_health", lambda *_args, **_kwargs: False)
     with pytest.raises(FlowError, match="未就绪"):
-        _node_run(nodes.IMAGE_TXT2IMG, {"prompt": "cat"})
+        _node_run(nodes.IMAGE_TXT2IMG, {"prompt": "cat"}, {"auto_start": False})
 
     captured: dict[str, Any] = {}
 
@@ -271,6 +271,34 @@ def test_image_txt2img_node_success_and_errors(monkeypatch: pytest.MonkeyPatch) 
     assert captured["payload"]["negative_prompt"] == "blur"
     with pytest.raises(FlowError, match="必须是数字"):
         _node_run(nodes.IMAGE_TXT2IMG, {"prompt": "cat"}, {"cfg_scale": "bad"})
+
+
+def test_image_txt2img_auto_starts_paint_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """画图服务未启动时按运行页配置自动启动，并使用实际 host / port 出图。"""
+    from fcmd.apps.llm import _llmw_flow_nodes as nodes
+
+    calls: list[str] = []
+
+    def _ensure() -> tuple[str, int]:
+        calls.append("start")
+        return "127.0.0.1", 4321
+
+    def _health(host: str, port: int) -> bool:
+        return (host, port) == ("127.0.0.1", 4321)
+
+    captured: dict[str, Any] = {}
+
+    def _txt2img(host: str, port: int, payload: dict[str, Any]) -> list[str]:
+        captured.update(host=host, port=port, payload=payload)
+        return ["base64-image"]
+
+    monkeypatch.setattr(nodes, "_ensure_paint_service", _ensure)
+    monkeypatch.setattr(nodes._llmpaint_server, "check_paint_health", _health)
+    monkeypatch.setattr(nodes._llmpaint_server, "txt2img", _txt2img)
+    result = _node_run(nodes.IMAGE_TXT2IMG, {"prompt": "cat"}, {"auto_start": True})
+    assert calls == ["start"]
+    assert result == {"images": ["base64-image"]}
+    assert (captured["host"], captured["port"]) == ("127.0.0.1", 4321)
 
 
 def test_image_save_and_text_save_nodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

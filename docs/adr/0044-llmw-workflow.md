@@ -25,7 +25,7 @@ llmw 已有对话、模型管理、运行页（LLM / 画图服务启停）与画
 | D6 | 内置模板：文生图、提示词润色 → 出图、LLM 问答 → 保存；首次打开工作流页时落盘 | `_llmw_flow_templates.py` |
 | D7 | 侧边栏新增「工作流」页；MVP 用「节点链」表单（顺序 / 上移 / 下移 / 删除 / 参数），**线性编辑、自动连线**；分支编辑留给 C3 画布 | `_llmw_qt_flow.py`、`_llmw_qt_window.py` |
 | D8 | 执行走 `submit_daemon` + 公共 `LogChannelMixin`：进度写页面状态栏，明细写「帮助 → 任务日志…」；失败不弹模态框 | `_llmw_qt_flow.py` |
-| D9 | LLM / 画图节点要求服务已就绪（运行页启动），未就绪时报可操作错误；服务自动切换 / 独占调度留给后续阶段 | `_llmw_flow_nodes.py` |
+| D9 | 画图节点服务未就绪时按运行页「图像」配置自动启动（含自动配对组件）；LLM 节点仍要求对话服务已就绪；服务自动切换 / 独占显存留给后续阶段 | `_llmw_flow_nodes.py` |
 
 ### D2 模型与校验
 
@@ -39,8 +39,10 @@ llmw 已有对话、模型管理、运行页（LLM / 画图服务启停）与画
 - `text.input`：无输入，输出 `TEXT`；
 - `llm.chat`：输入 `prompt`，输出 `TEXT`；调用运行中的 OpenAI 兼容服务（默认
   `127.0.0.1:8080`），服务未就绪直接报错；
-- `image.txt2img`：输入 `prompt` / 可选 `negative`，输出 `IMAGES`；调用运行中的
-  `sd-server`（默认 `127.0.0.1:1234`）；
+- `image.txt2img`：输入 `prompt` / 可选 `negative`，输出 `IMAGES`；调用 `sd-server`
+  （默认 `127.0.0.1:1234`）。服务未就绪时默认按运行页「图像」配置自动启动
+  （复用 `start_paint_service`，自动配对的 VAE / 文本编码器一起生效）；节点参数
+  `auto_start` 可关闭该行为；
 - `image.save` / `text.save`：把 `IMAGES` / `TEXT` 落盘，输出 `FILES`。
 - 不开放任意 Python 自定义节点；需要新能力时在 `_llmw_flow_nodes.py` 注册内置节点。
 
@@ -71,7 +73,7 @@ C3 画布只需替换 UI 的连线编辑，不改模型 / 执行器 / 存储。
   保留当前 `rechain` 作为「整理成链」动作。
 - C4：ComfyUI 工作流子集导入（`CheckpointLoader` / `CLIPTextEncode` / `KSampler` /
   `VAEDecode` / `SaveImage` → sd-server）；不支持节点显式报错，不静默改图。
-- 服务编排：后续可给 `llm.chat` / `image.txt2img` 增加「自动启动 / 独占显存」策略，
-  复用 `llmserve` / `_llmpaint_server` 的启动与显存校验。
+- 服务编排：`image.txt2img` 已支持自动启动画图服务；`llm.chat` 的自动启动 /
+  独占显存调度留给后续阶段，当前需先在运行页启动对话模型。
 - 新增节点：实现 `NodeDefinition.run`，参数用 `ParamSpec` 描述；同时补模型/执行器
   与页面测试，不直接改 UI 特判。

@@ -227,7 +227,11 @@ class WorkflowPage(AppPage):  # pragma: no cover - Qt 控件
         row.addWidget(remove)
         row.addStretch(1)
         card.body.addLayout(row)
-        card.body.addWidget(hint_label("工作流保存在 ${FCMD_HOME}/flows；服务需先在运行页启动。"))
+        card.body.addWidget(
+            hint_label(
+                "工作流保存在 ${FCMD_HOME}/flows；图像节点可按运行页图像配置自动启动，LLM 节点需先启动对话模型。"
+            )
+        )
         return card
 
     def _build_editor(self) -> PageScroll:
