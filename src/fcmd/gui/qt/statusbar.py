@@ -9,6 +9,8 @@
   所以状态栏高度恒为一行，不随文案长度 / 是否加载变化。
 - **按分页隔离**：``set_page_text(key, text)`` / ``set_page_detail(key, text)``
   记录每页自己的文案，``set_page(key)`` 切页时恢复；切走的页面不会把提示留在底部。
+- **左文字、右补充**：主状态文字靠左，页内补充（如选中项摘要）靠右、紧挨右侧备注 /
+  加载条，读起来是「这页在做什么 … 选中的是哪条」。
 - **右侧常驻**：``set_note`` 写「更新于 12:00」这类长期备注，``show_loading``
   控制加载条；两者都不挤占左侧文字（左侧文字始终可见，给用户看的是「这一页在做什么」）。
 
@@ -52,6 +54,8 @@ class WindowStatusBar(QStatusBar):  # pragma: no cover - Qt 控件
         self.detail_label = ElidedLabel("", mode=Qt.TextElideMode.ElideRight, parent=self)
         self.detail_label.setObjectName("Hint")
         self.detail_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        # 页内补充靠右：它表示「当前页选中的那条」，与右侧备注 / 加载条同一侧读起来更整齐。
+        self.detail_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.detail_label.setVisible(False)
         self.note_label = QLabel("", self)
         self.note_label.setObjectName("Hint")
@@ -60,7 +64,7 @@ class WindowStatusBar(QStatusBar):  # pragma: no cover - Qt 控件
         self.loading_bar = LoadingBar("加载中…", parent=self, compact=True)
         self.loading_bar.setVisible(False)
 
-        # 左侧两段：主文字（这一页在做什么）+ 页内补充（选中项摘要），都单行省略。
+        # 主文字靠左、页内补充靠右（同一行右半段，紧挨右侧备注 / 加载条）。
         self.addWidget(self.text_label, 3)
         self.addWidget(self.detail_label, 2)
         # 右侧常驻：备注 + 加载条。
