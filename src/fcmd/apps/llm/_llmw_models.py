@@ -52,7 +52,6 @@ __all__ = [
     "group_same_name",
     "is_usable_item",
     "local_row",
-    "matches_category",
     "matches_filter",
     "merge_installed_items",
     "model_item_lines",
@@ -64,7 +63,6 @@ __all__ = [
     "parse_patterns",
     "quant_precision_label",
     "repo_for_model_path",
-    "running_usage",
     "running_usage_counts",
     "settings_from_dict",
     "settings_to_dict",
@@ -553,47 +551,16 @@ def matches_filter(item: ModelSummary, filter_key: str) -> bool:
     return _matches_single(item, filter_key)
 
 
-def matches_category(name: str, filter_key: str) -> bool:
-    """本地模型名是否属于指定用途分类（运行页视频 / 音频候选筛选）。
-
-    与 :func:`matches_filter` 共用同一张分类关键字表；``all`` / ``local`` / 空串
-    视为全部符合，未登记的分类视为无匹配。只有名称可用，因此按关键词判断；
-    「对话」同样排除画图 / 视频 / 音频关键词，避免媒体模型落到聊天页签。
-    """
-    if filter_key in ("", "all", "local"):
-        return True
-    lowered = name.casefold()
-    if filter_key == "chat":
-        for media in ("paint", "video", "audio"):
-            if _keyword_match(lowered, _FILTER_KEYWORDS[media]):
-                return False
-    return _keyword_match(lowered, _FILTER_KEYWORDS.get(filter_key, ()))
-
-
-USAGE_KEYS: tuple[str, ...] = ("text", "paint", "video", "audio")
+USAGE_KEYS: tuple[str, ...] = ("text", "paint")
 """运行页页签的用途 key（与运行中模型的数量徽标同一顺序）。"""
 
 
-def running_usage(model_name: str) -> str:
-    """运行中的模型名 → 用途 key（与运行页各页签的模型候选口径一致）。
-
-    视频 / 音频先按分类关键字判定（更具体），其余（对话 / 编程 / 推理）统一算「文本」；
-    图像是 sd.cpp 的独立服务，不经过这里（由调用方按画图服务存活情况单独计数）。
-    """
-    for usage in ("video", "audio"):
-        if matches_category(model_name, usage):
-            return usage
-    return "text"
-
-
 def running_usage_counts(models: Sequence[str], *, paint_alive: bool = False) -> dict[str, int]:
-    """按用途统计运行中的模型数量；``paint_alive`` 表示 sd.cpp 画图服务在运行。"""
-    counts = dict.fromkeys(USAGE_KEYS, 0)
-    for name in models:
-        counts[running_usage(name)] += 1
-    if paint_alive:
-        counts["paint"] += 1
-    return counts
+    """按用途统计运行中的模型数量：LLM 全部算「文本」，sd.cpp 服务算「图像」。"""
+    return {
+        "text": len(models),
+        "paint": 1 if paint_alive else 0,
+    }
 
 
 def merge_installed_items(

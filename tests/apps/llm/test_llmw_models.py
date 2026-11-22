@@ -50,7 +50,6 @@ from fcmd.apps.llm._llmw_models import (
     parse_patterns,
     quant_precision_label,
     repo_for_model_path,
-    running_usage,
     running_usage_counts,
     settings_from_dict,
     settings_to_dict,
@@ -302,7 +301,7 @@ class TestBrowseHelpers:
         assert filter_by_local_fit((official, other), 0, pinned=()) == (official, other)
 
     def test_running_usage_counts_by_category(self) -> None:
-        """运行中的模型按用途归类计数：视频 / 音频优先，其余（含代码）统一算文本。"""
+        """运行中的模型按用途归类计数：LLM 统一算文本，sd.cpp 服务算图像。"""
         counts = running_usage_counts(
             [
                 "/m/Qwen3-8B-Instruct.gguf",
@@ -312,11 +311,9 @@ class TestBrowseHelpers:
             ],
             paint_alive=True,
         )
-        assert counts == {"text": 2, "paint": 1, "video": 1, "audio": 1}
+        assert counts == {"text": 4, "paint": 1}
         # 没有运行中的模型 / 画图服务时全是 0（徽标据此收起）
         assert running_usage_counts([]) == dict.fromkeys(USAGE_KEYS, 0)
-        assert running_usage("/m/Qwen3-Coder-30B.gguf") == "text"
-        assert running_usage("/m/Qwen3-8B-Instruct.gguf") == "text"
 
     def test_model_param_billions_parses_names_and_moe(self) -> None:
         assert model_param_billions("Qwen3-8B") == 8

@@ -276,7 +276,6 @@ def test_running_models_show_count_badges(window: Any) -> None:
     bar = window.run_page.tabs.tabBar()
     assert bar.badge(0) == 2  # 文本（对话 / 编程 / 推理合并）
     assert bar.badge(1) == 0  # 图像
-    assert bar.badge(2) == 0  # 视频
     assert window.nav.badge("run") == 2
 
     # 图像（sd.cpp）是独立后端：单独计数并落到「图像」页签
@@ -291,7 +290,7 @@ def test_running_models_show_count_badges(window: Any) -> None:
     window.state.servicesChanged.emit([])
     window.run_page._paint_probe = None
     window.run_page.sync_running_badges()
-    assert [bar.badge(index) for index in range(bar.count())] == [0, 0, 0, 0]
+    assert [bar.badge(index) for index in range(bar.count())] == [0, 0]
     assert window.nav.badge("run") == 0
 
 
@@ -391,34 +390,18 @@ def test_flow_page_builds_with_builtin_templates(window: Any) -> None:
 
 
 def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
-    """运行页分「文本 / 图像 / 视频 / 音频」：文本共用参数，图像只配启动参数与启停。"""
+    """运行页分「文本 / 图像」：文本配 llama.cpp 参数，图像只配 sd.cpp 参数与启停。"""
     window.show_page("run")
     run = window.run_page
-    assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == [
-        "文本",
-        "图像",
-        "视频",
-        "音频",
-    ]
+    assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == ["文本", "图像"]
     # 页签用胶囊样式：去掉 QTabBar 基线（多余横条），页签与内容同底色衔接。
     bar = run.tabs.tabBar()
     assert run.tabs.objectName() == "PillTabs"
     assert bar.objectName() == "PillTabBar"
     assert bar.drawBase() is False
     assert bar.expanding() is False
-    # 文本页独占一套启动参数表单；视频 / 音频切页签时整页搬家。
+    # 文本页独占一套启动参数表单。
     assert run.service_page.parent() is run.text_tab
-    # 视频 / 音频与图像同构：仍是「选择模型 + 启动参数」两张卡；参数表单先复用
-    # 同一份 llama.cpp 表单，后端落地后由 _param_form_for 换成引擎表单。
-    for index, usage in ((2, "video"), (3, "audio")):
-        run.tabs.setCurrentIndex(index)
-        QApplication.processEvents()
-        tab = getattr(run, f"{usage}_tab")
-        assert run.service_page.parent() is tab
-        assert tab.isAncestorOf(run.model_card)
-        assert tab.isAncestorOf(run.params_card)
-        assert run.param_host.itemAt(0).widget() is run.launch_form
-        assert run.params_card.title() == "启动参数"
     run.tabs.setCurrentIndex(0)
     QApplication.processEvents()
     assert run.service_page.parent() is run.text_tab
@@ -456,26 +439,20 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     assert "paint" not in tuple(window.nav.keys())
 
 
-def test_video_audio_usage_models_filtered_by_category(window: Any, tmp_path: Path) -> None:
-    """视频 / 音频候选按分类关键字筛选本地模型；无匹配时回退全部（与编程一致）。"""
+def test_text_usage_models_list_all_llm(window: Any, tmp_path: Path) -> None:
+    """文本页列出全部 LLM（含对话 / 编程 / 推理），不再按视频 / 音频拆分类别。"""
     from fcmd.apps.llm.llmbase import ModelEntry
 
     run = window.run_page
     paths = (
-        tmp_path / "Qwen2.5-Video-7B.gguf",
-        tmp_path / "Qwen2-Audio-7B.gguf",
+        tmp_path / "Qwen2.5-Coder-7B.gguf",
+        tmp_path / "DeepSeek-R1-8B.gguf",
         tmp_path / "Llama-3-8B.gguf",
     )
     window.state.models = [ModelEntry(tmp_path, path, 1) for path in paths]
 
-    run._usage = "video"
-    assert [entry.path.name for entry in run._usage_models()] == ["Qwen2.5-Video-7B.gguf"]
-    run._usage = "audio"
-    assert [entry.path.name for entry in run._usage_models()] == ["Qwen2-Audio-7B.gguf"]
-
-    # 没有命中时回退全部，避免页签空白。
-    window.state.models = [ModelEntry(tmp_path, paths[2], 1)]
-    assert [entry.path.name for entry in run._usage_models()] == ["Llama-3-8B.gguf"]
+    run._usage = "text"
+    assert [entry.path.name for entry in run._usage_models()] == [path.name for path in paths]
 
 
 def test_paint_model_combo_has_no_placeholder(window: Any, tmp_path: Path) -> None:

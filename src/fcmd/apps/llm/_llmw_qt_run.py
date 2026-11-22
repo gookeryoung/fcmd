@@ -1,4 +1,4 @@
-"""llmw（Qt）运行页：文本 / 图像 / 视频 / 音频四个能力域页签的启动参数与服务启停。
+"""llmw（Qt）运行页：文本 / 图像两个能力域页签的启动参数与服务启停。
 
 文本页（对话 / 编程 / 推理合并）使用 llama.cpp 启动参数表单，图像页签配置
 sd.cpp 的扩散模型与启动参数；引擎安装 / 设为默认统一在设置页。
@@ -109,9 +109,9 @@ __all__ = [
 ]
 
 _PAINT_TAB = 1
-"""运行页页签顺序：文本 / 图像 / 视频 / 音频（与模型页能力域一致）。"""
-_USAGE_BY_TAB: dict[int, str] = {0: "text", 2: "video", 3: "audio"}
-_USAGE_LABELS = {"text": "文本", "video": "视频", "audio": "音频"}
+"""运行页页签顺序：文本 / 图像。"""
+_USAGE_BY_TAB: dict[int, str] = {0: "text"}
+_USAGE_LABELS = {"text": "文本"}
 
 
 # ---------------------------------------------------------------------- #
@@ -488,8 +488,8 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
     def _build(self) -> None:
         outer = self.body
 
-        # 运行页按能力域分页：文本（对话 / 编程 / 推理）共用同一套 llama.cpp
-        # 启动参数，图像页签配 sd.cpp；引擎安装 / 默认引擎统一归设置页。
+        # 运行页按能力域分页：文本（对话 / 编程 / 推理）用 llama.cpp 启动参数，
+        # 图像页签配 sd.cpp；引擎安装 / 默认引擎统一归设置页。
         # 药丸式页签（共享 tab_widget）：去掉 QTabBar 的整条基线（「多余横条」），
         # 透明底 + 圆角选中块，页签与内容同底色衔接；不参与等宽分配，靠左紧凑排列。
         self.tabs = tab_widget(self)
@@ -553,22 +553,11 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.paint_scroll = PageScroll(paint_page)
         paint_layout.addWidget(self.paint_scroll, 1)
         self._build_paint_tab(self.paint_scroll.body)
-        # 视频 / 音频与文本共用同一套启动参数表单（两张卡的组织与图像页
-        # 一致），只是模型候选按分类筛选；参数卡内容由 _param_form_for 决定，
-        # 后端落地后换成独立引擎表单即可。
-        for usage, label in (("video", "视频"), ("audio", "音频")):
-            page = QWidget(self.tabs)
-            tab_layout = QVBoxLayout(page)
-            tab_layout.setContentsMargins(0, 0, 0, 0)
-            tab_layout.setSpacing(6)
-            self.tabs.addTab(page, label)
-            setattr(self, f"{usage}_tab", page)
-            self._service_layouts[usage] = tab_layout
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self._mount_service_page("text")
 
     def _build_launch_form(self, parent: QWidget) -> QWidget:
-        """构建 llama.cpp 启动参数表单（文本 / 视频 / 音频共用一份实例）。"""
+        """构建 llama.cpp 启动参数表单（文本页使用）。"""
         form_root = QWidget(parent)
         form_layout = QVBoxLayout(form_root)
         form_layout.setContentsMargins(0, 0, 0, 0)
@@ -652,7 +641,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         return self.launch_form
 
     def _mount_service_page(self, usage: str) -> None:
-        """把启动参数页挂到当前用途的页签（文本 / 视频 / 音频同一套表单）。"""
+        """把启动参数页挂到当前用途的页签（目前只有文本页使用）。"""
         self._usage = usage
         for target in self._service_layouts.values():
             target.removeWidget(self.service_page)
@@ -660,7 +649,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._install_param_form(self._param_form_for(usage))
 
     def _on_tab_changed(self, index: int) -> None:
-        """切换页签：文本 / 视频 / 音频换模型候选并同步启动参数；图像只刷新状态。"""
+        """切换页签：文本换模型候选并同步启动参数；图像只刷新状态。"""
         if index == _PAINT_TAB:
             # 进入图像页签就重扫一次扩散模型：下载 / 转换刚完成的模型不必等
             # 其它页面的信号（扩散权重不进 LLM 模型列表）。
@@ -681,12 +670,8 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.status(f"已切到「{_USAGE_LABELS[usage]}」启动参数")
 
     def _usage_models(self) -> list[ModelEntry]:
-        """当前用途的模型候选：视频 / 音频按分类筛选，文本页列出全部 LLM（含代码 / 推理）。"""
-        if self._usage in ("video", "audio"):
-            rows = [entry for entry in self.state.models if _llmw_models.matches_category(entry.path.name, self._usage)]
-        else:
-            rows = list(self.state.models)
-        return rows or list(self.state.models)
+        """当前用途的模型候选：文本页列出全部 LLM（含代码 / 推理）。"""
+        return list(self.state.models)
 
     def _build_paint_tab(self, layout: QVBoxLayout) -> None:
         """图像页签：与文本一致——顶部选模型 + 启停，下面只配启动参数。
@@ -1716,7 +1701,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         return bool(self._paint_probe is not None and self._paint_probe.alive)
 
     def running_counts(self) -> dict[str, int]:
-        """按用途统计运行中的模型：文本 / 图像 / 视频 / 音频。"""
+        """按用途统计运行中的模型：文本 / 图像。"""
         models = [state.model for state in self.state.alive_states]
         return _llmw_models.running_usage_counts(models, paint_alive=self.paint_alive())
 
