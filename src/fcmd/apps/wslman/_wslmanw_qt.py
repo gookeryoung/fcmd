@@ -1123,14 +1123,19 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._expanded_distro_row = None
 
     def _show_details(self) -> None:
-        """选中行变化时只更新状态栏摘要与工具栏启停按钮（详情在行内）。"""
+        """选中行变化时只更新状态栏摘要与工具栏启停按钮（详情在行内）。
+
+        摘要属于**发行版页**：3 秒状态轮询在任意页都会跑到这里，必须写页内固定 key，
+        否则用户在镜像 / 设置页时会看到「Ubuntu · 已停止」这类发行版摘要混进
+        当前页的状态栏。
+        """
         distro = self._selected()
         if distro is None:
-            self.set_status_detail("")
+            self.set_page_status_detail("distros", "")
             self._update_action_states()
             return
         size, estimated = self.sizes.get(distro.name, (None, False))
-        self.set_status_detail(w.summary_text(distro, size, estimated))
+        self.set_page_status_detail("distros", w.summary_text(distro, size, estimated))
         self._update_action_states()
 
     def _update_action_states(self) -> None:

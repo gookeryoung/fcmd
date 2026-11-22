@@ -979,6 +979,46 @@ def test_status_messages_follow_their_page(home: Path, monkeypatch: pytest.Monke
         window.deleteLater()
 
 
+def test_status_poll_does_not_leak_distro_summary_to_other_pages(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """回归：切到镜像页后，3 秒状态轮询不能把发行版摘要写进镜像页状态栏。
+
+    轮询在任何页都会触发 `_show_details()`，摘要必须固定写在「发行版」页的页内补充里，
+    否则底部会一直挂着「Ubuntu · 已停止」。
+    """
+    running = _view(_distro("Ubuntu", "running"))
+    stopped = _view(_distro("Ubuntu", "stopped"))
+    current = {"view": running}
+    monkeypatch.setattr(cli, "_view", lambda env: current["view"])
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        QApplication.processEvents()
+        assert window.status_detail_text().startswith("Ubuntu")
+
+        window.show_page("images")
+        QApplication.processEvents()
+        assert window.status_detail_text() == ""
+        assert window.status_text() != ""
+        # 模拟 3 秒轮询：状态变了但用户仍停在镜像页
+        current["view"] = stopped
+        window._apply_status(stopped)
+        QApplication.processEvents()
+        assert window.status_detail_text() == ""  # 镜像页底部不出现发行版摘要
+        assert "Ubuntu" not in window.status_text()
+
+        # 回到发行版页：摘要（已按新状态更新）恢复
+        window.show_page("distros")
+        QApplication.processEvents()
+        assert window.status_detail_text().startswith("Ubuntu")
+        assert "已停止" in window.status_detail_text()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_distro_summary_only_on_distros_page(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """选中发行版的摘要不跨页残留：切走后页内补充清空。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro("Ubuntu")))
