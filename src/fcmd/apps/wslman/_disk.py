@@ -14,7 +14,14 @@ from pathlib import Path
 
 from fcmd.infras.system import format_bytes as _format_bytes
 
-__all__ = ["VolumeInfo", "distro_disk_bytes", "format_bytes", "recommended_backup_dir", "volume_info"]
+__all__ = [
+    "VolumeInfo",
+    "distro_disk_bytes",
+    "distro_export_bytes",
+    "format_bytes",
+    "recommended_backup_dir",
+    "volume_info",
+]
 
 _WALK_BUDGET_S = 5.0
 _WALK_FILE_LIMIT = 200_000
@@ -82,6 +89,65 @@ def distro_disk_bytes(
     if version == 1 or rootfs.is_dir():
         return _walk_size(rootfs, budget_s)
     return None, False
+
+
+def distro_export_bytes(
+    base_path: str | None,
+    version: int | None,
+    *,
+    budget_s: float = _WALK_BUDGET_S,
+) -> tuple[int | None, bool]:
+    """导出 tar 的大小估算，返回 ``(字节数, 是否估算)``。
+
+    WSL2 的 ``ext4.vhdx`` 在稀疏卷上 ``st_size`` 是逻辑上限（可能远大于实际写入 tar
+    的内容），用它算导出百分比会长时间停在偏低值。这里取「逻辑大小 / 实际占用」的
+    较小值：稀疏文件落到实际占用，普通文件仍沿用逻辑大小；再叠加 vhdx 内部的空闲
+    空间误差，所以结果始终标记为估算。WSL1 与 :func:`distro_disk_bytes` 同一口径。
+    """
+    if not base_path:
+        return None, False
+    base = Path(base_path)
+    vhdx = base / "ext4.vhdx"
+    if vhdx.is_file():
+        try:
+            logical = vhdx.stat().st_size
+        except OSError:
+            return None, False
+        allocated = _allocated_size(vhdx)
+        if allocated is not None and 0 < allocated < logical:
+            logical = allocated
+        return logical, True
+    rootfs = base / "rootfs"
+    if version == 1 or rootfs.is_dir():
+        return _walk_size(rootfs, budget_s)
+    return None, False
+
+
+def _allocated_size(path: Path) -> int | None:
+    """文件在磁盘上的实际占用（字节）；Windows 用 ``GetCompressedFileSizeW``。
+
+    稀疏 / 压缩文件的实际占用会小于逻辑大小；读不到时返回 ``None``，调用方退回
+    ``st_size``。
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            high = ctypes.c_ulong(0)
+            low = ctypes.windll.kernel32.GetCompressedFileSizeW(  # type: ignore[attr-defined]
+                str(path), ctypes.byref(high)
+            )
+            if low == 0xFFFFFFFF and ctypes.GetLastError() != 0:
+                return None
+            return (int(high.value) << 32) | int(low)
+        except (AttributeError, OSError, ValueError):
+            return None
+    blocks = 0
+    try:
+        blocks = int(getattr(path.stat(), "st_blocks", 0) or 0)
+    except OSError:
+        return None
+    return blocks * 512 if blocks else None
 
 
 def _walk_size(root: Path, budget_s: float) -> tuple[int | None, bool]:

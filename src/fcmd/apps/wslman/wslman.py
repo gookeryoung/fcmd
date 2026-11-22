@@ -41,7 +41,13 @@ from fcmd.apps.wslman._decode import (
     parse_online_list,
     parse_status,
 )
-from fcmd.apps.wslman._disk import distro_disk_bytes, format_bytes, recommended_backup_dir, volume_info
+from fcmd.apps.wslman._disk import (
+    distro_disk_bytes,
+    distro_export_bytes,
+    format_bytes,
+    recommended_backup_dir,
+    volume_info,
+)
 from fcmd.apps.wslman._distro import (
     Distro,
     DistroView,
@@ -72,6 +78,7 @@ from fcmd.apps.wslman._terminal import (
     uses_windows_path,
 )
 from fcmd.apps.wslman._transfer import (
+    ProgressCallback,
     ProgressReporter,
     SpacePreflight,
     TransferLock,
@@ -1032,6 +1039,7 @@ def _export_stream(  # noqa: PLR0913 - 导出核心按需显式传参，CLI 与 
     level: int,
     terminate_first: bool,
     estimate: int | None,
+    progress: ProgressCallback | None = None,
 ) -> tuple[int, str]:
     """执行 ``wsl --export`` 到 ``.part``，按需 gzip 后原子改名；不负责清理。"""
     raw_part, gz_part = parts
@@ -1047,10 +1055,12 @@ def _export_stream(  # noqa: PLR0913 - 导出核心按需显式传参，CLI 与 
             with contextlib.suppress(OSError):
                 stale.unlink()
         raw_part.parent.mkdir(parents=True, exist_ok=True)
-        reporter = ProgressReporter(raw_part, estimate, label="导出")
+        reporter = ProgressReporter(raw_part, estimate, label="导出", on_progress=progress)
         reporter.start()
         try:
             result = _run_wsl(env, ["--export", name, str(raw_part)], timeout=_TRANSFER_TIMEOUT_S)
+            # 命令结束后补一次终态：写盘可能停在两次轮询之间，状态栏拿不到最后一段。
+            reporter.report()
         finally:
             reporter.stop()
         if result.returncode != 0:
@@ -1171,6 +1181,8 @@ def export_distro(  # noqa: PLR0913, PLR0917
             command=f"fcmd wslman export {name} {target_path}",
         )
         estimate, estimated = distro_disk_bytes(target.base_path, target.version)
+        # 预检沿用逻辑大小（偏安全）；进度改用实际占用，避免稀疏 vhdx 的百分比长期偏低。
+        progress_estimate, _ = distro_export_bytes(target.base_path, target.version)
         check = _preflight_for(env, target_path, estimate, estimated=estimated)
 
         parts_pair = _export_parts(target_path, compress)
@@ -1229,7 +1241,7 @@ def export_distro(  # noqa: PLR0913, PLR0917
             parts_pair,
             level=level,
             terminate_first=terminate_first,
-            estimate=estimate,
+            estimate=progress_estimate if progress_estimate is not None else estimate,
         )
     except KeyboardInterrupt:
         detail = _abort_parts(parts, keep=keep_on_failure)

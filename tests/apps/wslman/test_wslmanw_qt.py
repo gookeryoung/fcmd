@@ -303,6 +303,32 @@ def test_distro_image_note_shares_the_subtitle_line(home: Path, monkeypatch: pyt
         window.deleteLater()
 
 
+def test_export_progress_lands_in_status_bar(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """导出进度写实例页状态栏：文案带百分比 / 已写 / 估算总量，右侧进度条同步。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        bar = window.statusBar()
+        window._busy = True
+        window._task_page = "distros"
+        window._on_export_progress("Ubuntu", 512, 1024)
+        text = window.page_status("distros")
+        assert text.startswith("导出 Ubuntu · 50% · ")
+        assert bar.loading_bar.bar.maximum() == 1000
+        assert bar.loading_bar.bar.value() == 500
+        assert bar.loading_bar.text_label.text().startswith("导出 50% · ")
+
+        # 任务结束后迟到的进度信号不再把进度条叫起来。
+        window._busy = False
+        window._task_finished()
+        window._on_export_progress("Ubuntu", 1024, 1024)
+        assert bar.loading_bar.is_running() is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_download_progress_lands_in_status_bar(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """下载进度写状态栏：文案带百分比 / 速度，右侧进度条切确定进度；任务结束收起。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))

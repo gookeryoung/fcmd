@@ -199,6 +199,29 @@ def test_progress_reporter_reports_and_stops(tmp_path: Path) -> None:
     assert stream.getvalue().count("[复制]") == 0
 
 
+def test_progress_reporter_prefers_callback_over_stream(tmp_path: Path) -> None:
+    """传了进度回调（GUI）就不再写 stderr，回调拿到累计字节与总量。"""
+    target = _write(tmp_path / "a.part", b"x" * 2048)
+    stream = io.StringIO()
+    calls: list[tuple[int, int | None]] = []
+    reporter = _transfer.ProgressReporter(
+        target,
+        4096,
+        label="导出",
+        stream=stream,
+        on_progress=lambda done, total: calls.append((done, total)),
+    )
+    reporter.report()
+    assert calls == [(2048, 4096)]
+    assert stream.getvalue() == ""
+
+    missing = _transfer.ProgressReporter(
+        tmp_path / "missing.part", None, label="导出", on_progress=lambda done, total: calls.append((done, total))
+    )
+    missing.report()
+    assert calls == [(2048, 4096)]
+
+
 def test_transfer_lock_acquire_and_release(tmp_path: Path) -> None:
     lock = _transfer.TransferLock("Ubuntu", directory=tmp_path)
     with lock as handle:

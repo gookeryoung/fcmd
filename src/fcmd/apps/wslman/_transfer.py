@@ -15,6 +15,7 @@ import sys
 import tarfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -28,6 +29,7 @@ __all__ = [
     "ArchiveInfo",
     "BackupFile",
     "LockHandle",
+    "ProgressCallback",
     "ProgressReporter",
     "SpacePreflight",
     "TransferLock",
@@ -46,6 +48,9 @@ _PART_SUFFIX = ".part"
 _LOCK_STALE_S = 6 * 3600.0
 _MIN_UNKNOWN_FREE = 2 * 1024**3
 _PROGRESS_INTERVAL_S = 1.0
+
+ProgressCallback = Callable[[int, int | None], None]
+"""进度回调：``(累计已写字节, 总量或 None)``；传了回调就不再写 stderr（GUI 用）。"""
 
 
 def part_path(target: Path) -> Path:
@@ -181,9 +186,9 @@ def _volume_filesystem(path: Path) -> str | None:
 # 进度
 # ---------------------------------------------------------------------- #
 class ProgressReporter:
-    """后台线程按固定间隔把已写字节数打到 stderr。"""
+    """后台线程按固定间隔汇报已写字节数：默认写 stderr，传 ``on_progress`` 时改走回调。"""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - 进度输出（stderr / 回调）与轮询间隔都需可注入
         self,
         path: Path,
         total: int | None,
@@ -191,12 +196,14 @@ class ProgressReporter:
         label: str,
         stream: TextIO | None = None,
         interval: float = _PROGRESS_INTERVAL_S,
+        on_progress: ProgressCallback | None = None,
     ) -> None:
         self._path = path
         self._total = total
         self._label = label
         self._stream = sys.stderr if stream is None else stream
         self._interval = interval
+        self._on_progress = on_progress
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -214,6 +221,9 @@ class ProgressReporter:
         try:
             written = self._path.stat().st_size
         except OSError:
+            return
+        if self._on_progress is not None:
+            self._on_progress(written, self._total)
             return
         if self._total:
             percent = min(99, int(written * 100 / self._total))

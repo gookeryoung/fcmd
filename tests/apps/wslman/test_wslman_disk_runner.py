@@ -80,6 +80,29 @@ def test_disk_bytes_wsl2_vhdx(tmp_path: Path) -> None:
     assert _disk.distro_disk_bytes(str(tmp_path), 2) == (100, True)
 
 
+def test_export_bytes_uses_allocated_size_for_sparse_vhdx(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """稀疏 vhdx：导出进度估算取实际占用，不取逻辑 st_size（否则百分比长期偏低）。"""
+    vhdx = tmp_path / "ext4.vhdx"
+    vhdx.write_bytes(b"x" * 100)
+    monkeypatch.setattr(_disk, "_allocated_size", lambda path: 40)
+    assert _disk.distro_export_bytes(str(tmp_path), 2) == (40, True)
+
+
+def test_export_bytes_keeps_logical_size_when_not_sparse(tmp_path: Path) -> None:
+    """普通 vhdx：实际占用不小于 st_size 时仍用逻辑大小。"""
+    vhdx = tmp_path / "ext4.vhdx"
+    vhdx.write_bytes(b"x" * 100)
+    assert _disk.distro_export_bytes(str(tmp_path), 2) == (100, True)
+
+
+def test_export_bytes_wsl1_and_missing_base(tmp_path: Path) -> None:
+    assert _disk.distro_export_bytes(None, 2) == (None, False)
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    (rootfs / "a").write_bytes(b"a" * 30)
+    assert _disk.distro_export_bytes(str(tmp_path), 1) == (30, False)
+
+
 def test_disk_bytes_stat_error(monkeypatch: pytest.MonkeyPatch) -> None:
     class BadPath:
         def __init__(self, _value: str) -> None:

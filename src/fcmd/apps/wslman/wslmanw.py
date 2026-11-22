@@ -35,6 +35,7 @@ __all__ = [
     "detail_fields",
     "distro_image_text",
     "download_progress_text",
+    "export_progress_text",
     "filter_images",
     "image_counts",
     "image_details",
@@ -417,9 +418,18 @@ def download_progress_text(name: str, done: int, total: int | None, speed: float
     总量未知（服务端没给 Content-Length）时只给已下载字节与速度；速度为 0
     （刚开始 / 断流）时速度显示 ``--`` 且不估算剩余时间。
     """
+    return _progress_text("下载", name, done, total, speed)
+
+
+def export_progress_text(name: str, done: int, total: int | None, speed: float = 0.0) -> str:
+    """状态栏的导出进度文案，与下载同一口径（总量是发行版占用的估算值）。"""
+    return _progress_text("导出", name, done, total, speed)
+
+
+def _progress_text(prefix: str, name: str, done: int, total: int | None, speed: float) -> str:
     from fcmd.infras.download import format_eta, format_speed
 
-    parts = [f"下载 {name}"]
+    parts = [f"{prefix} {name}"]
     if total and total > 0:
         percent = max(0, min(100, int(done * 100 / total)))
         parts.append(f"{percent}%")

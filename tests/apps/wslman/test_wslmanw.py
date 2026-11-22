@@ -305,6 +305,13 @@ def test_download_progress_text_shows_percent_speed_and_eta() -> None:
     assert "剩余" not in done
 
 
+def test_export_progress_text_uses_same_shape_as_download() -> None:
+    """导出状态栏文案：百分比 / 已写 / 估算总量 / 速度 / 剩余，前缀是「导出」。"""
+    text = wslmanw.export_progress_text("Ubuntu", 512, 1024, 256.0)
+    assert text == "导出 Ubuntu · 50% · 512 B / 1.0 KiB · 256 B/s · 剩余 2s"
+    assert wslmanw.export_progress_text("Ubuntu", 2048, None, 1024.0) == ("导出 Ubuntu · 2.0 KiB · 1.00 KB/s")
+
+
 def test_pick_download_prefers_matching_arch(monkeypatch: pytest.MonkeyPatch) -> None:
     entry = wslmanw._images.ImageEntry(
         name="Ubuntu",

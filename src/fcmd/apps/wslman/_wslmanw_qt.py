@@ -60,7 +60,7 @@ from fcmd.apps.wslman._config import (
     load_config,
     work_root,
 )
-from fcmd.apps.wslman._disk import distro_disk_bytes, format_bytes, recommended_backup_dir
+from fcmd.apps.wslman._disk import distro_disk_bytes, distro_export_bytes, format_bytes, recommended_backup_dir
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command, spawn_detached
@@ -160,6 +160,12 @@ class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
     """下载进度信号：``(累计字节, 总量 / None)``，跨线程排队到主线程刷新状态栏。"""
 
     changed = Signal(int, object)
+
+
+class _ExportProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
+    """导出进度信号：``(发行版, 累计字节, 总量 / None)``。"""
+
+    changed = Signal(str, int, object)
 
 
 def _state_tone(state: str) -> str:
@@ -466,7 +472,9 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log_dialog: Any = None
         self._bridge: _LogBridge | None = None
         self._download_meter = SpeedMeter()
+        self._export_meter = SpeedMeter()
         self._progress_bridge: _ProgressBridge | None = None
+        self._export_bridge: _ExportProgressBridge | None = None
         self._poll: QTimer | None = None
         self._filter_timer: QTimer | None = None
         self._buttons: list[QPushButton] = []
@@ -485,6 +493,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         )
         self._progress_bridge = _ProgressBridge(self)
         self._progress_bridge.changed.connect(self._on_download_progress)
+        self._export_bridge = _ExportProgressBridge(self)
+        self._export_bridge.changed.connect(self._on_export_progress)
         # 四页都很轻（表格 + 表单），建窗即构造：镜像页 / 设置页的控件是设置持久化
         # 与下载动作的读取来源，延迟构建会让「没切到该页就关窗」时缺控件。
         # 但提前构造的页在未插入页面栈前是主窗口的子控件，默认可见并落在 (0,0)，
@@ -867,6 +877,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._set_buttons(False)
         # 任务进行中在状态栏右侧显示加载条；可预估总量的下载会切成确定进度。
         self._download_meter.reset()
+        self._export_meter.reset()
         self.show_loading(f"{label}…")
 
         def runner(cancel: threading.Event) -> tuple[bool, str]:
@@ -912,6 +923,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._active_entry = ""
         self.show_loading("")
         self._download_meter.reset()
+        self._export_meter.reset()
         self._set_buttons(True)
         if self._closing:
             return
@@ -954,6 +966,24 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             brief = f"下载 {min(100, int(done * 100 / total_bytes))}% · {format_speed(speed)}"
         else:
             brief = f"下载 {format_bytes(done)} · {format_speed(speed)}"
+        self.show_progress(brief, done, total_bytes)
+
+    def _on_export_progress(self, name: str, done: int, total: object) -> None:
+        """导出进度：左侧状态栏写「百分比 · 已写 / 估算 · 速度 · 剩余」，右侧进度条同步。
+
+        总量是发行版占用的估算值（稀疏 vhdx 取实际占用），可能不完全准确；任务结束
+        后由 ``_task_done`` 把进度条收起并改写「导出完成」。
+        """
+        if not self._busy:
+            return
+        total_bytes = total if isinstance(total, int) and total > 0 else None
+        self._export_meter.update(done)
+        speed = self._export_meter.speed
+        self.set_page_status(self._task_page or "distros", w.export_progress_text(name, done, total_bytes, speed))
+        if total_bytes:
+            brief = f"导出 {min(100, int(done * 100 / total_bytes))}% · {format_speed(speed)}"
+        else:
+            brief = f"导出 {format_bytes(done)} · {format_speed(speed)}"
         self.show_progress(brief, done, total_bytes)
 
     def _cancel_task(self) -> None:
@@ -1316,10 +1346,17 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 command=f"fcmd wslman export {current.name} {path}",
             )
             estimate, estimated = distro_disk_bytes(current.base_path, current.version)
+            progress_estimate, _ = distro_export_bytes(current.base_path, current.version)
             check = cli._preflight_for(env, path, estimate, estimated=estimated)
             if not check.ok:
                 raise runtime_error(f"目标卷空间不足：{check.detail}", hint="换一个位置或清理磁盘")
             parts = cli._export_parts(path, "none")
+            bridge = self._export_bridge
+
+            def report(done: int, total: int | None) -> None:
+                if bridge is not None:
+                    bridge.changed.emit(current.name, done, total)
+
             try:
                 size, digest = cli._export_stream(
                     env,
@@ -1328,7 +1365,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                     parts,
                     level=6,
                     terminate_first=terminate_first,
-                    estimate=estimate,
+                    estimate=progress_estimate if progress_estimate is not None else estimate,
+                    progress=report,
                 )
             except BaseException:
                 cli._abort_parts([item for item in parts if item is not None], keep=env.config.keep_partial)
