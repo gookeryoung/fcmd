@@ -230,7 +230,7 @@ def test_image_rows_expand_inline_detail(home: Path, monkeypatch: pytest.MonkeyP
 def test_settings_persisted(home: Path) -> None:
     window = _wslmanw_qt.WslmanQtWindow()
     try:
-        window.download_dir.setText(r"D:\WSL\downloads")
+        window.download_dir.set_value(r"D:\WSL\downloads")
         window.mirror.setCurrentIndex(window.mirror_ids.index("ustc"))
         window.image_filter_buttons["installed"].click()
         window.image_source.setCurrentIndex(window.image_source.findData("manifest"))
@@ -249,15 +249,15 @@ def test_settings_persisted(home: Path) -> None:
 
 
 def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
-    """侧边栏复用共享导航：三页登记、默认停在发行版页，折叠状态随设置落盘。"""
+    """侧边栏复用共享导航：四页登记、默认停在发行版页，折叠状态随设置落盘。"""
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        assert window.nav.keys() == ("distros", "images", "log")
+        assert window.nav.keys() == ("distros", "images", "log", "settings")
         assert window.nav.selected() == "distros"
         assert window.current_page() == "distros"
         assert window.page_title.text() == "发行版"
-        # 三页控件建窗即存在（设置落盘与下载动作都直接读镜像页控件）；
+        # 四页控件建窗即存在（设置落盘与下载动作会直接读设置页 / 镜像页控件）；
         # 页面本身仍由共享骨架在首次切换时挂进页面栈。
         assert window._table.rowCount() >= 0
         assert window.image_list.count() == 0
@@ -478,12 +478,101 @@ def test_images_page_keeps_bottom_actions_unsqueezed(home: Path, monkeypatch: py
             window.install_after,
             window.image_install_local,
             window.images_refresh,
-            window.advanced,
         ):
             assert widget.height() >= widget.sizeHint().height(), widget.objectName() or widget
         # 列表底边严格在动作行之上（不重叠）
         assert window.image_list.geometry().bottom() < window._download_button.geometry().top()
     finally:
         window.hide()
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+# ---------------------------------------------------------------------- #
+# 设置页：下载配置从镜像页搬过来
+# ---------------------------------------------------------------------- #
+def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """下载目录 / 下载源 / 校验移入设置页；镜像页不再承担配置表单。"""
+    from fcmd.gui.qt.widgets import PageScroll
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("settings")
+        settings_page = window.page("settings")
+        assert settings_page is not None
+        # 页面用滚动容器：窗口变矮时滚动，而不是压扁控件
+        assert settings_page.findChild(PageScroll) is not None
+        # 三项配置都在设置页里
+        for widget in (window.download_dir, window.mirror, window.expected_sha):
+            assert settings_page.isAncestorOf(widget)
+        assert "64" in window.expected_sha.placeholderText()
+
+        # 镜像页只剩列表与下载动作：配置控件 / 折叠高级区都不在它里面
+        window.show_page("images")
+        images_page = window.page("images")
+        assert images_page is not None
+        assert not images_page.isAncestorOf(window.download_dir)
+        assert not images_page.isAncestorOf(window.mirror)
+        assert window.image_filter_buttons  # 筛选胶囊仍在列表页
+        assert window.images_refresh.objectName() != ""
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_settings_page_persists_download_dir_and_mirror(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """设置页改动立即落盘：下载目录（回车提交）与下载源（切换即保存）。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("settings")
+        window.download_dir.set_value(r"D:\WSL\mirrors")
+        window.download_dir.committed.emit(r"D:\WSL\mirrors")
+        window.mirror.setCurrentIndex(window.mirror_ids.index("ustc"))
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+    raw = json.loads(_guiconfig.config_path(wslmanw.SETTINGS_NAME).read_text(encoding="utf-8"))
+    assert raw["download_dir"] == r"D:\WSL\mirrors"
+    assert raw["mirror"] == "ustc"
+
+
+def test_settings_page_restores_saved_download_dir(home: Path) -> None:
+    """启动时把 wslmanw.json 的下载目录 / 下载源回填到设置页。"""
+    from fcmd.apps.wslman import wslmanw
+
+    wslmanw.save_settings(
+        wslmanw.WslmanwSettings(download_dir=r"E:\WSL", mirror="ustc"),
+        _guiconfig.config_path(wslmanw.SETTINGS_NAME),
+    )
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        assert window.download_dir.value() == r"E:\WSL"
+        assert window.mirror_ids[window.mirror.currentIndex()] == "ustc"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_images_page_has_no_advanced_collapsible(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像页保持精简：不再有「高级：下载目录 / 校验」折叠区。"""
+    from fcmd.gui.qt.widgets import Collapsible
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("images")
+        page = window.page("images")
+        assert page is not None
+        assert page.findChildren(Collapsible) == []
+        assert not hasattr(window, "advanced")
+    finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

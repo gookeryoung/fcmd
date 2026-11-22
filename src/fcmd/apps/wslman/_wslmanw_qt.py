@@ -2,13 +2,14 @@
 
 窗口只做编排：业务判断全部走 :mod:`fcmd.apps.wslman.wslman` 与
 :mod:`fcmd.apps.wslman._source` 的共享实现（导出、预检、注销前备份、镜像下载），
-与 CLI 共用同一套口径；界面负责列表 / 详情 / 下载 / 日志四块内容与任务编排。
+与 CLI 共用同一套口径；界面负责列表 / 详情 / 下载 / 日志与下载配置，配置项集中在设置页。
 
 布局与 llmw 对齐：复用共享 :class:`fcmd.gui.qt.window.QtMainWindow` 的左侧
-:class:`~fcmd.gui.qt.sidebar.SidebarNav` 导航（折叠、``Alt+1..3`` 切换与窗口
-几何记忆都由基座提供），右侧按「发行版 / 镜像 / 日志」分页，每页拿满整个
-内容区，不再把详情、下载与日志挤进同一个底部标签页。发行版页用一个纵向
-分栏把列表与详情分开；镜像页参考 llmw 模型列表：自定义行卡铺满整页，
+:class:`~fcmd.gui.qt.sidebar.SidebarNav` 导航（折叠、``Alt+1..4`` 切换与窗口
+几何记忆都由基座提供），右侧按「发行版 / 镜像 / 日志 / 设置」分页，每页拿满
+整个内容区，不再把详情、下载、日志与配置挤进同一个底部标签页。发行版页用一个
+纵向分栏把列表与详情分开；下载目录 / 下载源 / 校验这类配置统一放设置页，
+镜像页只留列表与下载动作；镜像页参考 llmw 模型列表：自定义行卡铺满整页，
 详情与下载地址通过行内「展开」就地显示，不再占用右侧面板；进页先回显磁盘缓存
 （`cache/wslman-available.json`）再后台刷新，「更新列表」可手动绕过 30 分钟缓存。
 后台任务一律走
@@ -59,10 +60,12 @@ from fcmd.apps.wslman._transfer import sha256_file
 from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
     Card,
-    Collapsible,
     ElidedLabel,
+    FormGrid,
     HintLabel,
     LogView,
+    PageScroll,
+    PathRow,
     RowListWidget,
     SelectionRow,
     StatusTag,
@@ -92,8 +95,9 @@ NAV_TITLE = "WSL"
 
 PAGES: tuple[tuple[str, str, str, str], ...] = (
     ("distros", "发行版", "列表、详情、启动停止、导出与注销", "distros"),
-    ("images", "镜像", "在线镜像清单、下载源与本地安装", "disc"),
+    ("images", "镜像", "在线镜像清单、本地安装与清单更新", "disc"),
     ("log", "日志", "启动、导出、安装与下载的任务日志", "log"),
+    ("settings", "设置", "下载目录、下载源与校验", "settings"),
 )
 """侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。"""
 
@@ -265,7 +269,7 @@ class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
 
 
 class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """WSL 发行版管理：侧边栏分页（发行版 / 镜像 / 日志）+ 后台任务。"""
+    """WSL 发行版管理：侧边栏分页（发行版 / 镜像 / 日志 / 设置）+ 后台任务。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
         self._own_settings_path = settings_path
@@ -301,14 +305,15 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             sidebar_collapsed=self.settings.sidebar_collapsed,
             settings_path=settings_path,
         )
-        # 三页都很轻（表格 + 表单），建窗即构造：镜像页的控件也是设置持久化与
-        # 下载动作的读取来源，延迟构建会让「没切到镜像页就关窗」时缺控件。
+        # 四页都很轻（表格 + 表单），建窗即构造：镜像页 / 设置页的控件是设置持久化
+        # 与下载动作的读取来源，延迟构建会让「没切到该页就关窗」时缺控件。
         # 但提前构造的页在未插入页面栈前是主窗口的子控件，默认可见并落在 (0,0)，
         # 会把页内容画到菜单栏上；先 hide，等共享页面栈切换时再 show。
         builders = {
             "distros": self._build_distros_page,
             "images": self._build_images_page,
             "log": self._build_log_page,
+            "settings": self._build_settings_page,
         }
         for key, label, hint, icon in PAGES:
             page = builders[key]()
@@ -505,14 +510,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.image_source.setCurrentIndex(max(self.image_source.findData(self.settings.image_source), 0))
         self.image_source.currentIndexChanged.connect(self._on_image_source_changed)
         search_row.addWidget(self.image_source)
-        search_row.addWidget(QLabel("下载源"))
-        self.mirror_ids = _mirrors.identifiers()
-        self.mirror = QComboBox(self)
-        self.mirror.addItems([_mirrors.label(ident) for ident in self.mirror_ids])
-        index = self.mirror_ids.index(self.settings.mirror) if self.settings.mirror in self.mirror_ids else 0
-        self.mirror.setCurrentIndex(index)
-        self.mirror.currentIndexChanged.connect(self._on_mirror_changed)
-        search_row.addWidget(self.mirror)
+        search_row.addStretch(0)
         body.addLayout(search_row)
 
         # 状态行固定单行（中间省略 + tooltip）：换行标签在矮窗口里会被压扁，
@@ -560,23 +558,76 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         actions.addStretch(1)
         body.addLayout(actions)
 
-        self.advanced = Collapsible("高级：下载目录 / 校验", parent=page)
-        self.download_dir = QLineEdit(self.settings.download_dir, self.advanced.content)
-        self.download_dir.setPlaceholderText("留空时使用 wslman.json 的 download_dir 或系统下载目录")
-        self.expected_sha = QLineEdit("", self.advanced.content)
-        self.expected_sha.setPlaceholderText("可选：期望的 sha256（留空用官方清单）")
-        form = QGridLayout()
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setHorizontalSpacing(8)
-        form.setVerticalSpacing(6)
-        form.setColumnStretch(1, 1)
-        form.addWidget(QLabel("下载目录"), 0, 0)
-        form.addWidget(self.download_dir, 0, 1)
-        form.addWidget(QLabel("期望 sha256"), 1, 0)
-        form.addWidget(self.expected_sha, 1, 1)
-        self.advanced.body.addLayout(form)
-        self.advanced.body.addWidget(hint_label(w._DOWNLOAD_HINT))
-        body.addWidget(self.advanced)
+        return page
+
+    def _build_settings_page(self) -> QWidget:
+        """设置页：下载目录 / 下载源 / 校验 + 配置文件位置。
+
+        原来塞在镜像页「高级」折叠区里的配置项全部搬到这里（镜像页只留列表与
+        下载动作），页面用 :class:`PageScroll` 包裹，窗口变矮时滚动而不是压扁控件。
+        """
+        page = QWidget(self)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = PageScroll(page)
+        outer.addWidget(scroll)
+        layout = scroll.body
+
+        download = Card("下载")
+        form = FormGrid(download)
+        self.download_dir = PathRow(
+            value=self.settings.download_dir,
+            placeholder="留空 = wslman.json 的 download_dir 或系统下载目录",
+            directory=True,
+            show_reset=True,
+            browse_text="更改",
+            parent=download,
+        )
+        self.download_dir.setToolTip(
+            "镜像归档的保存目录；留空时回退到 wslman.json 的 download_dir、再回退到系统下载目录"
+        )
+        self.download_dir.committed.connect(self._on_download_dir_committed)
+        self.download_dir.reset.clicked.connect(lambda: self.download_dir.set_value(""))
+        # 「恢复默认」只在填了自定义目录时出现，默认状态下按钮不占位。
+        self.download_dir.changed.connect(lambda text: self.download_dir.reset.setVisible(bool(text.strip())))
+        self.download_dir.reset.setVisible(bool(self.settings.download_dir))
+        form.add_row("下载目录", self.download_dir)
+
+        self.mirror_ids = _mirrors.identifiers()
+        self.mirror = QComboBox(download)
+        self.mirror.addItems([_mirrors.label(ident) for ident in self.mirror_ids])
+        index = self.mirror_ids.index(self.settings.mirror) if self.settings.mirror in self.mirror_ids else 0
+        self.mirror.setCurrentIndex(index)
+        self.mirror.setToolTip("国内镜像源；条目缺少 sha256 时只走官方源")
+        self.mirror.currentIndexChanged.connect(self._on_mirror_changed)
+
+        self.expected_sha = QLineEdit("", download)
+        self.expected_sha.setPlaceholderText("可选：64 位十六进制摘要；留空用官方清单")
+        self.expected_sha.setToolTip("只对下一次下载生效，不写入配置")
+        # 同一行两对：下载源 + 校验，避免两个输入控件各占一整行。
+        form.add_pair("下载源", self.mirror, "校验 sha256", self.expected_sha)
+        download.body.addWidget(form)
+        download.body.addWidget(
+            hint_label(f"下载目录留空时回退到 wslman.json 的 download_dir 或系统下载目录；{w._DOWNLOAD_HINT}")
+        )
+        layout.addWidget(download)
+
+        files = Card("配置文件")
+        files_form = FormGrid(files)
+        self.settings_file_label = ElidedLabel(str(self._settings_path), parent=files)
+        self.settings_file_label.setObjectName("Mono")
+        self.settings_file_label.setToolTip(str(self._settings_path))
+        files_form.add_row("界面设置", self.settings_file_label)
+        config_path = Path(self.config_data.path)
+        self.cli_config_label = ElidedLabel(str(config_path), parent=files)
+        self.cli_config_label.setObjectName("Mono")
+        self.cli_config_label.setToolTip(str(config_path))
+        files_form.add_row("命令行配置", self.cli_config_label)
+        files.body.addWidget(files_form)
+        files.body.addWidget(hint_label("界面设置保存下载目录 / 下载源 / 筛选等；命令行配置与 wslman CLI 共用。"))
+        layout.addWidget(files)
+        layout.addStretch(1)
         return page
 
     def _build_log_page(self) -> QWidget:
@@ -1014,7 +1065,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return cache.entries if cache is not None else ()
 
     def _local_start_dir(self) -> str:
-        configured = self.download_dir.text().strip() or self.settings.download_dir
+        configured = self.download_dir.value() or self.settings.download_dir
         if configured:
             return configured
         fallback = load_config().download_dir.strip()
@@ -1037,7 +1088,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 return
 
     def _download_payload(self, entry: ImageEntry) -> None:
-        directory_text = self.download_dir.text().strip()
+        directory_text = self.download_dir.value()
         expected = self.expected_sha.text().strip() or None
         install_after = self.install_after.isChecked()
         mirror_policy = self.mirror_ids[self.mirror.currentIndex()] if self.mirror.currentIndex() >= 0 else "auto"
@@ -1126,8 +1177,15 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 镜像列表
     # ------------------------------------------------------------------ #
     def _on_mirror_changed(self, _index: int) -> None:
+        """切换下载源：立刻写回设置并提示（配置只落在设置页，镜像页不再放下拉）。"""
         if 0 <= self.mirror.currentIndex() < len(self.mirror_ids):
             self.set_status(f"下载源：{_mirrors.label(self.mirror_ids[self.mirror.currentIndex()])}")
+            self._persist_image_view()
+
+    def _on_download_dir_committed(self, _text: str) -> None:
+        """下载目录变更（回车 / 选目录）立即落盘，下次启动回填。"""
+        self._persist_image_view()
+        self.set_status("下载目录已保存" if self.download_dir.value() else "下载目录已恢复默认")
 
     def _restore_images_cache(self) -> Any:
         """把上次落盘的镜像清单直接铺到列表上（不等网络），返回命中的缓存。"""
@@ -1389,7 +1447,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         w.save_settings(
             w.WslmanwSettings(
                 geometry=geometry,
-                download_dir=self.download_dir.text().strip(),
+                download_dir=self.download_dir.value(),
                 mirror=self.mirror_ids[self.mirror.currentIndex()] if self.mirror.currentIndex() >= 0 else "auto",
                 sidebar_collapsed=self.nav.is_collapsed(),
                 image_filter=self._image_filter_key,
