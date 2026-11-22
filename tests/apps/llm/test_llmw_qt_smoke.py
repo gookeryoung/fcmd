@@ -740,11 +740,14 @@ def test_paint_auto_pair_fills_model_and_components(window: Any, tmp_path: Path)
     section._apply_assets(assets)
     assert section.model_combo.count() > 0
 
-    # 模拟「主模型 / 组件都没选」的状态，点自动配对应当补齐。
-    section.model_combo.setCurrentIndex(-1)
+    # 选择主模型后自动配对：不再有独立「自动配对」按钮。
+    assert not hasattr(section, "suggest_button")
     for combo in section.role_combos.values():
         combo.setCurrentIndex(0)
-    section.suggest_button.click()
+    section.model_combo.setCurrentIndex(-1)
+    if section.model_combo.currentData() != str(main):
+        section.model_combo.setCurrentIndex(section.model_combo.findData(str(main)))
+    QApplication.processEvents()
     assert section.model_combo.currentData() == str(main)
     assert section.role_combos["vae"].currentData() == str(vae)
     assert section.role_combos["llm"].currentData() == str(encoder)

@@ -567,13 +567,11 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         layout.addLayout(options_row)
 
         # 模型名 / 大小 / 家族已在主模型下拉与命令预览里，不再单独占一行文字；
-        # 这里只留「自动配对 / 下载缺失组件」两个动作。
+        # 组件按所选模型家族自动配对，这里只保留「下载缺失组件」。
         family_row = QHBoxLayout()
         family_row.setContentsMargins(0, 0, 0, 0)
         family_row.setSpacing(8)
         family_row.addStretch(1)
-        self.suggest_button = button("自动配对", kind="ghost", tooltip="按主模型家族填满 VAE / 文本编码器槽位")
-        family_row.addWidget(self.suggest_button)
         self.download_button = button("下载缺失组件…", kind="ghost")
         self.download_button.setToolTip("从 Comfy-Org / 官方仓库直接下载缺失的 VAE / 文本编码器")
         self.download_button.setVisible(False)
@@ -581,7 +579,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         family_row.addWidget(self.download_button)
         layout.addLayout(family_row)
 
-        self.advanced = Collapsible("高级参数（模型组件，留空自动配对）", expanded=False, parent=self)
+        self.advanced = Collapsible("高级参数（模型组件，选择模型后自动配对）", expanded=False, parent=self)
         components_form = FormGrid(self.advanced.content)
         self.model_combo = model_combo if model_combo is not None else QComboBox(self.advanced.content)
         if show_model:
@@ -672,7 +670,6 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
 
     def _wire(self) -> None:
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
-        self.suggest_button.clicked.connect(lambda: self._suggest(only_empty=False))
         self.save_params_button.clicked.connect(self._save_params)
         self.fill_params_button.clicked.connect(self._fill_params)
         self.mode_choice.changed.connect(lambda _key: self._on_changed())
@@ -728,7 +725,11 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
             self._add_combo_item(self.model_combo, Path(saved_model))
         if not saved_model and self.model_combo.count() > 0:
             self.model_combo.setCurrentIndex(0)
-        self._apply_component_selection()
+        self._loading = True
+        try:
+            self._apply_component_selection()
+        finally:
+            self._loading = False
         self._update_preview()
         self._refresh_component_actions()
         self.assetsLoaded.emit()
@@ -829,15 +830,15 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         return Path(data).expanduser() if isinstance(data, str) and data else None
 
     def _on_model_changed(self) -> None:
-        """主模型变化：给空槽位补默认组件（大小等信息留在下拉项的 tooltip 里）。"""
-        self._suggest(only_empty=True)
+        """主模型变化：按家族自动配对组件（资产恢复时只补空槽位，不覆盖已选值）。"""
+        self._suggest(only_empty=self._loading)
         self._on_changed()
 
     def _suggest(self, *, only_empty: bool) -> None:
         """按家族槽位给出建议组件；``only_empty`` 时只补空槽位。
 
-        主模型还没选时，「自动配对」先把资产里第一个扩散模型填上，再按家族补
-        VAE / 文本编码器——否则配对点了没反应，启动服务仍报「请选择主模型」。
+        用户选择主模型后自动填满 VAE / 文本编码器；资产恢复（``_loading``）时
+        只补空槽位，避免覆盖用户手工选择的组件。主模型为空时先补第一个扩散模型。
         """
         path = self._combo_path(self.model_combo)
         suggestion = _llmpaint.suggest_components(self._assets, path)
