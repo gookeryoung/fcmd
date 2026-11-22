@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -83,6 +82,7 @@ from fcmd.gui.widgets import (
     button,
     confirm,
     mono_font,
+    tab_widget,
 )
 from fcmd.gui.window import QtMainWindow
 from fcmd.gui.workers import EventBridge, submit
@@ -176,7 +176,7 @@ class _ResourceDetailView(QWidget):  # pragma: no cover - Qt 控件
         layout.setContentsMargins(8, 4, 8, 10)
         layout.setSpacing(6)
 
-        self.tabs = QTabWidget(self)
+        self.tabs = tab_widget(self, object_name="RowTabs")
         layout.addWidget(self.tabs, 1)
 
         text_page = QWidget(self.tabs)

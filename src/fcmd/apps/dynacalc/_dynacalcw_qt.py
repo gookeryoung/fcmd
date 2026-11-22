@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QSpinBox,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -53,6 +52,7 @@ from fcmd.gui.widgets import (
     button,
     make_table,
     make_table_item,
+    tab_widget,
 )
 from fcmd.gui.workers import EventBridge, submit
 
@@ -173,8 +173,7 @@ class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         """表单 → 动作行 → 页签（工况 / 作业 / 日志）。"""
         self.add(self._build_form())
         self.add_layout(self._build_actions())
-        self._tabs = QTabWidget(self)
-        self._tabs.setDocumentMode(True)
+        self._tabs = tab_widget(self)
         self._case_table = make_table(
             ["工况", "分组", "模型", "TBD 数"],
             widths=[120, 120, 220, 80],

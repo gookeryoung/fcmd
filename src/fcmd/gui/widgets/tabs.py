@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QTabBar, QTabWidget, QWidget
 
 from fcmd.gui import style as _qt_theme
 
-__all__ = ["PillTabBar", "badge_text", "pill_tabs"]
+__all__ = ["PillTabBar", "badge_text", "pill_tabs", "tab_widget"]
 
 
 _BADGE_SIZE = 16
@@ -135,3 +135,13 @@ def pill_tabs(tabs: QTabWidget, *, object_name: str = "PillTabs") -> QTabWidget:
     bar.setUsesScrollButtons(False)
     bar.setElideMode(Qt.TextElideMode.ElideNone)
     return tabs
+
+
+def tab_widget(parent: QWidget | None = None, *, object_name: str = "PillTabs") -> QTabWidget:
+    """创建药丸页签容器；项目内 **只允许** 通过本工厂创建 ``QTabWidget``。
+
+    默认 ``QTabWidget`` 页签栏带整条基线 / 边框，与卡片、行卡的圆角边框叠在一起
+    会露出错位的横线。这里一次性套好 :func:`pill_tabs`，调用方只需
+    ``tab_widget(self)``（行卡展开区传 ``object_name="RowTabs"``）。
+    """
+    return pill_tabs(QTabWidget(parent), object_name=object_name)

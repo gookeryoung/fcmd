@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QStyleOptionComboBox,
     QStyleOptionViewItem,
     QStylePainter,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -85,8 +84,8 @@ from fcmd.gui.widgets import (
     FormGrid,
     PageScroll,
     button,
-    pill_tabs,
     set_button_text,
+    tab_widget,
 )
 from fcmd.gui.workers import submit, submit_daemon
 
@@ -491,10 +490,9 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
 
         # 运行页按用途分页：对话 / 编程共用同一套 llama.cpp 启动参数（模型候选按
         # 能力标签区分），画图页签配 sd.cpp；引擎安装 / 默认引擎统一归设置页。
-        self.tabs = QTabWidget(self)
-        # 药丸式页签（共享 pill_tabs）：去掉 QTabBar 的整条基线（「多余横条」），
+        # 药丸式页签（共享 tab_widget）：去掉 QTabBar 的整条基线（「多余横条」），
         # 透明底 + 圆角选中块，页签与内容同底色衔接；不参与等宽分配，靠左紧凑排列。
-        pill_tabs(self.tabs)
+        self.tabs = tab_widget(self)
         outer.addWidget(self.tabs, 1)
 
         self.service_page = QWidget(self.tabs)

@@ -41,7 +41,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -95,8 +94,8 @@ from fcmd.gui.widgets import (
     confirm,
     hint_label,
     link_button,
-    pill_tabs,
     set_button_text,
+    tab_widget,
 )
 from fcmd.gui.workers import ProgressBridge, submit
 from fcmd.infras.download import SpeedMeter, format_eta, format_speed
@@ -397,10 +396,9 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.error.setVisible(False)
         layout.addWidget(self.error)
 
-        self.tabs = QTabWidget(self)
         # 与运行页同一套药丸页签：没有页签上方的分隔线与 QTabBar 基线；
         # 容器底色用 $surface，与展开它的行卡同色（否则详情区会露出窗口底色）。
-        pill_tabs(self.tabs, object_name="RowTabs")
+        self.tabs = tab_widget(self, object_name="RowTabs")
         layout.addWidget(self.tabs)
 
         meta_page = QWidget(self.tabs)

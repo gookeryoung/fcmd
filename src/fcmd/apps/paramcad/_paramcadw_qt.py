@@ -4,7 +4,7 @@
 :class:`CanvasMap` 纯函数；三个预览页都用 ``QPainter`` 直接绘制，颜色取自
 当前主题，切换主题即时重绘。
 
-布局口径：预览页放进 ``QTabWidget``，右侧摘要与页签用 ``QSplitter`` 分隔，
+布局口径：预览页放进药丸页签容器（``tab_widget``），右侧摘要与页签用 ``QSplitter`` 分隔，
 分栏比例写入 ``ui/paramcad.json``；画布每次按控件逻辑像素重算映射，缩放
 窗口不裁切、不模糊。
 """
@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QSizePolicy,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -56,6 +55,7 @@ from fcmd.gui.widgets import (
     button,
     make_splitter,
     splitter_sizes,
+    tab_widget,
 )
 
 if TYPE_CHECKING:
@@ -142,8 +142,7 @@ class ParamcadWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.add(toolbar)
 
         self._splitter = make_splitter(Qt.Orientation.Horizontal, parent=self)
-        self._tabs = QTabWidget(self._splitter)
-        self._tabs.setDocumentMode(True)
+        self._tabs = tab_widget(self._splitter)
         self._section_canvas = _PreviewCanvas(self, "section", self._tabs)
         self._axial_canvas = _PreviewCanvas(self, "axial", self._tabs)
         self._curve_canvas = _PreviewCanvas(self, "curves", self._tabs)

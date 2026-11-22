@@ -59,7 +59,7 @@ from fcmd.gui.widgets.metrics import (
 from fcmd.gui.widgets.rows import ItemRow, RowDetailMixin, RowListWidget, SelectionRow
 from fcmd.gui.widgets.splitter import apply_splitter_sizes, make_splitter, splitter_sizes
 from fcmd.gui.widgets.tables import make_table, make_table_item
-from fcmd.gui.widgets.tabs import PillTabBar, badge_text, pill_tabs
+from fcmd.gui.widgets.tabs import PillTabBar, badge_text, pill_tabs, tab_widget
 from fcmd.gui.widgets.text import (
     ElidedLabel,
     HintLabel,
@@ -115,5 +115,6 @@ __all__ = [
     "set_button_kind",
     "set_button_text",
     "splitter_sizes",
+    "tab_widget",
     "value_label",
 ]

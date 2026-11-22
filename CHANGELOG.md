@@ -243,6 +243,10 @@
 
 ### 修复
 
+- GUI 页签统一走共享 `tab_widget(...)`（内部 `pill_tabs`）：`reshackw` 行卡展开预览、
+  `dynacalcw` / `filescanw` / `paramcadw` / `pevieww` / `llmw` 运行与模型页不再创建
+  默认 `QTabWidget`，消除页签基线 / 边框与卡片圆角叠加产生的错位横线；新增源码扫描
+  测试，禁止在 `fcmd.gui.widgets.tabs` 之外构造 `QTabWidget`。
 - `reshack` / `reshackw` 读取大体积 PE 文件时不再整体解析导入 / 重定位 / 调试等
   目录：改为 `pefile` 的 `fast_load` + 只解析资源目录，`ntoskrnl.exe`（13 MB）
   加载耗时从约 1.2s 降到毫秒级，资源列表与预览行为不变。

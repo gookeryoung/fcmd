@@ -59,6 +59,7 @@ from fcmd.gui.widgets import (
     make_splitter,
     mono_font,
     splitter_sizes,
+    tab_widget,
 )
 
 __all__ = ["PeviewWindow", "run_qt"]
@@ -248,8 +249,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _build_tabs(self) -> QTabWidget:
         """右侧页签：详情、概览、十六进制（带偏移跳转）。"""
-        tabs = QTabWidget(self._splitter)
-        tabs.setDocumentMode(True)
+        tabs = tab_widget(self._splitter)
         tabs.setMinimumWidth(320)
         self._detail_text = _text_view(tabs)
         tabs.addTab(self._detail_text, "详情")

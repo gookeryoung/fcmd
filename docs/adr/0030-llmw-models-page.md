@@ -83,7 +83,7 @@ repo，且 `StorageSize` 不小于 1 MiB（0 表示接口未给体积，按未�
 `.part` 继续续传，全部下完后按钮禁用），两者都不受设置里的包含 / 排除掩码影响
 （下载 VAE / 文本编码器等单个文件不必整仓下载），
 文件清单在第一次切到该页签时才后台读取（失败可重试），保持展开内容紧凑、不拖慢展开。
-详情分页直接用共享的药丸页签 `pill_tabs`（`RowTabs` / `PillTabBar`，与运行页同一套
+详情分页直接用共享的 `tab_widget(..., object_name="RowTabs")`（`RowTabs` / `PillTabBar`，与运行页同一套
 外观）：没有页签上方的分隔线与 QTabBar 整条基线；页签与内容、文件表都跟行卡同底色
 （`QTabWidget#RowTabs` 及其内部 `QStackedWidget` 置透明，`QTableWidget#ModelFiles`
 去底色 / 边框 / 交替行色），不会在行卡里露出一块窗口底色的「第二个盒子」。

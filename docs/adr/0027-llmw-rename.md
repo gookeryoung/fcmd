@@ -47,7 +47,7 @@
   总数；画图（sd.cpp）是独立后端，按画图服务存活单独计数。计数口径见
   `_llmw_models.running_usage_counts`（视频 / 音频先按分类关键字，再看「代码」能力标签，
   其余算对话）。
-- 运行页「对话 / 编程 / 画图」用胶囊页签（共享 `widgets.pill_tabs`，`PillTabs` / `PillTabBar`）：`setDrawBase(False)`
+- 运行页「对话 / 编程 / 画图」用胶囊页签（共享 `widgets.tab_widget`（内部 `pill_tabs`），`PillTabs` / `PillTabBar`）：`setDrawBase(False)`
   去掉整条基线，`QTabBar` 透明底 + 圆角选中块，页签与内容同底色衔接，不再出现
   页签下方的横条；页签不参与等宽分配，靠左紧凑排列。
 - 运行页顶部按钮随模型状态显示启动 / 停止服务，另有「重启服务」按钮（仅运行中可用，

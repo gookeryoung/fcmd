@@ -57,6 +57,7 @@ from fcmd.gui.widgets import (
     segment_fill,
     set_button_kind,
     set_button_text,
+    tab_widget,
 )
 
 _BUTTON_KINDS = ("", "primary", "danger", "ghost")
@@ -273,6 +274,40 @@ def test_pill_tabs_share_one_theme_contract() -> None:
         assert bar.objectName() == "PillTabBar"
     finally:
         tabs.deleteLater()
+
+
+def test_tab_widget_factory_applies_pill_style() -> None:
+    """``tab_widget`` 是唯一构造入口：创建即套好药丸页签，不再出现默认边框基线。"""
+    tabs = tab_widget()
+    row_tabs = tab_widget(object_name="RowTabs")
+    try:
+        assert isinstance(tabs.tabBar(), PillTabBar)
+        assert tabs.objectName() == "PillTabs"
+        assert tabs.tabBar().drawBase() is False
+        assert row_tabs.objectName() == "RowTabs"
+    finally:
+        tabs.deleteLater()
+        row_tabs.deleteLater()
+
+
+def test_no_raw_tab_widget_construction_in_source() -> None:
+    """源码里只允许 ``fcmd.gui.widgets.tabs`` 内部构造 ``QTabWidget``。
+
+    默认 ``QTabWidget`` 的页签基线 / 边框与卡片圆角叠加会露出错位横线；应用窗口
+    一律走 ``tab_widget(...)``（内部 ``pill_tabs``），避免再回退到默认外观。
+    """
+    from pathlib import Path
+
+    source_root = Path(__file__).resolve().parents[2] / "src" / "fcmd"
+    factory = source_root / "gui" / "widgets" / "tabs.py"
+    offenders = [
+        f"{path.relative_to(source_root)}:{number}"
+        for path in source_root.rglob("*.py")
+        if path != factory
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "QTabWidget(" in line
+    ]
+    assert not offenders, "请改用 fcmd.gui.widgets.tab_widget(...) 创建页签: " + ", ".join(offenders)
 
 
 def test_icon_button_is_square_and_checkable() -> None:

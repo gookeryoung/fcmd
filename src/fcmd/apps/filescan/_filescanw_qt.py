@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSpinBox,
-    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -80,6 +79,7 @@ from fcmd.gui.widgets import (
     hint_label,
     make_table,
     make_table_item,
+    tab_widget,
 )
 from fcmd.gui.workers import submit
 
@@ -332,7 +332,7 @@ class FilescanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
     # 构建
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
-        self.tabs = QTabWidget(self)
+        self.tabs = tab_widget(self)
         self.tabs.setMinimumHeight(520)
         self.tabs.addTab(self._build_scan_page(), "扫描")
         self.tabs.addTab(self._build_result_page(), "结果")
