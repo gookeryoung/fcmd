@@ -68,3 +68,9 @@ ADR 0031 把模型目录收敛为单一 `models_dir`，只保留一个下载落�
 - 迁移提示保留：`models_dir_extra` 只提示不自动启用；用户确认后在卡片上添加。
 - 下一步（未做）：拖拽卡片调整顺序（当前用「设为主目录」改变主目录）；跨目录同名仓库
   在模型页的文件状态仍以首个命中目录判断。
+
+## 交接
+
+- 磁盘卡片的展示 / 信号已抽成共享组件 `fcmd.gui.widgets.storage.DiskGrid`
+  （`DiskLocation` + `DiskTile` + `DiskAddTile`）；llmw 的 `_llmw_qt_storage.py` 只做
+  `StorageLocation → DiskLocation` 适配，后续其它应用的目录设置可直接复用。

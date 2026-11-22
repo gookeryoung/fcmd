@@ -14,6 +14,7 @@
 - :mod:`fcmd.gui.widgets.forms`：表单网格与路径输入行；
 - :mod:`fcmd.gui.widgets.metrics`：指标网格、分段负载条、加载条与进度行；
 - :mod:`fcmd.gui.widgets.log`：只读日志区 + 工具条；
+- :mod:`fcmd.gui.widgets.storage`：通用磁盘 / 目录卡片网格（Steam 式多根目录管理）；
 - :mod:`fcmd.gui.widgets.splitter`：分栏容器与尺寸持久化。
 
 约定：
@@ -58,6 +59,7 @@ from fcmd.gui.widgets.metrics import (
 )
 from fcmd.gui.widgets.rows import ItemRow, RowDetailMixin, RowListWidget, SelectionRow
 from fcmd.gui.widgets.splitter import apply_splitter_sizes, make_splitter, splitter_sizes
+from fcmd.gui.widgets.storage import DiskAddTile, DiskGrid, DiskLocation, DiskTile
 from fcmd.gui.widgets.tables import make_table, make_table_item
 from fcmd.gui.widgets.tabs import PillTabBar, badge_text, pill_tabs, tab_widget
 from fcmd.gui.widgets.text import (
@@ -76,6 +78,10 @@ __all__ = [
     "ChoiceCard",
     "ChoiceGroup",
     "Collapsible",
+    "DiskAddTile",
+    "DiskGrid",
+    "DiskLocation",
+    "DiskTile",
     "ElidedLabel",
     "FormGrid",
     "HintLabel",

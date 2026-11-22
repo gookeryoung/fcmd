@@ -36,6 +36,9 @@ from fcmd.gui.widgets import (
     Card,
     ChoiceGroup,
     Collapsible,
+    DiskGrid,
+    DiskLocation,
+    DiskTile,
     ItemRow,
     LoadingBar,
     LogView,
@@ -1006,3 +1009,25 @@ def test_selected_row_repolishes_child_widgets() -> None:
         assert counter == {"unpolish": 2, "polish": 2}
     finally:
         row.deleteLater()
+
+
+def test_disk_grid_is_reusable_for_any_directory_list() -> None:
+    """通用磁盘卡片：目录列表 → 卡片 + 添加卡，文案与主目录标记由调用方给出。"""
+    from pathlib import Path
+
+    grid = DiskGrid(add_text="添加工作目录")
+    try:
+        grid.set_locations(
+            [
+                DiskLocation(Path("D:/models"), "D:", "NTFS", 1000, 400, primary=True),
+                DiskLocation(Path("E:/models"), "E:", "exFAT", 2000, 1500),
+            ]
+        )
+        QApplication.processEvents()
+        tiles = grid.findChildren(DiskTile)
+        assert len(tiles) == 2
+        assert tiles[0].location.primary is True
+        add = [child for child in grid.findChildren(QPushButton) if child.objectName() == "DiskAdd"]
+        assert add and add[0].text() == "添加工作目录"
+    finally:
+        grid.deleteLater()

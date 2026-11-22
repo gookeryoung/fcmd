@@ -7,6 +7,10 @@
 
 ### 变更
 
+- llmw 设置页的磁盘卡片抽成共享 UI 组件 `gui/widgets/storage.py`：
+  `DiskGrid` / `DiskTile` / `DiskAddTile` / `DiskLocation` 只负责展示与
+  打开 / 移除 / 设为主目录信号，任意应用的目录列表可复用；llmw 侧保留
+  `StorageLocation → DiskLocation` 适配与「下载目标」文案。
 - GUI 共享层目录拉平：`fcmd/gui/qt/*` 全部上移到 `fcmd/gui/`，主题翻译模块改名为
   `gui/style.py`（主题注册表仍为 `gui/theme.py`），分页纯函数改名为 `gui/nav.py`；
   `gui/widgets.py` 拆成 `gui/widgets/` 包（`text` / `tables` / `buttons` / `tabs` /
