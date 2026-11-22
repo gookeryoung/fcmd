@@ -656,10 +656,14 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         expand_hint: str = "展开详情",
         collapse_hint: str = "收起详情",
         metrics_samples: Sequence[str] | None = None,
+        copy_text: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._expanded = False
+        self._copy_text = ""
+        self._copy_button: QToolButton | None = None
+        self._copy_timer: QTimer | None = None
         self._metrics_samples = tuple(metrics_samples) if metrics_samples else _METRICS_SAMPLES
         self._expand_hint = expand_hint
         self._collapse_hint = collapse_hint
@@ -742,6 +746,8 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         outer.addWidget(self.detail_host)
         # 初始对齐：有副标题 / 标签就与第二行对齐，否则整行居中。
         self._sync_note_state()
+        if copy_text:
+            self.set_copy_text(copy_text)
 
     # ------------------------------------------------------------------ #
     # 内容插槽
@@ -776,6 +782,76 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             widget = item.widget() if item is not None else None
             if widget is not None:
                 self.header_row.setAlignment(widget, align)
+
+    # ------------------------------------------------------------------ #
+    # 复制全称（可配置）
+    # ------------------------------------------------------------------ #
+    def set_copy_text(self, text: str) -> None:
+        """配置标题右侧的「复制」小按钮；空串时收起（不占用标题行）。
+
+        通用能力：需要复制完整名称的行（如 llmw 模型行复制 ``组织/模型``）传文本
+        即可，其它行不传就不显示；按钮只复制，不改变选中行。
+        """
+        text = text.strip()
+        self._copy_text = text
+        if not text:
+            if self._copy_button is not None:
+                self._copy_button.hide()
+                self._copy_button.setToolTip("")
+            return
+        button = self._ensure_copy_button()
+        button.show()
+        button.setToolTip(f"复制 {text}")
+
+    def copy_text(self) -> str:
+        """当前配置的复制文本（空串表示没有复制按钮）。"""
+        return self._copy_text
+
+    def copy_button(self) -> QToolButton | None:
+        """标题右侧的复制按钮（测试 / 调试用；未配置时为 ``None``）。"""
+        return self._copy_button
+
+    def _ensure_copy_button(self) -> QToolButton:
+        """首次配置时创建小号复制按钮（图标按钮，不抢行卡选中）。"""
+        if self._copy_button is None:
+            button = icon_button("", tooltip="复制完整名称")
+            button.setProperty("rowCopy", "true")
+            button.setFixedSize(QSize(22, 22))
+            button.setIconSize(QSize(14, 14))
+            _qt_icons.set_icon(button, "copy", tone="muted")
+            button.clicked.connect(self._copy_to_clipboard)
+            self.title_row.addWidget(button, 0)
+            self._copy_button = button
+        return self._copy_button
+
+    def _copy_to_clipboard(self) -> None:
+        if not self._copy_text:
+            return
+        from PySide6.QtGui import QGuiApplication
+
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(self._copy_text)
+        self._flash_copied()
+
+    def _flash_copied(self) -> None:
+        """复制反馈：图标换成对勾、tooltip 改「已复制」，1.2 秒后复原。"""
+        button = self._copy_button
+        if button is None:
+            return
+        _qt_icons.set_icon(button, "check", tone="success")
+        button.setToolTip("已复制")
+        if self._copy_timer is None:
+            self._copy_timer = QTimer(self)
+            self._copy_timer.setSingleShot(True)
+            self._copy_timer.timeout.connect(self._reset_copy_button)
+        self._copy_timer.start(1200)
+
+    def _reset_copy_button(self) -> None:
+        if self._copy_button is None or not self._copy_text:
+            return
+        _qt_icons.set_icon(self._copy_button, "copy", tone="muted")
+        self._copy_button.setToolTip(f"复制 {self._copy_text}")
 
     def add_title_widget(self, widget: QWidget) -> None:
         """标题右侧的小标记（如发布方）。"""

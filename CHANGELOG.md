@@ -177,6 +177,9 @@
   运行页对应类别页签（对话 / 编程 / 画图 / 视频 / 音频）显示各类别数量，样式为
   半透明圆形数字（跟随主题强调色）；画图（sd.cpp）服务单独计数。共享层新增
   `PillTabBar`（`pill_tabs` 默认装好，`set_badge`）与 `SidebarNav.set_badge`。
+- llmw 模型行标题右侧新增小号复制按钮：一键复制完整仓库名（标题只显示模型名，长名会省略），
+  复制后图标换成对勾 1.2 秒再复原；该能力作为共享 `ItemRow` 的可配置项
+  （`copy_text` / `set_copy_text`），不传就不显示、也不占标题行。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

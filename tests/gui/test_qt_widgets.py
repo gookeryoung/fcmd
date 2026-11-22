@@ -434,6 +434,45 @@ def _alignment(row: ItemRow, widget: QWidget) -> Qt.AlignmentFlag:
     raise AssertionError("控件不在行卡头部布局里")
 
 
+def test_item_row_copy_button_is_optional_and_copies_full_text() -> None:
+    """行卡的「复制全称」是可选配置：传文本才有按钮，点击复制到剪贴板并给反馈。"""
+    from PySide6.QtGui import QGuiApplication
+
+    plain = ItemRow("Qwen3.8-27B")
+    try:
+        assert plain.copy_text() == ""
+        assert plain.copy_button() is None
+    finally:
+        plain.deleteLater()
+
+    row = ItemRow("Qwen3.8-27B", copy_text="Qwen/Qwen3.8-27B")
+    try:
+        button = row.copy_button()
+        assert button is not None
+        assert button.isHidden() is False
+        assert button.toolTip() == "复制 Qwen/Qwen3.8-27B"
+        assert row.copy_text() == "Qwen/Qwen3.8-27B"
+
+        button.click()
+        clipboard = QGuiApplication.clipboard()
+        assert clipboard is not None and clipboard.text() == "Qwen/Qwen3.8-27B"
+        assert button.toolTip() == "已复制"
+
+        # 关掉复制能力：按钮收起，不再占标题行
+        row.set_copy_text("")
+        assert row.copy_text() == ""
+        assert button.isHidden() is True
+
+        # 再次配置：同一个按钮复用，可复制新文本
+        row.set_copy_text("Qwen/Qwen3-8B")
+        assert button.isHidden() is False
+        assert button.toolTip() == "复制 Qwen/Qwen3-8B"
+        button.click()
+        assert clipboard is not None and clipboard.text() == "Qwen/Qwen3-8B"
+    finally:
+        row.deleteLater()
+
+
 def test_item_row_centers_actions_with_tag_or_title_line() -> None:
     """右侧动作与「标签行」居中对齐；只有一行标题时整行居中。"""
     row = ItemRow("Ubuntu", "v2")

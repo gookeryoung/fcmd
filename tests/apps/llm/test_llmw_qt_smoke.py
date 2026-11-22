@@ -806,6 +806,31 @@ def test_all_and_local_keep_seen_category_items(window: Any) -> None:
     assert [item.repo for item in browse._result_items] == [paint.repo]
 
 
+def test_model_row_copy_button_copies_full_repo(window: Any) -> None:
+    """模型行标题右侧的小复制按钮复制完整仓库名（标题本身只显示模型名）。"""
+    from PySide6.QtGui import QGuiApplication
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary
+
+    repo = "Qwen/Qwen3.8-27B"
+    browse._last_result = ModelSearch((ModelSummary(repo=repo, name="Qwen3.8-27B"),), 1, 1, 30)
+    browse._source_filter = "all"
+    browse._filter_key = "all"
+    browse._render_results()
+    item = browse.models.item(0)
+    row = browse.models.itemWidget(item)
+    assert row.copy_text() == repo
+    button = row.copy_button()
+    assert button is not None and button.isHidden() is False
+    assert repo in button.toolTip()
+
+    button.click()
+    clipboard = QGuiApplication.clipboard()
+    assert clipboard is not None and clipboard.text() == repo
+
+
 def test_local_model_keeps_official_entry_in_local_fit_view(window: Any) -> None:
     """「适合本机」下：已安装模型的同名官方条目不能被容量估算藏掉。"""
     from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary
@@ -1168,39 +1193,6 @@ def test_import_source_archive_sets_convert_script(
     assert script.read_bytes() == archive.read_bytes()
     assert page.engine_source_tag.text() == "已指定源码包"
     assert page.engine_source_tag.property("tone") == "success"
-
-
-def test_convert_engine_tag_is_editable_combo(window: Any) -> None:
-    """「引擎 tag」是可编辑下拉框：既能选已装引擎，也能填自定义 tag。"""
-    from PySide6.QtWidgets import QComboBox
-
-    window.show_page("settings")
-    page = window.page("settings")
-    assert isinstance(page.convert_tag, QComboBox)
-    assert page.convert_tag.isEditable()
-    page.convert_tag.setCurrentText("b9-custom")
-    page._save_convert()
-    assert window.state.settings.convert["tag"] == "b9-custom"
-
-
-def test_convert_architectures_button_lists_supported(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """「查看支持的架构…」列出当前脚本注册的架构，便于判断模型能否转换。"""
-    from fcmd.apps.llm import llmconvert
-
-    window.show_page("settings")
-    page = window.page("settings")
-    messages: list[str] = []
-    monkeypatch.setattr(
-        llmconvert, "supported_architectures", lambda *_a, **_k: ("LlamaForCausalLM", "GPT2LMHeadModel")
-    )
-    monkeypatch.setattr(
-        QMessageBox,
-        "information",
-        lambda _parent, _title, text, *_a, **_k: messages.append(str(text)),
-    )
-    page.convert_arch_button.click()
-    assert messages and "LlamaForCausalLM" in messages[0]
-    assert "2 个架构" in messages[0]
 
 
 def test_convert_engine_tag_is_editable_combo(window: Any) -> None:

@@ -200,6 +200,8 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
             elide=Qt.TextElideMode.ElideMiddle,
             expand_hint="展开详细信息",
             collapse_hint="收起详细信息",
+            # 标题显示的是模型名（省略在行内），复制按钮给完整仓库名（组织/模型）。
+            copy_text=item.repo,
             parent=parent,
         )
         self.repo = item.repo
