@@ -43,6 +43,7 @@ PAGES: tuple[PageSpec, ...] = (
     PageSpec("models", "模型", "GGUF 模型与显存适配", "models"),
     PageSpec("run", "运行", "档位、上下文与启动参数", "run"),
     PageSpec("chat", "对话", "多轮流式对话 / 画图（sd.cpp）", "chat"),
+    PageSpec("flow", "工作流", "节点编排：提示词 → LLM / 出图 → 保存", "workflow"),
     PageSpec("settings", "设置", "存储、引擎、下载与转换", "settings"),
 )
 """侧边栏页面顺序与提示；系统采样与实时性能已并入概览页。"""
@@ -80,6 +81,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.overview = OverviewPage(self.state)
         self.run_page = RunPage(self.state)
         self._chat_page: Any = None
+        self._flow_page: Any = None
         self._models_page: Any = None
         self._settings_page: Any = None
         self._bench_dialog: Any = None
@@ -165,9 +167,17 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             "models": self._build_models_page,
             "run": lambda: self.run_page,
             "chat": self._build_chat_page,
+            "flow": self._build_flow_page,
             "settings": self._build_settings_page,
         }
         return builders[key]
+
+    def _build_flow_page(self) -> QWidget:
+        from fcmd.apps.llm._llmw_qt_flow import WorkflowPage
+
+        page = WorkflowPage(self.state)
+        self._flow_page = page
+        return page
 
     def _build_models_page(self) -> QWidget:
         from fcmd.apps.llm._llmw_qt_center import ModelCenterPage

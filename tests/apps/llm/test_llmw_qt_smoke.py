@@ -137,7 +137,7 @@ def test_status_bar_follows_current_page(window: Any) -> None:
 
 def test_window_builds_all_pages(window: Any) -> None:
     keys = window.nav.keys()
-    assert keys == ("overview", "models", "run", "chat", "settings")
+    assert keys == ("overview", "models", "run", "chat", "flow", "settings")
     for key in keys:
         window.show_page(key)
         assert window.current_page() == key
@@ -331,6 +331,21 @@ def test_sidebar_badge_restores_paint_only_after_restart(
     finally:
         restarted.overview.stop()
         restarted.deleteLater()
+
+
+def test_flow_page_builds_with_builtin_templates(window: Any) -> None:
+    """工作流页首次打开：内置模板落盘、节点卡片可编辑、运行按钮可用。"""
+    window.show_page("flow")
+    QApplication.processEvents()
+    page = window._flow_page
+    assert page is not None
+    assert len(page._flows) == 3
+    assert [card.definition.label for card in page._cards]
+    assert page._name_edit.text() in {flow.name for flow in page._flows}
+    assert page._run_button.isEnabled() is True
+    # 在「文本 → 文生图 → 保存」之间插入 LLM 节点：按端口兼容性自动选择位置。
+    page._add_node("llm.chat")
+    assert [card.definition.type for card in page._cards][:2] == ["text.input", "llm.chat"]
 
 
 def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:

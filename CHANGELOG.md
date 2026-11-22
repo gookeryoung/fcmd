@@ -282,6 +282,10 @@
 
 ### 新增
 
+- llmw 新增「工作流」页：参考 ComfyUI 的节点 / 端口 / DAG 思路，提供类型化节点
+  （文本输入、LLM 对话、sd.cpp 文生图、保存图片 / 文本）、拓扑执行与节点缓存、
+  取消、JSON 持久化到 `${FCMD_HOME}/flows`，并内置「文生图」「提示词润色 → 出图」
+  「LLM 问答 → 保存」模板；MVP 用线性节点链编辑，画布与 ComfyUI 子集导入留待后续。
 - `filesync` / `filesyncw`：文件夹比较与同步，支持 compare / sync / mirror / update 四种模式，
   可预览变更、按规则过滤、跳过冲突项；`filesyncw` 为 Tk 窗口版。
 - CI 发布流水线接入 fspack 多平台打包：推 `v*.*.*` tag 时产出 Windows / Linux 便携 zip，
