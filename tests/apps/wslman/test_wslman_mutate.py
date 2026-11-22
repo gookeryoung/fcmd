@@ -200,7 +200,11 @@ def test_spawn_detached_returns_pid_and_disconnects_streams(monkeypatch: pytest.
     assert recorded["stderr"] is _terminal.subprocess.DEVNULL
     flags = recorded["creationflags"]
     assert isinstance(flags, int)
-    assert flags & getattr(_terminal.subprocess, "DETACHED_PROCESS", 0)
+    # Windows 上是 DETACHED_PROCESS | CREATE_NO_WINDOW；CI 的 Linux 上两者都是 0。
+    expected = getattr(_terminal.subprocess, "DETACHED_PROCESS", 0) | getattr(
+        _terminal.subprocess, "CREATE_NO_WINDOW", 0
+    )
+    assert flags == expected
 
 
 def test_spawn_detached_reports_missing_program(monkeypatch: pytest.MonkeyPatch) -> None:
