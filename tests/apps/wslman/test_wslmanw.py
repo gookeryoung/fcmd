@@ -290,78 +290,31 @@ def test_resolve_geometry_clamps_to_screen_and_minimum() -> None:
 
 
 def test_default_window_matches_new_layout() -> None:
-    """侧边栏 + 三页布局的默认尺寸；最小尺寸保证表格与详情不被压扁。"""
+    """侧边栏 + 四页布局的默认尺寸；最小尺寸保证行卡列表不被压扁。"""
     assert wslmanw.DEFAULT_GEOMETRY == "1160x760"
     assert (wslmanw.MIN_WIDTH, wslmanw.MIN_HEIGHT) == (900, 600)
 
 
-def test_text_units_counts_wide_chars_as_two() -> None:
-    assert wslmanw.text_units("Ubuntu") == 6
-    assert wslmanw.text_units("发行版") == 6
-    assert wslmanw.text_units("") == 0
-
-
-def test_elide_name_truncates_long_names_only() -> None:
-    assert wslmanw.elide_name("Ubuntu") == "Ubuntu"
-    short = "a" * 24
-    assert wslmanw.elide_name(short) == short
-
-    long_name = "Ubuntu-Preview-Extremely-Long-Distro-Name"
-    elided = wslmanw.elide_name(long_name)
-    assert elided.endswith("…")
-    assert wslmanw.text_units(elided) <= 24
-    assert long_name.startswith(elided[:-1])
-
-    wide = wslmanw.elide_name("发行版" * 10)
-    assert wide.endswith("…")
-    assert wslmanw.text_units(wide) <= 24
-
-
-def test_column_widths_respect_minimum_and_content() -> None:
-    minimums = {"name": 160, "state": 72, "version": 56, "disk": 96, "default": 50}
-    maximums = {"name": 360, "state": 120, "version": 84, "disk": 180, "default": 80}
-    assert wslmanw.column_widths([]) == minimums
-
-    rows = [("Ubuntu-24.04-Desktop-LTS", "运行中", "2", "≈ 12.3 GiB（估算）", "是")]
-    widths = wslmanw.column_widths(rows)
-    assert widths["name"] > minimums["name"]
-    assert widths["disk"] > minimums["disk"]
-
-    huge = [("x" * 100, "y" * 100, "z" * 100, "w" * 100, "v" * 100)]
-    assert wslmanw.column_widths(huge) == maximums
-
-
-def test_column_widths_distribute_slack_by_ratio_not_last_column() -> None:
-    """整幅宽度富余时按比例分摊，且不越过每列上限。"""
-    rows = [("Ubuntu", "运行中", "2", "12.3 GiB", "是")]
-    base = wslmanw.column_widths(rows)
-    wide = wslmanw.column_widths(rows, available=1400)
-    assert all(wide[key] >= base[key] for key in base)
-    assert wide == {"name": 360, "state": 120, "version": 84, "disk": 180, "default": 80}
-    # 富余全部被上限挡住时留在右侧，不会堆给最后一列。
-    assert sum(wide.values()) < 1400
-
-    partial = wslmanw.column_widths(rows, available=600)
-    assert sum(partial.values()) <= 600
-    assert all(partial[key] >= base[key] for key in base)
-
-    narrow = wslmanw.column_widths(rows, available=200)
-    assert narrow == base
-
-
-def test_detail_fields_labels_match_layout() -> None:
-    """详情页静态字段顺序与实际数据字段必须一致，避免布局漂移。"""
+def test_detail_fields_labels_match_inline_layout() -> None:
+    """行内详情网格的字段顺序与数据字段必须一致，避免布局漂移。"""
     fields = wslmanw.detail_fields(_distro(), 2048, False)
     assert tuple(label for label, _value in fields) == wslmanw._DETAIL_LABELS
     assert dict(fields)["虚拟磁盘"] == r"C:\WSL\Ubuntu\ext4.vhdx"
-    assert wslmanw.detail_lines(_distro(), 2048, False) == [f"{label}: {value}" for label, value in fields]
+
+    missing = dict(wslmanw.detail_fields(_distro(base_path=None, default_uid=None, registered=False), 10, True))
+    assert missing["BasePath"] == "未知"
+    assert missing["虚拟磁盘"] == "未知"
+    assert missing["默认用户"] == "未知"
+    assert missing["来源"] == "wsl --list"
+    assert "≈" in missing["占用"]
 
 
-def test_distro_row_truncates_long_name_but_summary_keeps_it() -> None:
+def test_summary_text_keeps_full_distro_name() -> None:
+    """状态栏摘要保留完整发行版名（行卡标题才做省略）。"""
     long_name = "Ubuntu-Preview-Extremely-Long-Distro-Name"
-    distro = _distro(name=long_name)
-    assert wslmanw.distro_row(distro, 0, False)[0].endswith("…")
-    assert wslmanw.summary_text(distro, 0, False).startswith(long_name)
+    summary = wslmanw.summary_text(_distro(name=long_name), 0, False)
+    assert summary.startswith(long_name)
+    assert "运行中" in summary and "v2" in summary
 
 
 def test_unregister_confirm_requires_exact_typed_name() -> None:
@@ -377,25 +330,15 @@ def test_shutdown_confirm_requires_checkbox() -> None:
     assert wslmanw.shutdown_confirm_enabled(False) is False
 
 
-def test_distro_row_and_detail_lines() -> None:
-    distro = _distro()
-    assert wslmanw.distro_row(distro, 2048, False) == ("Ubuntu", "运行中", "2", "2.0 KiB", "是")
-    assert wslmanw.distro_row(_distro(default=False, version=None), None, False)[3:] == ("未知", "")
-
-    lines = wslmanw.detail_lines(distro, None, False)
-    assert "名称: Ubuntu" in lines
-    assert "默认: 是" in lines
-    assert r"虚拟磁盘: C:\WSL\Ubuntu\ext4.vhdx" in lines
-    assert "默认用户: 1000" in lines
-
-
-def test_detail_lines_handles_missing_registry_data() -> None:
-    lines = wslmanw.detail_lines(_distro(base_path=None, default_uid=None, registered=False), 10, True)
-    assert "BasePath: 未知" in lines
-    assert "虚拟磁盘: 未知" in lines
-    assert "默认用户: 未知" in lines
-    assert "来源: wsl --list" in lines
-    assert "≈" in next(line for line in lines if line.startswith("占用:"))
+def test_detail_fields_cover_identity_and_storage() -> None:
+    """行内详情同时给出身份信息与存储信息。"""
+    fields = dict(wslmanw.detail_fields(_distro(), None, False))
+    assert fields["名称"] == "Ubuntu"
+    assert fields["状态"] == "运行中"
+    assert fields["版本"] == "2"
+    assert fields["默认"] == "是"
+    assert fields["默认用户"] == "1000"
+    assert fields["虚拟磁盘"].endswith("ext4.vhdx")
 
 
 def test_error_text_formats_wslman_errors() -> None:

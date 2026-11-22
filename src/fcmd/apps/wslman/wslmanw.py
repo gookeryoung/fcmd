@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import ntpath
 import platform
-import unicodedata
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -32,12 +31,8 @@ __all__ = [
     "SETTINGS_NAME",
     "WslmanwSettings",
     "action_states",
-    "column_widths",
     "config_path",
     "detail_fields",
-    "detail_lines",
-    "distro_row",
-    "elide_name",
     "filter_images",
     "image_counts",
     "image_details",
@@ -57,7 +52,6 @@ __all__ = [
     "shutdown_confirm_enabled",
     "sort_images",
     "summary_text",
-    "text_units",
     "unregister_confirm_enabled",
 ]
 
@@ -135,21 +129,6 @@ _IMAGE_DETAIL_FIELDS: tuple[str, ...] = (
 )
 """下载页详情区的短字段；下载地址单独用可滚动的只读文本域渲染。"""
 
-_COLUMNS: tuple[tuple[str, str, int, int], ...] = (
-    ("name", "名称", 160, 360),
-    ("state", "状态", 72, 120),
-    ("version", "版本", 56, 84),
-    ("disk", "占用", 96, 180),
-    ("default", "默认", 50, 80),
-)
-"""列定义：``(列 id, 表头, 最小宽度, 最大宽度)``，宽度按内容自适应后夹在两者之间。"""
-
-_CHAR_PX = 7
-"""窄字符的估算宽度（9pt 界面字体）；宽字符按 2 个窄字符计。"""
-
-_CELL_PAD_PX = 16
-"""单元格左右留白与排序指示器的估算宽度。"""
-
 _DETAIL_LABELS: tuple[str, ...] = (
     "名称",
     "状态",
@@ -167,50 +146,8 @@ _DETAIL_ROWS = 5
 """详情页左右两列各占的行数，长路径换行后仍不会压叠。"""
 
 
-def text_units(text: str) -> int:
-    """按显示宽度计字符数：CJK / 全角字符算 2，其余算 1。"""
-    return sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text)
-
-
-def elide_name(name: str, limit: int = 24) -> str:
-    """按显示宽度截断过长的发行版名，末尾补 ``…``；未超长时原样返回。"""
-    if text_units(name) <= limit:
-        return name
-    kept: list[str] = []
-    used = 0
-    for char in name:
-        width = 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
-        if used + width > limit - 1:
-            break
-        kept.append(char)
-        used += width
-    return "".join(kept) + "…"
-
-
-def column_widths(rows: Sequence[Sequence[str]], available: int | None = None) -> dict[str, int]:
-    """按表头与各行显示宽度估算列宽，夹在每列的最小 / 最大宽度之间。
-
-    ``available`` 为列表可用总宽时，把富余宽度按各列基础宽度的比例分摊，
-    而不是全部塞给最后一列；分摊后仍以每列最大宽度为上限，剩余留白留在右侧。
-    """
-    widths: dict[str, int] = {}
-    for index, (key, title, minimum, maximum) in enumerate(_COLUMNS):
-        widest = max([text_units(title), *(text_units(str(row[index])) for row in rows if index < len(row))])
-        widths[key] = min(maximum, max(minimum, widest * _CHAR_PX + _CELL_PAD_PX))
-    if available is None:
-        return widths
-    extra = available - sum(widths.values())
-    total = sum(widths.values())
-    if extra <= 0 or total <= 0:
-        return widths
-    for key, _title, _minimum, maximum in _COLUMNS:
-        share = int(extra * widths[key] / total)
-        widths[key] = min(maximum, widths[key] + share)
-    return widths
-
-
 def detail_fields(distro: Distro, size: int | None, estimated: bool) -> tuple[tuple[str, str], ...]:
-    """详情页的「字段 → 值」；字段口径与 ``detail_lines`` 完全一致。"""
+    """详情区的「字段 → 值」：行内展开与状态栏摘要共用同一份口径。"""
     # BasePath 来自 Lxss 注册表，始终是 Windows 路径；用 ntpath 拼接保持反斜杠。
     vhdx = ntpath.join(distro.base_path, "ext4.vhdx") if distro.base_path else "未知"
     return (
@@ -325,22 +262,6 @@ def unregister_confirm_enabled(typed: str, name: str) -> bool:
 def shutdown_confirm_enabled(checked: bool) -> bool:
     """``wsl --shutdown`` 必须显式勾选影响说明。"""
     return checked is True
-
-
-def distro_row(distro: Distro, size: int | None, estimated: bool) -> tuple[str, ...]:
-    """Treeview 一行：名称（过长截断）、状态、版本、磁盘、默认标记。"""
-    return (
-        elide_name(distro.name),
-        state_label(distro),
-        str(distro.version) if distro.version else "未知",
-        format_bytes(size, estimated=estimated),
-        "是" if distro.default else "",
-    )
-
-
-def detail_lines(distro: Distro, size: int | None, estimated: bool) -> list[str]:
-    """详情面板文本行；与 :func:`detail_fields` 同源，未知字段统一显示 ``未知``。"""
-    return [f"{label}: {value}" for label, value in detail_fields(distro, size, estimated)]
 
 
 def image_source_text(entry: _images.ImageEntry) -> str:

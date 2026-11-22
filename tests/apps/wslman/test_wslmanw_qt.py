@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QMessageBox, QTableWidget
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from fcmd.apps.wslman import _wslmanw_qt, wslmanw
 from fcmd.apps.wslman import wslman as cli
@@ -69,10 +69,12 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return base
 
 
-def _text(table: QTableWidget, row: int, column: int) -> str:
-    item = table.item(row, column)
+def _distro_row(window: _wslmanw_qt.WslmanQtWindow, index: int) -> _wslmanw_qt._DistroItemRow:
+    item = window.distro_list.item(index)
     assert item is not None
-    return item.text()
+    widget = window.distro_list.itemWidget(item)
+    assert isinstance(widget, _wslmanw_qt._DistroItemRow)
+    return widget
 
 
 def _image_row(window: _wslmanw_qt.WslmanQtWindow, index: int) -> _wslmanw_qt._ImageItemRow:
@@ -95,23 +97,28 @@ def _wait_idle(window: _wslmanw_qt.WslmanQtWindow, timeout: float = 5.0) -> None
     assert not window._busy
 
 
-def test_lists_distros_and_details(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """发行版以行卡呈现：选中行驱动工具栏启停按钮与状态栏摘要。"""
     view = _view(_distro("Ubuntu", "running"), _distro("Debian", "stopped", default=False))
     monkeypatch.setattr(cli, "_view", lambda env: view)
     monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        assert window._table.rowCount() == 2
-        assert _text(window._table, 0, 0) == "Ubuntu"
-        assert _text(window._table, 1, 1) == "已停止"
-        window._table.selectRow(0)
-        assert window.detail_values["名称"].text() == "Ubuntu"
-        assert window.detail_values["虚拟磁盘"].text().endswith("ext4.vhdx")
+        assert window.distro_list.count() == 2
+        assert _distro_row(window, 0).distro.name == "Ubuntu"
+        assert _distro_row(window, 1).state_tag.text() == "已停止"
+        assert _distro_row(window, 0).note_label.text().startswith("v2 · ")
+
+        window.distro_list.setCurrentRow(0)
         assert window.status_detail_text().startswith("Ubuntu")
         assert window.start_button.isEnabled() is False
         assert window.stop_button.isEnabled() is True
-        window._table.selectRow(1)
+        # 行内按钮跟着状态走：运行中显示「停止」，已停止显示「启动」
+        assert _distro_row(window, 0).start_stop_button.text() == "停止"
+        assert _distro_row(window, 1).start_stop_button.text() == "启动"
+
+        window.distro_list.setCurrentRow(1)
         assert window.start_button.isEnabled() is True
         assert window.stop_button.isEnabled() is False
     finally:
@@ -120,7 +127,40 @@ def test_lists_distros_and_details(home: Path, monkeypatch: pytest.MonkeyPatch) 
         window.deleteLater()
 
 
-def test_status_refresh_only_updates_state_column(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_distro_row_expands_inline_details(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """详情在行内展开（与 llmw 模型行一致），不再占用下方分栏。"""
+    view = _view(_distro("Ubuntu", "running"), _distro("Debian", "stopped", default=False))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        first, second = _distro_row(window, 0), _distro_row(window, 1)
+        first.expand_button.click()
+        assert first.is_expanded() is True
+        assert not window.distro_detail_view.isHidden()
+        assert window.distro_detail_view.values["名称"].text() == "Ubuntu"
+        assert window.distro_detail_view.values["虚拟磁盘"].text().endswith("ext4.vhdx")
+
+        # 展开另一行时先收起旧行；详情控件跟着换行
+        second.expand_button.click()
+        assert first.is_expanded() is False
+        assert second.is_expanded() is True
+        assert window.distro_detail_view.values["名称"].text() == "Debian"
+
+        second.expand_button.click()
+        assert second.is_expanded() is False
+        assert window.distro_detail_view.isHidden()
+        # 双击行等价于点展开
+        window._on_distro_double_clicked(window.distro_list.item(0))
+        assert first.is_expanded() is True
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_status_refresh_updates_rows_in_place(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """轮询只更新行内状态，不重建列表：选中行与行卡实例保持不变。"""
     stopped = _view(_distro("Ubuntu", "stopped"))
     running = _view(_distro("Ubuntu", "running"))
     current = {"view": stopped}
@@ -129,12 +169,17 @@ def test_status_refresh_only_updates_state_column(home: Path, monkeypatch: pytes
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        window._table.selectRow(0)
+        window.distro_list.setCurrentRow(0)
+        row = _distro_row(window, 0)
+        assert row.state_tag.text() == "已停止"
+
         current["view"] = running
         window._on_status(running)
-        assert window._table.rowCount() == 1
-        assert _text(window._table, 0, 1) == "运行中"
-        assert window._table.currentRow() == 0
+        assert window.distro_list.count() == 1
+        assert _distro_row(window, 0) is row  # 同一个行卡实例，未被重建
+        assert row.state_tag.text() == "运行中"
+        assert row.start_stop_button.text() == "停止"
+        assert window.distro_list.currentRow() == 0
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
@@ -259,7 +304,7 @@ def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
         assert window.page_title.text() == "发行版"
         # 四页控件建窗即存在（设置落盘与下载动作会直接读设置页 / 镜像页控件）；
         # 页面本身仍由共享骨架在首次切换时挂进页面栈。
-        assert window._table.rowCount() >= 0
+        assert window.distro_list.count() == 0
         assert window.image_list.count() == 0
         window.nav.set_collapsed(True)
         window._persist_settings("1160x760+0+0")
@@ -592,7 +637,7 @@ def test_statusbar_is_single_line(home: Path, monkeypatch: pytest.MonkeyPatch) -
         assert window.statusBar().height() == single
 
         # 发行版页：选中摘要走「页内补充」，不换行、不撑高
-        window._table.selectRow(0)
+        window.distro_list.setCurrentRow(0)
         QApplication.processEvents()
         assert window.status_detail_text()
         assert window.statusBar().height() == single
@@ -646,7 +691,7 @@ def test_distro_summary_only_on_distros_page(home: Path, monkeypatch: pytest.Mon
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        window._table.selectRow(0)
+        window.distro_list.setCurrentRow(0)
         QApplication.processEvents()
         assert window.status_detail_text().startswith("Ubuntu")
         window.show_page("images")

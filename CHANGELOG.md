@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `wslmanw` 发行版列表改为行卡（对齐 llmw 模型列表）：行内给名称 / 版本 / 占用 /
+  状态与默认胶囊 / 启动停止按钮，详情（BasePath、虚拟磁盘、占用量、默认用户、来源）
+  通过行内「展开」就地显示，移除下方的表格 + 详情分栏；状态轮询改为就地刷新行内状态。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

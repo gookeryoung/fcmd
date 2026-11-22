@@ -72,7 +72,6 @@ from fcmd.gui.qt.widgets import (
     fit_dialog_to_content,
     hint_label,
     icon_button,
-    make_splitter,
     make_table,
     make_table_item,
 )
@@ -99,8 +98,6 @@ PAGES: tuple[tuple[str, str, str, str], ...] = (
 )
 """侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。"""
 
-_COLUMN_KEYS: tuple[str, ...] = tuple(key for key, _title, _minimum, _maximum in w._COLUMNS)
-
 
 def _images_stamp(fetched_at: float) -> str:
     """镜像清单时间戳：当天只显示 ``HH:MM``，跨天补 ``月-日``。"""
@@ -126,6 +123,166 @@ class _LogBridge(QObject):  # pragma: no cover - Qt 信号桥
     """后台任务的日志行信号（跨线程排队到主线程）。"""
 
     message = Signal(str)
+
+
+def _state_tone(state: str) -> str:
+    """发行版状态 → 胶囊色调（与 ``state_label`` 的文案配套）。"""
+    return {"running": "success", "stopped": "muted", "unknown": "warning"}.get(state, "muted")
+
+
+class _DistroItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
+    """发行版行卡：与 llmw 模型行同构（标题 + 副标题 + 状态胶囊 + 行内动作 + 展开）。
+
+    详情（BasePath / 虚拟磁盘 / 占用 / 默认用户 / 来源）不再占用下方的详情面板，
+    改为行内「展开」就地显示；同一时间只展开一行。
+    """
+
+    toggleRequested = Signal(object)
+    startStopRequested = Signal(str)
+
+    def __init__(
+        self,
+        distro: Distro,
+        size: int | None,
+        estimated: bool,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.distro = distro
+        self.size = size
+        self.estimated = estimated
+        self._expanded = False
+        self.setObjectName("DistroItemRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("selected", "false")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        header = QWidget(self)
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(12, 8, 12, 8)
+        header_row.setSpacing(12)
+
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(3)
+        self.name_label = ElidedLabel(distro.name, mode=Qt.TextElideMode.ElideRight, parent=header)
+        self.name_label.setObjectName("DistroItemName")
+        self.name_label.setToolTip(distro.name)
+        left.addWidget(self.name_label)
+        note_row = QHBoxLayout()
+        note_row.setContentsMargins(0, 0, 0, 0)
+        note_row.setSpacing(6)
+        self.note_label = QLabel("", header)
+        self.note_label.setObjectName("Hint")
+        self.note_label.setWordWrap(False)
+        note_row.addWidget(self.note_label, 0)
+        note_row.addStretch(1)
+        self.state_tag = StatusTag("", tone="muted", parent=header)
+        note_row.addWidget(self.state_tag, 0)
+        self.default_tag = StatusTag("默认", tone="accent", parent=header)
+        note_row.addWidget(self.default_tag, 0)
+        left.addLayout(note_row)
+        header_row.addLayout(left, 1)
+
+        self.start_stop_button = button("启动", kind="primary")
+        self.start_stop_button.clicked.connect(lambda: self.startStopRequested.emit(distro.name))
+        header_row.addWidget(self.start_stop_button, 0)
+        self.expand_button = icon_button("", tooltip="展开详情")
+        self.expand_button.setIconSize(QSize(16, 16))
+        _set_icon(self.expand_button, "chevron-down", tone="muted")
+        self.expand_button.setAccessibleName("展开详情")
+        self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
+        header_row.addWidget(self.expand_button, 0)
+        outer.addWidget(header)
+
+        self.detail_host = QWidget(self)
+        self.detail_host.setVisible(False)
+        self.detail_layout = QVBoxLayout(self.detail_host)
+        self.detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.detail_layout.setSpacing(0)
+        outer.addWidget(self.detail_host)
+
+        self.update_distro(distro, size, estimated)
+
+    def update_distro(self, distro: Distro, size: int | None, estimated: bool) -> None:
+        """就地刷新状态 / 占用 / 默认标记与启停按钮（轮询不重建行）。"""
+        self.distro = distro
+        self.size = size
+        self.estimated = estimated
+        self.setToolTip(f"{distro.name}\n{distro.base_path or '未知'}")
+        self.name_label.setText(distro.name)
+        self.name_label.setToolTip(distro.name)
+        note = f"v{distro.version or '未知'} · {format_bytes(size, estimated=estimated)}"
+        self.note_label.setText(note)
+        self.note_label.setToolTip(note)
+        self.state_tag.set_status(state_label(distro), _state_tone(distro.state))
+        self.default_tag.setVisible(distro.default)
+        can_start, can_stop = w.action_states(distro.state)
+        self.start_stop_button.setText("停止" if can_stop else "启动")
+        self.start_stop_button.setEnabled(can_start or can_stop)
+        self.start_stop_button.setToolTip(f"停止 {distro.name}" if can_stop else f"启动 {distro.name}")
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool) -> None:
+        """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
+        self._expanded = expanded
+        self.detail_host.setVisible(expanded)
+        _set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down", tone="muted")
+        self.expand_button.setToolTip("收起详情" if expanded else "展开详情")
+        self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
+
+    def set_busy(self, busy: bool) -> None:
+        """任务进行中禁用行内启停按钮；结束后按当前状态重新计算。"""
+        if busy:
+            self.start_stop_button.setEnabled(False)
+            return
+        can_start, can_stop = w.action_states(self.distro.state)
+        self.start_stop_button.setEnabled(can_start or can_stop)
+
+
+class _DistroDetailView(QWidget):  # pragma: no cover - Qt 控件
+    """展开行里的发行版详情：字段网格 + 长路径可选中复制。
+
+    同一个实例在行之间复用：展开哪一行就挂到哪一行的 ``detail_layout`` 下。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 10)
+        layout.setSpacing(6)
+        separator = QFrame(self)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(separator)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(2)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        self.values: dict[str, QLabel] = {}
+        for index, label in enumerate(w._DETAIL_LABELS):
+            row, column = divmod(index, 2)
+            grid.addWidget(hint_label(f"{label}：", wrap=False), row, column * 2, Qt.AlignmentFlag.AlignTop)
+            value = QLabel("—", self)
+            value.setWordWrap(True)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid.addWidget(value, row, column * 2 + 1, Qt.AlignmentFlag.AlignTop)
+            self.values[label] = value
+        layout.addLayout(grid)
+
+    def render(self, distro: Distro, size: int | None, estimated: bool) -> None:
+        """回填字段；未知字段统一显示 ``—``。"""
+        fields = dict(w.detail_fields(distro, size, estimated))
+        for label, widget in self.values.items():
+            text = fields.get(label, "—")
+            widget.setText(text)
+            widget.setToolTip(text)
 
 
 class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
@@ -398,30 +555,30 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 构建
     # ------------------------------------------------------------------ #
     def _build_distros_page(self) -> QWidget:
-        """发行版页：动作行 + 纵向分栏（列表 / 详情）。"""
+        """发行版页：动作行 + 行卡列表（详情在行内展开）。
+
+        与 llmw 模型页同构：固定行只有动作条，列表吃满剩余空间并自带滚动；
+        BasePath / 虚拟磁盘 / 占用等详情通过行内「展开」就地显示，不再占用
+        下方分栏，发行版多时也不会被详情面板压掉一半高度。
+        """
         page = QWidget(self)
         body = QVBoxLayout(page)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(8)
         body.addLayout(self._build_distro_actions(page))
 
-        split = make_splitter(Qt.Orientation.Vertical, sizes=(430, 250), parent=page)
-        split.setMinimumHeight(300)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 1)
-        self._table_card = Card("发行版", split)
-        self._table = make_table(
-            [title for _key, title, _minimum, _maximum in w._COLUMNS],
-            widths=[minimum for _key, _title, minimum, _maximum in w._COLUMNS],
-            parent=self._table_card,
-        )
-        self._table.setMinimumHeight(150)
-        self._table.itemSelectionChanged.connect(self._show_details)
-        self._table.cellDoubleClicked.connect(lambda _row, _column: self._open_selected())
-        self._table_card.body.addWidget(self._table)
-        split.addWidget(self._table_card)
-        split.addWidget(self._build_detail_card(split))
-        body.addWidget(split, 1)
+        self.distro_list = RowListWidget(page)
+        self.distro_list.setObjectName("DistroResultList")
+        self.distro_list.setSpacing(4)
+        self.distro_list.setMinimumHeight(200)
+        self.distro_list.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
+        self.distro_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.distro_list.currentRowChanged.connect(self._on_distro_selected)
+        self.distro_list.itemDoubleClicked.connect(self._on_distro_double_clicked)
+        self.distro_detail_view = _DistroDetailView(page)
+        self.distro_detail_view.setVisible(False)
+        self._expanded_distro_row: _DistroItemRow | None = None
+        body.addWidget(self.distro_list, 1)
         return page
 
     def _build_distro_actions(self, page: QWidget) -> QHBoxLayout:
@@ -456,32 +613,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.start_button = self._button_by_text["启动"]
         self.stop_button = self._button_by_text["停止"]
         return toolbar
-
-    def _build_detail_card(self, parent: QWidget) -> Card:
-        """详情卡：9 个字段分左右两组，可随窗口宽度换行。"""
-        card = Card("详情", parent)
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(6)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
-        self.detail_values: dict[str, QLabel] = {}
-        for index, label in enumerate(w._DETAIL_LABELS):
-            group, row = divmod(index, w._DETAIL_ROWS)
-            column = group * 2
-            grid.addWidget(hint_label(label, wrap=False), row, column, Qt.AlignmentFlag.AlignTop)
-            value = QLabel("—", card)
-            value.setWordWrap(True)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            grid.addWidget(value, row, column + 1, Qt.AlignmentFlag.AlignTop)
-            self.detail_values[label] = value
-        card.body.addLayout(grid)
-        self.detail_hint = hint_label("选择上方列表中的发行版查看详情")
-        card.body.addWidget(self.detail_hint)
-        card.body.addStretch(1)
-        card.setMinimumHeight(170)
-        return card
 
     def _build_images_page(self) -> QWidget:
         """镜像页：筛选条（含手动更新）+ 搜索行 + 单行状态 + 行卡列表 + 下载动作。
@@ -786,19 +917,25 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.set_page_status("distros", f"状态刷新失败：{message}")
 
     def _apply_status(self, view: Any) -> None:
-        """只改状态列与按钮态，不重建整表：选中行与滚动位置不受影响。"""
+        """轮询结果：名单没变就只刷新行内状态，不重建列表（选中与滚动位置不动）。"""
         previous = self.view
         self.view = view
         names = [distro.name for distro in view.distros]
         if previous is None or names != [distro.name for distro in previous.distros]:
             self._refresh_rows()
             return
-        for row in range(self._table.rowCount()):
-            distro = self._distro_at(row)
-            if distro is not None:
-                item = self._table.item(row, 1)
-                if item is not None:
-                    item.setText(state_label(distro))
+        for index in range(self.distro_list.count()):
+            row = self.distro_list.itemWidget(self.distro_list.item(index))
+            if not isinstance(row, _DistroItemRow):
+                continue
+            distro = view.find(row.distro.name)
+            if distro is None:
+                continue
+            size, estimated = self.sizes.get(distro.name, (None, False))
+            row.update_distro(distro, size, estimated)
+            row.set_busy(self._busy)
+            if row.is_expanded():
+                self.distro_detail_view.render(distro, size, estimated)
         self._update_action_states()
         self._show_details()
 
@@ -820,66 +957,119 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.sizes = sizes
         return f"已加载 {len(view.distros)} 个发行版"
 
-    def _distro_at(self, row: int) -> Distro | None:
-        if self.view is None or row < 0:
-            return None
-        item = self._table.item(row, 0)
-        if item is None:
-            return None
-        name = item.data(Qt.ItemDataRole.UserRole)
-        return self.view.find(name) if isinstance(name, str) else None
-
     def _selected(self) -> Distro | None:
-        return self._distro_at(self._table.currentRow())
+        row = self._selected_row()
+        return row.distro if row is not None else None
+
+    def _selected_row(self) -> _DistroItemRow | None:
+        item = self.distro_list.currentItem()
+        row = self.distro_list.itemWidget(item) if item is not None else None
+        return row if isinstance(row, _DistroItemRow) else None
 
     def _refresh_rows(self) -> None:
+        """按当前视图重建行卡：保留选中行与展开行（只在名单变化时调用）。"""
         view = self.view
         selected = self._selected()
-        self._rows = []
-        self._table.setRowCount(0)
-        if view is not None:
-            self._table.setRowCount(len(view.distros))
-            for row, distro in enumerate(view.distros):
-                values = w.distro_row(distro, *self.sizes.get(distro.name, (None, False)))
-                self._rows.append(values)
-                for column, text in enumerate(values):
-                    item = make_table_item(text)
-                    if column == 0:
-                        item.setData(Qt.ItemDataRole.UserRole, distro.name)
-                        item.setToolTip(distro.name)
-                    self._table.setItem(row, column, item)
-        self._apply_column_widths(self._table.viewport().width())
+        expanded = self._expanded_distro_row.distro.name if self._expanded_distro_row is not None else ""
+        self._detach_distro_detail()
+        self.distro_list.clear()
+        distros = tuple(view.distros) if view is not None else ()
+        for distro in distros:
+            size, estimated = self.sizes.get(distro.name, (None, False))
+            item = QListWidgetItem(self.distro_list)
+            row = _DistroItemRow(distro, size, estimated, self.distro_list)
+            row.toggleRequested.connect(self._on_distro_toggle)
+            row.startStopRequested.connect(self._toggle_distro_state)
+            row.set_busy(self._busy)
+            item.setSizeHint(QSize(0, row.sizeHint().height()))
+            self.distro_list.setItemWidget(item, row)
+        self.distro_list.sync_row_widths()
+        target = 0 if distros else -1
         if selected is not None:
-            for row in range(self._table.rowCount()):
-                item = self._table.item(row, 0)
-                if item is not None and item.data(Qt.ItemDataRole.UserRole) == selected.name:
-                    self._table.selectRow(row)
+            found = next((index for index, distro in enumerate(distros) if distro.name == selected.name), None)
+            if found is not None:
+                target = found
+        if target >= 0:
+            self.distro_list.setCurrentRow(target)
+        if expanded:
+            for index in range(self.distro_list.count()):
+                row = self.distro_list.itemWidget(self.distro_list.item(index))
+                if isinstance(row, _DistroItemRow) and row.distro.name == expanded:
+                    self._expand_distro_row(row)
                     break
         self._show_details()
 
-    def _apply_column_widths(self, available: int) -> None:
-        widths = w.column_widths(self._rows, available if available > 1 else None)
-        for index, key in enumerate(_COLUMN_KEYS):
-            self._table.setColumnWidth(index, widths[key])
+    def _on_distro_selected(self, current: int) -> None:
+        """选中行变化：同步行卡选中态、工具栏启停按钮与状态栏摘要。"""
+        for index in range(self.distro_list.count()):
+            row = self.distro_list.itemWidget(self.distro_list.item(index))
+            if isinstance(row, _DistroItemRow):
+                row.set_selected(index == current)
+        self._show_details()
 
-    def resizeEvent(self, event: Any) -> None:
-        super().resizeEvent(event)
-        if hasattr(self, "_table"):
-            self._apply_column_widths(self._table.viewport().width())
+    def _on_distro_double_clicked(self, item: QListWidgetItem) -> None:
+        row = self.distro_list.itemWidget(item)
+        if isinstance(row, _DistroItemRow):
+            self._on_distro_toggle(row)
+
+    def _on_distro_toggle(self, row: _DistroItemRow) -> None:
+        """展开一行并在行下方挂详情；同一时间只展开一行（与镜像行一致）。"""
+        self._focus_distro_row(row)
+        if row.is_expanded():
+            row.set_expanded(False)
+            self.distro_detail_view.setVisible(False)
+            self._expanded_distro_row = None
+            self._update_distro_row_height(row)
+            return
+        self._expand_distro_row(row)
+
+    def _expand_distro_row(self, row: _DistroItemRow) -> None:
+        if self._expanded_distro_row is not None and self._expanded_distro_row is not row:
+            self._expanded_distro_row.set_expanded(False)
+            self._update_distro_row_height(self._expanded_distro_row)
+        size, estimated = self.sizes.get(row.distro.name, (None, False))
+        self.distro_detail_view.render(row.distro, size, estimated)
+        row.detail_layout.addWidget(self.distro_detail_view)
+        self.distro_detail_view.setVisible(True)
+        row.set_expanded(True)
+        self._expanded_distro_row = row
+        self._update_distro_row_height(row)
+
+    def _focus_distro_row(self, row: _DistroItemRow) -> None:
+        for index in range(self.distro_list.count()):
+            if self.distro_list.itemWidget(self.distro_list.item(index)) is row:
+                self.distro_list.setCurrentRow(index)
+                return
+
+    def _update_distro_row_height(self, row: _DistroItemRow | None) -> None:
+        if row is None:
+            return
+        layout = row.layout()
+        if layout is not None:
+            layout.activate()
+        for index in range(self.distro_list.count()):
+            item = self.distro_list.item(index)
+            if self.distro_list.itemWidget(item) is row:
+                item.setSizeHint(QSize(0, row.sizeHint().height()))
+                self.distro_list.sync_row_widths()
+                return
+
+    def _detach_distro_detail(self) -> None:
+        """列表重建前把复用的详情控件从旧行摘下来，避免随旧行一起销毁。"""
+        self.distro_detail_view.setParent(None)
+        self.distro_detail_view.setVisible(False)
+        if self._expanded_distro_row is not None:
+            self._expanded_distro_row.set_expanded(False)
+            self._expanded_distro_row = None
 
     def _show_details(self) -> None:
+        """选中行变化时只更新状态栏摘要与工具栏启停按钮（详情在行内）。"""
         distro = self._selected()
         if distro is None:
-            for value in self.detail_values.values():
-                value.setText("—")
-            self.detail_hint.setText("选择上方列表中的发行版查看详情")
             self.set_status_detail("")
             self._update_action_states()
             return
         size, estimated = self.sizes.get(distro.name, (None, False))
-        for label, value in w.detail_fields(distro, size, estimated):
-            self.detail_values[label].setText(value)
-        self.detail_hint.setText("")
         self.set_status_detail(w.summary_text(distro, size, estimated))
         self._update_action_states()
 
@@ -890,6 +1080,25 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         can_start, can_stop = w.action_states(distro.state if distro is not None else None)
         self.start_button.setEnabled(can_start)
         self.stop_button.setEnabled(can_stop)
+
+    def _toggle_distro_state(self, name: str) -> None:
+        """行内「启动 / 停止」：聚焦该行后复用工具栏动作（口径完全一致）。"""
+        row = self._row_for_distro(name)
+        if row is None:
+            return
+        self._focus_distro_row(row)
+        if row.distro.state == "running":
+            self._terminate_selected()
+        else:
+            self._start_selected()
+
+    def _row_for_distro(self, name: str) -> _DistroItemRow | None:
+        key = name.casefold()
+        for index in range(self.distro_list.count()):
+            row = self.distro_list.itemWidget(self.distro_list.item(index))
+            if isinstance(row, _DistroItemRow) and row.distro.name.casefold() == key:
+                return row
+        return None
 
     def _log(self, text: str) -> None:
         self._log_view.append(f"[{time.strftime('%H:%M:%S')}] {text}")
