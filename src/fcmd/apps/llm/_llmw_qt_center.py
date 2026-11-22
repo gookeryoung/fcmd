@@ -1460,10 +1460,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     # -- 详情 ---------------------------------------------------------- #
     def _on_model_selected(self, current: int) -> None:
-        for index in range(self.models.count()):
-            widget = self.models.itemWidget(self.models.item(index))
-            if isinstance(widget, _ModelItemRow):
-                widget.set_selected(index == current)
+        """选中行变化：只重抛光旧 / 新两行（几百行时逐行抛光会明显卡顿）。"""
+        self.models.sync_selection(current)
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         row = self.models.itemWidget(item)

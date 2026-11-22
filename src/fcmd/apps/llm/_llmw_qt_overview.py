@@ -649,11 +649,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             self._recommend_list.setCurrentRow(0)
 
     def _on_recommendation_selected(self, current: int) -> None:
-        for index in range(self._recommend_list.count()):
-            item = self._recommend_list.item(index)
-            row = self._recommend_list.itemWidget(item)
-            if isinstance(row, RecommendationRow):
-                row.set_selected(index == current)
+        self._recommend_list.sync_selection(current)
 
     # ------------------------------------------------------------------ #
     # 硬件

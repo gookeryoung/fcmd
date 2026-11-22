@@ -7,6 +7,10 @@
 
 ### 变更
 
+- 行卡列表切换选中不再卡顿：`SelectionRow.set_selected` 状态未变时空操作，
+  `RowListWidget.sync_selection()` 只重抛光「旧 / 新」两行，wslmanw 发行版 / 镜像与
+  llmw 模型 / 推荐 / 引擎列表都改用它（200 行单次切换由 ~11ms 降到 ~2.6ms，
+  其中 ~0.2ms 是抛光，其余为 Qt 重绘）。
 - `wslman` 默认工作目录统一为 `${FCMD_HOME:-~/.fcmd}/wsl`，按用途细分 `download/`
   （镜像归档）、`install/`（安装目录根，每个发行版一个子目录）、`backup/`（导出备份）：
   wslmanw 下载 / 安装 / 备份默认落在对应子目录（设置页新增「工作目录」卡片展示这些路径），

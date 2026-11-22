@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFrame,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -564,3 +566,91 @@ def test_card_title_with_action_stays_one_line() -> None:
     assert card.title_label.height() < metrics.height() * 2
     card.close()
     card.deleteLater()
+
+
+# ---------------------------------------------------------------------- #
+# 选中态同步：只重抛光旧 / 新两行（切换选中不卡顿）
+# ---------------------------------------------------------------------- #
+class _Row(SelectionRow, QFrame):
+    """测试用行卡：只关心选中态，不搞真实内容。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setProperty("selected", "false")
+        self.polish_count = 0
+
+
+class _CountingStyle:
+    """记录 polish / unpolish 次数的 style 替身。"""
+
+    def __init__(self, owner: _Row) -> None:
+        self.owner = owner
+
+    def unpolish(self, _widget: object) -> None:
+        self.owner.polish_count += 1
+
+    def polish(self, _widget: object) -> None:
+        self.owner.polish_count += 1
+
+
+def _list_with(count: int) -> tuple[QListWidget, list[_Row]]:
+    from fcmd.gui.qt.widgets import RowListWidget
+
+    view = RowListWidget()
+    view.setVisible(False)
+    rows: list[_Row] = []
+    for _index in range(count):
+        item = QListWidgetItem(view)
+        row = _Row()
+        rows.append(row)
+        view.setItemWidget(item, row)
+    for row in rows:
+        row.style = lambda row=row: _CountingStyle(row)  # type: ignore[method-assign]
+    return view, rows
+
+
+def test_set_selected_is_idempotent() -> None:
+    """状态没变时不重复抛光：重复调用只付一次 QSS 重解析。"""
+    row = _Row()
+    row.style = lambda: _CountingStyle(row)  # type: ignore[method-assign]
+    row.set_selected(False)
+    assert row.polish_count == 0
+
+    row.set_selected(True)
+    assert row.polish_count == 2  # unpolish + polish
+
+    row.set_selected(True)
+    assert row.polish_count == 2  # 幂等：不再抛光
+
+    row.set_selected(False)
+    assert row.polish_count == 4
+    row.deleteLater()
+
+
+def test_sync_selection_only_touches_old_and_new_rows() -> None:
+    """切换选中只处理「上一行 / 当前行」，不是 O(N) 全列表重抛光。"""
+    view, rows = _list_with(40)
+    try:
+        view.sync_selection(3)
+        assert [row.polish_count for row in rows].count(2) == 1  # 只有 3 号抛光
+        assert rows[3].is_selected() is True
+
+        for row in rows:
+            row.polish_count = 0
+        view.sync_selection(7)
+        polished = [index for index, row in enumerate(rows) if row.polish_count]
+        assert polished == [3, 7]  # 旧行取消 + 新行选中
+        assert rows[3].is_selected() is False
+        assert rows[7].is_selected() is True
+
+        # 切到同一行是空操作
+        for row in rows:
+            row.polish_count = 0
+        view.sync_selection(7)
+        assert [row.polish_count for row in rows] == [0] * 40
+
+        # 选中行被裁掉（列表重建后行数变少）时不越界
+        view.sync_selection(99)
+        assert rows[7].is_selected() is False
+    finally:
+        view.deleteLater()

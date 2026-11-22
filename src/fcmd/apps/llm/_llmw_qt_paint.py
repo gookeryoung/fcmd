@@ -1283,11 +1283,8 @@ class PaintEngineCard(Card):  # pragma: no cover - Qt 控件
         self.engines_list.setFixedHeight(min(content, cap))
 
     def _on_row_selected(self, current: int) -> None:
-        """同步行选中态（只加粗边框，不影响内容）。"""
-        for index in range(self.engines_list.count()):
-            row = self.engines_list.itemWidget(self.engines_list.item(index))
-            if isinstance(row, _PaintEngineRow):
-                row.set_selected(index == current)
+        """同步行选中态（只重抛光旧 / 新两行）。"""
+        self.engines_list.sync_selection(current)
 
     def _on_double_clicked(self, item: QListWidgetItem) -> None:
         """双击引擎行直接设为默认。"""

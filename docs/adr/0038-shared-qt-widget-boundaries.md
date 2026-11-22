@@ -25,6 +25,7 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D5 | `LogDialog` 只服务「独立日志窗口」；页面内日志继续用 `LogView` | 各工具窗口 |
 | D6 | `ProgressRow` 用于独立进度行；与按钮 / 文字同处一行的进度条保留窗口自己的布局 | ncmconvert、filescan、devman、llmw 下载区 |
 | D7 | 图标统一走 `fcmd.gui.qt.icons`（内置 Lucide 线性图标），不引入外部图标包 | 侧边栏、按钮、行卡展开 / 收起 |
+| D9 | 行卡选中态走 `RowListWidget.sync_selection()`：只重抛光「旧 / 新」两行，`set_selected` 状态未变时空操作 | 共享 `ItemRow` 的所有列表（wslmanw 发行版 / 镜像、llmw 模型 / 推荐 / 引擎） |
 | D8 | 底部状态栏统一用 `WindowStatusBar`：单行高度（文字与页内补充都是 `ElidedLabel`，加载条用 `compact`），文字 / 页内补充按分页隔离，任务消息写回「发起任务的那一页」 | `gui/qt/statusbar.py`、`QtMainWindow`、wslmanw |
 
 ### D1 行卡骨架为什么收敛到 ItemRow
@@ -56,6 +57,17 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 用半透明的 `accent_soft_strong`」：llmw 模型行、wslmanw 发行版行与镜像行都只靠
 `QFrame[itemRow="true"]` 这一组选择器取样式，列表自身透明无边框。新增可展开行卡
 （任何应用）直接继承 `ItemRow` 就得到同一套外观，不需要改主题、也不需要新增对象名。
+
+### D9 行卡选中态只重抛光两行
+
+行卡选中态是动态属性 + QSS（`[selected="true"]`），切换时需要 `unpolish` + `polish`
+重解析该控件的样式。原实现每次选中变化都遍历整列行卡逐行 `set_selected`，行数到
+几十上百时就是 O(N) 次重抛光（实测 200 行单次切换约 7~11ms，键盘连按明显掉帧）。
+
+现在两处一起改：`SelectionRow.set_selected` 属性没变直接返回（幂等），
+`RowListWidget.sync_selection(current)` 只处理上一次的当前行与本次当前行；各窗口的
+`currentRowChanged` 回调统一改成调用它，不再自己遍历。行数再多，单次切换的抛光次数
+也恒为 0~2 次。
 
 ### D8 为什么统一状态栏
 

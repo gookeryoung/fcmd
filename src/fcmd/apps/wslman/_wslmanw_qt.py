@@ -1063,11 +1063,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 row.update_image(entry, known=known)
 
     def _on_distro_selected(self, current: int) -> None:
-        """选中行变化：同步行卡选中态、工具栏启停按钮与状态栏摘要。"""
-        for index in range(self.distro_list.count()):
-            row = self.distro_list.itemWidget(self.distro_list.item(index))
-            if isinstance(row, _DistroItemRow):
-                row.set_selected(index == current)
+        """选中行变化：只重抛光旧 / 新两行，再更新工具栏与状态栏摘要。"""
+        self.distro_list.sync_selection(current)
         self._show_details()
 
     def _on_distro_double_clicked(self, item: QListWidgetItem) -> None:
@@ -1671,10 +1668,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._filter_timer.start()
 
     def _on_image_selected(self, current: int) -> None:
-        for index in range(self.image_list.count()):
-            widget = self.image_list.itemWidget(self.image_list.item(index))
-            if isinstance(widget, _ImageItemRow):
-                widget.set_selected(index == current)
+        self.image_list.sync_selection(current)
 
     def _on_image_double_clicked(self, item: QListWidgetItem) -> None:
         row = self.image_list.itemWidget(item)

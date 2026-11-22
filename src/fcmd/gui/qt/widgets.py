@@ -414,6 +414,22 @@ class RowListWidget(QListWidget):  # pragma: no cover - Qt 控件
         super().resizeEvent(event)
         self.sync_row_widths()
 
+    def sync_selection(self, current: int) -> None:
+        """只更新「上一行 / 当前行」的选中态，避免每次切换重抛光整列行卡。
+
+        行数是几十到几百，逐行 ``set_selected`` 会为每行跑一次 QSS 重抛光
+        （实测 200 行单次切换约 7ms，按键连按就明显卡顿）；这里记住上一次的
+        当前行，只动两行。
+        """
+        previous = getattr(self, "_selected_row", -1)
+        for index in {previous, current}:
+            if not 0 <= index < self.count():
+                continue
+            widget = self.itemWidget(self.item(index))
+            if isinstance(widget, SelectionRow):
+                widget.set_selected(index == current)
+        self._selected_row = current
+
     def sync_row_widths(self) -> None:
         """把每行自定义控件的几何对齐到列表当前可视区域。"""
         for index in range(self.count()):
@@ -428,11 +444,22 @@ class SelectionRow:
 
     与 QSS 的 ``[selected="true"]`` 选择器配套：列表当前行变化时由页面调用，
     切换动态属性并立即重新抛光，无需重建控件。
+
+    抛光（unpolish + polish）要重解析该控件的 QSS，几百行时每次切选中都很贵；
+    因此这里做两件事：属性没变就直接返回（幂等），调用方用
+    :meth:`RowListWidget.sync_selection` 只处理旧 / 新两行，而不是遍历全部行。
     """
 
+    def is_selected(self: QWidget) -> bool:
+        """当前是否处于选中态（读动态属性，避免重复抛光）。"""
+        return self.property("selected") == "true"
+
     def set_selected(self: QWidget, selected: bool) -> None:
-        """切换选中态边框（列表当前行变化时由页面同步）。"""
-        self.setProperty("selected", "true" if selected else "false")
+        """切换选中态边框；状态未变化时不重复抛光。"""
+        value = "true" if selected else "false"
+        if self.property("selected") == value:
+            return
+        self.setProperty("selected", value)
         self.style().unpolish(self)
         self.style().polish(self)
 
