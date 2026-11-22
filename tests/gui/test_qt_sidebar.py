@@ -139,6 +139,38 @@ def test_collapsed_without_icon_keeps_toggle_to_expand(nav: Any) -> None:
     assert nav.toggle_button.icon().isNull() is False
 
 
+def test_nav_badge_shows_count_and_repositions_on_collapse() -> None:
+    """侧边栏页按钮的数量徽标：半透明圆点、折叠 / 展开重新摆放、清零收起。"""
+    app = QApplication.instance() or QApplication([])
+    nav = SidebarNav(title="llmw")
+    try:
+        nav.add("run", "运行", icon="run")
+        nav.show()
+        app.processEvents()
+        nav.set_badge("run", 12)
+        badge = nav.badge_label("run")
+        assert badge is not None and badge.isVisible()
+        assert badge.objectName() == "NavBadge"
+        assert badge.text() == "12"
+        assert nav.badge("run") == 12
+        # 点击穿透：徽标不拦截鼠标
+        assert badge.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        expanded_x = badge.x()
+
+        nav.set_collapsed(True)
+        app.processEvents()
+        assert badge.x() != expanded_x  # 折叠态贴右上角
+        nav.set_collapsed(False)
+        app.processEvents()
+        assert badge.x() == expanded_x
+
+        nav.set_badge("run", 0)
+        assert nav.badge("run") == 0
+        assert badge.isHidden() is True
+    finally:
+        nav.deleteLater()
+
+
 def test_collapsed_keeps_icon_and_shows_expand_button() -> None:
     """折叠后保留应用图标（居中），并在图标下方给出始终可见的展开按钮。"""
     application = QApplication.instance() or QApplication([])

@@ -27,6 +27,7 @@ from fcmd.apps.llm.llmdown import (
     model_series,
     series_rank,
 )
+from fcmd.apps.llm.llmmodel import detect_model_tags
 
 __all__ = [
     "DEFAULT_MODEL_FILTER",
@@ -37,6 +38,7 @@ __all__ = [
     "MIN_ONLINE_MODEL_BYTES",
     "MODEL_FILTERS",
     "MODEL_SORTS",
+    "USAGE_KEYS",
     "DownloadGuiSettings",
     "dedupe_by_repo",
     "detail_pairs",
@@ -61,6 +63,8 @@ __all__ = [
     "parse_patterns",
     "quant_precision_label",
     "repo_for_model_path",
+    "running_usage",
+    "running_usage_counts",
     "settings_from_dict",
     "settings_to_dict",
     "sort_browse_items",
@@ -430,6 +434,34 @@ def matches_category(name: str, filter_key: str) -> bool:
     keywords = _FILTER_KEYWORDS.get(filter_key, ())
     lowered = name.casefold()
     return any(keyword.casefold() in lowered for keyword in keywords)
+
+
+USAGE_KEYS: tuple[str, ...] = ("chat", "code", "paint", "video", "audio")
+"""运行页页签的用途 key（与运行中模型的数量徽标同一顺序）。"""
+
+
+def running_usage(model_name: str) -> str:
+    """运行中的模型名 → 用途 key（与运行页各页签的模型候选口径一致）。
+
+    视频 / 音频先按分类关键字判定（更具体），再按能力标签判「代码」，其余算「对话」；
+    画图是 sd.cpp 的独立服务，不经过这里（由调用方按画图服务存活情况单独计数）。
+    """
+    for usage in ("video", "audio"):
+        if matches_category(model_name, usage):
+            return usage
+    if "代码" in detect_model_tags(model_name):
+        return "code"
+    return "chat"
+
+
+def running_usage_counts(models: Sequence[str], *, paint_alive: bool = False) -> dict[str, int]:
+    """按用途统计运行中的模型数量；``paint_alive`` 表示 sd.cpp 画图服务在运行。"""
+    counts = dict.fromkeys(USAGE_KEYS, 0)
+    for name in models:
+        counts[running_usage(name)] += 1
+    if paint_alive:
+        counts["paint"] += 1
+    return counts
 
 
 def merge_installed_items(

@@ -34,6 +34,9 @@ locllmw 原先与其他整窗工具一样，用顶部
   带图标时展开态「图标 + 文字」、折叠态只显示图标（见 ADR 0038 的 D7），
   `select(target)` 接受 key / 索引 / 页面控件，`step(delta)` 循环切换，
   `keys()` / `selected()` 读取状态。
+- 数量徽标 `set_badge(key, count)`：页按钮右端（折叠态右上角）叠加半透明圆形数字，
+  `count <= 0` 收起；徽标带 `WA_TransparentForMouseEvents`，点击仍落到按钮上。
+  llmw 侧边栏「运行」用它显示运行中模型总数（见 [ADR 0027](0027-llmw-rename.md)）。
 - `on_change(key)` 只在**真正切页**时回调；首个页面自动选中但不回调，
   避免构造期回调访问尚未建好的控件（与 `Notebook` 事件异步触发的效果对齐）。
 - 快捷键 `enable_shortcuts()`：`Ctrl+Tab` / `Ctrl+Shift+Tab` /

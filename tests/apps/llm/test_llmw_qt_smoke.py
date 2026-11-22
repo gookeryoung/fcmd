@@ -246,6 +246,55 @@ def test_chat_config_dialog_starts_compact(window: Any) -> None:
     dialog.close()
 
 
+def test_running_models_show_count_badges(window: Any) -> None:
+    """运行中的模型数量：运行页对应类别页签 + 侧边栏「运行」都显示圆形徽标。"""
+    from fcmd.apps.llm import _llmpaint_server
+    from fcmd.apps.llm.llmbase import ServeState
+
+    def serve_state(model: str, port: int) -> ServeState:
+        return ServeState(
+            name=f"svc-{port}",
+            pid=1000 + port,
+            create_time=0.0,
+            host="127.0.0.1",
+            port=port,
+            model=model,
+            profile="balanced",
+            context=8192,
+            engine="",
+            alias="",
+            api_key="",
+            log="",
+            started_at="",
+        )
+
+    window.state.alive_states = [
+        serve_state("/models/Qwen3-Coder-30B.gguf", 8081),
+        serve_state("/models/Qwen3-8B-Instruct.gguf", 8082),
+    ]
+    window.state.servicesChanged.emit(window.state.alive_states)
+    bar = window.run_page.tabs.tabBar()
+    assert bar.badge(0) == 1  # 对话
+    assert bar.badge(1) == 1  # 编程
+    assert bar.badge(2) == 0
+    assert window.nav.badge("run") == 2
+
+    # 画图（sd.cpp）是独立后端：单独计数并落到「画图」页签
+    window.run_page._paint_probe = _llmpaint_server.PaintProbe(None, True, True, True)
+    window.run_page.sync_running_badges()
+    assert bar.badge(2) == 1
+    assert window.nav.badge("run") == 3
+
+    # 全部停止：页签与侧边栏徽标一起收起
+    stopped: list[ServeState] = []
+    window.state.alive_states = stopped
+    window.state.servicesChanged.emit([])
+    window.run_page._paint_probe = None
+    window.run_page.sync_running_badges()
+    assert [bar.badge(index) for index in range(bar.count())] == [0, 0, 0, 0, 0]
+    assert window.nav.badge("run") == 0
+
+
 def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     """运行页分「对话 / 编程 / 画图 / 视频 / 音频」：前四项共用参数，画图只配启动参数与启停。"""
     window.show_page("run")
@@ -1119,6 +1168,39 @@ def test_import_source_archive_sets_convert_script(
     assert script.read_bytes() == archive.read_bytes()
     assert page.engine_source_tag.text() == "已指定源码包"
     assert page.engine_source_tag.property("tone") == "success"
+
+
+def test_convert_engine_tag_is_editable_combo(window: Any) -> None:
+    """「引擎 tag」是可编辑下拉框：既能选已装引擎，也能填自定义 tag。"""
+    from PySide6.QtWidgets import QComboBox
+
+    window.show_page("settings")
+    page = window.page("settings")
+    assert isinstance(page.convert_tag, QComboBox)
+    assert page.convert_tag.isEditable()
+    page.convert_tag.setCurrentText("b9-custom")
+    page._save_convert()
+    assert window.state.settings.convert["tag"] == "b9-custom"
+
+
+def test_convert_architectures_button_lists_supported(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """「查看支持的架构…」列出当前脚本注册的架构，便于判断模型能否转换。"""
+    from fcmd.apps.llm import llmconvert
+
+    window.show_page("settings")
+    page = window.page("settings")
+    messages: list[str] = []
+    monkeypatch.setattr(
+        llmconvert, "supported_architectures", lambda *_a, **_k: ("LlamaForCausalLM", "GPT2LMHeadModel")
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, _title, text, *_a, **_k: messages.append(str(text)),
+    )
+    page.convert_arch_button.click()
+    assert messages and "LlamaForCausalLM" in messages[0]
+    assert "2 个架构" in messages[0]
 
 
 def test_settings_engine_panel_is_compact(window: Any) -> None:

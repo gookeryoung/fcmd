@@ -41,6 +41,7 @@ from fcmd.gui.qt.widgets import (
     LogView,
     MetricGrid,
     PathRow,
+    PillTabBar,
     ProgressRow,
     SegmentBar,
     SelectionRow,
@@ -217,6 +218,40 @@ def test_icon_button_height_matches_default_button() -> None:
         assert icon.width() == icon.height()
     finally:
         container.deleteLater()
+
+
+def test_pill_tab_bar_badge_reserves_width_and_paints() -> None:
+    """页签数量徽标：占用右侧额外宽度、按数量绘制、清零后恢复原宽。"""
+    from PySide6.QtWidgets import QTabWidget
+
+    tabs = QTabWidget()
+    try:
+        pill_tabs(tabs)
+        tabs.addTab(QWidget(), "对话")
+        tabs.addTab(QWidget(), "编程")
+        bar = tabs.tabBar()
+        assert isinstance(bar, PillTabBar)
+
+        tabs.resize(360, 120)
+        tabs.show()
+        QApplication.processEvents()
+        plain = tabs.grab().toImage()
+        before = bar.tabSizeHint(0).width()
+        bar.set_badge(0, 3)
+        QApplication.processEvents()
+        assert bar.badge(0) == 3
+        assert bar.tabSizeHint(0).width() == before + 18
+        assert tabs.grab().toImage() != plain  # 徽标真的画上去了
+
+        bar.set_badge(1, 120)  # 三位数按 99 显示，不影响其它页签
+        assert bar.badge(1) == 120
+        assert bar.tabSizeHint(0).width() == before + 18
+
+        bar.set_badge(0, 0)
+        assert bar.badge(0) == 0
+        assert bar.tabSizeHint(0).width() == before
+    finally:
+        tabs.deleteLater()
 
 
 def test_pill_tabs_share_one_theme_contract() -> None:

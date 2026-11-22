@@ -697,6 +697,14 @@ QLabel#RecommendationName, QLabel#ItemRowName, QLabel#EngineItemName {
     font-size: ${font_heading}pt;
     font-weight: 600;
 }
+/* 侧边栏页按钮上的数量徽标：半透明强调色底 + 强调色数字的圆点。 */
+QLabel#NavBadge {
+    background: $accent_soft_strong;
+    color: $accent;
+    border-radius: 9px;
+    font-size: ${font_small}pt;
+    font-weight: 700;
+}
 QPushButton#InstalledButton, QPushButton#ConvertedButton {
     color: $success;
     background: $success_soft;

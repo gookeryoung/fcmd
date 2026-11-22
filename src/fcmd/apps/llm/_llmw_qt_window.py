@@ -91,6 +91,8 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.state.modelsUpdatedAtChanged.connect(self._show_models_updated_at)
         self._show_models_updated_at(self.state.models_updated_at or "")
         self.state.sampleCapacityChanged.connect(self.run_page.update_service_and_fit)
+        # 运行中模型数量：侧边栏「运行」页按钮上的圆形徽标。
+        self.run_page.runningChanged.connect(self._sync_run_badge)
         self.state.recommendationApplied.connect(self.run_page.apply_recommendation)
         self.state.modelsChanged.connect(self._on_models_changed)
         self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
@@ -102,6 +104,11 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.state.detect_hardware()
         else:
             self.overview.refresh_hardware()
+
+    def _sync_run_badge(self, counts: object) -> None:
+        """运行页的模型数量变化：把总数写到侧边栏「运行」按钮的徽标上。"""
+        total = sum(counts.values()) if isinstance(counts, dict) else 0
+        self.nav.set_badge("run", total)
 
     # ------------------------------------------------------------------ #
     # 菜单 / 日志

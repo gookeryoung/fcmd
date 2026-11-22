@@ -24,7 +24,7 @@ CI 无显示环境也能单测。
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QSize, Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QResizeEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -48,6 +48,9 @@ EXPANDED_WIDTH = 220
 
 COLLAPSED_WIDTH = 60
 """折叠态侧边栏宽度：一个中文字 + 左右内边距与更大图标。"""
+
+BADGE_SIZE = 18
+"""数量徽标直径（像素）：圆角半径取一半，数字用主题强调色。"""
 
 
 class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
@@ -74,6 +77,8 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._hints: dict[str, str] = {}
         self._icons: dict[str, str | None] = {}
         self._buttons: dict[str, QPushButton] = {}
+        self._badges: dict[str, QLabel] = {}
+        self._badge_counts: dict[str, int] = {}
         self._collapsed = False
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
@@ -194,6 +199,64 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
     def button(self, key: str) -> QPushButton | None:
         """返回页按钮（测试与窗口同步用）。"""
         return self._buttons.get(key)
+
+    # ------------------------------------------------------------------ #
+    # 数量徽标
+    # ------------------------------------------------------------------ #
+    def set_badge(self, key: str, count: int) -> None:
+        """在页按钮上叠加半透明圆形数量徽标；``count <= 0`` 时收起。
+
+        展开态贴在按钮右端、折叠态贴右上角；徽标不拦截鼠标，点击仍落到按钮上。
+        """
+        button = self._buttons.get(key)
+        if button is None:
+            raise KeyError(f"页面不存在: {key}")
+        badge = self._badges.get(key)
+        if count <= 0:
+            self._badge_counts.pop(key, None)
+            if badge is not None:
+                badge.hide()
+            return
+        self._badge_counts[key] = count
+        if badge is None:
+            badge = QLabel(button)
+            badge.setObjectName("NavBadge")
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            badge.setFixedSize(BADGE_SIZE, BADGE_SIZE)
+            self._badges[key] = badge
+        badge.setText("99" if count > 99 else str(count))
+        badge.show()
+        self._place_badge(button, badge)
+
+    def badge(self, key: str) -> int:
+        """某页当前的徽标数量（0 表示没有徽标）。"""
+        return self._badge_counts.get(key, 0)
+
+    def badge_label(self, key: str) -> QLabel | None:
+        """某页的徽标控件（测试 / 调试用）。"""
+        return self._badges.get(key)
+
+    def _place_badge(self, button: QPushButton, badge: QLabel) -> None:
+        """按展开 / 折叠态摆放徽标：展开贴右端（与文字同一行），折叠贴右上角。"""
+        if self._collapsed:
+            x = button.width() - BADGE_SIZE - 4
+            y = 3
+        else:
+            x = button.width() - BADGE_SIZE - 12
+            y = (button.height() - BADGE_SIZE) // 2
+        badge.move(max(0, x), max(0, y))
+
+    def _sync_badges(self) -> None:
+        """按钮尺寸 / 折叠态变化后重新摆放全部徽标。"""
+        for key, badge in self._badges.items():
+            button = self._buttons.get(key)
+            if button is not None and badge.isVisible():
+                self._place_badge(button, badge)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._sync_badges()
 
     def select(self, target: str | int) -> str:
         """切到指定页：``target`` 可以是 key 或索引；非法值抛 ``KeyError``。"""

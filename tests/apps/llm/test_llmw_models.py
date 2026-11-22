@@ -24,6 +24,7 @@ from fcmd.apps.llm._llmw_models import (
     FILE_STATE_PARTIAL,
     MIN_ONLINE_MODEL_BYTES,
     MODEL_FILTERS,
+    USAGE_KEYS,
     DownloadGuiSettings,
     dedupe_by_repo,
     detail_pairs,
@@ -49,6 +50,8 @@ from fcmd.apps.llm._llmw_models import (
     parse_patterns,
     quant_precision_label,
     repo_for_model_path,
+    running_usage,
+    running_usage_counts,
     settings_from_dict,
     settings_to_dict,
     sort_browse_items,
@@ -297,6 +300,23 @@ class TestBrowseHelpers:
         assert kept == ["Qwen/Qwen3.8-27B"]
         # 容量未知时全部保留（与既有口径一致）
         assert filter_by_local_fit((official, other), 0, pinned=()) == (official, other)
+
+    def test_running_usage_counts_by_category(self) -> None:
+        """运行中的模型按用途归类计数：视频 / 音频优先、代码看能力标签、其余算对话。"""
+        counts = running_usage_counts(
+            [
+                "/m/Qwen3-8B-Instruct.gguf",
+                "/m/Qwen3-Coder-30B.gguf",
+                "/m/Wan2.2-Video.gguf",
+                "/m/SenseVoice-audio.gguf",
+            ],
+            paint_alive=True,
+        )
+        assert counts == {"chat": 1, "code": 1, "paint": 1, "video": 1, "audio": 1}
+        # 没有运行中的模型 / 画图服务时全是 0（徽标据此收起）
+        assert running_usage_counts([]) == dict.fromkeys(USAGE_KEYS, 0)
+        assert running_usage("/m/Qwen3-Coder-30B.gguf") == "code"
+        assert running_usage("/m/Qwen3-8B-Instruct.gguf") == "chat"
 
     def test_model_param_billions_parses_names_and_moe(self) -> None:
         assert model_param_billions("Qwen3-8B") == 8

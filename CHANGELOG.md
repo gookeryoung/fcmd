@@ -169,6 +169,10 @@
 - 行卡（wslmanw 实例 / 镜像、llmw 模型）右侧的数值 / 操作按钮 / 展开箭头改为与
   「标签行（副标题）」居中对齐：两行结构下按钮中线与状态胶囊重合，不再介于两行之间；
   空副标题不再占一条空白行，单行行卡整行垂直居中（行高也随之收窄）。
+- `llmw` 运行中数量徽标：有运行中的模型时，侧边栏「运行」按钮显示运行总数，
+  运行页对应类别页签（对话 / 编程 / 画图 / 视频 / 音频）显示各类别数量，样式为
+  半透明圆形数字（跟随主题强调色）；画图（sd.cpp）服务单独计数。共享层新增
+  `PillTabBar`（`pill_tabs` 默认装好，`set_badge`）与 `SidebarNav.set_badge`。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

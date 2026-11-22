@@ -16,7 +16,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -459,12 +459,16 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
 
     PAGE_KEY = "run"
 
+    runningChanged = Signal(object)
+    """运行中模型的数量变化：``{"chat": 1, "paint": 1, ...}``（侧边栏徽标用）。"""
+
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(state, parent, spacing=6)
         self._syncing_tune = False
         self._active_param_key: str | None = None
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
         self._usage = "chat"
+        self._running_counts: dict[str, int] = dict.fromkeys(_llmw_models.USAGE_KEYS, 0)
         self._paint_busy = False
         self._paint_probe: _llmpaint_server.PaintProbe | None = None
         self._paint_probe_seq = 0
@@ -792,6 +796,8 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._paint_probe = probe
         self._refresh_paint_marker()
         self._refresh_paint_actions(probe.alive, probe=probe)
+        # 画图服务是独立后端：它的启停同样要反映到「画图」页签的数量徽标。
+        self.sync_running_badges()
 
     def _refresh_paint_marker(self) -> None:
         """把「运行中的扩散模型」标记到画图下拉（与对话 / 编程的「✓ 已启动」一致）。"""
@@ -1700,9 +1706,33 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._refresh_action_states()
 
     def _on_services_changed(self, _states: list[ServeState]) -> None:
-        """运行中服务变化：刷新下拉框状态与底部按钮。"""
+        """运行中服务变化：刷新下拉框状态、底部按钮与页签数量徽标。"""
         self._populate_model_combo()
         self._refresh_action_states()
+        self.sync_running_badges()
+
+    # ------------------------------------------------------------------ #
+    # 运行数量徽标
+    # ------------------------------------------------------------------ #
+    def paint_alive(self) -> bool:
+        """画图（sd.cpp）服务是否在运行（状态文件或端口探针任一确认）。"""
+        return bool(self._paint_probe is not None and self._paint_probe.alive)
+
+    def running_counts(self) -> dict[str, int]:
+        """按用途统计运行中的模型：对话 / 编程 / 画图 / 视频 / 音频。"""
+        models = [state.model for state in self.state.alive_states]
+        return _llmw_models.running_usage_counts(models, paint_alive=self.paint_alive())
+
+    def sync_running_badges(self) -> None:
+        """把运行数量写到页签徽标，并在数量变化时通知窗口刷新侧边栏徽标。"""
+        counts = self.running_counts()
+        bar = self.tabs.tabBar()
+        for index, usage in _USAGE_BY_TAB.items():
+            bar.set_badge(index, counts.get(usage, 0))
+        bar.set_badge(_PAINT_TAB, counts.get("paint", 0))
+        if counts != self._running_counts:
+            self._running_counts = counts
+            self.runningChanged.emit(dict(counts))
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.save_params_button.setEnabled(not busy)
