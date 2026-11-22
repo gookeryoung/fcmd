@@ -317,3 +317,27 @@ def test_mark_local_state_is_case_insensitive() -> None:
     assert by_name["Ubuntu"].backed_up is False
     assert by_name["Ubuntu-20.04"].backed_up is True
     assert by_name["Debian"].installed is False
+
+
+def test_mark_local_state_expands_shared_download_urls() -> None:
+    """同一归档的别名条目共享本地状态：装的是 Ubuntu，Ubuntu-26.04 也显示已安装。"""
+    url = "https://e/ubuntu-26.04.1-wsl-amd64.wsl"
+    shared = _images.ImageDownload("x86_64", url)
+    entries = (
+        _images.ImageEntry(name="Ubuntu", friendly_name="Ubuntu", sources=("cli",), downloads=(shared,)),
+        _images.ImageEntry(
+            name="Ubuntu-26.04", friendly_name="Ubuntu 26.04 LTS", sources=("manifest",), downloads=(shared,)
+        ),
+        _images.ImageEntry(
+            name="Ubuntu-24.04",
+            friendly_name="Ubuntu 24.04 LTS",
+            sources=("manifest",),
+            downloads=(_images.ImageDownload("x86_64", "https://e/ubuntu-24.04.5-wsl-amd64.wsl"),),
+        ),
+    )
+
+    marked = {entry.name: entry for entry in _images.mark_local_state(entries, installed=["ubuntu"], backups=[])}
+
+    assert marked["Ubuntu"].installed is True
+    assert marked["Ubuntu-26.04"].installed is True
+    assert marked["Ubuntu-24.04"].installed is False

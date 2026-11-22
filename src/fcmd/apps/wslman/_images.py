@@ -491,9 +491,14 @@ def mark_local_state(
     installed: Sequence[str],
     backups: Sequence[str],
 ) -> tuple[ImageEntry, ...]:
-    """按已安装名称与备份名称标注条目（大小写不敏感）。"""
-    installed_keys = {name.casefold() for name in installed}
-    backup_keys = {name.casefold() for name in backups}
+    """按已安装名称与备份名称标注条目（大小写不敏感）。
+
+    多个条目共用同一个下载地址（如 ``Ubuntu`` 与 ``Ubuntu-26.04`` 都指向
+    ``ubuntu-26.04.1-wsl-amd64.wsl``）时视为同一份镜像：任一名称已安装 / 已备份，
+    同族条目统一标注，避免「一个显示已安装、另一个仍可安装」的不一致状态。
+    """
+    installed_keys = _shared_entry_keys(entries, {name.casefold() for name in installed})
+    backup_keys = _shared_entry_keys(entries, {name.casefold() for name in backups})
     return tuple(
         replace(
             entry,
@@ -502,3 +507,29 @@ def mark_local_state(
         )
         for entry in entries
     )
+
+
+def _shared_entry_keys(entries: Sequence[ImageEntry], keys: set[str]) -> set[str]:
+    """把命中名称扩展到共享下载地址的条目（传递闭包，大小写不敏感）。"""
+    if not keys:
+        return set(keys)
+    urls: set[str] = set()
+    for entry in entries:
+        if entry.name.casefold() in keys:
+            urls.update(download.url.casefold() for download in entry.downloads if download.url)
+    if not urls:
+        return set(keys)
+    expanded = set(keys)
+    changed = True
+    while changed:
+        changed = False
+        for entry in entries:
+            key = entry.name.casefold()
+            if key in expanded:
+                continue
+            entry_urls = {download.url.casefold() for download in entry.downloads if download.url}
+            if entry_urls & urls:
+                expanded.add(key)
+                urls.update(entry_urls)
+                changed = True
+    return expanded
