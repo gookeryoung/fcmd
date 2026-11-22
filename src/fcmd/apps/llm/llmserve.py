@@ -55,6 +55,7 @@ __all__ = [
     "process_alive",
     "process_create_time",
     "read_log",
+    "spawn_child",
     "spawn_flags",
     "start_server",
     "stop_server",
@@ -284,17 +285,56 @@ def make_plan(  # noqa: PLR0913
     )
 
 
+BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+"""Windows：允许子进程脱离父进程所在的 Job Object。"""
+
+
+def _in_job() -> bool:
+    """当前进程是否在 Windows Job Object 中（终端 / IDE / 测试启动器常见）。"""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        in_job = ctypes.c_int(0)
+        if not kernel32.IsProcessInJob(kernel32.GetCurrentProcess(), None, ctypes.byref(in_job)):
+            return False
+        return bool(in_job.value)
+    except Exception:  # pragma: no cover - 非 Windows / 受限环境
+        return False
+
+
 def _creation_flags() -> int:
-    """子进程创建标志（Windows 独立进程组 + 脱离控制台）。"""
+    """子进程创建标志（Windows 独立进程组 + 脱离控制台 / Job）。"""
     if os.name != "nt":
         return 0
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    return flags | getattr(subprocess, "DETACHED_PROCESS", 0)
+    flags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+    # 从 IDE / 终端启动时父进程常在 Job 里：加上 breakaway 后 llmw 退出，
+    # 服务不会被 Job 的「关闭即杀」策略带走；失败时 spawn_child 会退回原标志。
+    if _in_job():
+        flags |= BREAKAWAY_FROM_JOB
+    return flags
 
 
 def spawn_flags() -> int:
     """公开包装：子进程创建标志（其他服务复用）。"""
     return _creation_flags()
+
+
+def spawn_child(argv: list[str], kwargs: dict[str, Any], popen: Callable[..., Any] | None = None) -> Any:
+    """拉起子进程；Job 不允许 breakaway 时自动退回不带该标志的创建方式。"""
+    factory = popen or _default_popen
+    try:
+        return factory(argv, **kwargs)
+    except OSError:
+        flags = int(kwargs.get("creationflags", 0))
+        stripped = flags & ~BREAKAWAY_FROM_JOB
+        if stripped == flags:
+            raise
+        kwargs = {**kwargs, "creationflags": stripped}
+        return factory(argv, **kwargs)
 
 
 def terminate_process(pid: int, create_time: float, timeout: float = 10.0) -> None:
@@ -408,7 +448,7 @@ def _launch_once(  # noqa: PLR0913
     with plan.log.open("ab") as log_file:
         kwargs["stdout"] = log_file
         try:
-            proc = (popen or _default_popen)(argv, **kwargs)
+            proc = spawn_child(argv, kwargs, popen)
         except OSError as exc:
             raise ServeError(f"启动引擎失败: {exc}（命令: {format_command(argv)}）") from exc
 

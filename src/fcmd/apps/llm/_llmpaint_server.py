@@ -391,7 +391,7 @@ def launch_paint(
     with plan.log.open("ab") as log_file:
         kwargs["stdout"] = log_file
         try:
-            proc = (popen or subprocess.Popen)(argv, **kwargs)
+            proc = llmserve.spawn_child(argv, kwargs, popen)
         except OSError as exc:
             raise ServeError(f"启动画图引擎失败: {exc}（命令: {format_command(argv)}）") from exc
 

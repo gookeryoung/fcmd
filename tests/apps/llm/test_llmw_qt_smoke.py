@@ -374,6 +374,44 @@ def test_storage_card_can_remove_last_dir_and_falls_back_to_default(
     assert page.storage_card.roots() == [_llmconfig.default_models_dir()]
 
 
+def test_paint_watchdog_restarts_once_and_stops_after_repeated_failures(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """画图服务意外退出：看护自动重启一次；连续失败后停止看护。"""
+    from fcmd.apps.llm import _llmpaint_server
+    from fcmd.apps.llm import _llmw_qt_run as run_module
+
+    state = _llmpaint_server.PaintState(
+        pid=999,
+        create_time=1.0,
+        host="127.0.0.1",
+        port=1234,
+        engine_tag="sd-test",
+        exe="sd-server.exe",
+        model="model.safetensors",
+        components={},
+        fingerprint=("sd-test",),
+        log="sd-server.log",
+        started_at="",
+    )
+    run = window.run_page
+    monkeypatch.setattr(_llmpaint_server, "status", lambda home=None: (state, False))
+    submitted: list[object] = []
+    monkeypatch.setattr(run_module, "submit_daemon", lambda fn, *args, **kwargs: submitted.append((fn, args, kwargs)))
+    run._paint_expected = True
+    run._paint_watch_failures = 0
+    run._paint_watch_retry_at = 0.0
+    run._watch_paint()
+    assert submitted
+    assert run._paint_expected is True
+
+    # 模拟连续多次自动重启失败：达到上限后不再自动拉起。
+    run._paint_watch_restarting = False
+    run._paint_watch_failures = 3
+    run._watch_paint()
+    assert run._paint_expected is False
+
+
 def test_flow_page_builds_with_builtin_templates(window: Any) -> None:
     """工作流页首次打开：内置模板落盘、节点卡片可编辑、运行按钮可用。"""
     window.show_page("flow")

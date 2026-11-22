@@ -13,6 +13,7 @@ sd.cpp 的扩散模型与启动参数；引擎安装 / 设为默认统一在设�
 from __future__ import annotations
 
 import shlex
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -471,6 +472,10 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._paint_busy = False
         self._paint_probe: _llmpaint_server.PaintProbe | None = None
         self._paint_probe_seq = 0
+        self._paint_expected = False
+        self._paint_watch_restarting = False
+        self._paint_watch_failures = 0
+        self._paint_watch_retry_at = 0.0
         self._paint_save_timer = QTimer(self)
         self._paint_save_timer.setSingleShot(True)
         self._paint_save_timer.setInterval(400)
@@ -481,6 +486,12 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._refresh_command_preview()
         self._refresh_action_states()
         self.refresh_paint()
+        # 初始已在运行（含上次 llmw 退出后留下的服务）时也纳入看护：意外退出后自动重启。
+        self._paint_expected = bool(self._paint_probe is not None and self._paint_probe.alive)
+        self._paint_watch_timer = QTimer(self)
+        self._paint_watch_timer.setInterval(5000)
+        self._paint_watch_timer.timeout.connect(self._watch_paint)
+        self._paint_watch_timer.start()
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -885,6 +896,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        self._paint_expected = False
         self._set_paint_busy(True)
         self.status("正在停止未登记的画图服务…")
         submit_daemon(
@@ -896,6 +908,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         )
 
     def _paint_orphans_stopped(self, pids: tuple[int, ...]) -> None:
+        self._paint_expected = False
         if pids:
             self.status(f"已停止 {len(pids)} 个未登记的画图服务（pid {', '.join(map(str, pids))}）")
             self.state.log(f"已停止未登记的画图服务：{pids}")
@@ -922,11 +935,14 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         )
 
     def _paint_started(self, started: bool) -> None:
+        self._paint_expected = True
+        self._paint_watch_failures = 0
         self.status("画图服务已就绪" if started else "画图服务已在按当前配置运行")
         self.state.log("已启动画图服务" if started else "画图服务已在运行")
         self.refresh_paint()
 
     def _stop_paint_service(self) -> None:
+        self._paint_expected = False
         self._set_paint_busy(True)
         self.status("正在停止画图服务…")
         submit_daemon(
@@ -937,6 +953,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         )
 
     def _paint_stopped(self, result: _llmpaint_server.PaintStopResult) -> None:
+        self._paint_expected = False
         self.status("画图服务已停止" if result.stopped else "画图服务未运行")
         if result.stopped:
             self.state.log("已停止画图服务")
@@ -966,12 +983,57 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         return start_paint_service(settings)
 
     def _paint_failed(self, message: str) -> None:
+        self._paint_expected = False
         self.state.log(f"画图服务操作失败：{message}")
         self._error("画图服务", message)
         self.refresh_paint()
 
     def _paint_finished(self) -> None:
         self._set_paint_busy(False)
+
+    # ------------------------------------------------------------------ #
+    # 画图服务看护
+    # ------------------------------------------------------------------ #
+    def _watch_paint(self) -> None:
+        """服务意外退出时自动拉起一次；连续失败后停止，避免无限重启。"""
+        if self._paint_watch_restarting or self.state.closing or not self._paint_expected:
+            return
+        state, alive = _llmpaint_server.status()
+        if alive or state is None:
+            return
+        now = time.monotonic()
+        if now < self._paint_watch_retry_at:
+            return
+        self._paint_watch_failures += 1
+        if self._paint_watch_failures > 3:
+            self._paint_expected = False
+            self.state.log("画图服务连续自动重启失败，已停止看护；请在运行页手动启动")
+            self.status("画图服务多次异常退出，已停止自动重启")
+            return
+        self._paint_watch_restarting = True
+        self.state.log(f"画图服务意外退出（pid {state.pid}），正在自动重启…")
+        self.status("画图服务意外退出，正在自动重启…")
+        submit_daemon(
+            start_paint_service,
+            self.paint_settings(),
+            on_done=self._paint_watch_done,
+            on_error=self._paint_watch_error,
+            on_finished=self._paint_watch_finished,
+        )
+
+    def _paint_watch_done(self, started: bool) -> None:
+        self._paint_watch_failures = 0
+        self.state.log("画图服务已自动恢复" if started else "画图服务已在运行")
+        self.refresh_paint()
+
+    def _paint_watch_error(self, message: str) -> None:
+        self._paint_watch_retry_at = time.monotonic() + 120.0
+        self.state.log(f"画图服务自动重启失败：{message}")
+        self.status("画图服务自动重启失败，稍后重试")
+        self.refresh_paint()
+
+    def _paint_watch_finished(self) -> None:
+        self._paint_watch_restarting = False
 
     def _set_paint_busy(self, busy: bool) -> None:
         self._paint_busy = busy

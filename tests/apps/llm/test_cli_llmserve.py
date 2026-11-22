@@ -3159,3 +3159,21 @@ class TestServeMiscBranches:
         out = capsys.readouterr().out
         assert "警告" in out
         assert "可能 OOM" in out
+
+
+def test_spawn_child_retries_without_job_breakaway() -> None:
+    """Job 不允许 breakaway 时自动退回普通创建标志，而不是直接启动失败。"""
+    from fcmd.apps.llm import llmserve
+
+    calls: list[int] = []
+
+    def fake(argv: list[str], **kwargs: object) -> str:
+        flags = kwargs.get("creationflags", 0)
+        calls.append(flags if isinstance(flags, int) else 0)
+        if len(calls) == 1:
+            raise OSError("access denied")
+        return "proc"
+
+    flags = llmserve.BREAKAWAY_FROM_JOB | 0x00000004
+    assert llmserve.spawn_child(["x"], {"creationflags": flags}, fake) == "proc"
+    assert calls == [flags, flags & ~llmserve.BREAKAWAY_FROM_JOB]
