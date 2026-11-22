@@ -39,7 +39,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
-    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -86,16 +85,13 @@ from fcmd.apps.llm.llmdown import (
     search_models_multi,
     select_source,
 )
-from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
-    ElidedLabel,
+    ItemRow,
     RowListWidget,
-    SelectionRow,
     StatusTag,
     button,
     confirm,
     hint_label,
-    icon_button,
     link_button,
     set_button_text,
 )
@@ -158,14 +154,14 @@ class _DownloadJob:
     stop_requested: bool = False
 
 
-class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
-    """浏览结果行：与概览推荐行同构（大标题 + 小字副标题 + 右侧关键数值）。
+class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
+    """浏览结果行：共享 :class:`ItemRow` 骨架 + 模型自己的标签与行内动作。
 
-    行本身只放关键内容；展开后在行下方显示详细信息，不再占用
-    右侧面板，列表可以铺满整页宽度。
+    标题是仓库名，副标题是参数 / 体积，右侧是数值摘要与下载 / 转换 / 量化 /
+    快捷启动按钮；发布方、发布时间、量化精度与状态胶囊都往共享骨架的插槽里加。
+    行本身只放关键内容，展开后在行下方显示详细信息，列表可以铺满整页宽度。
     """
 
-    toggleRequested = Signal(object)
     downloadRequested = Signal(str)
     convertRequested = Signal(str)
     quantizeRequested = Signal(str)
@@ -193,13 +189,21 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         same_name: int = 1,
         progress_text: str = "",
     ) -> None:
-        super().__init__(parent)
         title, subtitle, metrics = _llmw_models.model_item_lines(item)
-        self.repo = item.repo
         if size_text:
             metrics = size_text
+        super().__init__(
+            title,
+            subtitle,
+            object_name="ModelItemRow",
+            name_object_name="ModelItemName",
+            elide=Qt.TextElideMode.ElideMiddle,
+            expand_hint="展开详细信息",
+            collapse_hint="收起详细信息",
+            parent=parent,
+        )
+        self.repo = item.repo
         self.serve_path = serve_path
-        self._expanded = False
         self._downloadable = downloadable
         self._convertible = convertible
         self._converted = converted
@@ -207,119 +211,80 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self._quantizable = quantizable
         self._quant_blocked = quant_blocked
         self._incomplete = incomplete
-        self.setObjectName("ModelItemRow")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setProperty("selected", "false")
         self.setToolTip(item.repo)
+        self.title_label.setToolTip(item.repo)
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        header = QWidget(self)
-        header_row = QHBoxLayout(header)
-        header_row.setContentsMargins(12, 8, 12, 8)
-        header_row.setSpacing(12)
-        left = QVBoxLayout()
-        left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(3)
-        name_row = QHBoxLayout()
-        name_row.setContentsMargins(0, 0, 0, 0)
-        name_row.setSpacing(8)
-        name = ElidedLabel(title, mode=Qt.TextElideMode.ElideMiddle, parent=header)
-        name.setObjectName("ModelItemName")
-        name.setToolTip(item.repo)
-        name_row.addWidget(name, 1)
         if owner:
-            owner_label = QLabel(owner, header)
+            owner_label = QLabel(owner, self.header)
             owner_label.setObjectName("OwnerTag")
             owner_label.setToolTip(f"发布方 {owner}")
-            name_row.addWidget(owner_label, 0)
-        left.addLayout(name_row)
-        note_row = QHBoxLayout()
-        note_row.setContentsMargins(0, 0, 0, 0)
-        note_row.setSpacing(6)
-        sub = QLabel(subtitle, header)
-        sub.setObjectName("Hint")
-        sub.setWordWrap(False)
-        sub.setMinimumWidth(0)
-        sub.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        sub.setToolTip(subtitle)
-        note_row.addWidget(sub, 0)
+            self.add_title_widget(owner_label)
         published = _llmw_models.model_published_text(item)
         if published:
-            published_label = QLabel(published, header)
+            published_label = QLabel(published, self.header)
             published_label.setObjectName("Hint")
             published_label.setToolTip(f"模型发布时间：{_llmw_models.format_timestamp(item.updated)}")
-            note_row.addWidget(published_label, 0)
-        note_row.addStretch(1)
+            self.add_note_widget(published_label)
         if installed and not incomplete:
-            note_row.addWidget(StatusTag("已安装", tone="success", parent=header), 0)
+            self.add_tag(StatusTag("已安装", tone="success", parent=self.header))
         elif incomplete:
-            note_row.addWidget(StatusTag("部分下载", tone="warning", parent=header), 0)
+            self.add_tag(StatusTag("部分下载", tone="warning", parent=self.header))
         if not downloadable:
-            note_row.addWidget(StatusTag("仅本地", tone="muted", parent=header), 0)
+            self.add_tag(StatusTag("仅本地", tone="muted", parent=self.header))
         if any(tag.upper().startswith("UD-") for tag in quant_tags):
-            note_row.addWidget(StatusTag("UD", tone="accent", parent=header), 0)
+            self.add_tag(StatusTag("UD", tone="accent", parent=self.header))
         if same_name > 1:
-            note_row.addWidget(StatusTag(f"同名 {same_name}", tone="muted", parent=header), 0)
+            self.add_tag(StatusTag(f"同名 {same_name}", tone="muted", parent=self.header))
         if converted:
-            note_row.addWidget(StatusTag("已转换", tone="success", parent=header), 0)
+            self.add_tag(StatusTag("已转换", tone="success", parent=self.header))
         elif convert_blocked:
-            blocked_tag = StatusTag("不可转换", tone="warning", parent=header)
+            blocked_tag = StatusTag("不可转换", tone="warning", parent=self.header)
             blocked_tag.setToolTip(convert_blocked)
-            note_row.addWidget(blocked_tag, 0)
+            self.add_tag(blocked_tag)
         if quant_blocked:
-            note_row.addWidget(StatusTag("不可量化", tone="warning", parent=header), 0)
+            self.add_tag(StatusTag("不可量化", tone="warning", parent=self.header))
         visible_tags = list(quant_tags)
         if default_quant in visible_tags:
             visible_tags.remove(default_quant)
             visible_tags.insert(0, default_quant)
         for tag in visible_tags[:4]:
-            chip = QLabel(tag, header)
+            chip = QLabel(tag, self.header)
             if tag == default_quant:
                 chip.setText(f"{tag} · 上次启动")
                 chip.setToolTip("快捷启动默认使用该量化精度（记住用户上次启动过的精度）")
             else:
                 chip.setToolTip(f"已量化精度 {tag}")
             chip.setObjectName("QuantTag")
-            note_row.addWidget(chip, 0)
+            self.add_tag(chip)
         hidden_tags = visible_tags[4:]
         if hidden_tags:
-            hidden_chip = QLabel(f"+{len(hidden_tags)}", header)
+            hidden_chip = QLabel(f"+{len(hidden_tags)}", self.header)
             hidden_chip.setObjectName("QuantTag")
             hidden_chip.setToolTip("其他量化：" + "、".join(hidden_tags))
-            note_row.addWidget(hidden_chip, 0)
+            self.add_tag(hidden_chip)
         if incomplete and progress_text:
-            progress = QLabel(progress_text, header)
+            progress = QLabel(progress_text, self.header)
             progress.setObjectName("DownloadProgress")
             progress.setToolTip(progress_text)
-            note_row.addWidget(progress, 0)
-        left.addLayout(note_row)
-        header_row.addLayout(left, 1)
+            self.add_tag(progress)
 
-        stats = QLabel(metrics, header)
-        stats.setObjectName("Hint")
-        stats.setWordWrap(False)
-        stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        stats.setToolTip(metrics)
-        header_row.addWidget(stats, 0)
+        self.set_metrics(metrics)
         self.convert_button: Any = None
         if convertible and not converted:
             self.convert_button = button("转换")
             self.convert_button.clicked.connect(lambda: self.convertRequested.emit(self.repo))
-            header_row.addWidget(self.convert_button, 0)
+            self.add_action(self.convert_button)
         self.quant_button: Any = None
         if quantizable:
             self.quant_button = button("量化")
             self.quant_button.clicked.connect(lambda: self.quantizeRequested.emit(self.repo))
-            header_row.addWidget(self.quant_button, 0)
+            self.add_action(self.quant_button)
         self.start_button: Any = None
         if startable:
             self.start_button = button("启动服务", kind="primary")
             self.start_button.setToolTip("选择量化精度并启动服务；默认使用上次启动过的精度")
             self.start_button.clicked.connect(lambda: self.startRequested.emit(self.repo))
-            header_row.addWidget(self.start_button, 0)
+            self.add_action(self.start_button)
         self.download_button: Any = None
         # 已安装且无 .part 的模型视为已全部下载完成：不再显示下载按钮。
         if downloadable and not (installed and not incomplete):
@@ -327,37 +292,12 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             if incomplete:
                 self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
             self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
-            header_row.addWidget(self.download_button, 0)
-        self.expand_button = icon_button("", tooltip="展开详细信息")
-        self.expand_button.setIconSize(QSize(16, 16))
-        _set_icon(self.expand_button, "chevron-down", tone="muted")
-        self.expand_button.setAccessibleName("展开详情")
-        self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
-        header_row.addWidget(self.expand_button, 0)
-        outer.addWidget(header)
-
-        self.detail_host = QWidget(self)
-        self.detail_host.setVisible(False)
-        self.detail_layout = QVBoxLayout(self.detail_host)
-        self.detail_layout.setContentsMargins(0, 0, 0, 0)
-        self.detail_layout.setSpacing(0)
-        outer.addWidget(self.detail_host)
-
-    def is_expanded(self) -> bool:
-        return self._expanded
+            self.add_action(self.download_button)
 
     @property
     def downloadable(self) -> bool:
         """能否对应到远程仓库；仅本地条目为 False，详情不读在线清单。"""
         return self._downloadable
-
-    def set_expanded(self, expanded: bool) -> None:
-        """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
-        self._expanded = expanded
-        self.detail_host.setVisible(expanded)
-        _set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down", tone="muted")
-        self.expand_button.setToolTip("收起详细信息" if expanded else "展开详细信息")
-        self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
 
     def set_download_state(self, *, busy: bool, active: bool, queued: bool = False) -> None:
         """下载中禁用；未完成显示「继续下载」，未安装显示「下载」，排队时显示「排队中…」。"""

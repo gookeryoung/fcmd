@@ -56,22 +56,20 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command
 from fcmd.apps.wslman._transfer import sha256_file
-from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
     FormGrid,
+    ItemRow,
     LogView,
     PageScroll,
     PathRow,
     RowListWidget,
-    SelectionRow,
     StatusTag,
     button,
     confirm,
     fit_dialog_to_content,
     hint_label,
-    icon_button,
     make_table,
     make_table_item,
 )
@@ -130,14 +128,14 @@ def _state_tone(state: str) -> str:
     return {"running": "success", "stopped": "muted", "unknown": "warning"}.get(state, "muted")
 
 
-class _DistroItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
-    """发行版行卡：与 llmw 模型行同构（标题 + 副标题 + 状态胶囊 + 行内动作 + 展开）。
+class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
+    """发行版行卡：共享 :class:`ItemRow` 骨架 + 发行版自己的状态位。
 
-    详情（BasePath / 虚拟磁盘 / 占用 / 默认用户 / 来源）不再占用下方的详情面板，
-    改为行内「展开」就地显示；同一时间只展开一行。
+    标题是发行版名，副标题是版本 / 占用，状态胶囊与默认胶囊在副标题行；
+    右侧是行内启停按钮与展开箭头。详情（BasePath / 虚拟磁盘 / 占用 / 默认用户 /
+    来源）由 ``_DistroDetailView`` 挂到 ``detail_layout`` 就地显开，同一时间只展开一行。
     """
 
-    toggleRequested = Signal(object)
     startStopRequested = Signal(str)
 
     def __init__(
@@ -147,62 +145,25 @@ class _DistroItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         estimated: bool,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(
+            distro.name,
+            "",
+            object_name="DistroItemRow",
+            name_object_name="DistroItemName",
+            elide=Qt.TextElideMode.ElideRight,
+            parent=parent,
+        )
         self.distro = distro
         self.size = size
         self.estimated = estimated
-        self._expanded = False
-        self.setObjectName("DistroItemRow")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setProperty("selected", "false")
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        header = QWidget(self)
-        header_row = QHBoxLayout(header)
-        header_row.setContentsMargins(12, 8, 12, 8)
-        header_row.setSpacing(12)
-
-        left = QVBoxLayout()
-        left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(3)
-        self.name_label = ElidedLabel(distro.name, mode=Qt.TextElideMode.ElideRight, parent=header)
-        self.name_label.setObjectName("DistroItemName")
-        self.name_label.setToolTip(distro.name)
-        left.addWidget(self.name_label)
-        note_row = QHBoxLayout()
-        note_row.setContentsMargins(0, 0, 0, 0)
-        note_row.setSpacing(6)
-        self.note_label = QLabel("", header)
-        self.note_label.setObjectName("Hint")
-        self.note_label.setWordWrap(False)
-        note_row.addWidget(self.note_label, 0)
-        note_row.addStretch(1)
-        self.state_tag = StatusTag("", tone="muted", parent=header)
-        note_row.addWidget(self.state_tag, 0)
-        self.default_tag = StatusTag("默认", tone="accent", parent=header)
-        note_row.addWidget(self.default_tag, 0)
-        left.addLayout(note_row)
-        header_row.addLayout(left, 1)
+        self.state_tag = StatusTag("", tone="muted", parent=self.header)
+        self.add_tag(self.state_tag)
+        self.default_tag = StatusTag("默认", tone="accent", parent=self.header)
+        self.add_tag(self.default_tag)
 
         self.start_stop_button = button("启动", kind="primary")
         self.start_stop_button.clicked.connect(lambda: self.startStopRequested.emit(distro.name))
-        header_row.addWidget(self.start_stop_button, 0)
-        self.expand_button = icon_button("", tooltip="展开详情")
-        self.expand_button.setIconSize(QSize(16, 16))
-        _set_icon(self.expand_button, "chevron-down", tone="muted")
-        self.expand_button.setAccessibleName("展开详情")
-        self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
-        header_row.addWidget(self.expand_button, 0)
-        outer.addWidget(header)
-
-        self.detail_host = QWidget(self)
-        self.detail_host.setVisible(False)
-        self.detail_layout = QVBoxLayout(self.detail_host)
-        self.detail_layout.setContentsMargins(0, 0, 0, 0)
-        self.detail_layout.setSpacing(0)
-        outer.addWidget(self.detail_host)
+        self.add_action(self.start_stop_button)
 
         self.update_distro(distro, size, estimated)
 
@@ -212,28 +173,14 @@ class _DistroItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.size = size
         self.estimated = estimated
         self.setToolTip(f"{distro.name}\n{distro.base_path or '未知'}")
-        self.name_label.setText(distro.name)
-        self.name_label.setToolTip(distro.name)
-        note = f"v{distro.version or '未知'} · {format_bytes(size, estimated=estimated)}"
-        self.note_label.setText(note)
-        self.note_label.setToolTip(note)
+        self.set_title(distro.name)
+        self.set_subtitle(f"v{distro.version or '未知'} · {format_bytes(size, estimated=estimated)}")
         self.state_tag.set_status(state_label(distro), _state_tone(distro.state))
         self.default_tag.setVisible(distro.default)
         can_start, can_stop = w.action_states(distro.state)
         self.start_stop_button.setText("停止" if can_stop else "启动")
         self.start_stop_button.setEnabled(can_start or can_stop)
         self.start_stop_button.setToolTip(f"停止 {distro.name}" if can_stop else f"启动 {distro.name}")
-
-    def is_expanded(self) -> bool:
-        return self._expanded
-
-    def set_expanded(self, expanded: bool) -> None:
-        """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
-        self._expanded = expanded
-        self.detail_host.setVisible(expanded)
-        _set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down", tone="muted")
-        self.expand_button.setToolTip("收起详情" if expanded else "展开详情")
-        self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
 
     def set_busy(self, busy: bool) -> None:
         """任务进行中禁用行内启停按钮；结束后按当前状态重新计算。"""
@@ -285,63 +232,36 @@ class _DistroDetailView(QWidget):  # pragma: no cover - Qt 控件
             widget.setToolTip(text)
 
 
-class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
-    """镜像列表行卡：与 llmw 模型行同构（大标题 + 小字副标题 + 右侧关键状态）。
+class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
+    """镜像列表行卡：共享 :class:`ItemRow` 骨架 + 镜像自己的动作与标记。
 
-    行内只放关键内容，详情与下载地址在行下方就地展开，列表铺满整页宽度，
-    不再占用右侧详情面板。
+    标题是镜像名，副标题是友好名 / 架构 / 来源，右侧是来源摘要、已安装 / 已备份 /
+    sha256 胶囊与行内下载 / 安装按钮。下载地址与短字段由 ``_ImageDetailView`` 挂到
+    ``detail_layout`` 就地展开，列表铺满整页宽度。
     """
 
-    toggleRequested = Signal(object)
     downloadRequested = Signal(str)
     installRequested = Signal(str)
     cancelRequested = Signal()
 
     def __init__(self, entry: ImageEntry, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.entry = entry
-        self._expanded = False
-        self.setObjectName("ImageItemRow")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setProperty("selected", "false")
-        self.setToolTip(entry.name)
-
         title, subtitle, metrics = w.image_item_lines(entry)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        header = QWidget(self)
-        header_row = QHBoxLayout(header)
-        header_row.setContentsMargins(12, 8, 12, 8)
-        header_row.setSpacing(12)
-        left = QVBoxLayout()
-        left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(3)
-        name = ElidedLabel(title, mode=Qt.TextElideMode.ElideMiddle, parent=header)
-        name.setObjectName("ImageItemName")
-        name.setToolTip(entry.name)
-        left.addWidget(name)
-        note_row = QHBoxLayout()
-        note_row.setContentsMargins(0, 0, 0, 0)
-        note_row.setSpacing(6)
-        note = QLabel(subtitle, header)
-        note.setObjectName("Hint")
-        note.setWordWrap(False)
-        note.setToolTip(subtitle)
-        note_row.addWidget(note, 0)
-        note_row.addStretch(1)
+        super().__init__(
+            title,
+            subtitle,
+            object_name="ImageItemRow",
+            name_object_name="ImageItemName",
+            elide=Qt.TextElideMode.ElideMiddle,
+            expand_hint="展开详情与下载地址",
+            collapse_hint="收起详情",
+            parent=parent,
+        )
+        self.entry = entry
+        self.setToolTip(entry.name)
+        self.title_label.setToolTip(entry.name)
         for text, tone in w.image_marks(entry):
-            note_row.addWidget(StatusTag(text, tone=tone, parent=header), 0)
-        left.addLayout(note_row)
-        header_row.addLayout(left, 1)
-
-        stats = QLabel(metrics, header)
-        stats.setObjectName("Hint")
-        stats.setWordWrap(False)
-        stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        stats.setToolTip(metrics)
-        header_row.addWidget(stats, 0)
+            self.add_tag(StatusTag(text, tone=tone, parent=self.header))
+        self.set_metrics(metrics)
 
         # 每行自带动作按钮：未下载 →「下载」；已下载未安装 →「安装」；已安装 → 无按钮。
         # 下载 / 安装进行中时该行按钮变成「取消」，不再依赖页面底部的动作条。
@@ -351,32 +271,7 @@ class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.download_button = button(self._action_text(), kind="primary")
             self.download_button.setToolTip(self._action_tooltip())
             self.download_button.clicked.connect(self._on_action)
-            header_row.addWidget(self.download_button, 0)
-        self.expand_button = icon_button("", tooltip="展开详情与下载地址")
-        self.expand_button.setIconSize(QSize(16, 16))
-        _set_icon(self.expand_button, "chevron-down", tone="muted")
-        self.expand_button.setAccessibleName("展开详情")
-        self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
-        header_row.addWidget(self.expand_button, 0)
-        outer.addWidget(header)
-
-        self.detail_host = QWidget(self)
-        self.detail_host.setVisible(False)
-        self.detail_layout = QVBoxLayout(self.detail_host)
-        self.detail_layout.setContentsMargins(0, 0, 0, 0)
-        self.detail_layout.setSpacing(0)
-        outer.addWidget(self.detail_host)
-
-    def is_expanded(self) -> bool:
-        return self._expanded
-
-    def set_expanded(self, expanded: bool) -> None:
-        """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
-        self._expanded = expanded
-        self.detail_host.setVisible(expanded)
-        _set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down", tone="muted")
-        self.expand_button.setToolTip("收起详情" if expanded else "展开详情与下载地址")
-        self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
+            self.add_action(self.download_button)
 
     @staticmethod
     def _action_kind(entry: ImageEntry) -> str:

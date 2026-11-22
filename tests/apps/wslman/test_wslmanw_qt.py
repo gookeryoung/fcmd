@@ -107,8 +107,9 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
         _wait_idle(window)
         assert window.distro_list.count() == 2
         assert _distro_row(window, 0).distro.name == "Ubuntu"
+        assert isinstance(_distro_row(window, 0), _wslmanw_qt.ItemRow)
         assert _distro_row(window, 1).state_tag.text() == "已停止"
-        assert _distro_row(window, 0).note_label.text().startswith("v2 · ")
+        assert _distro_row(window, 0).sub_label.text().startswith("v2 · ")
 
         window.distro_list.setCurrentRow(0)
         assert window.status_detail_text().startswith("Ubuntu")
@@ -203,6 +204,8 @@ def test_image_rows_and_filter(home: Path, monkeypatch: pytest.MonkeyPatch) -> N
         assert window.image_list.count() == 2
         assert _image_row(window, 0).entry.name == "Debian"
         assert _image_row(window, 1).entry.name == "Ubuntu"
+        # 行卡骨架来自共享 ItemRow（与 llmw 模型行同源）。
+        assert isinstance(_image_row(window, 0), _wslmanw_qt.ItemRow)
         assert window.image_list.currentRow() == 0
         window.image_search.setText("Ubuntu 24")
         window._render_images()

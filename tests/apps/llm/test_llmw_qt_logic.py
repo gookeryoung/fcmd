@@ -68,6 +68,7 @@ from fcmd.apps.llm._llmw_qt_settings import engine_rows_values
 from fcmd.apps.llm._llmw_recommend import Recommendation
 from fcmd.apps.llm.llmbase import EngineInfo, LaunchPlan, ModelEntry, Profile, ServeError, ServeState, Tuning
 from fcmd.apps.llm.llmdown import ModelInfo, ModelSummary
+from fcmd.gui.qt.widgets import ItemRow
 
 
 def _plan(*, model: Path = Path("model.gguf"), context: int = 65536, kv_type: str | None = None) -> LaunchPlan:
@@ -242,6 +243,8 @@ def test_model_item_row_expands_inline_detail() -> None:
 
     QApplication.instance() or QApplication([])
     row = _ModelItemRow(ModelSummary(repo="Qwen/demo"))
+    # 行卡骨架来自共享 ItemRow（wslmanw 的发行版 / 镜像行同源）。
+    assert isinstance(row, ItemRow)
     owner_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), owner="Qwen", installed=True)
     owner_labels = [label for label in owner_row.findChildren(QLabel) if label.objectName() == "OwnerTag"]
     assert [label.text() for label in owner_labels] == ["Qwen"]

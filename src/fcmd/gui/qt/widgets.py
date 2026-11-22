@@ -59,6 +59,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.gui.qt import icons as _qt_icons
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.layout import parse_sizes, serialize_sizes
 
@@ -73,6 +74,7 @@ __all__ = [
     "ElidedLabel",
     "FormGrid",
     "HintLabel",
+    "ItemRow",
     "KeyValueGrid",
     "LoadingBar",
     "LogView",
@@ -410,6 +412,157 @@ class SelectionRow:
         self.setProperty("selected", "true" if selected else "false")
         self.style().unpolish(self)
         self.style().polish(self)
+
+
+class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
+    """可展开行卡骨架：标题 + 副标题 / 标签行 + 右侧数值与动作 + 行内展开区。
+
+    这是 llmw 模型列表行卡（``_ModelItemRow``）的公共结构，wslmanw 的发行版 / 镜像
+    行卡与它同构，故上提到共享件：
+
+    - 上半行 ``header``：左侧 ``title_label``（``ElidedLabel``）在 ``title_row``，
+      下面是 ``sub_label`` + ``note_row``（副标题后跟状态胶囊）；右侧 ``header_row``
+      依次是 ``set_metrics`` 数值、``add_action`` 动作按钮、末尾固定展开箭头；
+    - 下半行 ``detail_host`` / ``detail_layout``：详情视图由页面在展开时挂进来；
+      同一时间只展开一行由页面负责，行本身只管显隐与箭头图标。
+
+    子类只写自己的业务渲染与状态位；追加控件用 ``add_title_widget``（标题右侧，
+    如发布方）、``add_note_widget``（副标题之后、拉伸之前）、``add_tag``（拉伸之后
+    的状态胶囊 / 进度小字，追加顺序即显示顺序）、``add_action``（拉伸之后、箭头之前）。
+    """
+
+    toggleRequested = Signal(object)
+
+    def __init__(  # noqa: PLR0913 - 行卡骨架的可选项由调用方显式给出
+        self,
+        title: str = "",
+        subtitle: str = "",
+        *,
+        object_name: str,
+        name_object_name: str = "",
+        elide: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+        expand_hint: str = "展开详情",
+        collapse_hint: str = "收起详情",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._expanded = False
+        self._expand_hint = expand_hint
+        self._collapse_hint = collapse_hint
+        self.metrics_label: QLabel | None = None
+        self.setObjectName(object_name)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("selected", "false")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self.header = QWidget(self)
+        self.header_row = QHBoxLayout(self.header)
+        self.header_row.setContentsMargins(12, 8, 12, 8)
+        self.header_row.setSpacing(12)
+
+        self.left = QVBoxLayout()
+        self.left.setContentsMargins(0, 0, 0, 0)
+        self.left.setSpacing(3)
+        self.title_row = QHBoxLayout()
+        self.title_row.setContentsMargins(0, 0, 0, 0)
+        self.title_row.setSpacing(8)
+        self.title_label = ElidedLabel(title, mode=elide, parent=self.header)
+        if name_object_name:
+            self.title_label.setObjectName(name_object_name)
+        self.title_label.setToolTip(title)
+        self.title_row.addWidget(self.title_label, 1)
+        self.left.addLayout(self.title_row)
+
+        self.note_row = QHBoxLayout()
+        self.note_row.setContentsMargins(0, 0, 0, 0)
+        self.note_row.setSpacing(6)
+        self.sub_label = QLabel(subtitle, self.header)
+        self.sub_label.setObjectName("Hint")
+        self.sub_label.setWordWrap(False)
+        self.sub_label.setMinimumWidth(0)
+        self.sub_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.sub_label.setToolTip(subtitle)
+        self.note_row.addWidget(self.sub_label, 0)
+        self.note_row.addStretch(1)
+        self.left.addLayout(self.note_row)
+        self.header_row.addLayout(self.left, 1)
+
+        self.expand_button = icon_button("", tooltip=expand_hint)
+        self.expand_button.setIconSize(QSize(16, 16))
+        _qt_icons.set_icon(self.expand_button, "chevron-down", tone="muted")
+        self.expand_button.setAccessibleName(expand_hint)
+        self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
+        self.header_row.addWidget(self.expand_button, 0)
+        outer.addWidget(self.header)
+
+        self.detail_host = QWidget(self)
+        self.detail_host.setVisible(False)
+        self.detail_layout = QVBoxLayout(self.detail_host)
+        self.detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.detail_layout.setSpacing(0)
+        outer.addWidget(self.detail_host)
+
+    # ------------------------------------------------------------------ #
+    # 内容插槽
+    # ------------------------------------------------------------------ #
+    def set_title(self, text: str) -> None:
+        """换标题文字（同时同步 tooltip，轮询就地刷新行时用）。"""
+        self.title_label.setText(text)
+        self.title_label.setToolTip(text)
+
+    def set_subtitle(self, text: str) -> None:
+        """换副标题（版本 / 占用、架构 / 来源等）。"""
+        self.sub_label.setText(text)
+        self.sub_label.setToolTip(text)
+
+    def add_title_widget(self, widget: QWidget) -> None:
+        """标题右侧的小标记（如发布方）。"""
+        self.title_row.addWidget(widget, 0)
+
+    def add_note_widget(self, widget: QWidget) -> None:
+        """副标题之后、状态胶囊之前的小字（如发布时间）。"""
+        self.note_row.insertWidget(self.note_row.count() - 1, widget)
+
+    def add_tag(self, widget: QWidget) -> None:
+        """副标题行右端的状态胶囊 / 进度小字，调用顺序即显示顺序。"""
+        self.note_row.addWidget(widget, 0)
+
+    def add_action(self, widget: QWidget) -> None:
+        """右侧动作按钮：始终插在展开箭头之前。"""
+        index = self.header_row.indexOf(self.expand_button)
+        self.header_row.insertWidget(max(index, 0), widget, 0)
+
+    def set_metrics(self, text: str) -> QLabel:
+        """右侧数值 / 摘要（模型大小、镜像来源等），位于动作按钮左侧。"""
+        if self.metrics_label is None:
+            self.metrics_label = QLabel(text, self.header)
+            self.metrics_label.setObjectName("Hint")
+            self.metrics_label.setWordWrap(False)
+            self.metrics_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.metrics_label.setToolTip(text)
+            self.add_action(self.metrics_label)
+            return self.metrics_label
+        self.metrics_label.setText(text)
+        self.metrics_label.setToolTip(text)
+        return self.metrics_label
+
+    # ------------------------------------------------------------------ #
+    # 展开 / 收起
+    # ------------------------------------------------------------------ #
+    def is_expanded(self) -> bool:
+        """详情区是否展开（同一时间只展开一行由页面保证）。"""
+        return self._expanded
+
+    def set_expanded(self, expanded: bool) -> None:
+        """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
+        self._expanded = expanded
+        self.detail_host.setVisible(expanded)
+        _qt_icons.set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down", tone="muted")
+        self.expand_button.setToolTip(self._collapse_hint if expanded else self._expand_hint)
+        self.expand_button.setAccessibleName(self._collapse_hint if expanded else self._expand_hint)
 
 
 class Card(QFrame):  # pragma: no cover - Qt 控件

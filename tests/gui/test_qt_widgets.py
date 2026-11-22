@@ -34,6 +34,7 @@ from fcmd.gui.qt.widgets import (
     Card,
     ChoiceGroup,
     Collapsible,
+    ItemRow,
     LoadingBar,
     LogView,
     MetricGrid,
@@ -374,6 +375,50 @@ def test_selection_row_toggles_property() -> None:
         assert row.property("selected") == "true"
         SelectionRow.set_selected(row, False)
         assert row.property("selected") == "false"
+    finally:
+        row.deleteLater()
+
+
+def test_item_row_builds_slots_and_expands() -> None:
+    """``ItemRow`` 提供行卡骨架：标题 / 副标题 / 标签 / 动作 / 行内展开区。"""
+    row = ItemRow("Ubuntu", "v2 · 2.0 GB", object_name="TestItemRow")
+    try:
+        assert row.title_label.text() == "Ubuntu"
+        assert row.sub_label.text() == "v2 · 2.0 GB"
+        assert row.property("selected") == "false"
+        assert row.is_expanded() is False
+        assert row.detail_host.isHidden()
+
+        tag = StatusTag("运行中", tone="success")
+        row.add_tag(tag)
+        note_widget = QPushButton("小字")
+        row.add_note_widget(note_widget)
+        action = QPushButton("启动")
+        row.add_action(action)
+        # 插槽顺序：副标题 → 小字 → 拉伸 → 胶囊；动作始终在展开箭头之前。
+        note_indexes = [row.note_row.indexOf(widget) for widget in (row.sub_label, note_widget, tag)]
+        assert note_indexes == sorted(note_indexes)
+        assert row.header_row.indexOf(action) + 1 == row.header_row.indexOf(row.expand_button)
+
+        row.set_title("Debian")
+        row.set_subtitle("v1 · 未知")
+        assert row.title_label.text() == "Debian"
+        assert row.title_label.toolTip() == "Debian"
+        assert row.sub_label.text() == "v1 · 未知"
+
+        row.set_expanded(True)
+        assert row.is_expanded() is True
+        assert not row.detail_host.isHidden()
+        assert row.expand_button.toolTip() == "收起详情"
+        row.set_expanded(False)
+        assert row.is_expanded() is False
+        assert row.detail_host.isHidden()
+        assert row.expand_button.toolTip() == "展开详情"
+
+        row.set_metrics("2.0 GB")
+        assert row.metrics_label is not None and row.metrics_label.text() == "2.0 GB"
+        row.set_metrics("3.0 GB")
+        assert row.metrics_label.text() == "3.0 GB"
     finally:
         row.deleteLater()
 

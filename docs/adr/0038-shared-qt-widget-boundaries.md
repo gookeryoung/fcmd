@@ -7,8 +7,8 @@
 ## 背景
 
 Qt 迁移后，`gui/qt/` 已沉淀 `Card` / `PageScroll` / `FormGrid` / `LogView` / `StatusTag` /
-`ProgressRow` / `ChoiceCard` / `ChoiceGroup` / `SelectionRow` / `LogDialog` / `EventBridge` /
-`ProgressBridge` / `WindowStatusBar` 等共享件。P0–P2 已把 llmw 内部的重复拼装收敛到这些共享件，并推广到
+`ProgressRow` / `ChoiceCard` / `ChoiceGroup` / `SelectionRow` / `ItemRow` / `LogDialog` /
+`EventBridge` / `ProgressBridge` / `WindowStatusBar` 等共享件。P0–P2 已把 llmw 内部的重复拼装收敛到这些共享件，并推广到
 img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 
 继续推广时，剩下候选都涉及「抽基类」「换可见交互」或「新建通用对话框」。这类改动
@@ -18,7 +18,7 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 
 | 编号 | 决策 | 落点 |
 |---|---|---|
-| D1 | **不做完整 `InfoRowCard` 基类**，行卡继续以 `SelectionRow` mixin 复用选中态 | 三张 llmw 行卡 |
+| D1 | 可展开行卡的骨架统一用共享 `ItemRow`（标题 + 副标题 / 标签行 + 右侧数值与动作 + 行内展开区），选中态仍由 `SelectionRow` mixin 提供 | `gui/qt/widgets.py`、llmw 模型行、wslmanw 发行版 / 镜像行 |
 | D2 | **不做通用 `TaskDialog`**；需要进度与日志的窗口各自组合 `ProgressRow` / `LogView` | llmw 引擎下载、性能测试 |
 | D3 | `ChoiceCard` 只用于「卡片式单选」；pdfsplit、mirrortool、checksum 继续用 `QRadioButton` | 上述工具窗口 |
 | D4 | `StatusTag` 用于需要语义色的状态块；`objectName("Success"/"Danger")` 属于主题契约，不强行替换 | reshack 等 |
@@ -26,6 +26,28 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D6 | `ProgressRow` 用于独立进度行；与按钮 / 文字同处一行的进度条保留窗口自己的布局 | ncmconvert、filescan、devman、llmw 下载区 |
 | D7 | 图标统一走 `fcmd.gui.qt.icons`（内置 Lucide 线性图标），不引入外部图标包 | 侧边栏、按钮、行卡展开 / 收起 |
 | D8 | 底部状态栏统一用 `WindowStatusBar`：单行高度（文字与页内补充都是 `ElidedLabel`，加载条用 `compact`），文字 / 页内补充按分页隔离，任务消息写回「发起任务的那一页」 | `gui/qt/statusbar.py`、`QtMainWindow`、wslmanw |
+
+### D1 行卡骨架为什么收敛到 ItemRow
+
+单行紧凑行卡（`RecommendationRow`、`_EngineRow`、`_PaintEngineRow`）形态不同：评分徽章 /
+名称 + 路径 + 胶囊，各自保留自己的布局，不上提。共骨架的是「可展开行卡」这一类：
+`_ModelItemRow`（llmw 模型浏览）、`_DistroItemRow` 与 `_ImageItemRow`（wslmanw）都是
+「左侧标题 + 副标题 / 状态胶囊，右侧数值与动作，末尾展开箭头，详情挂在行下方」，
+同一段骨架已经被抄了三份（60 行以上）——第三张行卡出现时即触发了本 ADR 原先写下的
+重新评估条件。
+
+`ItemRow` 只负责这一段固定骨架与展开 / 收起：
+
+- 内容插槽：`add_title_widget`（标题右侧小标记）、`add_note_widget`（副标题之后、拉伸之前）、
+  `add_tag`（拉伸之后的状态胶囊 / 小字，追加顺序即显示顺序）、`set_metrics`（右侧数值）、
+  `add_action`（右侧动作，始终在展开箭头之前）；
+- 展开态：`is_expanded` / `set_expanded` 只管详情区显隐与箭头图标，`detail_layout` 由页面
+  把复用的详情视图挂进来，「同一时间只展开一行」仍由页面保证；
+- 外观：`object_name` / `name_object_name` / `elide` / `expand_hint` 由调用方给出，
+  QSS 契约（`#ModelItemRow` / `#DistroItemRow` / `#ImageItemRow` 等）不变。
+
+业务渲染与状态位留在各自行里：模型行的量化精度 / 下载转换按钮，发行版行的启停与
+默认胶囊，镜像行的下载 / 安装动作。基类参数只覆盖骨架本身，不是三张行卡的并集。
 
 ### D8 为什么统一状态栏
 
@@ -40,18 +62,6 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 
 `QtMainWindow` 只做转发（`set_status` / `set_page_status` / `set_status_detail` / `status_text`），
 窗口不再直接操作 `statusBar()` 的子控件。
-
-### D1 为什么不做 InfoRowCard 基类
-
-三张行卡的规模与结构差异很大：
-
-- `RecommendationRow` 约 58 行：评分徽章 + 名称 / 参数 + 右侧性能摘要；
-- `_EngineRow` 约 44 行：单行名称 + 可执行文件 + 状态 / 按钮；
-- `_ModelItemRow` 约 253 行：可展开详情、多组状态标签与行内动作。
-
-真正共有的只有「`QFrame` 外壳 + `WA_StyledBackground` + `selected` 属性 + 名称 / 副标题」
-约 10 行。若抽完整基类，必须开放徽章、展开区、右侧动作等插槽，基类参数会接近三张卡
-的并集，耦合成本高于节省的重复代码。**共性已被 `SelectionRow` 覆盖，不再上提。**
 
 ### D2 为什么不做 TaskDialog
 
@@ -99,11 +109,11 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 ## 后果
 
 - `theme.py` 的 objectName / QSS 与相关测试零改动。
-- 三张行卡、四个工具窗口、reshack 状态栏的既有行为与视觉不变。
-- 新增行卡或 UI 容器时，优先用共享件组合，不新增基类层级。
+- 行卡的既有行为与视觉不变：可展开行卡共享 `ItemRow` 骨架，单行紧凑行卡保持自己的布局。
+- 新增可展开行卡时直接继承 `ItemRow`，只写业务渲染与状态位，不再复制骨架。
 
 ## 重新评估的触发条件
 
-- 出现第四种行卡，或三张行卡的公共骨架增长到约 30 行以上；
+- 单行紧凑行卡之间也出现三份以上相同骨架；
 - 两个以上应用需要「窗口外日志回放」；
 - 多个应用的产品设计确定改为卡片式单选，届时再整体迁移 `ChoiceCard`。
