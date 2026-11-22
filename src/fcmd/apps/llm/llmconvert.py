@@ -49,6 +49,7 @@ __all__ = [
     "plan_convert",
     "root_error_line",
     "summarize_convert_line",
+    "supported_architectures",
 ]
 
 CONVERT_SCRIPT = "convert_hf_to_gguf.py"
@@ -457,6 +458,38 @@ def ensure_convert_script(  # noqa: PLR0912, PLR0913, PLR0917 - 兼容旧调用�
             f"可手动 clone {CONVERT_REPO_URL} 后用 --script 指定 convert_hf_to_gguf.py"
         )
     return cached
+
+
+def supported_architectures(
+    script: Path | None = None,
+    *,
+    tag: str | None = None,
+    home: Path | None = None,
+) -> tuple[str, ...]:
+    """当前转换脚本 / 源码能识别的模型架构列表（按字母排序）。
+
+    用于设置页「查看支持的架构」：配置了 ``.py`` 脚本时读其所在源码的
+    ``conversion/`` 包；留空或源码包尚未解压时读当前引擎 tag 的已缓存源码。
+    源码未获取、脚本不支持读取（如未解压的 zip）时返回空元组。
+    """
+    repo: Path | None = None
+    if script is not None:
+        target = Path(script).expanduser()
+        if target.suffix.lower() == ".py" and (target.parent / "conversion").is_dir():
+            repo = target.parent
+        elif target.is_dir() and (target / "conversion").is_dir():
+            repo = target
+    if repo is None:
+        root = convert_source_root(
+            tag or llmengine.current_engine_tag(llmenv.engines_root(home)) or DEFAULT_ENGINE_TAG,
+            home,
+        )
+        if (root / "conversion").is_dir():
+            repo = root
+    if repo is None:
+        return ()
+    registered, _mapping = _engine_architectures(repo)
+    return tuple(sorted(registered))
 
 
 def plan_convert(  # noqa: PLR0912, PLR0913, PLR0917

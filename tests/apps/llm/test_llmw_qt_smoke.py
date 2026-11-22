@@ -1203,6 +1203,39 @@ def test_convert_architectures_button_lists_supported(window: Any, monkeypatch: 
     assert "2 个架构" in messages[0]
 
 
+def test_convert_engine_tag_is_editable_combo(window: Any) -> None:
+    """「引擎 tag」是可编辑下拉框：既能选已装引擎，也能填自定义 tag。"""
+    from PySide6.QtWidgets import QComboBox
+
+    window.show_page("settings")
+    page = window.page("settings")
+    assert isinstance(page.convert_tag, QComboBox)
+    assert page.convert_tag.isEditable()
+    page.convert_tag.setCurrentText("b9-custom")
+    page._save_convert()
+    assert window.state.settings.convert["tag"] == "b9-custom"
+
+
+def test_convert_architectures_button_lists_supported(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """「查看支持的架构…」列出当前脚本注册的架构，便于判断模型能否转换。"""
+    from fcmd.apps.llm import llmconvert
+
+    window.show_page("settings")
+    page = window.page("settings")
+    messages: list[str] = []
+    monkeypatch.setattr(
+        llmconvert, "supported_architectures", lambda *_a, **_k: ("LlamaForCausalLM", "GPT2LMHeadModel")
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, _title, text, *_a, **_k: messages.append(str(text)),
+    )
+    page.convert_arch_button.click()
+    assert messages and "LlamaForCausalLM" in messages[0]
+    assert "2 个架构" in messages[0]
+
+
 def test_settings_engine_panel_is_compact(window: Any) -> None:
     """引擎独立成卡片且位于存储下方：导入按钮在目录行、刷新在右上角。"""
     from fcmd.gui.qt.widgets import Card

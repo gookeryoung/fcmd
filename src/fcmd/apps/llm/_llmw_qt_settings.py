@@ -43,6 +43,7 @@ from fcmd.gui.qt.widgets import (
     button,
     confirm,
     hint_label,
+    link_button,
 )
 
 if TYPE_CHECKING:
@@ -190,8 +191,13 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.convert_outtype.setCurrentText(settings.outtype)
         grid.addWidget(self.convert_outtype, 0, 1)
         grid.addWidget(QLabel("引擎 tag"), 0, 2, Qt.AlignmentFlag.AlignRight)
-        self.convert_tag = QLineEdit(settings.tag, card)
-        self.convert_tag.setPlaceholderText("留空用默认引擎")
+        self.convert_tag = QComboBox(card)
+        self.convert_tag.setEditable(True)
+        self.convert_tag.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        line_edit = self.convert_tag.lineEdit()
+        if line_edit is not None:
+            line_edit.setPlaceholderText("留空用默认引擎")
+        self._refresh_convert_engine_options(settings.tag)
         grid.addWidget(self.convert_tag, 0, 3)
         grid.addWidget(QLabel("解释器"), 1, 0, Qt.AlignmentFlag.AlignRight)
         self.convert_python = QLineEdit(settings.python, card)
@@ -209,12 +215,65 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.convert_overwrite.setChecked(settings.overwrite)
         grid.addWidget(self.convert_overwrite, 3, 0, 1, 2)
         card.body.addLayout(grid)
+        arch_row = QHBoxLayout()
+        arch_row.setContentsMargins(0, 0, 0, 0)
+        arch_row.setSpacing(8)
+        self.convert_arch_button = link_button(
+            "查看支持的架构…", tooltip="读取当前转换脚本注册表；不在列表内的架构无法转换"
+        )
+        self.convert_arch_button.clicked.connect(self._show_supported_architectures)
+        arch_row.addWidget(self.convert_arch_button)
+        arch_row.addWidget(
+            hint_label(
+                "llama.cpp 只支持脚本注册表内的架构；自定义架构请指定支持它的脚本 / 源码包，或直接下载官方 GGUF。",
+                wrap=True,
+            ),
+            1,
+        )
+        card.body.addLayout(arch_row)
         self.convert_outtype.currentIndexChanged.connect(lambda _index: self._save_convert())
-        self.convert_tag.editingFinished.connect(self._save_convert)
+        self.convert_tag.currentIndexChanged.connect(lambda _index: self._save_convert())
+        if line_edit is not None:
+            line_edit.editingFinished.connect(self._save_convert)
         self.convert_python.editingFinished.connect(self._save_convert)
         self.convert_script.editingFinished.connect(self._save_convert)
         self.convert_overwrite.toggled.connect(lambda _checked: self._save_convert())
         return card
+
+    def _convert_tag_text(self) -> str:
+        """当前转换引擎 tag（可编辑下拉框文本；空串表示默认引擎）。"""
+        return self.convert_tag.currentText().strip()
+
+    def _refresh_convert_engine_options(self, selected: str = "") -> None:
+        """把已安装引擎 tag 填进可编辑下拉框，同时保留自定义文本。"""
+        if not hasattr(self, "convert_tag"):
+            return
+        current = selected.strip() or self.convert_tag.currentText().strip()
+        self.convert_tag.blockSignals(True)
+        self.convert_tag.clear()
+        tags = [info.tag for info in settings_logic.installed_engines()]
+        self.convert_tag.addItems(tags)
+        self.convert_tag.setCurrentText(current)
+        self.convert_tag.blockSignals(False)
+
+    def _show_supported_architectures(self) -> None:
+        """列出当前转换脚本 / 源码能识别的架构，解释「为什么不支持」。"""
+        script_text = self.convert_script.text().strip()
+        script = Path(script_text).expanduser() if script_text else None
+        archs = llmconvert.supported_architectures(script, tag=self._convert_tag_text() or None)
+        if not archs:
+            QMessageBox.information(
+                self,
+                "暂无法读取架构列表",
+                "尚未获取到 llama.cpp 源码，或当前转换脚本是未解压的 zip。\n",
+                "先执行一次转换让源码就绪，或在「转换脚本」中选择源码目录 / convert_hf_to_gguf.py。",
+            )
+            return
+        QMessageBox.information(
+            self,
+            "转换脚本支持的架构",
+            f"当前脚本共注册 {len(archs)} 个架构：\n\n" + "、".join(archs),
+        )
 
     def _pick_convert_script(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(
@@ -230,7 +289,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
     def _save_convert(self) -> None:
         settings = _llmw_convert.ConvertSettings(
             outtype=self.convert_outtype.currentText().strip() or llmconvert.CONVERT_OUTTYPES[0],
-            tag=self.convert_tag.text().strip(),
+            tag=self._convert_tag_text(),
             python=self.convert_python.text().strip(),
             script=self.convert_script.text().strip(),
             overwrite=self.convert_overwrite.isChecked(),
@@ -254,7 +313,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
             self.engine_source_tag.set_status("指定文件不存在", "warning")
             self.engine_source_tag.setToolTip(script_text)
             return
-        tag = self.convert_tag.text().strip() or None
+        tag = self._convert_tag_text() or None
         try:
             status = _llmw_convert.convert_source_status(tag)
         except OSError as exc:  # pragma: no cover - 读盘失败时只提示，不阻断设置页
@@ -354,6 +413,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.migration_note.setVisible(bool(note))
         self.refresh_engines()
         self.refresh_engine_cards()
+        self._refresh_convert_engine_options(self._convert_tag_text())
         self._refresh_engine_source()
 
     def refresh_engine_cards(self) -> None:

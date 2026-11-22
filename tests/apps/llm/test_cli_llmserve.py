@@ -2394,6 +2394,16 @@ class TestConvertPrecheck:
         assert "不支持架构 MysteryForCausalLM" in message
         assert "-GGUF" in message
 
+    def test_supported_architectures_reads_conversion_registry(self, tmp_path: Path) -> None:
+        repo = self._repo(tmp_path)
+        script = repo / llmconvert.CONVERT_SCRIPT
+        script.write_text("# script", encoding="utf-8")
+        assert llmconvert.supported_architectures(repo) == ("GPT2LMHeadModel",)
+        assert llmconvert.supported_architectures(script) == ("GPT2LMHeadModel",)
+
+    def test_supported_architectures_empty_without_source(self, home: Path) -> None:
+        assert llmconvert.supported_architectures(tag="b9", home=home) == ()
+
     def test_plan_convert_rechecks_arch_after_script_fetch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
