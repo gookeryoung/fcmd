@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -674,6 +675,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self._convert_blocked: dict[str, str] = {}
         self._converting = False
         self._convert_active_repo: str | None = None
+        self._convert_cancel: threading.Event | None = None
         self._quant_candidates: dict[str, tuple[Path, ...]] = {}
         self._quant_tags: dict[str, tuple[str, ...]] = {}
         self._quantized_files: dict[str, tuple[tuple[str, Path], ...]] = {}
@@ -1857,11 +1859,15 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
             return
         self._converting = True
         self._convert_active_repo = repo
+        self._convert_cancel = threading.Event()
         self.download_status.setVisible(True)
         # 准备阶段（探测解释器 / 获取源码 / 检查架构）没有百分比：用忙碌条表示在动。
         self.download_bar.setRange(0, 0)
         self.download_text.setText(f"准备转换 {repo}…")
-        self.stop_download_button.setVisible(False)
+        self.stop_download_button.setText("停止转换")
+        self.stop_download_button.setToolTip("停止转换（含 llama.cpp 源码下载）")
+        self.stop_download_button.setEnabled(True)
+        self.stop_download_button.setVisible(True)
         self._sync_download_buttons()
         self._log(f"开始转换 {source} -> {output}")
         self._bridge = ProgressBridge(self)
@@ -1891,7 +1897,8 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
             if self._bridge is not None:
                 self._bridge.progress.emit(text)
 
-        python = form.python or llmconvert.find_convert_python(on_status=report)
+        cancel = self._convert_cancel
+        python = form.python or llmconvert.find_convert_python(on_status=report, cancel=cancel)
         plan = llmconvert.plan_convert(
             source,
             output=Path(form.output),
@@ -1900,6 +1907,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
             python=python,
             tag=form.tag or None,
             on_status=report,
+            cancel=cancel,
         )
         last = -1
 
@@ -1912,7 +1920,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
                 last = percent
                 self._bridge.progress.emit(percent) if self._bridge is not None else None
 
-        return [str(path) for path in llmconvert.convert_model(plan, on_output=relay, on_status=report)]
+        return [str(path) for path in llmconvert.convert_model(plan, on_output=relay, on_status=report, cancel=cancel)]
 
     def _on_convert_progress(self, value: object) -> None:
         if isinstance(value, int):
@@ -1927,6 +1935,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
     def _convert_done(self, repo: str, produced: list[str]) -> None:
         self.download_bar.setRange(0, 100)
         self.download_bar.setValue(100)
+        self.stop_download_button.setVisible(False)
         self.download_text.setText(f"转换完成：{repo}")
         self._log(f"转换完成 {repo}: {'、'.join(produced)}")
         self.refresh_installed()
@@ -1934,12 +1943,21 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
 
     def _convert_error(self, repo: str, message: str) -> None:
         self.download_bar.setRange(0, 100)
+        self.stop_download_button.setVisible(False)
+        if "已取消转换" in message:
+            self.download_text.setText(f"已取消转换：{repo}")
+            self._log(f"已取消转换 {repo}")
+            return
         self.download_text.setText(f"转换失败：{repo} · {message}")
         self._log(f"转换失败 {repo}: {message}")
 
     def _convert_finished(self) -> None:
         self._converting = False
         self._convert_active_repo = None
+        self._convert_cancel = None
+        self.stop_download_button.setText("停止")
+        self.stop_download_button.setToolTip("停止当前下载")
+        self.stop_download_button.setVisible(False)
         self._sync_download_buttons()
 
     # -- 快捷启动 ------------------------------------------------------ #
@@ -2103,6 +2121,12 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self._update_download_summary()
 
     def stop_download(self) -> None:
+        if self._converting and self._convert_cancel is not None:
+            self._convert_cancel.set()
+            self.stop_download_button.setEnabled(False)
+            self.download_text.setText("正在停止转换…")
+            self._log("正在停止转换…")
+            return
         if not self._jobs:
             return
         for job in self._jobs.values():
@@ -2115,7 +2139,13 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self._log("正在停止下载…")
 
     def close(self) -> bool:
-        """关窗前确认进行中的下载，返回 ``False`` 表示用户取消关闭。"""
+        """关窗前确认进行中的下载 / 转换，返回 ``False`` 表示用户取消关闭。"""
+        if self._converting:
+            if not confirm(self, "转换进行中", "转换仍在进行，关闭窗口将停止转换（已生成部分保留）。确实关闭？"):
+                return False
+            if self._convert_cancel is not None:
+                self._convert_cancel.set()
+            return True
         if not self._jobs:
             return True
         if not confirm(

@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 from collections.abc import Callable
@@ -277,6 +278,7 @@ def _download_resumable(
     opener: Opener | None = None,
     *,
     attempts: int | None = None,
+    cancel: threading.Event | None = None,
 ) -> int:
     """带 Range 续传与重试的下载，专用于体积较大的源码包。
 
@@ -291,6 +293,8 @@ def _download_resumable(
     last_error: OSError | None = None
     limit = _SOURCE_ATTEMPTS if attempts is None else max(1, attempts)
     for attempt in range(limit):
+        if cancel is not None and cancel.is_set():
+            raise ServeError("已取消转换")
         start = part.stat().st_size if part.is_file() else 0
         headers = {"User-Agent": "fcmd-llm/0.3.10"}
         if start:
@@ -306,6 +310,8 @@ def _download_resumable(
                         total = int(expected.get("Content-Length") or 0) + (start if mode == "ab" else 0)
                 with part.open(mode) as out:
                     while chunk := resp.read(CHUNK_SIZE):
+                        if cancel is not None and cancel.is_set():
+                            raise ServeError("已取消转换")
                         out.write(chunk)
         except OSError as exc:
             last_error = exc
@@ -328,6 +334,7 @@ def _download_convert_source(
     opener: Opener | None,
     *,
     on_status: Callable[[str], None] | None = None,
+    cancel: threading.Event | None = None,
 ) -> bool:
     """下载并解压源码包；地址不可用时逐个尝试，全部失败返回 ``False``。"""
     archive = repo.parent / f"{repo.name}-{ref}.zip"
@@ -335,12 +342,16 @@ def _download_convert_source(
     # 镜像候选可能有 6–8 条：每条都重试 5 次会让「准备阶段」看起来卡死。
     attempts = _SOURCE_ATTEMPTS if len(urls) <= 2 else 2
     for index, url in enumerate(urls, start=1):
+        if cancel is not None and cancel.is_set():
+            raise ServeError("已取消转换")
         if on_status is not None:
             on_status(f"正在下载 llama.cpp 源码包（{index}/{len(urls)}）…")
         try:
-            _download_resumable(url, archive, opener, attempts=attempts)
+            _download_resumable(url, archive, opener, attempts=attempts, cancel=cancel)
         except ServeError:
             archive.unlink(missing_ok=True)
+            if cancel is not None and cancel.is_set():
+                raise
             continue
         extracted = zipfile.is_zipfile(archive) and _extract_source_archive(archive, repo)
         archive.unlink(missing_ok=True)
@@ -349,13 +360,14 @@ def _download_convert_source(
     return False
 
 
-def ensure_convert_script(  # noqa: PLR0913, PLR0917 - 兼容旧调用方，参数保持扁平
+def ensure_convert_script(  # noqa: PLR0912, PLR0913, PLR0917 - 兼容旧调用方，参数保持扁平
     tag: str | None = None,
     script: Path | None = None,
     home: Path | None = None,
     runner: Runner = run_command,
     opener: Opener | None = None,
     on_status: Callable[[str], None] | None = None,
+    cancel: threading.Event | None = None,
 ) -> Path:
     """定位转换脚本：显式 ``--script``（脚本或本地源码 zip）→ ``FCMD_CONVERT_SCRIPT``
     → 本地源码 → 引擎目录已有 ``llama.cpp*.zip`` → 源码包下载 → 浅克隆。
@@ -388,6 +400,8 @@ def ensure_convert_script(  # noqa: PLR0913, PLR0917 - 兼容旧调用方，参�
     if cached.is_file():
         return cached
 
+    if cancel is not None and cancel.is_set():
+        raise ServeError("已取消转换")
     if on_status is not None:
         on_status("未找到本地 llama.cpp 源码，首次转换需要获取（下载源码包或 clone）…")
     ref = resolved if _BUILD_TAG_RE.fullmatch(resolved) else "master"
@@ -396,9 +410,11 @@ def ensure_convert_script(  # noqa: PLR0913, PLR0917 - 兼容旧调用方，参�
     for archive in _local_source_archives(ref, repo):
         if _source_archive_ready(archive) and _extract_source_archive(archive, repo):
             return cached
-    if _download_convert_source(ref, repo, opener, on_status=on_status):
+    if _download_convert_source(ref, repo, opener, on_status=on_status, cancel=cancel):
         return cached
 
+    if cancel is not None and cancel.is_set():
+        raise ServeError("已取消转换")
     shutil.rmtree(repo, ignore_errors=True)
     if on_status is not None:
         on_status("源码包不可用，正在 git clone llama.cpp 源码（较慢，请稍候）…")
@@ -426,12 +442,15 @@ def plan_convert(  # noqa: PLR0913, PLR0917
     tag: str | None = None,
     home: Path | None = None,
     on_status: Callable[[str], None] | None = None,
+    cancel: threading.Event | None = None,
 ) -> ConvertPlan:
     """构造转换计划。
 
     默认输出到模型目录下的 ``converted`` 子目录：
     ``<模型目录>/converted/<源目录名>/<源目录名>[-<量化>].gguf``。
     """
+    if cancel is not None and cancel.is_set():
+        raise ServeError("已取消转换")
     src = source.expanduser()
     if not is_hf_safetensors_dir(src):
         raise ServeError(f"不是 HF safetensors 目录（需要 config.json 与 *.safetensors）: {src}")
@@ -475,7 +494,7 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         source=src.resolve(),
         output=target.resolve(),
         outtype=outtype,
-        script=ensure_convert_script(tag=tag, script=script, home=home, on_status=on_status),
+        script=ensure_convert_script(tag=tag, script=script, home=home, on_status=on_status, cancel=cancel),
         python=python or os.environ.get("FCMD_CONVERT_PYTHON") or sys.executable,
         quant=quant,
         quantize_exe=quant_exe,
@@ -511,6 +530,7 @@ def find_convert_python(
     runner: Runner = run_command,
     *,
     on_status: Callable[[str], None] | None = None,
+    cancel: threading.Event | None = None,
 ) -> str:
     """找到一个已安装 ``torch`` / ``safetensors`` / ``numpy`` 的 Python 解释器。
 
@@ -518,6 +538,8 @@ def find_convert_python(
     探测进度通过 ``on_status`` 回传给窗口。
     """
     for candidate in _python_candidates():
+        if cancel is not None and cancel.is_set():
+            raise ServeError("已取消转换")
         if on_status is not None:
             on_status(f"正在检测转换解释器：{candidate}")
         result = runner([candidate, "-c", "import torch, safetensors, numpy"], timeout=_PYTHON_PROBE_TIMEOUT)
@@ -592,18 +614,21 @@ def summarize_convert_line(line: str) -> str:
     return f"{line[:index]}{marker}<已省略 {len(template)} 字符的 Jinja 模板，完整内容已写入 GGUF 元数据>"
 
 
-def convert_model(
+def convert_model(  # noqa: PLR0912 - 取消 / 量化 / 失败分支集中在一处
     plan: ConvertPlan,
     runner: Runner = run_command,
     on_output: Callable[[str], None] | None = None,
     *,
     on_status: Callable[[str], None] | None = None,
+    cancel: threading.Event | None = None,
 ) -> list[Path]:
     """执行转换（可选再量化），返回最终产出的 GGUF 列表。
 
     传入 ``on_output`` 时改为逐行读取转换脚本输出（兼容 tqdm 的 ``\\r`` 进度），
     可实时回调日志；否则沿用一次性捕获的 ``runner``。
     """
+    if cancel is not None and cancel.is_set():
+        raise ServeError("已取消转换")
     plan.output.parent.mkdir(parents=True, exist_ok=True)
     if on_status is not None:
         on_status(f"正在启动转换脚本：{plan.python}")
@@ -615,11 +640,14 @@ def convert_model(
                 plan.convert_argv(),
                 timeout=CONVERT_TIMEOUT,
                 on_output=lambda line: _relay_output(line, on_output),
+                cancel=cancel,
             )
         except subprocess.TimeoutExpired as exc:
             raise ServeError(f"safetensors 转 GGUF 超时（{CONVERT_TIMEOUT:.0f}s）") from exc
         except OSError as exc:
             raise ServeError(f"无法启动转换脚本: {exc}") from exc
+    if cancel is not None and cancel.is_set():
+        raise ServeError("已取消转换")
     if result.returncode != 0:
         raise ServeError(_convert_failure(result, streamed=on_output is not None))
     if plan.quant is None:

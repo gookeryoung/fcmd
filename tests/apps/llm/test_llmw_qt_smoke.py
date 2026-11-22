@@ -756,6 +756,42 @@ def test_all_and_local_keep_seen_category_items(window: Any) -> None:
     assert [item.repo for item in browse._result_items] == [paint.repo]
 
 
+def test_convert_can_be_stopped_from_status_row(window: Any) -> None:
+    """转换（含首次下载 llama.cpp 源码）可从底部状态行停止。"""
+    import threading
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    browse._converting = True
+    browse._convert_cancel = threading.Event()
+    browse.stop_download_button.setText("停止转换")
+    browse.stop_download_button.setEnabled(True)
+    try:
+        browse.stop_download()
+        assert browse._convert_cancel.is_set()
+        assert not browse.stop_download_button.isEnabled()
+        assert browse.download_text.text() == "正在停止转换…"
+    finally:
+        browse._converting = False
+        browse._convert_cancel = None
+
+
+def test_settings_shows_convert_source_status(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """设置页「模型转换」卡片显示当前引擎是否带有 llama.cpp 转换源码。"""
+    from fcmd.apps.llm import _llmw_convert
+
+    window.show_page("settings")
+    page = window.page("settings")
+    ready = _llmw_convert.ConvertSourceStatus(
+        ready=True, tag="b9", path=Path("/engines/b9/llama.cpp/convert_hf_to_gguf.py")
+    )
+    monkeypatch.setattr(_llmw_convert, "convert_source_status", lambda _tag=None: ready)
+    page._refresh_convert_source()
+    assert page.convert_source_tag.text() == "已包含源码"
+    assert page.convert_source_tag.property("tone") == "success"
+    assert "convert_hf_to_gguf.py" in page.convert_source_hint.text()
+
+
 def test_convert_preparation_shows_busy_status(window: Any) -> None:
     """转换准备阶段用忙碌条 + 状态行反馈（探测解释器 / 下载源码 / clone），不再是静止的 0%。"""
     window.show_page("models")

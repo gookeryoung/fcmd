@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from fcmd.apps.llm import llmbase, llmserve
+from fcmd.apps.llm import _llmw_convert, llmbase, llmconvert, llmserve
 from fcmd.apps.llm._llmpaint_engine import SdEngine, engine_backend, engine_version
 from fcmd.apps.llm._llmw_hardware import HardwareSnapshot
 from fcmd.apps.llm._llmw_monitor import LoadSample
@@ -235,6 +235,27 @@ def test_quantize_menu_items_marks_existing_precisions() -> None:
     assert by_quant["Q5_K_M"] is True
     assert by_quant["Q8_0"] is False
     assert all(desc for _quant, desc, _done in items)
+
+
+def test_convert_source_status_reports_ready_and_missing(tmp_path: Path) -> None:
+    """设置页按当前引擎 tag 判断 llama.cpp 是否已包含转换源码。"""
+    tag = "b9"
+    ready_path = llmconvert.convert_source_root(tag, tmp_path) / llmconvert.CONVERT_SCRIPT
+    ready_path.parent.mkdir(parents=True)
+    ready_path.write_text("# ready", encoding="utf-8")
+
+    ready = _llmw_convert.convert_source_status(tag, tmp_path)
+    assert ready.ready is True
+    assert ready.tag == tag
+    assert ready.title == "已包含源码"
+    assert ready.tone == "success"
+    assert ready.hint == str(ready_path)
+
+    missing = _llmw_convert.convert_source_status("b10", tmp_path)
+    assert missing.ready is False
+    assert missing.title == "未下载源码"
+    assert missing.tone == "warning"
+    assert "首次转换时自动下载" in missing.hint
 
 
 def test_model_item_row_expands_inline_detail() -> None:

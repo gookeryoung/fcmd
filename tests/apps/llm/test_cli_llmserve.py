@@ -655,6 +655,34 @@ class TestConvert:
                 opener=cast(Any, _fail_opener),
             )
 
+    def test_download_resumable_honors_cancel(self, tmp_path: Path) -> None:
+        """取消标记先置位时不发起网络请求，直接以「已取消转换」结束。"""
+        import threading
+
+        cancel = threading.Event()
+        cancel.set()
+        dest = tmp_path / "src.zip"
+        with pytest.raises(ServeError, match="已取消转换"):
+            llmconvert._download_resumable(
+                "https://example.com/src.zip",
+                dest,
+                cast(Any, lambda *_a, **_k: pytest.fail("取消后不应发请求")),
+                cancel=cancel,
+            )
+
+    def test_find_convert_python_honors_cancel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """探测解释器前检查取消标记，避免停止后继续尝试后续候选。"""
+        import threading
+
+        cancel = threading.Event()
+        cancel.set()
+        monkeypatch.setattr(llmconvert, "_python_candidates", lambda: ["python"])
+        with pytest.raises(ServeError, match="已取消转换"):
+            llmconvert.find_convert_python(
+                lambda *_a, **_k: pytest.fail("取消后不应探测解释器"),
+                cancel=cancel,
+            )
+
     def test_source_archive_urls(self) -> None:
         """源码包地址：GitHub 镜像优先，官方 codeload / archive 直连兜底。"""
         tag_urls = llmconvert._source_archive_urls("b12212")

@@ -20,16 +20,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fcmd.apps.llm import _llmconfig, llmconvert, llmengine, llmmodel, llmqnt
+from fcmd.apps.llm import _llmconfig, llmconvert, llmengine, llmenv, llmmodel, llmqnt
 from fcmd.apps.llm._llmgguf import GgufPrecision
 from fcmd.apps.llm._llmw_ui import _detect_precisions
 from fcmd.apps.llm.llmbase import ModelEntry, ServeError, human_size
 
 __all__ = [
     "ConvertSettings",
+    "ConvertSourceStatus",
     "ModelEnv",
     "convert_settings_from_dict",
     "convert_settings_to_dict",
+    "convert_source_status",
     "default_output_path",
     "output_path_from_form",
     "scan_model_env",
@@ -86,6 +88,37 @@ def convert_settings_to_dict(settings: ConvertSettings) -> dict[str, Any]:
         "script": settings.script,
         "overwrite": settings.overwrite,
     }
+
+
+@dataclass(frozen=True, slots=True)
+class ConvertSourceStatus:
+    """当前引擎 tag 的 llama.cpp 转换源码状态（供设置页展示）。"""
+
+    ready: bool
+    tag: str
+    path: Path
+
+    @property
+    def title(self) -> str:
+        """状态胶囊文案。"""
+        return "已包含源码" if self.ready else "未下载源码"
+
+    @property
+    def tone(self) -> str:
+        """状态胶囊色调。"""
+        return "success" if self.ready else "warning"
+
+    @property
+    def hint(self) -> str:
+        """状态说明：已就绪给路径；未就绪提示首次转换会自动获取。"""
+        return str(self.path) if self.ready else "首次转换时自动下载；也可在下方指定本地脚本 / 源码包"
+
+
+def convert_source_status(tag: str | None = None, home: Path | None = None) -> ConvertSourceStatus:
+    """检查当前（或指定）引擎 tag 的 llama.cpp 源码是否已包含转换脚本。"""
+    resolved = tag or llmengine.current_engine_tag(llmenv.engines_root(home)) or llmengine.DEFAULT_ENGINE_TAG
+    path = llmconvert.convert_source_root(resolved, home) / llmconvert.CONVERT_SCRIPT
+    return ConvertSourceStatus(ready=path.is_file(), tag=resolved, path=path)
 
 
 @dataclass(frozen=True, slots=True)

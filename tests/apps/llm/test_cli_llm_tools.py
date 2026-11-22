@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -974,3 +977,18 @@ def test_scan_model_env_survives_missing_engine_and_quantizer(monkeypatch: pytes
     assert "未找到" in env.info["quantizer"]
     assert env.entries == []
     assert env.convertible == []
+
+
+@pytest.mark.slow
+def test_stream_command_honors_pre_set_cancel() -> None:
+    """取消标记已置位时，长时间无输出的子进程也能被及时终止。"""
+    cancel = threading.Event()
+    cancel.set()
+    started = time.monotonic()
+    result = llmbase.stream_command(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        timeout=10.0,
+        cancel=cancel,
+    )
+    assert time.monotonic() - started < 5.0
+    assert result.returncode != 0

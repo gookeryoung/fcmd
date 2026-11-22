@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import codecs
+import contextlib
 import functools
 import locale
 import re
@@ -414,12 +415,13 @@ STREAM_CHUNK = 4096
 _LINE_SPLIT = re.compile(r"\r\n|\r|\n")
 
 
-def stream_command(
+def stream_command(  # noqa: PLR0913, PLR0917 - 与 Popen 参数一一对应，保持扁平
     cmd: Sequence[str],
     timeout: float = 15.0,
     on_output: Callable[[str], None] | None = None,
     cwd: str | Path | None = None,
     env: dict[str, str] | None = None,
+    cancel: threading.Event | None = None,
 ) -> CommandResult:
     """执行外部命令并实时逐行回调输出。
 
@@ -474,6 +476,19 @@ def stream_command(
 
     reader = threading.Thread(target=read_stream, daemon=True)
     reader.start()
+    stop_watch = threading.Event()
+
+    def watch_cancel() -> None:
+        """轮询取消标记：命令长时间无输出时也能及时终止。"""
+        while not stop_watch.wait(0.2):
+            if cancel is not None and cancel.is_set():
+                with contextlib.suppress(OSError):
+                    process.kill()
+                return
+
+    watcher = threading.Thread(target=watch_cancel, daemon=True) if cancel is not None else None
+    if watcher is not None:
+        watcher.start()
     try:
         returncode = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -481,6 +496,9 @@ def stream_command(
         process.wait()
         raise
     finally:
+        stop_watch.set()
+        if watcher is not None:
+            watcher.join(timeout=1.0)
         reader.join()
         if process.stdout is not None:
             process.stdout.close()
