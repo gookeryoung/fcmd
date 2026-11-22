@@ -2,12 +2,14 @@
 
 窗口只做编排：业务判断全部走 :mod:`fcmd.apps.wslman.wslman` 与
 :mod:`fcmd.apps.wslman._source` 的共享实现（导出、预检、注销前备份、镜像下载），
-与 CLI 共用同一套口径；界面负责列表 / 详情 / 下载 / 日志与下载配置，配置项集中在设置页。
+与 CLI 共用同一套口径；界面负责列表 / 详情 / 下载与下载配置，配置项集中在设置页；
+任务日志从「帮助 → 任务日志…」以非模态窗口打开（与 llmw 的服务日志同形态）。
 
 布局与 llmw 对齐：复用共享 :class:`fcmd.gui.qt.window.QtMainWindow` 的左侧
 :class:`~fcmd.gui.qt.sidebar.SidebarNav` 导航（折叠、``Alt+1..4`` 切换与窗口
-几何记忆都由基座提供），右侧按「发行版 / 镜像 / 日志 / 设置」分页，每页拿满
-整个内容区，不再把详情、下载、日志与配置挤进同一个底部标签页。发行版页用一个
+几何记忆都由基座提供），右侧按「发行版 / 镜像 / 设置」分页，每页拿满整个
+内容区，不再把详情、下载与配置挤进同一个底部标签页；任务日志不占分页，从
+「帮助 → 任务日志…」打开。发行版页用一个
 纵向分栏把列表与详情分开；下载目录 / 下载源 / 校验这类配置统一放设置页，
 镜像页只留列表与下载动作；镜像页参考 llmw 模型列表：自定义行卡铺满整页，
 详情与下载地址通过行内「展开」就地显示，不再占用右侧面板；进页先回显磁盘缓存
@@ -27,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -61,7 +64,6 @@ from fcmd.gui.qt.widgets import (
     ElidedLabel,
     FormGrid,
     ItemRow,
-    LogView,
     PageScroll,
     PathRow,
     RowListWidget,
@@ -85,16 +87,22 @@ __all__ = ["WslmanQtWindow", "run_qt"]
 
 DEFAULT_SIZE = (1160, 760)
 
+_LOG_LINES_MAX = 1000
+"""任务日志缓冲上限（行）；超出后丢弃最旧的，避免长时间运行吃内存。"""
+
 TITLE = "WSL · 发行版管理"
 NAV_TITLE = "WSL"
 
 PAGES: tuple[tuple[str, str, str, str], ...] = (
     ("distros", "发行版", "列表、详情、启动停止、导出与注销", "distros"),
     ("images", "镜像", "在线镜像清单、本地安装与清单更新", "disc"),
-    ("log", "日志", "启动、导出、安装与下载的任务日志", "log"),
     ("settings", "设置", "下载目录、下载源与校验", "settings"),
 )
-"""侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。"""
+"""侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。
+
+任务日志不占分页：从顶部「帮助 → 任务日志…」以非模态窗口打开（见
+:meth:`WslmanQtWindow.show_log`），与 llmw 的服务日志同一形态。
+"""
 
 
 def _images_stamp(fetched_at: float) -> str:
@@ -361,7 +369,14 @@ class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
 
 
 class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """WSL 发行版管理：侧边栏分页（发行版 / 镜像 / 日志 / 设置）+ 后台任务。"""
+    """WSL 发行版管理：侧边栏分页（发行版 / 镜像 / 设置）+ 后台任务。
+
+    任务日志不占分页：顶部「帮助 → 任务日志…」打开非模态日志窗口，历史来自
+    ``_log_lines`` 缓冲，窗口打开时回放、之后按 :attr:`logLine` 实时追加。
+    """
+
+    logLine = Signal(str)
+    """任务日志行信号：后台任务写日志 → 已打开的日志窗口实时追加。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
         self._own_settings_path = settings_path
@@ -384,6 +399,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._active_entry = ""
         self._task_page = ""
         self._closing = False
+        self._log_lines: list[str] = []
+        self._log_dialog: Any = None
         self._bridge: _LogBridge | None = None
         self._poll: QTimer | None = None
         self._filter_timer: QTimer | None = None
@@ -407,7 +424,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         builders = {
             "distros": self._build_distros_page,
             "images": self._build_images_page,
-            "log": self._build_log_page,
             "settings": self._build_settings_page,
         }
         for key, label, hint, icon in PAGES:
@@ -416,6 +432,37 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.add_page(key, label, hint=hint, icon=icon, factory=lambda page=page: page)
         self._schedule_poll()
         self.refresh()
+
+    def _build_menu(self) -> None:
+        """共享菜单 + 「帮助 → 任务日志…」（放在「关于」之前）。"""
+        super()._build_menu()
+        log_action = QAction("任务日志…", self)
+        log_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
+        log_action.triggered.connect(self.show_log)
+        self.help_menu.insertAction(self.about_action, log_action)
+        self.help_menu.insertSeparator(self.about_action)
+        self.log_action = log_action
+
+    def show_log(self) -> None:
+        """打开（或聚焦）任务日志窗口；历史来自 ``_log_lines`` 缓冲。"""
+        if self._log_dialog is None:
+            from fcmd.gui.qt.logdialog import LogDialog
+
+            self._log_dialog = LogDialog(
+                "任务日志",
+                text="\n".join(self._log_lines),
+                append=self.logLine,
+                on_clear=self._clear_log,
+                hint="汇总启动 / 停止、导出、安装与下载操作；复制、清空、导出见日志工具条。",
+                parent=self,
+            )
+        self._log_dialog.show()
+        self._log_dialog.raise_()
+        self._log_dialog.activateWindow()
+
+    def _clear_log(self) -> None:
+        """日志窗口「清空」同时清掉缓冲，再次打开不会回放已清掉的行。"""
+        self._log_lines.clear()
 
     def show_page(self, key: str) -> None:
         """切页：进入镜像页时先回显本地缓存，再后台刷新在线清单。
@@ -676,19 +723,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         files.body.addWidget(hint_label("界面设置保存下载目录 / 下载源 / 筛选等；命令行配置与 wslman CLI 共用。"))
         layout.addWidget(files)
         layout.addStretch(1)
-        return page
-
-    def _build_log_page(self) -> QWidget:
-        """日志页：任务日志独占整页，复制 / 清空 / 导出沿用共享工具条。"""
-        page = QWidget(self)
-        body = QVBoxLayout(page)
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(8)
-        card = Card("任务日志", page)
-        self._log_view = LogView(height=200, parent=card)
-        card.body.addWidget(self._log_view, 1)
-        card.body.addWidget(hint_label("汇总启动 / 停止、导出、安装与下载操作；复制、清空、导出见日志工具条。"))
-        body.addWidget(card, 1)
         return page
 
     # ------------------------------------------------------------------ #
@@ -998,7 +1032,11 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return None
 
     def _log(self, text: str) -> None:
-        self._log_view.append(f"[{time.strftime('%H:%M:%S')}] {text}")
+        """追加一行任务日志：写缓冲（限量）并发信号给已打开的日志窗口。"""
+        line = f"[{time.strftime('%H:%M:%S')}] {text}"
+        self._log_lines.append(line)
+        del self._log_lines[:-_LOG_LINES_MAX]
+        self.logLine.emit(line)
 
     # ------------------------------------------------------------------ #
     # 操作

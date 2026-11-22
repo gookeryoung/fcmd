@@ -126,7 +126,7 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
         assert window.start_button.isEnabled() is True
         assert window.stop_button.isEnabled() is False
     finally:
-        window._log_view.clear()
+        window._log_lines.clear()
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
@@ -300,11 +300,11 @@ def test_settings_persisted(home: Path) -> None:
 
 
 def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
-    """侧边栏复用共享导航：四页登记、默认停在发行版页，折叠状态随设置落盘。"""
+    """侧边栏复用共享导航：三页登记（日志已移到帮助菜单）、默认停在发行版页。"""
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        assert window.nav.keys() == ("distros", "images", "log", "settings")
+        assert window.nav.keys() == ("distros", "images", "settings")
         assert window.nav.selected() == "distros"
         assert window.current_page() == "distros"
         assert window.page_title.text() == "发行版"
@@ -333,7 +333,8 @@ def test_prebuilt_pages_stay_hidden_until_shown(home: Path) -> None:
         assert bar.geometry().top() == 0
         assert bar.geometry().height() > 0
         assert not window.image_list.isVisible()
-        assert not window._log_view.isVisible()
+        # 日志不占页面：未打开前没有日志窗口
+        assert window._log_dialog is None
         hit = window.childAt(30, bar.height() // 2)
         node = hit
         while node is not None and node is not window:
@@ -661,6 +662,62 @@ def test_statusbar_is_single_line(home: Path, monkeypatch: pytest.MonkeyPatch) -
         window.deleteLater()
 
 
+def test_log_moves_to_help_menu(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """任务日志不占页面：「帮助 → 任务日志…」打开非模态窗口，回放缓冲并实时追加。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        texts = [action.text() for action in window.help_menu.actions() if not action.isSeparator()]
+        assert texts[-2:] == ["任务日志…", "关于"]
+        assert window.log_action.shortcut().toString() == "Ctrl+Shift+L"
+        assert window._log_dialog is None
+
+        window._log("启动前日志")
+        window.show_log()
+        QApplication.processEvents()
+        dialog = window._log_dialog
+        assert dialog is not None
+        assert dialog.isVisible()
+        assert "启动前日志" in dialog.log_view.text()
+
+        # 打开后继续实时追加
+        window._log("运行中日志")
+        QApplication.processEvents()
+        assert "运行中日志" in dialog.log_view.text()
+
+        # 清空同时清缓冲：再次打开不会回放已清掉的行
+        dialog.log_view.clear_button.click()
+        QApplication.processEvents()
+        assert dialog.log_view.text() == ""
+        assert window._log_lines == []
+        window.show_log()
+        QApplication.processEvents()
+        assert dialog.log_view.text() == ""
+        dialog.close()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_log_buffer_is_capped(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """日志缓冲有上限：长时间运行不会无限吃内存。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        for index in range(_wslmanw_qt._LOG_LINES_MAX + 5):
+            window._log(f"line {index}")
+        assert len(window._log_lines) == _wslmanw_qt._LOG_LINES_MAX
+        assert window._log_lines[-1].endswith("line 1004")
+        assert not any(line.endswith("line 0") for line in window._log_lines)
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_status_messages_follow_their_page(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """任务消息写回发起任务的分页；切到别的页不会看到它。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
@@ -669,21 +726,23 @@ def test_status_messages_follow_their_page(home: Path, monkeypatch: pytest.Monke
     try:
         _wait_idle(window)
         window.show_page("images")
-        # 在镜像页发起任务，然后切到日志页：完成提示应停在镜像页
+        # 在镜像页发起任务，然后切到别的页：完成提示应停在镜像页
         window._task_page = "images"
-        window.show_page("log")
+        window.show_page("distros")
         window._set_task_status("下载完成")
-        assert window.status_text() == "就绪"
         assert window.page_status("images") == "下载完成"
+        # 发行版页只显示自己的状态（刷新完成），不会串到镜像页的消息
+        assert window.status_text() == window.page_status("distros") != "下载完成"
 
         window.show_page("images")
         assert window.status_text() == "下载完成"
 
         # 设置页的改动只写设置页
-        window.show_page("log")
+        window.show_page("distros")
         window._on_download_dir_committed("")
         assert window.page_status("settings").startswith("下载目录")
-        assert window.status_text() == "就绪"
+        assert window.status_text() == window.page_status("distros")
+        assert not window.status_text().startswith("下载目录")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
