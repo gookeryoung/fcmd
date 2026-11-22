@@ -243,6 +243,11 @@
 
 ### 修复
 
+- 任务日志统一为公共组件：所有 Qt 窗口的日志入口统一挂在「帮助 → 任务日志…」
+  （`Ctrl+Shift+L`），由 `gui/logdialog.py` 的 `LogChannelMixin` 提供缓冲 / 回放 / 实时追加 /
+  清空 / 关闭联动；`dynacalcw`、`filesyncw`、`mirrortoolw`、`img2icow`、`ncmconvertw`、
+  `videoconvw`、`docdiffw`、`img2pdfw`、`pdfcryptw`、`pdfsplitw` 移除页面内日志页签 /
+  日志卡片 / 日志分栏，只保留业务内容；`QtMainWindow` / `QtToolWindow` 创建即带日志菜单。
 - GUI 页签统一走共享 `tab_widget(...)`（内部 `pill_tabs`）：`reshackw` 行卡展开预览、
   `dynacalcw` / `filescanw` / `paramcadw` / `pevieww` / `llmw` 运行与模型页不再创建
   默认 `QTabWidget`，消除页签基线 / 边框与卡片圆角叠加产生的错位横线；新增源码扫描

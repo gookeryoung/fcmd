@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +85,12 @@ def _run_conversion(  # noqa: PLR0913, PLR0917 - 转换参数逐项显式传递�
 class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     """图片转 PDF 转换器主窗口。"""
 
+    log_hint = "汇总输入、页面设置、逐页进度与输出 PDF；复制、清空、导出见日志工具条。"
+
+    def format_log_line(self, message: str) -> str:
+        """任务日志前缀：``[HH:MM:SS]``。"""
+        return f"[{time.strftime('%H:%M:%S')}] {message}"
+
     def __init__(self) -> None:
         self._settings = load_settings()
         self._busy = False
@@ -119,8 +126,7 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._progress = self._progress_row.bar
         self.add(self._progress_row)
 
-        self._log = self.add_log(height=180)
-        self._log.append("选择图片或目录，设置页面尺寸与 DPI 后点击「开始转换」。")
+        self.log("选择图片或目录，设置页面尺寸与 DPI 后点击「开始转换」。")
 
     def _build_input_card(self) -> Card:
         """输入行：可手填，也可分别按「图片…」「目录…」挑选。"""
@@ -246,18 +252,18 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
         raw_input = self._input.text().strip()
         if not raw_input:
-            self._log.append("错误：请选择输入图片或目录")
+            self.log("错误：请选择输入图片或目录")
             return
         input_path = Path(raw_input).expanduser()
         if not input_path.exists():
-            self._log.append(f"错误：输入路径不存在 {input_path}")
+            self.log(f"错误：输入路径不存在 {input_path}")
             return
 
         try:
             page_size = normalize_page(self._page_size.currentText())
             dpi = parse_dpi(self._dpi.value())
         except ValueError as exc:
-            self._log.append(f"错误：{exc}")
+            self.log(f"错误：{exc}")
             return
 
         raw_output = self._output.text().strip()
@@ -265,17 +271,17 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         try:
             output_path = resolve_pdf_output(output_path)
         except ValueError as exc:
-            self._log.append(f"错误：{exc}")
+            self.log(f"错误：{exc}")
             return
 
-        self._log.clear()
+        self.clear_log()
         self._set_busy(True)
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.set_status("正在转换…")
-        self._log.append(f"输入：{input_path}")
-        self._log.append(f"输出：{output_path}")
-        self._log.append(f"页面尺寸：{page_size}；DPI：{dpi}")
+        self.log(f"输入：{input_path}")
+        self.log(f"输出：{output_path}")
+        self.log(f"页面尺寸：{page_size}；DPI：{dpi}")
 
         bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
@@ -294,22 +300,22 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         """消费后台事件：消息、进度、完成、失败。"""
         kind = event[0]
         if kind == "message":
-            self._log.append(event[1])
+            self.log(event[1])
         elif kind == "progress":
             _, done, total, message = event
             self._progress.setRange(0, max(total, 1))
             self._progress.setValue(done)
-            self._log.append(message)
+            self.log(message)
         elif kind == "done":
             _, output, total = event
             self._progress.setRange(0, max(total, 1))
             self._progress.setValue(total)
-            self._log.append(f"完成：{total} 页 -> {output}")
+            self.log(f"完成：{total} 页 -> {output}")
             self.set_status(f"完成：{total} 页")
             self._finish()
             QMessageBox.information(self, "转换完成", f"已生成 PDF：\n{output}")
         elif kind == "error":
-            self._log.append(f"错误：{event[1]}")
+            self.log(f"错误：{event[1]}")
             self.set_status("转换失败")
             self._finish()
             QMessageBox.critical(self, "转换失败", event[1])

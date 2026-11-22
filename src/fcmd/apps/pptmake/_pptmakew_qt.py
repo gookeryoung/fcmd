@@ -367,10 +367,12 @@ class PptmakeQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
         help_menu = menubar.actions()[-1].menu()
         about_action = help_menu.actions()[-1]
+        # 公共「任务日志…」已在骨架里插到「关于」之前；应用帮助项排在它前面。
+        anchor = self.log_action or about_action
         help_action = QAction("使用说明", self)
         help_action.triggered.connect(self._show_help)
-        help_menu.insertAction(about_action, help_action)
-        help_menu.insertSeparator(about_action)
+        help_menu.insertAction(anchor, help_action)
+        help_menu.insertSeparator(anchor)
         self.menuBar().update()
 
     def _build_widgets(self) -> None:

@@ -258,7 +258,7 @@ def test_start_submits_worker(home: Path, tmp_path: Path, monkeypatch: pytest.Mo
         assert not window._start_button.isEnabled()
         assert window._stop_button.isEnabled()
         assert window._status_label.text() == "正在转换…"
-        assert str(output_path) in window._log.text()
+        assert str(output_path) in window.log_text()
     finally:
         window._set_busy(False)
         window.deleteLater()
@@ -300,8 +300,8 @@ def test_worker_success_event(home: Path, tmp_path: Path, monkeypatch: pytest.Mo
         assert window._progress.value() == 100
         assert window._status_label.text() == "✓ 转换成功"
         assert window._status_label.tone() == "success"
-        assert "转换中 4.0s / 10.0s" in window._log.text()
-        assert "ffmpeg 输出行" in window._log.text()
+        assert "转换中 4.0s / 10.0s" in window.log_text()
+        assert "ffmpeg 输出行" in window.log_text()
         assert window._start_button.isEnabled()
         assert window._stop_button.isEnabled() is False
         assert infos and "out.mp4" in infos[0]
@@ -323,7 +323,7 @@ def test_worker_failure_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
         assert window._status_label.text() == "✗ 转换失败或已取消"
         assert window._status_label.tone() == "danger"
-        assert "转换失败或已取消，详见日志" in window._log.text()
+        assert "转换失败或已取消，详见日志" in window.log_text()
         assert warnings == ["转换失败或已取消，详见日志与命令行输出"]
         assert window._start_button.isEnabled()
     finally:
@@ -344,7 +344,7 @@ def test_worker_exception_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> 
         bridge.event.connect(window._on_event)
         _work_convert(Path("in.mp4"), Path("out.mp4"), VideoOptions(), threading.Event(), bridge)
 
-        assert "后台异常：boom" in window._log.text()
+        assert "后台异常：boom" in window.log_text()
         assert window._status_label.tone() == "danger"
     finally:
         window.deleteLater()
@@ -361,7 +361,7 @@ def test_stop_sets_cancel_event(home: Path) -> None:
         window._stop_conversion()
         assert window._cancel.is_set()
         assert window._status_label.text() == "正在停止…"
-        assert "已请求中止转换" in window._log.text()
+        assert "已请求中止转换" in window.log_text()
     finally:
         window._set_busy(False)
         window.deleteLater()
@@ -410,11 +410,11 @@ def test_ffmpeg_version_status(home: Path) -> None:
     try:
         window._apply_ffmpeg_version("ffmpeg version 6.0")
         assert window.status_text() == "✓ ffmpeg version 6.0"
-        assert "ffmpeg 可用" in window._log.text()
+        assert "ffmpeg 可用" in window.log_text()
 
         window._apply_ffmpeg_version(None)
         assert window.status_text().startswith("✗ 未找到 ffmpeg")
-        assert "转换功能不可用" in window._log.text()
+        assert "转换功能不可用" in window.log_text()
     finally:
         window.deleteLater()
 

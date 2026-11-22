@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,12 @@ def _run_split(  # noqa: PLR0913, PLR0917 - 参数由界面校验结果一次性
 class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     """PDF 分割主窗口。"""
 
+    log_hint = "汇总输入 PDF、分割模式、逐份进度与输出文件；复制、清空、导出见日志工具条。"
+
+    def format_log_line(self, message: str) -> str:
+        """任务日志前缀：``[HH:MM:SS]``。"""
+        return f"[{time.strftime('%H:%M:%S')}] {message}"
+
     def __init__(self) -> None:
         self._settings = load_settings()
         self._busy = False
@@ -166,8 +173,7 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._progress = self._progress_row.bar
         self.add(self._progress_row)
 
-        self._log = self.add_log(height=200)
-        self._log.append_timestamped("选择 PDF、设置输出目录与分割模式后点击「开始分割」。")
+        self.log("选择 PDF、设置输出目录与分割模式后点击「开始分割」。")
         self._on_mode_change()
 
     def _build_input_card(self) -> Card:
@@ -298,11 +304,11 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         """校验输入并返回后台任务参数；失败时写日志并返回 ``None``。"""
         raw_input = self._input_row.value()
         if not raw_input:
-            self._log.append_timestamped("错误：请选择输入 PDF")
+            self.log("错误：请选择输入 PDF")
             return None
         input_path = Path(raw_input).expanduser()
         if not input_path.is_file():
-            self._log.append_timestamped(f"错误：输入文件不存在 {input_path}")
+            self.log(f"错误：输入文件不存在 {input_path}")
             return None
 
         mode = normalize_mode(self._current_mode())
@@ -310,11 +316,11 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             parts = parse_positive_int(self._parts.value(), "分割份数") if mode == "parts" else 1
             size = parse_positive_int(self._size.value(), "每份页数") if mode == "size" else 1
         except ValueError as exc:
-            self._log.append_timestamped(f"错误：{exc}")
+            self.log(f"错误：{exc}")
             return None
         pages = self._pages.text().strip()
         if mode == "range" and not pages:
-            self._log.append_timestamped("错误：页码范围模式需要填写页码范围")
+            self.log("错误：页码范围模式需要填写页码范围")
             return None
 
         raw_dir = self._output_dir_row.value()
@@ -341,8 +347,8 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.set_status("正在分割…")
-        self._log.append_timestamped(f"输入：{input_path}")
-        self._log.append_timestamped(f"模式：{MODE_LABELS[mode]}；输出目录：{output_dir}")
+        self.log(f"输入：{input_path}")
+        self.log(f"模式：{MODE_LABELS[mode]}；输出目录：{output_dir}")
 
         bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
@@ -356,16 +362,16 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             _, done, total, message = event
             self._progress.setRange(0, max(total, 1))
             self._progress.setValue(done)
-            self._log.append_timestamped(message)
+            self.log(message)
         elif kind == "done":
             _, count, target = event
             self._progress.setValue(self._progress.maximum())
             self.set_status(f"完成：{count} 个输出")
-            self._log.append_timestamped(f"完成：{count} 个输出 -> {target}")
+            self.log(f"完成：{count} 个输出 -> {target}")
             self._finish()
             QMessageBox.information(self, "分割完成", f"已生成 {count} 个输出：\n{target}")
         elif kind == "error":
-            self._log.append_timestamped(f"错误：{event[1]}")
+            self.log(f"错误：{event[1]}")
             self.set_status("分割失败")
             self._finish()
             QMessageBox.critical(self, "分割失败", event[1])

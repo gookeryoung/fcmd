@@ -37,7 +37,7 @@ def test_window_builds_with_defaults(home: Path) -> None:
         assert window._timeout.value() == 3600
         assert window._retries.value() == 0
         assert window._fake.isChecked()
-        assert window._tabs.count() == 3
+        assert window._tabs.count() == 2
         assert window._case_table.columnCount() == 4
         assert window._job_table.columnCount() == 5
         assert window.status_text().startswith("就绪")

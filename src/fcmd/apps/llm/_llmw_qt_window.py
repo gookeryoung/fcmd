@@ -58,6 +58,10 @@ def create_application(argv: Sequence[str] | None = None) -> QApplication:
 class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """llmw 主窗口：共享状态 + 五个页面 + 状态栏 / 日志通道。"""
 
+    log_action_text = "服务日志…"
+    log_title = "服务日志"
+    log_hint = "汇总服务启动 / 停止、模型扫描与下载等操作；复制、清空、导出见日志工具条。"
+
     def __init__(self, settings_path: Path | None = None) -> None:
         self.state = LlmState(settings_path)
         super().__init__(
@@ -117,22 +121,26 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         super()._build_menu()
         bench_action = QAction("性能测试…", self)
         bench_action.triggered.connect(self.show_bench)
-        self.help_menu.insertAction(self.about_action, bench_action)
-        log_action = QAction("服务日志…", self)
-        log_action.setShortcut("Ctrl+Shift+L")
-        log_action.triggered.connect(self.show_service_log)
-        self.help_menu.insertAction(self.about_action, log_action)
-        self.help_menu.insertSeparator(self.about_action)
+        # 日志入口由公共组件在 super() 里插好，性能测试排在它前面。
+        self.help_menu.insertAction(self.log_action or self.about_action, bench_action)
         self.bench_action = bench_action
-        self.service_log_action = log_action
+        self.service_log_action = self.log_action
 
     def show_service_log(self) -> None:
         """打开（或聚焦）服务日志窗口；历史来自 ``LlmState`` 缓冲。"""
+        self.show_log_dialog()
+
+    def show_log_dialog(self, title: Any = None, hint: Any = None, *, parent: Any = None) -> None:
+        """日志窗口的缓冲来自共享状态（页面都往 ``LlmState`` 写日志）。"""
         self.state.show_log_dialog(
-            "服务日志",
-            "汇总服务启动 / 停止、模型扫描与下载等操作；复制、清空、导出见日志工具条。",
-            parent=self,
+            title or self.log_title,
+            hint if hint is not None else self.log_hint,
+            parent=parent or self,
         )
+
+    def close_log_dialog(self) -> None:
+        """窗口关闭时收起共享状态持有的日志窗口。"""
+        self.state.close_log_dialog()
 
     def show_bench(self) -> None:
         """打开（或聚焦）性能测试窗口；被测服务来自共享状态。"""
@@ -246,7 +254,6 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return False
         if self._chat_page is not None:
             self._chat_page.close()
-        self.state.close_log_dialog()
         if self._bench_dialog is not None:
             self._bench_dialog.stop()
             self._bench_dialog.close()

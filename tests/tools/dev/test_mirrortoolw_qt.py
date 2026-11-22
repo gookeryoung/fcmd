@@ -228,8 +228,8 @@ def test_worker_service_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> No
         assert window._last_service == "pip"
         assert window._table.rowCount() == 2
         assert window.status_text() == "完成：推荐 nju"
-        assert f"{SERVICE_LABELS['pip']} 共 2 个候选镜像，可达 1 个" in window._log.text()
-        assert "推荐镜像: nju" in window._log.text()
+        assert f"{SERVICE_LABELS['pip']} 共 2 个候选镜像，可达 1 个" in window.log_text()
+        assert "推荐镜像: nju" in window.log_text()
         assert window._probe_button.isEnabled()
         assert window._progress.value() == 0
     finally:
@@ -247,7 +247,7 @@ def test_worker_sites_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
         assert window._last_service == ""
         assert window.status_text() == "完成：推荐 nju"
-        assert "教育网站点（内置列表）共 2 个" in window._log.text()
+        assert "教育网站点（内置列表）共 2 个" in window.log_text()
     finally:
         window.deleteLater()
 
@@ -270,7 +270,7 @@ def test_worker_error_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> None
         _work_probe(MODE_SERVICE, "pip", 3.0, "auto", bridge)
 
         assert window.status_text() == "操作失败"
-        assert "错误：boom" in window._log.text()
+        assert "错误：boom" in window.log_text()
         assert errors == ["boom"]
         assert window._probe_button.isEnabled()
     finally:
@@ -315,7 +315,7 @@ def test_apply_selected_without_selection(home: Path) -> None:
         window._rows = _rows()
         window._render_rows()
         window._apply_selected()
-        assert "请先在结果表中选择一个镜像" in window._log.text()
+        assert "请先在结果表中选择一个镜像" in window.log_text()
     finally:
         window.deleteLater()
 
@@ -327,7 +327,7 @@ def test_apply_recommended_without_rows(home: Path) -> None:
         window._last_service = "pip"
         window._rows = []
         window._apply_recommended()
-        assert "没有可达镜像可应用" in window._log.text()
+        assert "没有可达镜像可应用" in window.log_text()
     finally:
         window.deleteLater()
 
@@ -348,9 +348,9 @@ def test_apply_event_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _work_apply("pip", "nju", bridge)
 
         assert window.status_text() == "已应用 nju"
-        assert "已写入 pip 配置" in window._log.text()
-        assert "第二行" in window._log.text()
-        assert f"已应用 {SERVICE_LABELS['pip']} 镜像: nju" in window._log.text()
+        assert "已写入 pip 配置" in window.log_text()
+        assert "第二行" in window.log_text()
+        assert f"已应用 {SERVICE_LABELS['pip']} 镜像: nju" in window.log_text()
         assert window._probe_button.isEnabled()
     finally:
         window.deleteLater()

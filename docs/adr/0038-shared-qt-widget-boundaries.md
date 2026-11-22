@@ -19,10 +19,10 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | 编号 | 决策 | 落点 |
 |---|---|---|
 | D1 | 可展开行卡的骨架统一用共享 `ItemRow`（标题 + 副标题 / 标签行 + 右侧数值与动作 + 行内展开区），选中态仍由 `SelectionRow` mixin 提供 | `gui/widgets/rows.py`、llmw 模型行、wslmanw 发行版 / 镜像行 |
-| D2 | **不做通用 `TaskDialog`**；需要进度与日志的窗口各自组合 `ProgressRow` / `LogView` | llmw 引擎下载、性能测试 |
+| D2 | **不做通用 `TaskDialog`**；进度仍用 `ProgressRow`，日志统一走公共 `LogChannelMixin`（帮助菜单），页面内不再组合 `LogView` 日志区 | llmw 引擎下载、性能测试 |
 | D3 | `ChoiceCard` 只用于「卡片式单选」；pdfsplit、mirrortool、checksum 继续用 `QRadioButton` | 上述工具窗口 |
 | D4 | `StatusTag` 用于需要语义色的状态块；`objectName("Success"/"Danger")` 属于主题契约，不强行替换 | reshack 等 |
-| D5 | `LogDialog` 只服务「独立日志窗口」；页面内日志继续用 `LogView` | 各工具窗口 |
+| D5 | 所有窗口的任务日志只经 `LogChannelMixin`：窗口骨架自动把「任务日志…」（`Ctrl+Shift+L`）插到「帮助 → 关于」之前，应用只调 `self.log(...)`；`LogDialog` / 日志缓冲 / 关闭联动都由公共组件维护 | `gui/logdialog.py`、`gui/window.py`、`gui/toolwindow.py`、各 `*w` 窗口 |
 | D6 | `ProgressRow` 用于独立进度行；与按钮 / 文字同处一行的进度条保留窗口自己的布局 | ncmconvert、filescan、llmw 下载区 |
 | D7 | 图标统一走 `fcmd.gui.icons`（内置 Lucide 线性图标），不引入外部图标包 | 侧边栏、按钮、行卡展开 / 收起 |
 | D9 | 行卡选中态走 `RowListWidget.sync_selection()`：只重抛光「旧 / 新」两行，`set_selected` 状态未变时空操作 | 共享 `ItemRow` 的所有列表（wslmanw 发行版 / 镜像、llmw 模型 / 推荐 / 引擎） |

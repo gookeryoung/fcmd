@@ -139,7 +139,7 @@ def test_compare_renders_rows_and_summary(home: Path, trees: tuple[Path, Path]) 
         assert actions["b.txt"] == "复制 ← 右侧"
         assert window._table.item(0, 1).toolTip() == window._table.item(0, 1).text()  # type: ignore[union-attr]
         assert window.status_text() == "比较完成"
-        assert "比较完成：共 4 项" in window._log.text()
+        assert "比较完成：共 4 项" in window.log_text()
     finally:
         window.deleteLater()
 
@@ -171,7 +171,7 @@ def test_sync_dry_run_writes_nothing(home: Path, trees: tuple[Path, Path]) -> No
         assert not (right / "a.txt").exists()
         assert (right / "b.txt").exists()
         assert window.status_text() == "同步完成"
-        assert "试运行" in window._log.text()
+        assert "试运行" in window.log_text()
     finally:
         window.deleteLater()
 
@@ -187,18 +187,18 @@ def test_sync_mirror_executes_plan(home: Path, trees: tuple[Path, Path]) -> None
         _work_sync(left, right, window._collect_options(), SYNC_MIRROR, False, bridge)
         assert (right / "a.txt").read_text(encoding="utf-8") == "alpha"
         assert not (right / "b.txt").exists()
-        assert "同步完成：复制" in window._log.text()
+        assert "同步完成：复制" in window.log_text()
     finally:
         window.deleteLater()
 
 
 def test_help_menu_order(home: Path) -> None:
-    """帮助菜单：载入配置…、保存配置…、分隔线、关于。"""
+    """帮助菜单：载入配置…、保存配置…、任务日志…、分隔线、关于。"""
     window = FilesyncWindow()
     try:
         menu = window._menu("帮助")
         texts = [action.text() for action in menu.actions() if not action.isSeparator()]
-        assert texts[-3:] == ["载入配置…", "保存配置…", "关于"]
+        assert texts[-4:] == ["载入配置…", "保存配置…", "任务日志…", "关于"]
         separators = [action.isSeparator() for action in menu.actions()]
         assert separators[-2] is True
     finally:

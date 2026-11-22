@@ -10,6 +10,7 @@ GUI 线程。
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,12 @@ def _run_conversion(
 class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     """图像转 ICO 转换器主窗口。"""
 
+    log_hint = "汇总输入、尺寸、转换进度与输出图标；复制、清空、导出见日志工具条。"
+
+    def format_log_line(self, message: str) -> str:
+        """任务日志前缀：``[HH:MM:SS]``。"""
+        return f"[{time.strftime('%H:%M:%S')}] {message}"
+
     def __init__(self) -> None:
         self._settings = load_settings()
         self._busy = False
@@ -111,8 +118,7 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._progress.setValue(0)
         self.add(self._progress_row)
 
-        self._log = self.add_log(height=160)
-        self._log.append("选择输入图像或目录，填写尺寸后点击「开始转换」。")
+        self.log("选择输入图像或目录，填写尺寸后点击「开始转换」。")
 
     def _build_input_card(self) -> Card:
         """输入行：可手填路径，也可分别按「文件…」「目录…」挑选。"""
@@ -242,30 +248,30 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
         raw_input = self._input.text().strip()
         if not raw_input:
-            self._log.append("错误：请选择输入图像或目录")
+            self.log("错误：请选择输入图像或目录")
             return
         input_path = Path(raw_input).expanduser()
         if not input_path.exists():
-            self._log.append(f"错误：输入路径不存在 {input_path}")
+            self.log(f"错误：输入路径不存在 {input_path}")
             return
 
         try:
             sizes = parse_sizes_text(self._sizes.text())
             quality = normalize_quality(self._quality.currentText())
         except ValueError as exc:
-            self._log.append(f"错误：{exc}")
+            self.log(f"错误：{exc}")
             return
 
         raw_output = self._output.text().strip()
         output_path = Path(raw_output).expanduser() if raw_output else None
 
-        self._log.clear()
+        self.clear_log()
         self._set_busy(True)
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.set_status("正在转换…")
-        self._log.append(f"输入：{input_path}")
-        self._log.append(f"尺寸：{', '.join(str(size) for size in sizes)}；质量：{quality}")
+        self.log(f"输入：{input_path}")
+        self.log(f"尺寸：{', '.join(str(size) for size in sizes)}；质量：{quality}")
 
         bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
@@ -279,19 +285,19 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             _, done, total, message = event
             self._progress.setRange(0, max(total, 1))
             self._progress.setValue(done)
-            self._log.append(message)
+            self.log(message)
         elif kind == "done":
             _, outputs, used_sizes = event
             self._progress.setRange(0, max(len(outputs), 1))
             self._progress.setValue(len(outputs))
             for output in outputs:
-                self._log.append(f"已生成 {output}")
-            self._log.append(f"完成：{len(outputs)} 个图标，{len(used_sizes)} 种尺寸")
+                self.log(f"已生成 {output}")
+            self.log(f"完成：{len(outputs)} 个图标，{len(used_sizes)} 种尺寸")
             self.set_status(f"完成：{len(outputs)} 个图标")
             self._finish()
             QMessageBox.information(self, "转换完成", f"已生成 {len(outputs)} 个图标文件。")
         elif kind == "error":
-            self._log.append(f"错误：{event[1]}")
+            self.log(f"错误：{event[1]}")
             self.set_status("转换失败")
             self._finish()
             QMessageBox.critical(self, "转换失败", event[1])

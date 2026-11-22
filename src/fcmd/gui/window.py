@@ -17,7 +17,7 @@ from __future__ import annotations
 import platform
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui.compat import binding_version
 from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
+from fcmd.gui.logdialog import LogChannelMixin
 from fcmd.gui.page import PageSpec
 from fcmd.gui.shell import WindowShellMixin, WindowSpec
 from fcmd.gui.statusbar import DEFAULT_STATUS, WindowStatusBar
@@ -106,8 +107,11 @@ def restore_geometry(
     widget.setGeometry(x, y, width, height)
 
 
-class QtMainWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """通用窗口骨架：左侧分页导航 + 右侧页面栈 + 状态栏 + 主题菜单。"""
+class QtMainWindow(LogChannelMixin, WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+    """通用窗口骨架：左侧分页导航 + 右侧页面栈 + 状态栏 + 主题菜单 + 任务日志。"""
+
+    logLine = Signal(str)
+    """任务日志行信号：写日志 → 已打开的日志窗口实时追加。"""
 
     def __init__(  # noqa: PLR0913 - 窗口骨架参数成组出现，显式优于配置对象
         self,
@@ -125,6 +129,7 @@ class QtMainWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 
         theme_app: str = "",
     ) -> None:
         super().__init__()
+        self._init_log_channel()
         self._init_window_shell(
             WindowSpec(
                 title=title,
@@ -384,6 +389,8 @@ class QtMainWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 
         self.about_action = QAction("关于", self)
         self.about_action.triggered.connect(self._show_about)
         self.help_menu.addAction(self.about_action)
+        # 日志入口是所有窗口的公共组件：统一挂在「帮助 → 关于」之前。
+        self.enable_log_menu()
 
     def _handle_sidebar_collapsed(self, collapsed: bool) -> None:
         """同步菜单勾选状态；无自定义 persist 时把折叠状态写进窗口设置。"""

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QSpinBox,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -47,7 +47,6 @@ from fcmd.gui.toolwindow import QtToolWindow
 from fcmd.gui.widgets import (
     Card,
     FormGrid,
-    LogView,
     PathField,
     button,
     make_table,
@@ -153,6 +152,12 @@ def _work_gates(out: Path, bridge: EventBridge) -> None:
 class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     """dynacalc 主窗口。"""
 
+    log_hint = "汇总生成、门控检查与求解报告；复制、清空、导出见日志工具条。"
+
+    def format_log_line(self, message: str) -> str:
+        """任务日志前缀：``[HH:MM:SS]``。"""
+        return f"[{time.strftime('%H:%M:%S')}] {message}"
+
     def __init__(self) -> None:
         self._settings = load_settings()
         self._bridge: EventBridge | None = None
@@ -170,7 +175,7 @@ class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 构建
     # ------------------------------------------------------------------ #
     def _build(self) -> None:
-        """表单 → 动作行 → 页签（工况 / 作业 / 日志）。"""
+        """表单 → 动作行 → 页签（工况 / 作业）；日志统一在「帮助 → 任务日志…」。"""
         self.add(self._build_form())
         self.add_layout(self._build_actions())
         self._tabs = tab_widget(self)
@@ -188,12 +193,6 @@ class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             parent=self._tabs,
         )
         self._tabs.addTab(self._job_table, "作业状态")
-        log_page = QWidget(self._tabs)
-        log_layout = QVBoxLayout(log_page)
-        log_layout.setContentsMargins(0, 0, 0, 0)
-        self._log = LogView(height=220, parent=log_page)
-        log_layout.addWidget(self._log)
-        self._tabs.addTab(log_page, "日志 / 汇总")
         self.add(self._tabs, 1)
 
     def _build_form(self) -> Card:
@@ -456,9 +455,8 @@ class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         else:
             _, text, show_in_log = event
             if show_in_log:
-                self._log.clear()
-            self._log.append(str(text))
-            self._tabs.setCurrentIndex(2)
+                self.clear_log()
+            self.log(str(text))
             self.set_status("存在不通过项" if str(text).startswith("[不通过]") else "完成")
 
     def _fill_cases(self, rows: list[tuple[str, str, str, str]]) -> None:

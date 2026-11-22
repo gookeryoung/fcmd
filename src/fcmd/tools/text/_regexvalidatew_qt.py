@@ -207,6 +207,8 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         help_menu = self._menu("帮助")
         actions = help_menu.actions()
         about = actions[-1] if actions else None
+        # 公共「任务日志…」已由骨架插在「关于」之前；语法帮助排在它前面。
+        about = self.log_action or about
         action = QAction("语法帮助", self)
         action.triggered.connect(self._show_help)
         if about is not None:

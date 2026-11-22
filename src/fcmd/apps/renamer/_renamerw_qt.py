@@ -333,6 +333,8 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             return
         actions = help_menu.actions()
         about = actions[-1] if actions else None
+        # 公共「任务日志…」已由骨架插在「关于」之前；应用帮助项排在它前面。
+        about = self.log_action or about
         for text, slot in (
             ("使用帮助", self._show_help),
             ("载入规则…", self._load_rules_file),

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -70,7 +70,6 @@ from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_co
 from fcmd.apps.wslman._transfer import sha256_file
 from fcmd.gui import icons as _qt_icons
 from fcmd.gui.geometry import format_geometry
-from fcmd.gui.logdialog import LogChannelMixin
 from fcmd.gui.page import PageBody, PageSpec
 from fcmd.gui.widgets import (
     Card,
@@ -428,15 +427,15 @@ class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.url.setPlainText(values.get("下载地址", "—"))
 
 
-class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """WSL 实例管理：侧边栏分页（实例 / 镜像 / 设置）+ 后台任务。
 
     任务日志不占分页：顶部「帮助 → 任务日志…」打开非模态日志窗口，历史来自
     ``_log_lines`` 缓冲，窗口打开时回放、之后按 :attr:`logLine` 实时追加。
     """
 
-    logLine = Signal(str)
-    """任务日志行信号：后台任务写日志 → 已打开的日志窗口实时追加。"""
+    log_limit = _LOG_LINES_MAX
+    log_hint = "汇总启动 / 停止、导出、安装与下载操作；复制、清空、导出见日志工具条。"
 
     def __init__(self, settings_path: Path | None = None) -> None:
         self._own_settings_path = settings_path
@@ -460,7 +459,6 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
         self._active_entry = ""
         self._task_page = ""
         self._closing = False
-        self._init_log_channel(limit=_LOG_LINES_MAX)
         self._bridge: EventBridge | None = None
         self._download_meter = SpeedMeter()
         self._export_meter = SpeedMeter()
@@ -507,23 +505,9 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
         self._schedule_poll()
         self.refresh()
 
-    def _build_menu(self) -> None:
-        """共享菜单 + 「帮助 → 任务日志…」（放在「关于」之前）。"""
-        super()._build_menu()
-        log_action = QAction("任务日志…", self)
-        log_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
-        log_action.triggered.connect(self.show_log)
-        self.help_menu.insertAction(self.about_action, log_action)
-        self.help_menu.insertSeparator(self.about_action)
-        self.log_action = log_action
-
     def show_log(self) -> None:
         """打开（或聚焦）任务日志窗口；历史来自 ``_log_lines`` 缓冲。"""
-        self.show_log_dialog(
-            "任务日志",
-            "汇总启动 / 停止、导出、安装与下载操作；复制、清空、导出见日志工具条。",
-            parent=self,
-        )
+        self.show_log_dialog()
 
     def show_page(self, key: str) -> None:
         """切页：进入镜像页时先回显本地缓存，再后台刷新在线清单。

@@ -82,8 +82,8 @@ def test_add_paths_filters_and_dedupes(home: Path) -> None:
         assert item is not None
         assert Path(item.text()) == Path("a.ncm")
         assert window._count_label.text() == "共 1 个文件"
-        assert "已添加 1 个文件" in window._log.text()
-        assert "已忽略 1 个非 .ncm 文件" in window._log.text()
+        assert "已添加 1 个文件" in window.log_text()
+        assert "已忽略 1 个非 .ncm 文件" in window.log_text()
     finally:
         window.deleteLater()
 
@@ -165,7 +165,7 @@ def test_worker_success_flow(home: Path, tmp_path: Path, monkeypatch: pytest.Mon
 
         assert window._progress.value() == 1
         assert window.status_text() == "✓ 全部完成"
-        assert "a.ncm → " in window._log.text()
+        assert "a.ncm → " in window.log_text()
         assert not window._running
         assert window._convert_button.isEnabled()
         assert shown == ["解锁已完成"]
@@ -189,7 +189,7 @@ def test_worker_failure_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         bridge.event.connect(window._on_event)
         _work_convert([Path("x.ncm")], None, threading.Event(), bridge)
         assert window.status_text() == "完成：成功 0，失败 1"
-        assert "失败：x.ncm：boom" in window._log.text()
+        assert "失败：x.ncm：boom" in window.log_text()
         assert warnings and "1 个文件失败" in warnings[0]
     finally:
         window.deleteLater()
@@ -205,7 +205,7 @@ def test_worker_cancelled_before_start(home: Path) -> None:
         bridge.event.connect(window._on_event)
         _work_convert([Path("a.ncm")], None, cancel, bridge)
         assert window.status_text() == "已中止：成功 0，失败 0"
-        assert "已中止：完成 0/1" in window._log.text()
+        assert "已中止：完成 0/1" in window.log_text()
     finally:
         window.deleteLater()
 

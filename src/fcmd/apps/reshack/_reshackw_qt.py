@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QImage, QKeySequence, QPixmap
+from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
@@ -71,7 +71,6 @@ from fcmd.apps.reshack.reshackw import (
     load_settings,
     save_settings,
 )
-from fcmd.gui.logdialog import LogChannelMixin
 from fcmd.gui.page import PageBody, PageSpec
 from fcmd.gui.widgets import (
     Card,
@@ -290,15 +289,15 @@ class _RecentItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.add_action(open_button)
 
 
-class ReshackWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """PE 资源编辑器主窗口：侧边栏分页（资源 / 文件）+ 后台任务。
 
     任务日志不占分页：「帮助 → 任务日志…」打开非模态日志窗口，历史来自
     ``_log_lines`` 缓冲，窗口打开时回放、之后按 :attr:`logLine` 实时追加。
     """
 
-    logLine = Signal(str)
-    """任务日志行信号：操作写日志 → 已打开的日志窗口实时追加。"""
+    log_limit = _LOG_LINES_MAX
+    log_hint = "汇总打开、导出、替换与预览操作；复制、清空、导出见日志工具条。"
 
     def __init__(self, settings_path: Path | None = None) -> None:
         self._settings = load_settings(settings_path)
@@ -313,7 +312,6 @@ class ReshackWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: n
         self._bridge: EventBridge | None = None
         self._filter_key = _FILTER_ALL
         self._buttons: list[QPushButton] = []
-        self._init_log_channel(limit=_LOG_LINES_MAX)
         super().__init__(
             title=f"PE 资源编辑器 v{__version__}",
             config_name="reshackw",
@@ -497,14 +495,6 @@ class ReshackWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: n
         else:
             self.menuBar().addMenu(resource_menu)
 
-        log_action = QAction("任务日志…", self)
-        log_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
-        log_action.triggered.connect(self.show_log)
-        if help_action is not None:
-            self.help_menu.insertAction(self.about_action, log_action)
-            self.help_menu.insertSeparator(self.about_action)
-        self.log_action = log_action
-
     def _find_menu(self, title: str) -> QMenu | None:
         """按标题取骨架已建好的菜单。"""
         for action in self.menuBar().actions():
@@ -531,11 +521,7 @@ class ReshackWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: n
 
     def show_log(self) -> None:
         """打开（或聚焦）任务日志窗口；历史来自 ``_log_lines`` 缓冲。"""
-        self.show_log_dialog(
-            "任务日志",
-            "汇总打开、导出、替换与预览操作；复制、清空、导出见日志工具条。",
-            parent=self,
-        )
+        self.show_log_dialog()
 
     # ------------------------------------------------------------------ #
     # 基础交互
@@ -1039,7 +1025,6 @@ class ReshackWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: n
         if self._pe is not None:
             self._pe.close()
             self._pe = None
-        self.close_log_dialog()
         self._resize_timer.stop()
         # 摘掉预览视口的尺寸监听：窗口销毁后 atexit 阶段 Qt 仍可能给已删的
         # viewport 派发事件，eventFilter 里再碰已删除的 C++ 对象会抛 RuntimeError。

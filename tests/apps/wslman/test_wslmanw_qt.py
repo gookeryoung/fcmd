@@ -1155,6 +1155,7 @@ def test_log_moves_to_help_menu(home: Path, monkeypatch: pytest.MonkeyPatch) -> 
         _wait_idle(window)
         texts = [action.text() for action in window.help_menu.actions() if not action.isSeparator()]
         assert texts[-2:] == ["任务日志…", "关于"]
+        assert window.log_action is not None
         assert window.log_action.shortcut().toString() == "Ctrl+Shift+L"
         assert window._log_dialog is None
 

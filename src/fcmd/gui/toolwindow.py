@@ -16,11 +16,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
+from fcmd.gui.logdialog import LogChannelMixin
 from fcmd.gui.shell import WindowShellMixin, WindowSpec
-from fcmd.gui.widgets import LogView, PageScroll
+from fcmd.gui.widgets import PageScroll
 from fcmd.gui.window import about_version_text
 
 if TYPE_CHECKING:
@@ -29,8 +31,11 @@ if TYPE_CHECKING:
 __all__ = ["QtToolWindow"]
 
 
-class QtToolWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """单页工具窗口：统一菜单、状态栏、主题切换与关闭落盘。"""
+class QtToolWindow(LogChannelMixin, WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+    """单页工具窗口：统一菜单、状态栏、主题切换、关闭落盘与任务日志。"""
+
+    logLine = Signal(str)
+    """任务日志行信号：写日志 → 已打开的日志窗口实时追加。"""
 
     def __init__(  # noqa: PLR0913 - 窗口骨架参数成组出现，显式优于配置对象
         self,
@@ -45,6 +50,7 @@ class QtToolWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 
         status: str = "就绪",
     ) -> None:
         super().__init__()
+        self._init_log_channel()
         self._init_window_shell(
             WindowSpec(
                 title=title,
@@ -93,12 +99,6 @@ class QtToolWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 
         """在内容区末尾加入弹性空白（控件靠上排列）。"""
         self.body.addStretch(1)
 
-    def add_log(self, *, height: int = 180) -> LogView:
-        """追加一个带工具条的日志区并占满剩余空间。"""
-        view = LogView(height=height, parent=self)
-        self.body.addWidget(view, 1)
-        return view
-
     # ------------------------------------------------------------------ #
     # 菜单 / 主题
     # ------------------------------------------------------------------ #
@@ -113,10 +113,12 @@ class QtToolWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 
         view_menu = self.menuBar().addMenu("视图")
         self._attach_theme_menu(view_menu.addMenu("主题"))
 
-        help_menu = self.menuBar().addMenu("帮助")
-        about_action = QAction("关于", self)
-        about_action.triggered.connect(self._show_about)
-        help_menu.addAction(about_action)
+        self.help_menu = self.menuBar().addMenu("帮助")
+        self.about_action = QAction("关于", self)
+        self.about_action.triggered.connect(self._show_about)
+        self.help_menu.addAction(self.about_action)
+        # 日志入口是所有窗口的公共组件：统一挂在「帮助 → 关于」之前。
+        self.enable_log_menu()
 
     # ------------------------------------------------------------------ #
     # 状态 / 设置

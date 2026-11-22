@@ -199,6 +199,10 @@ class WindowLifecycleMixin:
             event.ignore()
             return
         self._closing = True
+        # 日志窗口属于主窗口：关闭时一并收起（日志公共组件的统一生命周期）。
+        close_log = getattr(self, "close_log_dialog", None)
+        if callable(close_log):
+            close_log()
         geometry = self.geometry_text()  # type: ignore[attr-defined]
         if self._persist is not None:
             self._persist(geometry)

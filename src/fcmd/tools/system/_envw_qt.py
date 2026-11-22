@@ -336,11 +336,13 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         menubar = self.menuBar()
         help_menu = menubar.actions()[-1].menu()
         about_action = help_menu.actions()[-1]
+        # 公共「任务日志…」已在骨架里插到「关于」之前；应用帮助项排在它前面。
+        anchor = self.log_action or about_action
         for text, handler in (("备份全部作用域…", self._backup), ("从备份恢复…", self._restore)):
             action = QAction(text, self)
             action.triggered.connect(handler)
-            help_menu.insertAction(about_action, action)
-        help_menu.insertSeparator(about_action)
+            help_menu.insertAction(anchor, action)
+        help_menu.insertSeparator(anchor)
 
     def _build_widgets(self) -> None:
         top = Card("作用域与搜索")

@@ -212,3 +212,33 @@ def test_elided_label_set_text_updates_full_text(app: QApplication, home: Path) 
         assert label.fullText() == _LONG_PATH
     finally:
         label.deleteLater()
+
+
+def test_log_is_a_common_help_component(app: QApplication, home: Path) -> None:
+    """所有单页窗口都自带「帮助 → 任务日志…」：缓冲、实时追加与关闭联动。"""
+    window = QtToolWindow(title="日志", config_name="log", min_size=(600, 400))
+    try:
+        texts = [action.text() for action in window.help_menu.actions() if not action.isSeparator()]
+        assert texts[-2:] == ["任务日志…", "关于"]
+        assert window.log_action is not None
+        assert window.log_action.shortcut().toString() == "Ctrl+Shift+L"
+        assert window._log_dialog is None
+
+        window.log("启动前日志")
+        assert "启动前日志" in window.log_text()
+        window.show_log_dialog()
+        QApplication.processEvents()
+        dialog = window._log_dialog
+        assert dialog is not None
+        assert dialog.isVisible()
+        assert "启动前日志" in dialog.log_view.text()
+
+        window.log("运行中日志")
+        QApplication.processEvents()
+        assert "运行中日志" in dialog.log_view.text()
+
+        window.close()
+        QApplication.processEvents()
+        assert dialog.isVisible() is False
+    finally:
+        window.deleteLater()

@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import io
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -113,6 +114,12 @@ def _work_convert(
 class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     """视频转换器主窗口。"""
 
+    log_hint = "汇总 ffmpeg 输出、转换进度与结果；复制、清空、导出见日志工具条。"
+
+    def format_log_line(self, message: str) -> str:
+        """任务日志前缀：``[HH:MM:SS]``。"""
+        return f"[{time.strftime('%H:%M:%S')}] {message}"
+
     def __init__(self, settings_path: Path | None = None) -> None:
         self._settings = load_settings(settings_path)
         self._settings_override = settings_path
@@ -132,7 +139,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._settings_path = settings_path
             self._raw_settings = _guiconfig.read_settings(settings_path) or {}
         self._build()
-        self._log.append_timestamped("选择输入视频并设置转换参数后点击「开始转换」。")
+        self.log("选择输入视频并设置转换参数后点击「开始转换」。")
         QTimer.singleShot(50, self._start_ffmpeg_check)
 
     # ------------------------------------------------------------------ #
@@ -144,7 +151,6 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self.add(self._build_options_card())
         self.add(self._build_action_row())
         self.add(self._build_progress())
-        self.add(self._build_log_card(), 1)
         self.add(self._build_footer())
 
     def _build_io_card(self) -> Card:
@@ -263,11 +269,6 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._progress = self._progress_row.bar
         return self._progress_row
 
-    def _build_log_card(self) -> Card:
-        card = Card("日志", self)
-        self._log = card.add_log(height=150, minimum_height=110)
-        return card
-
     def _build_footer(self) -> QWidget:
         footer = QWidget(self)
         layout = QHBoxLayout(footer)
@@ -349,10 +350,10 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         """在状态栏显示 ffmpeg 版本或缺失提示。"""
         if version:
             self.set_status(f"✓ {version}")
-            self._log.append_timestamped(f"ffmpeg 可用：{version}")
+            self.log(f"ffmpeg 可用：{version}")
         else:
             self.set_status("✗ 未找到 ffmpeg，请安装并加入 PATH")
-            self._log.append_timestamped("警告：未找到 ffmpeg，转换功能不可用")
+            self.log("警告：未找到 ffmpeg，转换功能不可用")
 
     # ------------------------------------------------------------------ #
     # 转换
@@ -388,8 +389,8 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         output_dir = Path(raw_output_dir).expanduser() if raw_output_dir else None
         output_path = build_output_path(input_path, output_dir, options.output_format)
 
-        self._log.append_timestamped(f"输入：{input_path}")
-        self._log.append_timestamped(f"输出：{output_path}")
+        self.log(f"输入：{input_path}")
+        self.log(f"输出：{output_path}")
         self._cancel = threading.Event()
         self._progress.setValue(0)
         self._set_status("正在转换…")
@@ -410,7 +411,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _on_worker_error(self, message: str) -> None:
         """线程池兜底异常：记日志、恢复界面。"""
-        self._log.append_timestamped(f"错误：{message}")
+        self.log(f"错误：{message}")
         self._set_status("✗ 转换失败", "Danger")
         self._set_busy(False)
         self._bridge = None
@@ -422,9 +423,9 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             _, percent, message = event
             self._progress.setValue(percent)
             self._set_status(f"进度：{percent}% - {message}")
-            self._log.append_timestamped(message)
+            self.log(message)
         elif kind == "log":
-            self._log.append_timestamped(str(event[1]))
+            self.log(str(event[1]))
         elif kind == "done":
             _, success, output_path = event
             self._finish(bool(success), output_path)
@@ -436,11 +437,11 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         if success:
             self._progress.setValue(100)
             self._set_status("✓ 转换成功", "Success")
-            self._log.append_timestamped(f"转换成功：{output_path}")
+            self.log(f"转换成功：{output_path}")
             QMessageBox.information(self, "转换完成", f"视频已生成：\n{output_path}")
         else:
             self._set_status("✗ 转换失败或已取消", "Danger")
-            self._log.append_timestamped("转换失败或已取消，详见日志")
+            self.log("转换失败或已取消，详见日志")
             QMessageBox.warning(self, "转换失败", "转换失败或已取消，详见日志与命令行输出")
 
     def _stop_conversion(self) -> None:
@@ -449,7 +450,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         self._cancel.set()
         self._set_status("正在停止…")
-        self._log.append_timestamped("已请求中止转换")
+        self.log("已请求中止转换")
 
     def _reset_settings(self) -> None:
         """把界面参数恢复为默认值（不改变输入/输出路径）。"""
@@ -464,7 +465,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._preset_combo.setCurrentText(DEFAULT_PRESET)
         self._remove_audio_check.setChecked(False)
         self._audio_edit.clear()
-        self._log.append_timestamped("转换参数已重置为默认值")
+        self.log("转换参数已重置为默认值")
 
     # ------------------------------------------------------------------ #
     # 生命周期
