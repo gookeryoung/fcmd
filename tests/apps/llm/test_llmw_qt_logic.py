@@ -56,6 +56,7 @@ from fcmd.apps.llm._llmw_qt_run import (
     build_plan_from,
     memory_guard,
     model_combo_text,
+    model_item_text_color,
     parse_custom_args,
     parse_int,
     parse_optional_int,
@@ -68,6 +69,7 @@ from fcmd.apps.llm._llmw_qt_settings import engine_rows_values
 from fcmd.apps.llm._llmw_recommend import Recommendation
 from fcmd.apps.llm.llmbase import EngineInfo, LaunchPlan, ModelEntry, Profile, ServeError, ServeState, Tuning
 from fcmd.apps.llm.llmdown import ModelInfo, ModelSummary
+from fcmd.gui import theme as _guitheme
 from fcmd.gui.widgets import ItemRow
 
 
@@ -138,6 +140,20 @@ def test_model_combo_text_keeps_full_name_and_honors_explicit_limit() -> None:
     assert "…" not in text
     # 仍可按调用方给的 limit 显式截断（不依赖窗口宽度）。
     assert len(model_combo_text(entry, limit=30).split("  (")[0]) == 30
+
+
+def test_model_item_text_color_follows_theme_semantics() -> None:
+    """弹层项文字色：未选中时运行中项置绿，选中项统一用主题选中前景色。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    palette = theme.palette
+    assert model_item_text_color(theme, selected=False, running=True) == palette.success
+    assert model_item_text_color(theme, selected=False, running=False) == palette.text
+    for name in _guitheme.theme_names():
+        themed = _guitheme.resolve_theme(name)
+        selected = model_item_text_color(themed, selected=True, running=True)
+        # 选中底色是 select_bg：深色 / 浅色 / 高对比 / native 四套主题都得用 select_fg。
+        assert selected == themed.palette.select_fg
+        assert selected == model_item_text_color(themed, selected=True, running=False)
 
 
 def test_sanitize_custom_args_drops_model_flags() -> None:

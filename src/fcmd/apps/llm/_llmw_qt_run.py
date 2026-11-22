@@ -94,6 +94,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from fcmd.apps.llm._llmw_qt_state import LlmState
+    from fcmd.gui.theme import Theme
 
 __all__ = [
     "RunPage",
@@ -101,6 +102,7 @@ __all__ = [
     "default_service_name",
     "memory_guard",
     "model_combo_text",
+    "model_item_text_color",
     "parse_custom_args",
     "parse_int",
     "parse_optional_int",
@@ -325,8 +327,22 @@ def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
 _MODEL_RUNNING_ROLE = MODEL_RUNNING_ROLE
 
 
+def model_item_text_color(theme: Theme, *, selected: bool, running: bool) -> str:
+    """模型下拉项文字色（弹层项与当前项共用一套语义色）。
+
+    选中项必须用主题的 ``select_fg``：弹层里的选中底色是 ``select_bg``，在深色 /
+    浅色主题下都不等于 ``accent``，写死 ``on_accent`` 会得到「深色字压中蓝底」的低
+    对比（切到已启动 / 未启动模型时选中项颜色看起来都不对）。运行中的项由绿色描边
+    与「✓ 已启动」文案继续表达，不会因为被选中而丢失标记。
+    """
+    palette = theme.palette
+    if selected:
+        return palette.select_fg
+    return palette.success if running else palette.text
+
+
 class _ModelItemDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
-    """模型下拉项：仅运行中的项绘制绿色文字，避免整框被染绿。"""
+    """模型下拉项：运行中的项绘制绿色文字与描边，选中项跟随主题选中色。"""
 
     def paint(self, painter: Any, option: QStyleOptionViewItem, index: Any) -> None:
         opt = QStyleOptionViewItem(option)
@@ -336,14 +352,10 @@ class _ModelItemDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
         style = opt.widget.style() if opt.widget is not None else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         selected = bool(opt.state & QStyle.StateFlag.State_Selected)
-        theme = _qt_theme.load_theme()
+        # 运行时主题可能尚未落盘，用 active_theme 而不是 load_theme，避免沿用旧调色板。
+        theme = _qt_theme.active_theme()
         running = bool(index.data(_MODEL_RUNNING_ROLE))
-        if selected:
-            color = QColor(theme.palette.on_accent)
-        elif running:
-            color = QColor(theme.palette.success)
-        else:
-            color = QColor(theme.palette.text)
+        color = QColor(model_item_text_color(theme, selected=selected, running=running))
         painter.save()
         if running:
             pen = QPen(QColor(theme.palette.success), 1)
@@ -387,7 +399,14 @@ class _ModelCombo(QComboBox):  # pragma: no cover - Qt 控件
             self,
         )
         elided = self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, max(edit_rect.width(), 0))
-        painter.setPen(self.palette().color(self.foregroundRole()))
+        # 当前项颜色按「运行中」角色直接取语义色，不再只依赖 QSS 写进调色板的 color：
+        # 切换已启动 / 未启动模型后（属性重新 polish）个别平台样式不会刷新调色板，
+        # 会出现该绿不绿 / 该恢复正文色仍发绿的残留。
+        running = bool(self.itemData(self.currentIndex(), _MODEL_RUNNING_ROLE))
+        if running:
+            painter.setPen(QColor(_qt_theme.active_theme().palette.success))
+        else:
+            painter.setPen(self.palette().color(self.foregroundRole()))
         painter.drawText(
             edit_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
