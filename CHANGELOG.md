@@ -243,6 +243,9 @@
 
 ### 修复
 
+- `reshack` / `reshackw` 读取大体积 PE 文件时不再整体解析导入 / 重定位 / 调试等
+  目录：改为 `pefile` 的 `fast_load` + 只解析资源目录，`ntoskrnl.exe`（13 MB）
+  加载耗时从约 1.2s 降到毫秒级，资源列表与预览行为不变。
 - 修复 `filescanw` / `pptmake` / `wslmanw` / `envw` 启动时把 `app_name` 按位置传给
   仅关键字参数的 `run_window()` 而抛 `TypeError` 的问题；新增 Qt 窗口入口签名回归测试，
   逐项调用各 `run_qt()` 并以共享入口的真实签名校验。

@@ -101,8 +101,12 @@ class FakePE:
         )
         self.writes: list[tuple[int, bytes]] = []
         self.write_path: str | None = None
+        self.parsed_directories: list[int] = []
         self.closed = False
         self.dll = False
+
+    def parse_data_directories(self, directories: list[int] | None = None) -> None:
+        self.parsed_directories.extend(directories or [])
 
     def is_dll(self) -> bool:
         return self.dll
@@ -125,8 +129,20 @@ class FakePE:
         self.closed = True
 
 
-def _fake_module(pe: FakePE) -> SimpleNamespace:
-    return SimpleNamespace(PE=lambda _path: pe)
+class _FakeModule:
+    """``pefile`` 模块替身：记录 ``PE`` 构造参数（验证 ``fast_load`` 快路径）。"""
+
+    def __init__(self, pe: FakePE) -> None:
+        self._pe = pe
+        self.pe_calls: list[tuple[str, dict[str, Any]]] = []
+
+    def PE(self, path: str, **kwargs: Any) -> FakePE:
+        self.pe_calls.append((path, kwargs))
+        return self._pe
+
+
+def _fake_module(pe: FakePE) -> _FakeModule:
+    return _FakeModule(pe)
 
 
 def _write_pe_file(path: Path, offset: int = 0x40) -> Path:
@@ -429,12 +445,24 @@ class TestPEFileOpen:
     def test_open_parse_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         path = _write_pe_file(tmp_path / "app.exe")
 
-        def boom(_path: str) -> Any:
+        def boom(_path: str, **_kwargs: Any) -> Any:
             raise ValueError("bad pe")
 
         monkeypatch.setattr(reshack, "_require_pefile", lambda: SimpleNamespace(PE=boom))
         with pytest.raises(PEError, match="解析 PE 文件失败"):
             PEFile().open(path)
+
+    def test_open_uses_fast_load_and_parses_resource_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """只走资源目录快路径：不解析导入 / 重定位，避免大文件加载秒级等待。"""
+        path = _write_pe_file(tmp_path / "app.exe")
+        fake = FakePE(RESOURCE_ENTRIES)
+        module = _fake_module(fake)
+        monkeypatch.setattr(reshack, "_require_pefile", lambda: module)
+        PEFile().open(path)
+        assert module.pe_calls == [(str(path), {"fast_load": True})]
+        assert fake.parsed_directories == [reshack._RESOURCE_DIRECTORY_INDEX]
 
     def test_operations_require_loaded(self) -> None:
         wrapper = PEFile()

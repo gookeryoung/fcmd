@@ -135,6 +135,9 @@ class PEError(ValueError):
 RT_BITMAP = 2
 RT_ICON = 3
 
+_RESOURCE_DIRECTORY_INDEX = 2
+"""PE 可选头数据目录中资源表（``IMAGE_DIRECTORY_ENTRY_RESOURCE``）的固定索引。"""
+
 
 _pefile_module: Any = None
 
@@ -337,7 +340,12 @@ class PEFile:
         if module is None:
             raise PEError("未安装 pefile 库，请安装: pip install fcmd[pe]")
         try:
-            pe = module.PE(str(path))
+            # 只解析资源目录：``fast_load`` 跳过导入 / 重定位 / 调试等无关目录，
+            # 大文件（ntoskrnl.exe 10MB+）加载时间从 ~1s 降到毫秒级。
+            pe = module.PE(str(path), fast_load=True)
+            parse_directories = getattr(pe, "parse_data_directories", None)
+            if callable(parse_directories):
+                parse_directories(directories=[_RESOURCE_DIRECTORY_INDEX])
         except Exception as exc:  # pefile 对损坏文件抛自定义异常
             raise PEError(f"解析 PE 文件失败: {path}: {exc}") from exc
         self._pe = pe
