@@ -273,6 +273,21 @@ QSplitter#ChatSplitter::handle { background: transparent; }
 QSplitter#ChatSplitter::handle:hover { background: $accent_soft; }
 /* 通用侧边栏列表：条目由 SidebarList 的 delegate 自绘，这里只保留透明底。 */
 QListWidget#SidebarList { background: transparent; border: none; outline: 0; padding: 0; }
+/* 侧边栏主操作：与条目同宽同圆角，但底色更实、边框更深，和纯文字条目区分。 */
+QPushButton#SidebarAction {
+    background: $surface_active;
+    color: $text;
+    border: 1px solid $border_strong;
+    border-radius: 8px;
+    padding: 0 10px;
+    min-height: 34px;
+    max-height: 34px;
+    text-align: left;
+    font-weight: 600;
+}
+QPushButton#SidebarAction:hover { background: $surface_hover; border-color: $accent; }
+QPushButton#SidebarAction:pressed { background: $accent_soft_strong; border-color: $accent; }
+QPushButton#SidebarAction:disabled { background: $surface; color: $muted; border-color: $border; }
 QTextEdit#ChatTranscript {
     background: transparent;
     border: none;

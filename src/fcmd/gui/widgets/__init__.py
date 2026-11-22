@@ -58,7 +58,7 @@ from fcmd.gui.widgets.metrics import (
     segment_fill,
 )
 from fcmd.gui.widgets.rows import ItemRow, RowDetailMixin, RowListWidget, SelectionRow
-from fcmd.gui.widgets.sidebar_list import SidebarEntry, SidebarList
+from fcmd.gui.widgets.sidebar_list import SidebarActionButton, SidebarEntry, SidebarList
 from fcmd.gui.widgets.splitter import apply_splitter_sizes, make_splitter, splitter_sizes
 from fcmd.gui.widgets.storage import (
     DiskAddTile,
@@ -108,6 +108,7 @@ __all__ = [
     "RowListWidget",
     "SegmentBar",
     "SelectionRow",
+    "SidebarActionButton",
     "SidebarEntry",
     "SidebarList",
     "StatusTag",

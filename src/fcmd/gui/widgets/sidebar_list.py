@@ -19,6 +19,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QSizePolicy,
     QStyle,
     QStyledItemDelegate,
@@ -28,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui import style as _qt_theme
 
-__all__ = ["SidebarEntry", "SidebarList"]
+__all__ = ["SidebarActionButton", "SidebarEntry", "SidebarList"]
 
 TITLE_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 SUBTITLE_ROLE = TITLE_ROLE + 1
@@ -70,6 +71,7 @@ class _SidebarDelegate(QStyledItemDelegate):
     SECTION_HEIGHT = 26
     H_PADDING = 10
     RADIUS = 8
+    ITEM_H_MARGIN = 4
 
     def sizeHint(self, _option: QStyleOptionViewItem, index: Any) -> QSize:
         if bool(index.data(SECTION_ROLE)):
@@ -83,7 +85,7 @@ class _SidebarDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         theme = _theme()
         palette = theme.palette
-        rect = option.rect.adjusted(4, 2, -4, -2)
+        rect = option.rect.adjusted(self.ITEM_H_MARGIN, 2, -self.ITEM_H_MARGIN, -2)
         title = str(index.data(TITLE_ROLE) or "")
         if bool(index.data(SECTION_ROLE)):
             font = QFont(option.font)
@@ -174,6 +176,28 @@ def _theme() -> Any:
         return next(iter(THEMES.values()))
 
 
+class SidebarActionButton(QPushButton):  # pragma: no cover - Qt 控件
+    """侧边栏顶部的主操作按钮：与 SidebarList 条目同宽、圆角与内边距同源。
+
+    比普通按钮更「实体」：半透明强调底 + 更深边框，和列表条目区分；高度与
+    ``SidebarList`` 普通条目一致（34px），由 QSS ``QPushButton#SidebarAction``
+    统一配色，主题切换自动跟随。
+    """
+
+    HEIGHT = 34
+
+    def __init__(self, text: str, *, icon: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setObjectName("SidebarAction")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(self.HEIGHT)
+        if icon:
+            from fcmd.gui.icons import set_icon
+
+            set_icon(self, icon, size=16, tone="text")
+
+
 class SidebarList(QListWidget):  # pragma: no cover - Qt 控件
     """侧边栏条目列表：圆角选中态、标题省略、可选副标题 / 右侧摘要 / 分组。
 
@@ -181,6 +205,8 @@ class SidebarList(QListWidget):  # pragma: no cover - Qt 控件
     左侧粗边框；分组标题行不可选中。``count()`` / ``setCurrentRow()`` /
     ``currentRowChanged`` 等原生 API 不变，接入成本低。
     """
+
+    ITEM_H_MARGIN = _SidebarDelegate.ITEM_H_MARGIN
 
     def __init__(
         self,

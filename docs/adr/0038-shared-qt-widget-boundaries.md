@@ -29,7 +29,7 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D9 | 输入法组合期间的占位文字统一由应用级事件过滤器处理（`gui/ime.py` 的 `PlaceholderImeGuard`），不在各输入框重复实现 | `create_application`、llmw 对话输入框等 |
 | D10 | 多存储目录设置统一用 `StorageCard`（`StorageRoots` 增删 / 设为主目录 + `DiskGrid` 展示）：组件负责添加 / 移除确认 / 按宿主 ``min_count`` 决定可否清空（llmw 允许清空并回落默认），变更只发 `changed`，应用负责落盘 | `gui/widgets/storage.py`、llmw 设置页存储卡片 |
 | D11 | 侧边栏条目列表统一用 `SidebarList`（`SidebarEntry` + 自绘 delegate）：圆角选中底、标题省略、可选副标题 / 右侧摘要 / 分组标题；不再为每个窗口单写 QListWidget QSS | `gui/widgets/sidebar_list.py`、llmw 对话历史 |
-| D12 | 分页窗口不再在页标题下渲染 `PageSpec.hint`（提示保留在侧边栏 tooltip）；`SidebarList` 支持 `highlight_background=False`，只保留文字强调、不画整行底色 | `gui/window.py`、`gui/widgets/sidebar_list.py`、llmw 对话历史 |
+| D12 | 分页窗口不再在页标题下渲染 `PageSpec.hint`（提示保留在侧边栏 tooltip）；`SidebarList` 支持 `highlight_background=False`，只保留文字强调、不画整行底色；`SidebarActionButton` 与列表条目同宽同圆角，底色更实、边框更深 | `gui/window.py`、`gui/widgets/sidebar_list.py`、llmw 对话历史 / 新对话 |
 | D8 | 底部状态栏统一用 `WindowStatusBar`：单行高度（文字与页内补充都是 `ElidedLabel`，加载条用 `compact`），文字 / 页内补充按分页隔离，任务消息写回「发起任务的那一页」 | `gui/statusbar.py`、`QtMainWindow`、wslmanw |
 
 ### D9 为什么占位文字用应用级过滤器

@@ -1631,7 +1631,7 @@ def test_chat_config_button_opens_separate_dialog(window: Any) -> None:
     """模型 / 生成参数收进独立配置窗口，不占用对话页正文与对话框区域。"""
     window.show_page("chat")
     chat = window.page("chat")
-    assert chat.new_chat_button.objectName() == "RunPrimary"
+    assert chat.new_chat_button.objectName() == "SidebarAction"
     assert chat.config_button.icon().isNull() is False
     # 对话页内不再出现配置表单，配置控件都在独立窗口里。
     assert chat.config_dialog.isAncestorOf(chat.url_edit)
@@ -2344,6 +2344,11 @@ def test_chat_input_buttons_share_one_row(window: Any) -> None:
     assert len(widths) == 1
     assert chat.new_chat_button.text() == "新对话"
     assert chat.new_chat_button.icon().isNull() is False
+    # 「新对话」与历史条目同宽、同圆角风格：只是底色更实、边框更深。
+    item = chat.history_list.item(0)
+    assert item is not None
+    item_width = chat.history_list.visualItemRect(item).width()
+    assert chat.new_chat_button.width() == item_width
 
 
 def test_chat_send_stop_toggle_uses_one_button(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:

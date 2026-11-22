@@ -71,6 +71,7 @@ from fcmd.gui.widgets import (
     Collapsible,
     ElidedLabel,
     FormGrid,
+    SidebarActionButton,
     SidebarEntry,
     SidebarList,
     StatusTag,
@@ -385,16 +386,21 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(8, 8, 8, 8)
         side.setSpacing(8)
-        self.new_chat_button = button("新对话", kind="primary")
-        # 与运行页顶部「启动服务」同一尺寸：只比常规按钮略高，左右内边距更宽。
-        self.new_chat_button.setObjectName("RunPrimary")
+        self.new_chat_button = SidebarActionButton("新对话", icon="plus", parent=sidebar)
+        self.new_chat_button.setToolTip("开始一个新对话")
         self.new_chat_button.clicked.connect(self.new_conversation)
-        side.addWidget(self.new_chat_button)
+        # 与 SidebarList 条目共用左右 4px 缩进，按钮宽度和每条历史记录完全一致。
+        new_chat_row = QHBoxLayout()
+        new_chat_row.setContentsMargins(4, 0, 4, 0)
+        new_chat_row.setSpacing(0)
+        new_chat_row.addWidget(self.new_chat_button)
+        side.addLayout(new_chat_row)
         self.history_list = SidebarList(sidebar, accent_selection=True)
         # 公共侧边栏列表：圆角选中底、长标题右侧省略（tooltip 保留全名），
         # 不出现横向滚动条，也不让内容把侧栏撑宽；用户仍可拖动 splitter 展开。
         self.history_list.setMinimumWidth(0)
         self.history_list.currentRowChanged.connect(self._select_conversation)
+        self.history_list.viewport().installEventFilter(self)
         side.addWidget(self.history_list, 1)
         # 底部操作条：无边框透明底，三个图标按钮等宽铺满一行，不抢正文视线。
         self.history_actions = QFrame(sidebar)
@@ -425,6 +431,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
             history_actions.addWidget(widget, 1)
         side.addWidget(self.history_actions)
         self._splitter.addWidget(sidebar)
+        self._sync_new_chat_width()
 
         right = QWidget(self._splitter)
         layout = QVBoxLayout(right)
@@ -650,7 +657,10 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
             self._set_status(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:
-        """Ctrl+Enter 发送；其余事件交给父类。"""
+        """Ctrl+Enter 发送；历史列表视口尺寸变化时同步「新对话」宽度。"""
+        if obj is self.history_list.viewport() and event.type() == QEvent.Type.Resize:
+            self._sync_new_chat_width()
+            return False
         if obj is self.input_edit and event.type() == QEvent.Type.KeyPress:
             key_event = event if isinstance(event, QKeyEvent) else None
             if (
@@ -665,6 +675,18 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 对话历史
     # ------------------------------------------------------------------ #
+    def _sync_new_chat_width(self) -> None:
+        """让「新对话」与历史条目等宽（都按列表视口减去 delegate 左右缩进）。"""
+        if not hasattr(self, "new_chat_button"):
+            return
+        item = self.history_list.item(0)
+        if item is not None:
+            width = self.history_list.visualItemRect(item).width()
+        else:
+            width = self.history_list.viewport().width() - SidebarList.ITEM_H_MARGIN * 2
+        if width > 0:
+            self.new_chat_button.setFixedWidth(width)
+
     def _conversation(self) -> _Conversation:
         return self._conversations[self._active]
 
@@ -708,6 +730,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         self.history_list.set_entries(entries)
         self.history_list.setCurrentRow(self._active)
         self.history_list.blockSignals(False)
+        self._sync_new_chat_width()
 
     def _select_conversation(self, row: int) -> None:
         if row < 0 or row == self._active:
