@@ -54,9 +54,16 @@ class SidebarEntry:
 class _SidebarDelegate(QStyledItemDelegate):
     """自绘条目：可选圆角选中底 + 两行标题 / 副标题 + 右侧摘要。"""
 
-    def __init__(self, parent: QWidget | None = None, *, highlight_background: bool = True) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        highlight_background: bool = True,
+        accent_selection: bool = False,
+    ) -> None:
         super().__init__(parent)
         self._highlight_background = highlight_background
+        self._accent_selection = accent_selection
 
     ROW_HEIGHT = 34
     ROW_HEIGHT_WITH_SUBTITLE = 48
@@ -95,7 +102,13 @@ class _SidebarDelegate(QStyledItemDelegate):
         if self._highlight_background:
             if selected:
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(palette.surface_active))
+                if self._accent_selection:
+                    # 与对话 / 画图胶囊的未按下选中态同色：强调色 16% 透明底。
+                    selected_color = QColor(palette.accent)
+                    selected_color.setAlphaF(0.16)
+                else:
+                    selected_color = QColor(palette.surface_active)
+                painter.setBrush(selected_color)
                 painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
             elif hovered:
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -121,7 +134,7 @@ class _SidebarDelegate(QStyledItemDelegate):
         top = content.top() + max((content.height() - total_height) // 2, 0)
         title_rect = QRect(content.left(), top, title_width, title_height)
         painter.setFont(title_font)
-        if selected and not self._highlight_background:
+        if selected and (self._accent_selection or not self._highlight_background):
             title_color = palette.accent
         elif selected or hovered:
             title_color = palette.text
@@ -169,7 +182,13 @@ class SidebarList(QListWidget):  # pragma: no cover - Qt 控件
     ``currentRowChanged`` 等原生 API 不变，接入成本低。
     """
 
-    def __init__(self, parent: QWidget | None = None, *, highlight_background: bool = True) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        highlight_background: bool = True,
+        accent_selection: bool = False,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("SidebarList")
         self.setMouseTracking(True)
@@ -182,7 +201,9 @@ class SidebarList(QListWidget):  # pragma: no cover - Qt 控件
         self.setWordWrap(False)
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
-        self.setItemDelegate(_SidebarDelegate(self, highlight_background=highlight_background))
+        self.setItemDelegate(
+            _SidebarDelegate(self, highlight_background=highlight_background, accent_selection=accent_selection)
+        )
 
     # ------------------------------------------------------------------ #
     # 数据

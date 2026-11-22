@@ -140,3 +140,37 @@ def test_no_background_mode_only_paints_text() -> None:
     finally:
         highlighted.deleteLater()
         flat.deleteLater()
+
+
+def test_accent_selection_uses_chip_like_tinted_background() -> None:
+    """对话历史选中态：强调色浅底 + 强调色文字，与模式胶囊选中态一致。"""
+    app = QApplication.instance()
+    assert app is not None
+    plain = SidebarList()
+    accent = SidebarList(accent_selection=True)
+    try:
+        for widget in (plain, accent):
+            widget.resize(260, 120)
+            widget.set_entries([SidebarEntry("画一只猫", key=1)])
+            widget.show()
+        app.processEvents()
+        plain.set_current_key(1)
+        accent.set_current_key(1)
+        app.processEvents()
+
+        def inner_color(widget: SidebarList):
+            item = widget.item(0)
+            assert item is not None
+            rect = widget.visualItemRect(item)
+            image = widget.viewport().grab().toImage()
+            return image.pixelColor(rect.left() + 6, rect.center().y())
+
+        assert accent.itemDelegate()._accent_selection is True
+        accent_color = inner_color(accent)
+        plain_color = inner_color(plain)
+        assert accent_color != plain_color
+        # 强调色浅底：蓝色通道明显高于红色通道。
+        assert accent_color.blue() > accent_color.red()
+    finally:
+        plain.deleteLater()
+        accent.deleteLater()

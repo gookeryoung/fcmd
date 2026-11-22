@@ -153,5 +153,6 @@
 ## 交接
 
 - 左侧对话历史使用公共 `fcmd.gui.widgets.SidebarList`（`SidebarEntry`）：
-  不画列表 / 行底色，只保留文字强调与标题省略（`highlight_background=False`），
-  每行铺满侧栏等宽；不再依赖 `QListWidget#ChatHistory` 的整行方块与左侧强调条。
+  选中行画强调色 16% 浅底 + 强调色文字（`accent_selection=True`，与对话 / 画图
+  胶囊选中态同色系），圆角、标题省略，每行铺满侧栏等宽；不再依赖
+  `QListWidget#ChatHistory` 的整行方块与左侧强调条。
