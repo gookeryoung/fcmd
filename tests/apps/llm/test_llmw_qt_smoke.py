@@ -353,6 +353,28 @@ def test_storage_card_removes_directory_and_persists_config(
     assert page.storage_card.roots() == [first]
 
 
+def test_storage_card_can_remove_last_dir_and_falls_back_to_default(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """移除最后一个模型目录后回落到默认目录，而不是卡在空网格。"""
+    from fcmd.apps.llm import _llmconfig
+    from fcmd.gui.widgets import storage as storage_module
+
+    only = tmp_path / "only-models"
+    _llmconfig.set_models_dirs([only])
+    monkeypatch.delenv("FCMD_MODELS", raising=False)
+    window.show_page("settings")
+    page = window.page("settings")
+    page.refresh()
+    monkeypatch.setattr(storage_module, "confirm", lambda *_args, **_kwargs: True)
+    page.storage_card._remove(str(only))
+    app = QApplication.instance()
+    assert app is not None
+    app.processEvents()
+    assert _llmconfig.configured_models_dirs() == []
+    assert page.storage_card.roots() == [_llmconfig.default_models_dir()]
+
+
 def test_flow_page_builds_with_builtin_templates(window: Any) -> None:
     """工作流页首次打开：内置模板落盘、节点卡片可编辑、运行按钮可用。"""
     window.show_page("flow")

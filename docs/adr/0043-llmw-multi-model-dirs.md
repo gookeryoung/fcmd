@@ -3,7 +3,7 @@
 - 状态：已落地
 - 日期：2026-11-22
 - 关联：`src/fcmd/apps/llm/_llmconfig.py`、`src/fcmd/apps/llm/_llmw_storage.py`、
-  `src/fcmd/apps/llm/_llmw_qt_storage.py`、`src/fcmd/apps/llm/_llmw_qt_settings.py`、
+  `src/fcmd/apps/llm/_llmw_qt_settings.py`、`src/fcmd/gui/widgets/storage.py`、
   `src/fcmd/gui/style.py`、[ADR 0031](0031-llm-config-unification.md)
 
 ## 背景
@@ -39,14 +39,17 @@ ADR 0031 把模型目录收敛为单一 `models_dir`，只保留一个下载落�
 - 标题行：硬盘图标 + 盘符 / 挂载点（`D:` 或 `/mnt/data`）+ 文件系统（NTFS / ext4）；
 - 路径行：中间省略的完整路径，tooltip 显示全路径；
 - 容量行：已用比例进度条 + 「剩余 X / 共 Y」；目录不存在或无法读取容量时给文字提示；
-- 动作行：打开、设为主目录（非主目录时显示）、移除（至少保留一个目录；
-  移除只改列表，不删除磁盘文件）；
-- 卡片最多三列并排，超出换行；末尾固定一张虚线「添加模型目录」卡；
+- 动作行：打开、设为主目录（非主目录时显示）、移除（llmw 允许移除到空并回落默认
+  目录；移除只改列表，不删除磁盘文件）；
+- 卡片最多三列并排，超出换行；**添加入口只保留网格末尾的虚线卡片**，标题行不再重复放
+  「添加目录」按钮；
+- 移除入口对每个非最小目录开放：llmw 允许移除最后一个目录（清空后回落默认目录），
+  而不是把用户已添加的目录锁死在列表里；
 - 主目录卡片带「下载目标」胶囊，设为主目录即调整列表顺序并立即生效。
 
-共享控件边界：磁盘卡与网格放在 llm 专用模块 `_llmw_qt_storage`（不在 `fcmd.gui`
-里造「存储卡」通用控件）；`fcmd.gui` 只提供既有的 `Card` / `ElidedLabel` / `StatusTag`
-与新增的 `StorageCard` / `StorageAdd` 主题样式。
+共享控件边界：多目录卡片是共享组件 `fcmd.gui.widgets.StorageCard`
+（`DiskGrid` / `DiskTile` / `StorageRoots`），llmw 只做 `StorageLocation → DiskLocation`
+映射与配置落盘；其它窗口可直接复用，不再各自拼磁盘卡。
 
 ### 3. 盘符 / 容量的数据来源
 
@@ -59,7 +62,8 @@ ADR 0031 把模型目录收敛为单一 `models_dir`，只保留一个下载落�
 
 - `tests/apps/llm/test_llmconfig.py`：列表读写、去重、环境变量单目录覆盖、空列表回落默认；
 - `tests/apps/llm/test_llmw_storage.py`：主目录标记、容量换算、目录不存在、增删 / 设主目录；
-- `tests/apps/llm/test_llmw_qt_storage.py`：卡片并排构造、只剩一个目录时不显示移除；
+- `tests/gui/test_qt_storage.py`：公共卡片并排构造、添加入口唯一、`min_count` 语义、
+  移除最后一个目录；llmw 侧的删除 / 回落默认由 `test_llmw_qt_smoke` 覆盖；
 - 既有单目录测试保留：`set_models_dir` / `configured_models_dir` 仍按主目录语义工作。
 
 ## 落地状态与交接
@@ -72,6 +76,6 @@ ADR 0031 把模型目录收敛为单一 `models_dir`，只保留一个下载落�
 ## 交接
 
 - 多目录设置已抽成共享组件 `fcmd.gui.widgets.StorageCard`：内部 `StorageRoots`
-  负责去重 / 添加 / 移除 / 设为主目录（至少保留一个目录，移除只从列表删、不删磁盘
-  文件），`DiskGrid` 负责磁盘卡展示；变更只发 `changed`，由宿主落盘。
+  负责去重 / 添加 / 移除 / 设为主目录（按宿主 `min_count` 决定可否清空；llmw 用 0，清空后回落默认目录；
+  移除只从列表删、不删磁盘文件），`DiskGrid` 负责磁盘卡展示；变更只发 `changed`，由宿主落盘。
   llmw 设置页直接使用 `StorageCard`，`_llmw_storage.py` 只保留目录模型与磁盘信息。

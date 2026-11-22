@@ -42,7 +42,8 @@ def test_storage_card_renders_tiles_and_removal(monkeypatch: pytest.MonkeyPatch)
         assert len(tiles) == 2
         assert tiles[0].location.primary is True
         add = [child for child in card.findChildren(QPushButton) if child.objectName() == "DiskAdd"]
-        assert add and add[0].text() == "添加工作目录"
+        assert len(add) == 1
+        assert add[0].text() == "添加工作目录"
         # 移除由组件自身处理：调用内部动作后同步列表并刷新卡片
         card._remove(str(Path("E:/models")))
         app.processEvents()
@@ -60,5 +61,21 @@ def test_storage_card_supports_custom_disk_locations() -> None:
         tile = card.grid.findChildren(DiskTile)[0]
         assert tile.location.label == "X:"
         assert tile.location.primary_label == "主目录"
+    finally:
+        card.deleteLater()
+
+
+def test_storage_card_can_clear_last_root_when_host_allows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``min_count=0`` 的宿主可以移除最后一个目录（用于回落默认）。"""
+    from fcmd.gui.widgets import storage as storage_module
+
+    monkeypatch.setattr(storage_module, "confirm", lambda *_args, **_kwargs: True)
+    app = QApplication.instance() or QApplication([])
+    card = StorageCard([Path("D:/models")], min_count=0)
+    try:
+        app.processEvents()
+        card._remove(str(Path("D:/models")))
+        app.processEvents()
+        assert card.roots() == []
     finally:
         card.deleteLater()

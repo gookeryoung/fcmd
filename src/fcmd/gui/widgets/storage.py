@@ -202,10 +202,12 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
         *,
         add_text: str = "添加目录",
         max_columns: int = _MAX_COLUMNS,
+        min_count: int = 1,
     ) -> None:
         super().__init__(parent)
         self._add_text = add_text
         self._max_columns = max(max_columns, 1)
+        self._min_count = max(min_count, 0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
@@ -219,7 +221,7 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
             widget = item.widget() if item is not None else None
             if widget is not None:
                 widget.deleteLater()
-        can_remove = len(locations) > 1
+        can_remove = len(locations) > self._min_count
         tiles: list[QWidget] = []
         for location in locations:
             tile = DiskTile(location, can_remove=can_remove, parent=self)
@@ -353,25 +355,21 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
         dialog_title: str = "添加目录",
         remove_title: str = "移除目录",
         note: str = "",
+        min_count: int = 1,
         locations: Callable[[Sequence[Path]], list[DiskLocation]] | None = None,
         open_path: Callable[[Path], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(title, parent)
-        self._roots = StorageRoots([Path(str(item)) for item in roots])
+        self._roots = StorageRoots([Path(str(item)) for item in roots], min_count=min_count)
         self._locations = locations or (lambda items: default_disk_locations(items, primary_label=primary_label))
         self._open_path = open_path or (lambda path: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
         self._dialog_title = dialog_title
         self._remove_title = remove_title
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.addWidget(hint_label(hint, wrap=False))
-        header.addStretch(1)
-        self.add_button = button(add_text, kind="ghost", icon="plus")
-        self.add_button.clicked.connect(self._add)
-        header.addWidget(self.add_button)
-        self.body.addLayout(header)
-        self.grid = DiskGrid(self, add_text=add_text)
+        if hint:
+            # 添加入口只保留网格末尾的虚线卡片（Steam 式），不再在标题行重复放按钮。
+            self.body.addWidget(hint_label(hint, wrap=False))
+        self.grid = DiskGrid(self, add_text=add_text, min_count=min_count)
         self.grid.addRequested.connect(self._add)
         self.grid.openRequested.connect(self._open)
         self.grid.removeRequested.connect(self._remove)

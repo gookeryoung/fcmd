@@ -27,7 +27,7 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D7 | 图标统一走 `fcmd.gui.icons`（内置 Lucide 线性图标），不引入外部图标包 | 侧边栏、按钮、行卡展开 / 收起 |
 | D9 | 行卡选中态走 `RowListWidget.sync_selection()`：只重抛光「旧 / 新」两行，`set_selected` 状态未变时空操作 | 共享 `ItemRow` 的所有列表（wslmanw 发行版 / 镜像、llmw 模型 / 推荐 / 引擎） |
 | D9 | 输入法组合期间的占位文字统一由应用级事件过滤器处理（`gui/ime.py` 的 `PlaceholderImeGuard`），不在各输入框重复实现 | `create_application`、llmw 对话输入框等 |
-| D10 | 多存储目录设置统一用 `StorageCard`（`StorageRoots` 增删 / 设为主目录 + `DiskGrid` 展示）：组件负责添加 / 移除确认 / 至少保留一个目录，变更只发 `changed`，应用负责落盘 | `gui/widgets/storage.py`、llmw 设置页存储卡片 |
+| D10 | 多存储目录设置统一用 `StorageCard`（`StorageRoots` 增删 / 设为主目录 + `DiskGrid` 展示）：组件负责添加 / 移除确认 / 按宿主 ``min_count`` 决定可否清空（llmw 允许清空并回落默认），变更只发 `changed`，应用负责落盘 | `gui/widgets/storage.py`、llmw 设置页存储卡片 |
 | D8 | 底部状态栏统一用 `WindowStatusBar`：单行高度（文字与页内补充都是 `ElidedLabel`，加载条用 `compact`），文字 / 页内补充按分页隔离，任务消息写回「发起任务的那一页」 | `gui/statusbar.py`、`QtMainWindow`、wslmanw |
 
 ### D9 为什么占位文字用应用级过滤器

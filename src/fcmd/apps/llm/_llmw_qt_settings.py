@@ -94,6 +94,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
             primary_label="下载目标",
             dialog_title="添加模型目录",
             remove_title="移除模型目录",
+            min_count=0,
             locations=lambda roots: [_disk_location(location) for location in _llmw_storage.locations_for(roots)],
             open_path=open_path,
             parent=self,
@@ -102,7 +103,6 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         card.message.connect(self._on_storage_message)
         self.storage_card = card
         # 兼容既有测试 / 页内访问路径。
-        self.storage_add_button = card.add_button
         self.storage_grid = card.grid
         self.migration_note = card.note_label
         self._refresh_migration_note()
@@ -121,6 +121,9 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
             QMessageBox.critical(self, "保存失败", str(exc))
             self.storage_card.set_roots([location.path for location in _llmw_storage.locations()])
             return
+        # 移除最后一个目录会回落默认目录：把卡片同步到当前生效列表，
+        # 否则界面停留在空网格，看不到默认目录已重新生效。
+        self.storage_card.set_roots([location.path for location in _llmw_storage.locations()])
         self._refresh_migration_note()
         self.state.refresh_models()
 
