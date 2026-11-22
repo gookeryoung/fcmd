@@ -474,16 +474,18 @@ def test_collect_optional_deps_status_with_missing_dep(monkeypatch: pytest.Monke
     real_find_spec = importlib.util.find_spec
 
     def fake_find_spec(name: str, package: str | None = None) -> object:
-        if name == "PIL":
+        if name == "pypdf":
             return None
         return real_find_spec(name, package)
 
     monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
 
     deps = collect_optional_deps_status()
-    pil_dep = next(d for d in deps if d["package"] == "PIL")
-    assert pil_dep["installed"] is False
-    assert pil_dep["version"] == ""
+    missing = next(d for d in deps if d["package"] == "pypdf")
+    assert missing["installed"] is False
+    assert missing["version"] == ""
+    # 常驻依赖（Pillow）不再出现在可选依赖报告里
+    assert all(d["package"] != "PIL" for d in deps)
 
 
 def test_platform_string_matches_platform_platform() -> None:

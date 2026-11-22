@@ -40,7 +40,7 @@ def run(argv: list[str]) -> int:
     - fcmd 版本与安装路径
     - Python 版本、平台、解释器路径
     - 已注册工具数与子命令总数
-    - 可选依赖（img/pdf/ocr）的安装状态与版本
+    - 可选依赖（pdf/ocr/svg/crypto/archive/filecheck/color/pe/ppt）的安装状态与版本
     """
     parser = argparse.ArgumentParser(
         prog="fcmd env",

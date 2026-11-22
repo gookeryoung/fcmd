@@ -615,8 +615,6 @@ dev = [
     { name = "cryptography" },
     { name = "mcp" },
     { name = "pefile" },
-    { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pillow", version = "13.0.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "prek" },
     { name = "puremagic", version = "1.30", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.12'" },
     { name = "puremagic", version = "2.2.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version >= '3.12'" },
@@ -647,8 +645,6 @@ full = [
     { name = "coloraide" },
     { name = "cryptography" },
     { name = "pefile" },
-    { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pillow", version = "13.0.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "puremagic", version = "1.30", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.12'" },
     { name = "puremagic", version = "2.2.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pymupdf" },
@@ -659,22 +655,14 @@ full = [
     { name = "pyzipper" },
     { name = "resvg-py" },
 ]
-img = [
-    { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pillow", version = "13.0.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version >= '3.11'" },
-]
 lint = [
     { name = "pyrefly" },
     { name = "ruff" },
 ]
 ocr = [
-    { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pillow", version = "13.0.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pytesseract" },
 ]
 office = [
-    { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pillow", version = "13.0.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pymupdf" },
     { name = "pypdf" },
     { name = "pytesseract" },
@@ -716,14 +704,12 @@ requires-dist = [
     { name = "coloraide", marker = "extra == 'color'", specifier = ">=2.9" },
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=43" },
     { name = "fcmd", extras = ["agent"], marker = "extra == 'test'" },
-    { name = "fcmd", extras = ["img"], marker = "extra == 'ocr'" },
-    { name = "fcmd", extras = ["img", "pdf", "ocr", "svg", "crypto", "archive", "filecheck", "color", "pe", "ppt", "win32"], marker = "extra == 'full'" },
-    { name = "fcmd", extras = ["img", "pdf", "ocr", "svg", "ppt"], marker = "extra == 'office'" },
     { name = "fcmd", extras = ["lint", "test", "full"], marker = "extra == 'dev'" },
+    { name = "fcmd", extras = ["pdf", "ocr", "svg", "crypto", "archive", "filecheck", "color", "pe", "ppt", "win32"], marker = "extra == 'full'" },
+    { name = "fcmd", extras = ["pdf", "ocr", "svg", "ppt"], marker = "extra == 'office'" },
     { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.0,<3" },
     { name = "pefile", marker = "extra == 'pe'", specifier = ">=2024.8.26" },
     { name = "pillow", specifier = ">=10" },
-    { name = "pillow", marker = "extra == 'img'", specifier = ">=10" },
     { name = "prek", marker = "extra == 'dev'", specifier = ">=0.4.5" },
     { name = "psutil", specifier = ">=6.0" },
     { name = "puremagic", marker = "extra == 'filecheck'", specifier = ">=1.28" },
@@ -750,7 +736,7 @@ requires-dist = [
     { name = "tox-uv", marker = "extra == 'dev'", specifier = ">=1.13.1" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12" },
 ]
-provides-extras = ["agent", "archive", "color", "crypto", "dev", "filecheck", "full", "img", "lint", "ocr", "office", "pdf", "pe", "ppt", "svg", "test", "win32"]
+provides-extras = ["agent", "archive", "color", "crypto", "dev", "filecheck", "full", "lint", "ocr", "office", "pdf", "pe", "ppt", "svg", "test", "win32"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "fcmd", extras = ["lint", "test", "full"] }]

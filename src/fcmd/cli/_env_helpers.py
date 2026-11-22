@@ -18,11 +18,20 @@ __all__ = ["collect_optional_deps_status", "platform_string"]
 # 可选依赖清单：(extra 分组, import 包名, 分发包名)
 # extra 对应 pyproject.toml 的 [project.optional-dependencies]
 # import 包名用于 find_spec 探测；分发包名用于 dist-info 扫描读取版本
+#
+# 只列「需要额外安装」的依赖：pillow / psutil / pyyaml / rich / Qt 都是主依赖，
+# 缺了说明安装不完整（重装 fcmd），不作为可选分组出现在 env / doctor 报告里。
 _OPTIONAL_DEPS: tuple[tuple[str, str, str], ...] = (
-    ("img", "PIL", "pillow"),
     ("pdf", "fitz", "pymupdf"),
     ("pdf", "pypdf", "pypdf"),
     ("ocr", "pytesseract", "pytesseract"),
+    ("svg", "resvg_py", "resvg-py"),
+    ("crypto", "cryptography", "cryptography"),
+    ("archive", "pyzipper", "pyzipper"),
+    ("filecheck", "puremagic", "puremagic"),
+    ("color", "coloraide", "coloraide"),
+    ("pe", "pefile", "pefile"),
+    ("ppt", "pptx", "python-pptx"),
 )
 
 

@@ -87,7 +87,7 @@ _ICO_MAGIC = b"\x00\x00\x01\x00"
 def _require_pil() -> bool:
     """Pillow 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PIL:
-        return missing_dependency("Pillow", "img")
+        return missing_dependency("Pillow", None)
     global Image  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     if Image is None:
         from PIL import Image as _image
@@ -244,7 +244,7 @@ def images_to_pdf(  # noqa: PLR0913, PLR0917  参数由 CLI 与 GUI 共享，保
         Pillow 未安装。
     """
     if not _require_pil():
-        raise RuntimeError("缺少依赖: pillow（pip install fcmd[img]）")
+        raise RuntimeError("缺少依赖: pillow（主包常驻依赖，请重新安装 fcmd）")
 
     page_key = normalize_page_size(page_size)
     resolved_dpi = normalize_dpi(dpi)

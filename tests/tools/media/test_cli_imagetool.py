@@ -402,5 +402,5 @@ class TestEdgeCases:
 # 兼容性标志验证
 # ---------------------------------------------------------------------- #
 def test_optional_deps_available() -> None:
-    """测试环境应已安装可选依赖（img）。"""
-    assert HAS_PIL is True, "Pillow 未安装，img extra 测试无法运行"
+    """测试环境应已安装 Pillow（主包常驻依赖）。"""
+    assert HAS_PIL is True, "Pillow 未安装：主包安装不完整，先 uv sync"

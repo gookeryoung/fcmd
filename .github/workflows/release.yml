@@ -105,7 +105,7 @@ jobs:
             # 这里显式覆盖 extras，去掉 win32 分组。
             extras_args: >-
               --extra archive --extra color --extra crypto --extra filecheck
-              --extra img --extra ocr --extra office --extra pdf --extra pe
+              --extra ocr --extra office --extra pdf --extra pe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:

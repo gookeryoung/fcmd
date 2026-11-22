@@ -18,7 +18,7 @@
 ### D1 保留 src 布局与 `tools/<域>` 域层（不压平）
 
 - `src/` 布局由 hatch `packages=["src/fcmd"]`、`tox.ini` 的 `PYTHONPATH=src` 与 pytest 共同确定；搬到仓库根会让 `pip install -e .` 把仓库杂项塞进 `sys.path`。
-- `tools/<域>` 保留：域提供归属、可选依赖 extras 边界（archive/img/ocr/office/pdf/pe/win32）与测试镜像；压平后单目录文件过多、`tests/tools/<域>` 镜像失效，`pyproject.toml` 硬编码入口与数百处测试引用都要改。收益是少一层目录，代价是失去归属与镜像，**不压平**。
+- `tools/<域>` 保留：域提供归属、可选依赖 extras 边界（archive/ocr/office/pdf/pe/ppt/svg/win32 等；Pillow 为常驻依赖，不再单列 img 分组）与测试镜像；压平后单目录文件过多、`tests/tools/<域>` 镜像失效，`pyproject.toml` 硬编码入口与数百处测试引用都要改。收益是少一层目录，代价是失去归属与镜像，**不压平**。
 
 ### D2 模块深度不变量：`fcmd/<包>/[<子包>/]<模块>.py`
 

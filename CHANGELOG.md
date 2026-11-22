@@ -7,6 +7,10 @@
 
 ### 变更
 
+- 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
+  不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
+  的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），
+  不再把 Pillow 当作可选依赖；缺常驻依赖时提示重装主包而不是安装不存在的 extra。
 - 应用 `locllm` 更名为 `llm`：包目录改为 `src/fcmd/apps/llm/`，模块 `locllmw.py` 与
   `_locllmw_*` 统一改为 `llmw.py` / `_llmw_*`；命令名统一为 `llmw`（旧命令 `locllmw`
   已移除）；窗口设置 `~/.fcmd/ui/locllmw.json` 在首次访问时

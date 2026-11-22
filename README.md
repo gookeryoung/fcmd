@@ -18,11 +18,13 @@
 pip install fcmd          # 或 uv add fcmd
 ```
 
+主包常驻依赖：Pillow、psutil、PyYAML、rich（以及按 Python 版本选择的 PySide6 / PySide2），
+装 `fcmd` 即具备图像处理与 GUI 能力，不需要再装额外分组。
+
 可选依赖（按需安装）：
 
 | Extra | 安装命令 | 提供的工具/能力 |
 |-------|---------|---------------|
-| `img` | - | 已随主包安装（Pillow 为常驻依赖），保留该分组仅为 `ocr` / `office` 组合引用 |
 | `pdf` | `pip install fcmd[pdf]` | `pdftool` / `pdfcrypt` / `pdfsplit`（PyMuPDF + pypdf） |
 | `ocr` | `pip install fcmd[ocr]` | `pdftool ocr`（pytesseract，需系统 tesseract） |
 | `svg` | `pip install fcmd[svg]` | `img2ico` 的 SVG 输入（resvg-py） |
@@ -33,6 +35,7 @@ pip install fcmd          # 或 uv add fcmd
 | `pe` | `pip install fcmd[pe]` | `reshack` / `reshackw` 的 PE 资源解析与写回（pefile） |
 | `ppt` | `pip install fcmd[ppt]` | `pptmake` 的 PPTX 生成与导入（python-pptx） |
 | `office` | `pip install fcmd[office]` | pdf + ocr + svg + ppt 全家桶 |
+| `agent` | `pip install fcmd[agent]` | MCP 适配器（`fcmd mcp serve`，mcp 包） |
 | `win32` | `pip install fcmd[win32]` | `docdiff` / `docdiffw` 的 Word 自动化（pywin32，仅 Windows） |
 | `full` | `pip install fcmd[full]` | office + win32 + crypto + archive + filecheck + color + pe |
 | `lint` | `pip install fcmd[lint]` | 开发用：ruff + pyrefly |

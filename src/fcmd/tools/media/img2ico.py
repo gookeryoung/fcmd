@@ -24,7 +24,7 @@ __all__ = ["img2ico_gen"]
 def _require_deps() -> bool:
     """检查 PIL + resvg-py 依赖，缺失时打印提示并返回 False。"""
     if not med.HAS_PIL:
-        return missing_dependency("Pillow", "img")
+        return missing_dependency("Pillow", None)
     if not med.HAS_RESVG:
         return missing_dependency("resvg-py", "svg")
     med.ensure_pil()

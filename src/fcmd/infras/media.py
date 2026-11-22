@@ -143,10 +143,20 @@ def ensure_resvg() -> None:
         resvg_py = _resvg_py
 
 
+def _missing_deps_text() -> str:
+    """缺依赖时的提示：Pillow 是常驻依赖，resvg-py 走 ``fcmd[svg]`` extra。"""
+    missing: list[str] = []
+    if not HAS_PIL:
+        missing.append("pillow（主包常驻依赖，请重新安装 fcmd）")
+    if not HAS_RESVG:
+        missing.append("resvg-py（pip install fcmd[svg]）")
+    return "缺少依赖: " + " / ".join(missing)
+
+
 def ensure_deps() -> None:
     """确认图标转换依赖齐全；缺失时抛 ``RuntimeError``。"""
     if not HAS_PIL or not HAS_RESVG:
-        raise RuntimeError("缺少依赖: pillow (fcmd[img]) / resvg-py (fcmd[svg])")
+        raise RuntimeError(_missing_deps_text())
     ensure_pil()
     ensure_resvg()
 

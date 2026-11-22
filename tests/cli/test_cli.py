@@ -1517,7 +1517,7 @@ class TestBuiltinDoctor:
         # 让 collect_optional_deps_status 返回全部已安装
         def fake_deps() -> list[dict[str, object]]:
             return [
-                {"extra": "img", "package": "PIL", "installed": True, "version": "10.0"},
+                {"extra": "svg", "package": "resvg_py", "installed": True, "version": "0.5"},
                 {"extra": "pdf", "package": "fitz", "installed": True, "version": "1.0"},
                 {"extra": "pdf", "package": "pypdf", "installed": True, "version": "1.0"},
                 {"extra": "ocr", "package": "pytesseract", "installed": True, "version": "1.0"},
@@ -1568,7 +1568,7 @@ class TestBuiltinDoctor:
         """``--json`` 全通过时输出 ``ok=true`` 且退出 0。"""
 
         def fake_deps() -> list[dict[str, object]]:
-            return [{"extra": "img", "package": "PIL", "installed": True, "version": "10.0"}]
+            return [{"extra": "svg", "package": "resvg_py", "installed": True, "version": "0.5"}]
 
         monkeypatch.setattr("fcmd.cli._doctor_helpers.collect_optional_deps_status", fake_deps)
         monkeypatch.setattr("shutil.which", lambda cmd: f"/fake/{cmd}")

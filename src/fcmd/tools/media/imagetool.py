@@ -36,7 +36,7 @@ __all__ = [
 def _require_pil() -> bool:
     """Pillow 未安装时打印提示并返回 False；已安装则惰性导入。"""
     if not med.HAS_PIL:
-        return missing_dependency("Pillow", "img")
+        return missing_dependency("Pillow", None)
     med.ensure_pil()
     return True
 
