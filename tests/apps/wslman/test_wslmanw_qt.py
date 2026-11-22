@@ -1057,6 +1057,70 @@ def test_image_row_actions_follow_state(home: Path, monkeypatch: pytest.MonkeyPa
         window.deleteLater()
 
 
+def test_install_archive_creates_missing_target_parents(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """安装到还不存在的工作目录（``install/<名称>``）时先建目录，避免 wsl 报「找不到路径」。"""
+    archive = tmp_path / "download" / "kali-linux.wsl"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"x" * 16)
+    target = home / "wsl" / "install" / "kali-linux"
+    assert not target.parent.exists()
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    steps: list[list[str]] = []
+
+    def fake_step(_env: Any, argv: list[str], **_kwargs: Any) -> Any:
+        steps.append(list(argv))
+        assert target.is_dir(), "导入前必须先建好目标目录"
+        return None
+
+    monkeypatch.setattr(cli, "_run_step", fake_step)
+    monkeypatch.setattr(cli, "_dir_problem", lambda path: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window._install_archive(archive, "kali-linux", target, replace=False, backup=None)
+        _wait_idle(window)
+        assert target.is_dir()
+        assert steps and steps[0][:2] == ["--import", "kali-linux"]
+        assert steps[0][2] == str(target)
+        assert steps[0][3] == str(archive)
+        assert window.status_text().startswith("安装完成") or "已安装" in window.status_text()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_install_archive_reports_unwritable_target(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """建目录失败时给出可读错误，而不是把 wsl 的「找不到路径」直接抛给用户。"""
+    archive = tmp_path / "kali.wsl"
+    archive.write_bytes(b"x")
+    target = home / "wsl" / "install" / "kali-linux"
+
+    real_mkdir = Path.mkdir
+
+    def boom(self: Path, *args: Any, **kwargs: Any) -> None:
+        if self == target:
+            raise OSError("access denied")
+        real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(cli, "_dir_problem", lambda path: None)
+    monkeypatch.setattr(_wslmanw_qt.Path, "mkdir", boom)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: QMessageBox.StandardButton.Ok)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window._install_archive(archive, "kali-linux", target, replace=False, backup=None)
+        _wait_idle(window)
+        assert "安装失败" in window.status_text()
+        assert "无法创建安装目录" in "".join(window._log_lines)
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_install_entry_opens_dialog_with_preset_archive(
     home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

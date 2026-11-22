@@ -59,6 +59,10 @@
 - `wslmanw` 镜像列表把「已下载 / 已安装」的镜像固定置顶（档位：已安装 → 已下载 →
   其它），按名称 / 按友好名 / 已备份优先只在同档位内排序；原「已安装优先」排序项
   随之改为「已备份优先」（已安装置顶已成为固定规则，不再需要单独选项）。
+- 修复 `wslmanw` 安装已下载镜像报「系统找不到指定的路径」：默认装到工作目录
+  `~/.fcmd/wsl/install/<名称>`，此前父目录不存在时直接跑 `wsl --import`（它只建最后
+  一级目录）；现在与 CLI 同口径，导入前 `mkdir(parents=True, exist_ok=True)`，
+  建目录失败时给出「无法创建安装目录」的可读提示而不是 wsl 的原始报错。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

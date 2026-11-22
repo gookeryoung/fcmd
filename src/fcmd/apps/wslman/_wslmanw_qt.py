@@ -1347,6 +1347,16 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             problem = cli._dir_problem(target)
             if problem:
                 raise invalid_argument(f"安装目录不可用：{problem}", hint="选择一个空目录（不存在会自动创建）")
+            # 默认装到工作目录的 install/<名称>，父目录可能还没建过；``wsl --import``
+            # 只创建最后一级目录，父目录缺失会直接报「系统找不到指定的路径」。
+            # CLI 导入同样是先 ``mkdir(parents=True)`` 再执行，这里保持同一口径。
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise invalid_argument(
+                    f"无法创建安装目录：{target}",
+                    hint=f"换一个可写的本地目录（{exc}）",
+                ) from exc
             if self._bridge is not None:
                 self._bridge.message.emit(f"[安装] 导入 {archive.name} → {target}")
             cli._run_step(
