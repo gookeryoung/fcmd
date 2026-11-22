@@ -479,6 +479,13 @@ def test_item_row_groups_tags_and_actions() -> None:
         assert row.header_row.indexOf(action) + 1 == row.header_row.indexOf(second)
         assert row.header_row.indexOf(second) + 1 == row.header_row.indexOf(row.expand_button)
         assert row.header_row.count() == 5  # 文字区 + 分隔线 + 两个动作 + 展开
+
+        # 选中行底色更深：分隔线同步 selected 属性，主题换成更亮的强调色。
+        assert row.action_divider.property("selected") == "false"
+        row.set_selected(True)
+        assert row.action_divider.property("selected") == "true"
+        row.set_selected(False)
+        assert row.action_divider.property("selected") == "false"
     finally:
         row.deleteLater()
 

@@ -387,8 +387,11 @@ def test_row_chips_share_one_box_contract() -> None:
     assert "padding: 0 10px" in compact
     assert "QFrame#RowActionDivider" in text
     divider = _rule(text, "QFrame#RowActionDivider")
-    assert f"background: {theme.palette.border}" in divider
+    assert f"background: {theme.palette.border_strong}" in divider
     assert "border: none" in divider
+    # 选中行底色更深：分隔线不能沿用常态边框色，否则几乎看不见。
+    selected = _rule(text, 'QFrame#RowActionDivider[selected="true"]')
+    assert f"background: {theme.palette.accent}" in selected
 
 
 def test_secondary_buttons_keep_visible_border() -> None:

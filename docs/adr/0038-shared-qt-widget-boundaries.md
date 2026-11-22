@@ -73,6 +73,8 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 - 右侧数值摘要统一 `QLabel#RowMetrics`（小号、加粗、右对齐），与副标题区分；列宽按
   `metrics_samples` 测量一次后固定（镜像行把「仅 wsl --install」也纳入样本），
   同一列表里体积 / 状态文案长短不同也不会让分隔线、动作按钮和标签逐行左右跳动；
+  分隔线常态用 `border_strong`，选中行把 `selected="true"` 同步到分隔线并换成
+  `accent`，避免深色选中底上「看不见分隔线」；
 - 行内动作按钮收紧左右内边距；次要动作（转换 / 量化）用 `#Ghost`，主操作
   （下载 / 启动服务 / 安装）保留填充色。
 

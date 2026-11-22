@@ -657,12 +657,14 @@ QFrame[itemRow="true"] {
     border: 1px solid $border;
     border-radius: 8px;
 }
-/* 行卡动作区与文字区之间的细分隔线：1px、与边框同色，只在有动作时出现。 */
+/* 行卡动作区与文字区之间的细分隔线：只在有动作时出现。
+   常态用较强边框色；选中行底色更深，换成强调色才看得清。 */
 QFrame#RowActionDivider {
-    background: $border;
+    background: $border_strong;
     border: none;
     margin: 0 2px;
 }
+QFrame#RowActionDivider[selected="true"] { background: $accent; }
 /* 行卡右侧数值摘要：比副标题更小、加粗，与动作按钮拉开层级。 */
 QLabel#RowMetrics {
     color: $muted;

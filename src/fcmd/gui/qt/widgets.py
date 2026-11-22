@@ -610,6 +610,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.action_divider.setFrameShape(QFrame.Shape.VLine)
         self.action_divider.setFixedWidth(1)
         self.action_divider.setFixedHeight(20)
+        self.action_divider.setProperty("selected", "false")
         self.action_divider.setVisible(False)
         self._action_divider_added = False
 
@@ -680,6 +681,15 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self._action_divider_added = True
             index += 1
         self.header_row.insertWidget(index, widget, 0)
+
+    def set_selected(self, selected: bool) -> None:
+        """同步选中态到动作分隔线：选中底较深，必须换成更亮的线才能看清。"""
+        super().set_selected(selected)
+        value = "true" if selected else "false"
+        if self.action_divider.property("selected") != value:
+            self.action_divider.setProperty("selected", value)
+            self.action_divider.style().unpolish(self.action_divider)
+            self.action_divider.style().polish(self.action_divider)
 
     def set_metrics(self, text: str) -> QLabel:
         """右侧数值 / 摘要（模型大小、镜像来源等），位于动作按钮左侧。"""
