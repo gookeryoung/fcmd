@@ -92,6 +92,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.state.pageStatus.connect(self.set_page_status)
         self.state.navigateRequested.connect(self.show_page)
         self.state.serveModelRequested.connect(self._serve_model)
+        self.state.paintModelRequested.connect(self._serve_paint_model)
         self.state.loadingTextChanged.connect(self.show_loading)
         self.state.modelsUpdatedAtChanged.connect(self._show_models_updated_at)
         self._show_models_updated_at(self.state.models_updated_at or "")
@@ -256,6 +257,13 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return
         self.show_page("run")
         self.run_page.start_model(path)
+
+    def _serve_paint_model(self, path: object) -> None:
+        """模型页扩散模型快捷启动：切到运行页「画图」并启动 sd-server。"""
+        if not isinstance(path, Path):
+            return
+        self.show_page("run")
+        self.run_page.start_paint_model(path)
 
     def _on_close(self) -> bool:
         """关窗前确认进行中的任务，落盘设置并停掉采样 / 生成。"""

@@ -753,6 +753,16 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         combo.setCurrentIndex(combo.count() - 1)
         combo.blockSignals(False)
 
+    def select_model(self, path: Path) -> None:
+        """选中指定扩散模型（模型页快捷启动用）：不在下拉里时补一条并刷新组件建议。"""
+        target = path.expanduser()
+        index = self.model_combo.findData(str(target))
+        if index < 0:
+            self._add_combo_item(self.model_combo, target)
+        else:
+            self.model_combo.setCurrentIndex(index)
+        self._on_model_changed()
+
     def set_running_model(self, model: str) -> None:
         """标记正在运行的扩散模型：追加「✓ 已启动」并置绿（与对话 / 编程同款）。
 

@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.apps.llm import (
     _llmconfig,
+    _llmpaint,
     _llmw_convert,
     _llmw_models,
     llmconvert,
@@ -152,6 +153,7 @@ class _InstalledSnapshot:
     quant_tags: dict[str, tuple[str, ...]]
     quantized: dict[str, tuple[tuple[str, Path], ...]]
     usable: set[str]
+    paint_models: dict[str, Path]
 
 
 @dataclass
@@ -193,6 +195,7 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
         quantizable: bool = False,
         quant_blocked: bool = False,
         startable: bool = False,
+        paint_startable: bool = False,
         default_quant: str = "",
         serve_path: Path | None = None,
         downloadable: bool = True,
@@ -297,7 +300,11 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.start_button: Any = None
         if startable:
             self.start_button = button("启动服务", kind="primary")
-            self.start_button.setToolTip("选择量化精度并启动服务；默认使用上次启动过的精度")
+            self.start_button.setToolTip(
+                "启动画图服务（sd.cpp）：切到运行页「画图」并加载该扩散模型"
+                if paint_startable
+                else "选择量化精度并启动服务；默认使用上次启动过的精度"
+            )
             self.start_button.clicked.connect(lambda: self.startRequested.emit(self.repo))
             self.add_action(self.start_button)
         self.download_button: Any = None
@@ -785,6 +792,7 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
         self._quant_candidates: dict[str, tuple[Path, ...]] = {}
         self._quant_tags: dict[str, tuple[str, ...]] = {}
         self._quantized_files: dict[str, tuple[tuple[str, Path], ...]] = {}
+        self._paint_models: dict[str, Path] = {}
         self._quantizing = False
         self._quant_active_repo: str | None = None
         self._pending_convert: str | None = None
@@ -1105,7 +1113,7 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
                     seen_repos.add(model.repo.casefold())
                     models.append(model)
         except OSError:
-            return _InstalledSnapshot({}, set(), {}, {}, {}, {}, {}, {}, set())
+            return _InstalledSnapshot({}, set(), {}, {}, {}, {}, {}, {}, set(), {})
         installed = {
             model.repo.casefold(): ModelSummary(
                 repo=model.repo,
@@ -1161,6 +1169,17 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
             if tags:
                 quant_tags[key] = tuple(tags)
         usable = {model.repo.casefold() for model in models if model.weights > 0 or model.partial > 0}
+        # 扩散模型（Flux / Qwen-Image 等）不进 llama.cpp 扫描，也没有量化 GGUF；
+        # 单独扫描一次扩散资产，把主模型映射回仓库，供「启动服务」走 sd.cpp。
+        paint_models: dict[str, Path] = {}
+        for asset in _llmpaint.scan_assets(_llmconfig.models_dirs()).main_models():
+            for model in models:
+                try:
+                    asset.path.relative_to(model.path)
+                except ValueError:
+                    continue
+                paint_models.setdefault(model.repo.casefold(), asset.path)
+                break
         return _InstalledSnapshot(
             installed,
             set(installed),
@@ -1171,6 +1190,7 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
             quant_tags,
             {repo: tuple(entries) for repo, entries in quantized.items()},
             usable,
+            paint_models,
         )
 
     def _apply_installed(self, snapshot: _InstalledSnapshot) -> None:
@@ -1184,6 +1204,7 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
         self._quant_candidates = snapshot.quant_candidates
         self._quant_tags = snapshot.quant_tags
         self._quantized_files = snapshot.quantized
+        self._paint_models = snapshot.paint_models
         pending = self._pending_convert
         self._pending_convert = None
         if pending:
@@ -1546,6 +1567,7 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
             convert_info = self._convertible.get(key)
             quantizable = key in self._quant_candidates
             quantized = self._quantized_files.get(key, ())
+            paint_path = self._paint_models.get(key)
             default_quant = self._default_quant(key)
             serve_path = next((path for label, path in quantized if label == default_quant), None)
             if serve_path is None and quantized:
@@ -1562,7 +1584,8 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
                 quant_tags=self._quant_tags.get(key, ()),
                 quantizable=quantizable,
                 quant_blocked=installed and not quantizable,
-                startable=bool(quantized),
+                startable=bool(quantized) or paint_path is not None,
+                paint_startable=paint_path is not None,
                 default_quant=default_quant,
                 serve_path=serve_path,
                 incomplete=incomplete,
@@ -2076,10 +2099,16 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
         """选择量化精度后快捷启动；只有一个精度时直接启动。"""
         if self._quantizing or bool(self._jobs) or self._converting:
             return
-        files = self._quantized_files.get(repo.casefold(), ())
+        key = repo.casefold()
+        paint_path = self._paint_models.get(key)
+        if paint_path is not None:
+            self._log(f"快捷启动画图服务: {paint_path}")
+            self.status(f"正在准备启动画图服务 {paint_path.name}…")
+            self.state.request_paint_model(paint_path)
+            return
+        files = self._quantized_files.get(key, ())
         if not files:
             return
-        key = repo.casefold()
         if len(files) == 1:
             self._request_serve(files[0][1], key)
             return

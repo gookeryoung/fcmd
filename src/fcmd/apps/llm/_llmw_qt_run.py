@@ -1449,6 +1449,12 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
             on_finished=self._on_start_finished,
         )
 
+    def start_paint_model(self, path: Path) -> None:
+        """模型页扩散模型快捷启动：切到「画图」页签、选中主模型并启动 sd-server。"""
+        self.tabs.setCurrentIndex(_PAINT_TAB)
+        self.paint_engine_section.select_model(path)
+        self._start_paint_service()
+
     def start_model(self, path: Path) -> None:
         """选中指定模型并立即启动（模型页快捷启动入口）。"""
         self.state.select_model(path, update_name=True)

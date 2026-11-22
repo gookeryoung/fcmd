@@ -146,6 +146,7 @@ class LlmState(LogChannelMixin, QObject):  # pragma: no cover - 依赖 Qt 事件
     busyChanged = Signal(bool)
     navigateRequested = Signal(str)
     serveModelRequested = Signal(object)
+    paintModelRequested = Signal(object)
     loadingTextChanged = Signal(str)
     modelsUpdatedAtChanged = Signal(str)
 
@@ -194,6 +195,10 @@ class LlmState(LogChannelMixin, QObject):  # pragma: no cover - 依赖 Qt 事件
     def request_serve_model(self, path: Path) -> None:
         """请求窗口切到运行页并启动指定模型（模型页快捷启动用）。"""
         self.serveModelRequested.emit(path)
+
+    def request_paint_model(self, path: Path) -> None:
+        """请求窗口切到运行页「画图」并启动 sd.cpp（扩散模型快捷启动用）。"""
+        self.paintModelRequested.emit(path)
 
     def begin_loading(self, key: str, text: str) -> None:
         """登记一项加载任务并显示最近开始的说明；同一说明供状态栏右侧渲染。"""

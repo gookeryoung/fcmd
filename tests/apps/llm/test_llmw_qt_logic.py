@@ -20,7 +20,7 @@ from fcmd.apps.llm import _llmw_convert, llmbase, llmconvert, llmserve
 from fcmd.apps.llm._llmpaint_engine import SdEngine, engine_backend, engine_version
 from fcmd.apps.llm._llmw_hardware import HardwareSnapshot
 from fcmd.apps.llm._llmw_monitor import LoadSample
-from fcmd.apps.llm._llmw_qt_center import _ModelDetailView, _ModelItemRow, quantize_menu_items
+from fcmd.apps.llm._llmw_qt_center import _BrowsePanel, _ModelDetailView, _ModelItemRow, quantize_menu_items
 from fcmd.apps.llm._llmw_qt_chat import endpoint_from_form, service_labels
 from fcmd.apps.llm._llmw_qt_overview import (
     PaintSample,
@@ -288,6 +288,9 @@ def test_model_item_row_expands_inline_detail() -> None:
     blocked_row = _ModelItemRow(ModelSummary(repo="Qwen/image"), convert_blocked="diffusers 多组件模型")
     assert blocked_row.convert_button is None
     assert "不可转换" in {label.text() for label in blocked_row.findChildren(QLabel, "StatusTag")}
+    paint_row = _ModelItemRow(ModelSummary(repo="Qwen/Flux-2"), startable=True, paint_startable=True)
+    assert paint_row.start_button is not None
+    assert "画图服务" in paint_row.start_button.toolTip()
     quantized_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quant_tags=("Q4_K_M", "Q5_K_M"))
     assert quantized_row.findChild(QLabel, "QuantTag") is not None
     start_row = _ModelItemRow(
@@ -951,3 +954,19 @@ def test_paint_engine_variant_note() -> None:
     assert "ROCm" in variant_note("rocm-6.0")
     assert "兜底" in variant_note("cpu")
     assert variant_note("metal") == "自定义构建"
+
+
+def test_scan_installed_maps_diffusion_model_for_quick_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """已下载的扩散模型（如 Flux-2）要映射到 sd.cpp 启动入口，而不是被当成 LLM 量化模型。"""
+    home = tmp_path / "home"
+    models_root = tmp_path / "models"
+    weight = models_root / "Qwen" / "Flux-2-dev" / "flux-2-dev.safetensors"
+    weight.parent.mkdir(parents=True)
+    weight.write_bytes(b"x" * (2 * 1024 * 1024))
+    monkeypatch.setenv("FCMD_HOME", str(home))
+    monkeypatch.setenv("FCMD_MODELS", str(models_root))
+    monkeypatch.delenv("FCMD_CONFIG", raising=False)
+
+    snapshot = _BrowsePanel._scan_installed()
+
+    assert snapshot.paint_models["qwen/flux-2-dev"] == weight.resolve()

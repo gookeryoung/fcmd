@@ -2710,3 +2710,17 @@ def test_engine_download_dialog_can_close_while_fetching(window: Any, monkeypatc
             time.sleep(0.01)
             if dialog._fetching is False:
                 break
+
+
+def test_quick_serve_routes_diffusion_models_to_paint(window: Any, tmp_path: Path) -> None:
+    """扩散主模型的「启动服务」走 sd.cpp 请求，不再按 LLM 量化模型处理。"""
+    window.show_page("models")
+    browse = window.page("models").browse
+    weight = tmp_path / "flux-2-dev.safetensors"
+    emitted: list[Path] = []
+    browse.state.paintModelRequested.connect(emitted.append)
+    browse._paint_models["qwen/flux-2-dev"] = weight
+
+    browse._on_quick_serve("Qwen/Flux-2-dev")
+
+    assert emitted == [weight]
