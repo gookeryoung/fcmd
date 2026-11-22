@@ -16,6 +16,7 @@ import pytest
 from fcmd.apps.wslman import _terminal
 from fcmd.apps.wslman import wslman as wslman_module
 from fcmd.apps.wslman._config import WslmanConfig
+from fcmd.apps.wslman._distro import Distro
 from fcmd.apps.wslman._terminal import LaunchError, TerminalCommand
 from fcmd.core.toolkit import _TOOL_REGISTRY, list_subcommands, run_tool
 from tests.apps.wslman import _fakes
@@ -285,6 +286,63 @@ def test_registers_p2_subcommands() -> None:
 # ---------------------------------------------------------------------- #
 # open
 # ---------------------------------------------------------------------- #
+
+
+def _distro(state: str) -> Distro:
+    return Distro(
+        name="Ubuntu",
+        state=state,
+        state_raw=state.capitalize(),
+        version=2,
+        default=False,
+        base_path="C:/WSL/Ubuntu",
+        default_uid=1000,
+        registered=True,
+    )
+
+
+def test_wait_until_running_polls_after_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """启动是异步的：前几次 ``wsl -l -v`` 仍是 Stopped，轮询到 Running 才算成功。"""
+    states = iter([_distro("stopped"), _distro("stopped"), _distro("running")])
+    monkeypatch.setattr(wslman_module, "_require_target", lambda env, name: next(states))
+    now = {"t": 0.0}
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now["t"] += seconds
+
+    result = wslman_module.wait_until_running(
+        _env(_fakes.FakeRunner({})),
+        "Ubuntu",
+        clock=lambda: now["t"],
+        sleep=fake_sleep,
+    )
+    assert result.state == "running"
+    assert sleeps == [wslman_module.START_POLL_INTERVAL_S] * 2
+
+
+def test_wait_until_running_returns_last_state_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """一直起不来时按超时返回最后一次状态，由调用方决定怎么报错（不在这里抛）。"""
+    monkeypatch.setattr(wslman_module, "_require_target", lambda env, name: _distro("stopped"))
+    now = {"t": 0.0}
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now["t"] += seconds
+
+    result = wslman_module.wait_until_running(
+        _env(_fakes.FakeRunner({})),
+        "Ubuntu",
+        timeout=0.4,
+        interval=0.15,
+        clock=lambda: now["t"],
+        sleep=fake_sleep,
+    )
+    assert result.state == "stopped"
+    assert len(sleeps) == 3
+    assert now["t"] == pytest.approx(0.45)
 
 
 def test_open_preview_has_zero_side_effects(

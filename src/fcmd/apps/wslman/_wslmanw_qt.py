@@ -1249,11 +1249,13 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             spawn_detached(
                 [wsl_path, "-d", target.name, "--exec", "/bin/sh", "-c", _KEEPALIVE_LOOP],
             )
-            current = cli._require_target(env, target.name)
+            # 启动是异步的：`wsl -l -v` 要过几百毫秒才看到 Running（实测约 0.7s），
+            # 立刻断言会误报「启动失败」；统一在这里等一小段时间。
+            current = cli.wait_until_running(env, target.name)
             if current.state != "running":
                 raise runtime_error(
-                    f"{target.name} 启动后状态仍为 {state_label(current)}",
-                    hint="运行 fcmd wslman doctor 检查 WSL 状态，稍后可点「刷新」再次确认",
+                    f"{target.name} 启动后状态仍为 {state_label(current)}（已等待 {cli.START_TIMEOUT_S:.0f}s）",
+                    hint="实例可能仍在启动：稍等后点「刷新」；持续未运行请检查 wsl -l -v 或运行 fcmd wslman doctor",
                 )
             return f"已启动 {target.name}"
 

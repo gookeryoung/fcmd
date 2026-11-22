@@ -101,6 +101,10 @@
   "while :; do sleep 3600; done"`，`DETACHED_PROCESS` + 断开标准流）：关闭 wslmanw
   不再结束实例（此前一次性命令跑完就被 WSL 收回 Stopped），只有用户点「停止」/
   「关闭全部」或 `wsl --shutdown` 才会停。
+- 修复 `wslmanw` 启动实例立刻弹「启动失败」：启动是异步的（实测冷启动约 0.7–2.6 秒才
+  从 Stopped 迁移到 Running），此前 `spawn` 完立刻用 `wsl -l -v` 断言状态，几乎必然
+  误报。新增 `wslman.wait_until_running`（默认最长 20 秒、每 0.15 秒轮询一次），只有
+  等够时间仍不是 Running 才按失败提示（文案注明已等待时长并提示稍后刷新）。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

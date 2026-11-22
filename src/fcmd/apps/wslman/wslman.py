@@ -19,7 +19,7 @@ import contextlib
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -109,6 +109,7 @@ __all__ = [
     "status",
     "terminate",
     "unregister",
+    "wait_until_running",
 ]
 
 _DESCRIPTION = (
@@ -852,6 +853,12 @@ def set_default(distro: str, json_output: bool = False, preview: bool = False) -
 _TRANSFER_TIMEOUT_S = 24 * 60 * 60.0
 _RESERVE_HINT = "更换目标路径或清理空间后重试"
 
+START_TIMEOUT_S = 20.0
+"""启动实例后等待它进入 ``running`` 的上限；实测 WSL2 约 0.7 秒完成状态迁移。"""
+
+START_POLL_INTERVAL_S = 0.15
+"""等待启动状态的轮询间隔：每次都要跑一次 ``wsl -l -v``（约 50–70 ms）。"""
+
 
 def _require_target(env: Environment, name: str) -> Distro:
     view = _view(env)
@@ -859,6 +866,31 @@ def _require_target(env: Environment, name: str) -> Distro:
     if target is None:
         raise not_found(f"未找到发行版 {name}", hint="运行 fcmd wslman list 查看已安装发行版")
     return target
+
+
+def wait_until_running(  # noqa: PLR0913 - 轮询参数（超时 / 间隔 / 时钟 / sleep）为测试注入
+    env: Environment,
+    name: str,
+    *,
+    timeout: float = START_TIMEOUT_S,
+    interval: float = START_POLL_INTERVAL_S,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Distro:
+    """轮询 ``wsl -l -v`` 直到实例进入 ``running``；超时返回最后一次看到的状态。
+
+    启动实例是异步的：``wsl -d <名称> --exec …`` 刚拉起时紧接着的 ``wsl -l -v``
+    往往还是 ``Stopped``（实测约 0.7 秒才迁移到 Running），立刻断言「启动后状态
+    仍为已停止」会误报失败。实例不存在仍按 ``not_found`` 抛出。
+    """
+    deadline = clock() + max(0.0, timeout)
+    while True:
+        current = _require_target(env, name)
+        if current.state == "running":
+            return current
+        if clock() >= deadline:
+            return current
+        sleep(interval)
 
 
 def _require_dir(directory: Path | None, *, example: str) -> Path:

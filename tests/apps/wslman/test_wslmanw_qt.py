@@ -631,6 +631,43 @@ def _catalog(entries: tuple[Any, ...], *, from_cache: bool = False, stale: bool 
     )
 
 
+def test_start_failure_dialog_only_after_waiting_for_running(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """启动失败只在「等够时间仍不是 Running」时报错，不在刚 spawn 完就弹窗误报。"""
+    from types import SimpleNamespace
+
+    stopped = _distro("Ubuntu", "stopped")
+    monkeypatch.setattr(cli, "_view", lambda env: _view(stopped))
+    monkeypatch.setattr(cli, "_build_environment", lambda: SimpleNamespace(config=WslmanConfig(path=default_path())))
+    monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+    monkeypatch.setattr(_wslmanw_qt, "spawn_detached", lambda argv: 1)
+    waited: list[float] = []
+
+    def fake_wait(_env: Any, name: str, **kwargs: Any) -> Any:
+        waited.append(float(kwargs.get("timeout", cli.START_TIMEOUT_S)))
+        return stopped
+
+    monkeypatch.setattr(cli, "wait_until_running", fake_wait)
+    messages: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda *_args: messages.append(str(_args[2])) or QMessageBox.StandardButton.Ok,
+    )
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        window._start_selected()
+        _wait_idle(window)
+        assert waited  # 先等待，再判定失败
+        assert messages and "启动后状态仍为" in messages[0]
+        assert "已等待" in messages[0]
+        assert "启动失败" in window.status_text()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_start_selected_spawns_detached_keepalive(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """启动实例用脱离父进程的看护循环：wslmanw 退出后实例仍在运行。"""
     from types import SimpleNamespace
