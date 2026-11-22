@@ -103,6 +103,13 @@ _LOG_LINES_MAX = 1000
 TITLE = "WSL · 发行版管理"
 NAV_TITLE = "WSL"
 
+HOME_CWD = "~"
+"""「打开终端」进入的目录：Linux 用户主目录（``wsl --cd ~``）。
+
+不传 ``--cd`` 时 ``wsl.exe`` 会把 Windows 侧当前目录映射成 ``/mnt/...``，
+用户看到的是项目 / 系统目录而不是自己的家目录；这里固定进 ``~``。
+"""
+
 PAGES: tuple[PageSpec, ...] = (
     PageSpec("distros", "发行版", "列表、详情、启动停止、导出与注销", "distros"),
     PageSpec("images", "镜像", "在线镜像清单、本地安装与清单更新", "disc"),
@@ -1201,7 +1208,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             command = build_command(
                 wsl_path=cli._require_wsl(env),
                 distro=distro.name,
-                cwd=None,
+                cwd=HOME_CWD,
                 user=None,
                 program=env.config.terminal_program,
                 extra_args=env.config.terminal_extra_args,

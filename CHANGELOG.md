@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `wslmanw`「打开终端」进入 Linux 用户主目录：启动参数固定带 `--cd ~`，不再继承
+  Windows 侧当前目录（之前会落到 `/mnt/c/...` 这类映射路径）；CLI `wslman open`
+  的 `--workdir` 口径不变。
 - GUI 共享层整合：`QtMainWindow` / `QtToolWindow` 的设置 / 几何 / 主题 / 关闭逻辑拆成
   `gui/qt/shell.py` 的 mixin 并由 `WindowShellMixin` 组合，两个窗口骨架不再各存一份；
   应用页面统一继承 `gui/qt/page.py` 的 `AppPage`（页面 key + 按页状态通道 + 卡片辅助），

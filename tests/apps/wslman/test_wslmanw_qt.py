@@ -7,7 +7,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -629,6 +629,34 @@ def _catalog(entries: tuple[Any, ...], *, from_cache: bool = False, stale: bool 
         stale=stale,
         warnings=(),
     )
+
+
+def test_open_selected_starts_in_user_home(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """「打开终端」进入 Linux 用户主目录（``--cd ~``），而不是 Windows 当前目录的 /mnt 映射。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    config = WslmanConfig(path=default_path(), terminal_program="conhost")
+    monkeypatch.setattr(cli, "_build_environment", lambda: SimpleNamespace(config=config))
+    monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        recorded: list[Any] = []
+
+        class _Recorder:
+            def launch(self, command: Any, **_kwargs: Any) -> int:
+                recorded.append(command)
+                return 1
+
+        window.launcher = cast(Any, _Recorder())
+        window._open_selected()
+        assert len(recorded) == 1
+        assert recorded[0].argv == ("wsl.exe", "-d", "Ubuntu", "--cd", "~")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
 
 
 def test_images_page_restores_cache_then_refreshes(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
