@@ -46,6 +46,7 @@ from fcmd.gui.qt.widgets import (
     ToggleChip,
     button,
     icon_button,
+    pill_tabs,
     section_header,
     segment_band,
     segment_fill,
@@ -213,6 +214,25 @@ def test_icon_button_height_matches_default_button() -> None:
         assert icon.width() == icon.height()
     finally:
         container.deleteLater()
+
+
+def test_pill_tabs_share_one_theme_contract() -> None:
+    """``pill_tabs`` 统一药丸页签：无基线、不拉伸、容器名可换成行卡专用底色。"""
+    from PySide6.QtWidgets import QTabWidget
+
+    tabs = QTabWidget()
+    try:
+        assert pill_tabs(tabs) is tabs
+        bar = tabs.tabBar()
+        assert tabs.objectName() == "PillTabs"
+        assert bar.objectName() == "PillTabBar"
+        assert bar.drawBase() is False
+        assert bar.expanding() is False
+        pill_tabs(tabs, object_name="RowTabs")
+        assert tabs.objectName() == "RowTabs"
+        assert bar.objectName() == "PillTabBar"
+    finally:
+        tabs.deleteLater()
 
 
 def test_icon_button_is_square_and_checkable() -> None:

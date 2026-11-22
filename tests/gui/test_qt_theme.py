@@ -243,6 +243,25 @@ def test_tab_pane_and_nested_tables_are_flat() -> None:
     assert "background: transparent" in nested_block
 
 
+def test_row_detail_tabs_match_row_card_background() -> None:
+    """展开行里的页签与文件表跟行卡同底色：无页签基线、无多余盒子与交替行色。"""
+    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+    bar_block = text.split("QTabBar#PillTabBar {", 1)[1].split("}", 1)[0]
+    assert "border: none" in bar_block
+    assert "background: transparent" in bar_block
+    tab_block = text.split("QTabBar#PillTabBar::tab {", 1)[1].split("}", 1)[0]
+    assert "border-radius: 13px" in tab_block
+    pane_block = text.split("QTabWidget#RowTabs::pane {", 1)[1].split("}", 1)[0]
+    assert "background: transparent" in pane_block
+    # QTabWidget 内部的 QStackedWidget 默认按窗口底色填充，必须显式置透明。
+    stack_block = text.split("QTabWidget#RowTabs QStackedWidget {", 1)[1].split("}", 1)[0]
+    assert "background: transparent" in stack_block
+    files_block = text.split("QTableWidget#ModelFiles {", 1)[1].split("}", 1)[0]
+    assert "background: transparent" in files_block
+    assert "alternate-background-color: transparent" in files_block
+    assert "border: none" in files_block
+
+
 def test_installed_and_converted_buttons_use_success_color() -> None:
     theme = _guitheme.resolve_theme("dark-blue")
     text = _qt_theme.stylesheet(theme)

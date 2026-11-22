@@ -42,7 +42,7 @@
 
 约定：
 
-- 运行页「对话 / 编程 / 画图」用胶囊页签（`RunTabs` / `RunTabBar`）：`setDrawBase(False)`
+- 运行页「对话 / 编程 / 画图」用胶囊页签（共享 `widgets.pill_tabs`，`PillTabs` / `PillTabBar`）：`setDrawBase(False)`
   去掉整条基线，`QTabBar` 透明底 + 圆角选中块，页签与内容同底色衔接，不再出现
   页签下方的横条；页签不参与等宽分配，靠左紧凑排列。
 - 运行页顶部按钮随模型状态显示启动 / 停止服务，另有「重启服务」按钮（仅运行中可用，

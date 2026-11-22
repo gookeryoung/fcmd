@@ -258,8 +258,8 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     ]
     # 页签用胶囊样式：去掉 QTabBar 基线（多余横条），页签与内容同底色衔接。
     bar = run.tabs.tabBar()
-    assert run.tabs.objectName() == "RunTabs"
-    assert bar.objectName() == "RunTabBar"
+    assert run.tabs.objectName() == "PillTabs"
+    assert bar.objectName() == "PillTabBar"
     assert bar.drawBase() is False
     assert bar.expanding() is False
     # 对话 / 编程共用同一套启动参数表单，切页签时整页搬家。

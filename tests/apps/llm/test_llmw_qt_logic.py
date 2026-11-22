@@ -289,6 +289,14 @@ def test_model_item_row_expands_inline_detail() -> None:
     start_row.set_serve_state(busy=False, running=True)
     assert start_row.start_button.text() == "已启动"
     assert not start_row.start_button.isEnabled()
+    # 禁用态的主按钮底色变浅：勾选图标必须跟着换成 muted，
+    # 否则浅色主题下 on_accent（白）的勾在白底上看不见。
+    assert start_row.start_button.property("fcmdIconTone") == "muted"
+    start_row.set_serve_state(busy=True, running=False)
+    assert start_row.start_button.property("fcmdIconTone") == "muted"
+    start_row.set_serve_state(busy=False, running=False)
+    assert start_row.start_button.text() == "启动服务"
+    assert start_row.start_button.property("fcmdIconTone") == "on_accent"
     quantizable_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quantizable=True)
     assert quantizable_row.quant_button is not None
     assert quantizable_row.quant_button.text() == "量化"
@@ -345,8 +353,14 @@ def test_model_detail_view_reset_and_metadata() -> None:
     assert not hasattr(view, "readme")
     # 详情分页：右侧「文件列表」与「详细信息」并列。
     assert [view.tabs.tabText(index) for index in range(view.tabs.count())] == ["详细信息", "文件列表"]
+    # 页签用共享的药丸样式（同运行页）：无整条基线，容器底色跟行卡走。
+    assert view.tabs.objectName() == "RowTabs"
+    assert view.tabs.tabBar().objectName() == "PillTabBar"
+    assert view.tabs.tabBar().drawBase() is False
     assert view.files_table.objectName() == "ModelFiles"
     assert view.files_table.columnCount() == 2
+    # 文件表与详情区同底色：不画交替行底色（否则会突出于行卡背景之外）。
+    assert view.files_table.alternatingRowColors() is False
     view.set_error("网络错误")
     assert view.error.text() == "网络错误"
     assert not view.error.isHidden()

@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -93,6 +92,7 @@ from fcmd.gui.qt.widgets import (
     confirm,
     hint_label,
     link_button,
+    pill_tabs,
     set_button_text,
 )
 from fcmd.gui.qt.workers import ProgressBridge, submit
@@ -339,11 +339,20 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
         set_button_text(self.quant_button, "量化中…" if active else "量化")
 
     def set_serve_state(self, *, busy: bool, running: bool) -> None:
-        """快捷启动按钮：任务进行中禁用，已运行时显示「已启动」。"""
+        """快捷启动按钮：任务进行中禁用，已运行时显示「已启动」。
+
+        禁用态的主按钮底色会变成浅色（``$surface_hover``），图标必须同步换成
+        ``muted``：否则浅色主题下保留下来的 ``on_accent`` 白勾在白底上几乎看不见。
+        """
         if self.start_button is None:
             return
-        self.start_button.setEnabled(not busy and not running)
-        set_button_text(self.start_button, "已启动" if running else "启动服务")
+        enabled = not busy and not running
+        self.start_button.setEnabled(enabled)
+        set_button_text(
+            self.start_button,
+            "已启动" if running else "启动服务",
+            tone="on_accent" if enabled else "muted",
+        )
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
@@ -374,15 +383,14 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         layout.setContentsMargins(12, 0, 12, 10)
         layout.setSpacing(6)
 
-        separator = QFrame(self)
-        separator.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(separator)
         self.error = hint_label("")
         self.error.setVisible(False)
         layout.addWidget(self.error)
 
         self.tabs = QTabWidget(self)
-        self.tabs.setDocumentMode(True)
+        # 与运行页同一套药丸页签：没有页签上方的分隔线与 QTabBar 基线；
+        # 容器底色用 $surface，与展开它的行卡同色（否则详情区会露出窗口底色）。
+        pill_tabs(self.tabs, object_name="RowTabs")
         layout.addWidget(self.tabs)
 
         meta_page = QWidget(self.tabs)
@@ -442,7 +450,8 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.files_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.files_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.files_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.files_table.setAlternatingRowColors(True)
+        # 行卡展开区里不另起盒子：表格与详情区同底色，只有表头 / 选中行有底色。
+        self.files_table.setAlternatingRowColors(False)
         self.files_table.setShowGrid(False)
         header = self.files_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -461,6 +470,8 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.files_download_button.clicked.connect(self._download_selected)
         files_actions.addWidget(self.files_download_button)
         files_layout.addLayout(files_actions)
+        # 表格高度固定（行高度可控），剩余空间留在下方，文件列表紧跟页签顶部。
+        files_layout.addStretch(1)
         self.tabs.addTab(files_page, "文件列表")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 

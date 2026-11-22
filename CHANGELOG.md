@@ -25,6 +25,13 @@
   右侧数值与动作 + 行内展开区，提供 `add_tag` / `add_note_widget` / `set_metrics` /
   `add_action` 插槽）：llmw 模型浏览行、`wslmanw` 发行版行与镜像行都改为继承它，
   不再各写一份骨架（ADR 0038 D1 随之更新，原「不做行卡基类」的重新评估条件已触发）。
+- `llmw` 模型行展开后的分页按运行页设计改造：共享 `pill_tabs`（`PillTabs` / `PillTabBar`，
+  运行页与行卡详情同一套药丸页签）去掉页签上方的分隔线与 QTabBar 整条基线；行卡详情的
+  页签容器（`RowTabs`）及其内部 `QStackedWidget` 置透明，跟上行卡底色（选中时一起变色），
+  不再露出一块窗口底色；「文件列表」不再画表框 / 交替行色（`QTableWidget#ModelFiles`），
+  与「详细信息」同为行卡底色，表格紧跟页签顶部。
+- `llmw` 模型行「已启动」勾选图标在浅色主题下不可见：禁用的主按钮底色会变浅，图标
+  按可用性切 `on_accent` / `muted`（已启动与任务进行中都走 muted），不再留下白勾。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

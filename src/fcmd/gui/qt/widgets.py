@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QStylePainter,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -100,6 +101,7 @@ __all__ = [
     "make_table_item",
     "mono_font",
     "mono_label",
+    "pill_tabs",
     "section_header",
     "segment_band",
     "segment_fill",
@@ -377,6 +379,27 @@ def make_table_item(text: str) -> QTableWidgetItem:  # pragma: no cover - Qt 控
     item = QTableWidgetItem(text)
     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
     return item
+
+
+def pill_tabs(tabs: QTabWidget, *, object_name: str = "PillTabs") -> QTabWidget:  # pragma: no cover - Qt 控件
+    """把页签容器改成「药丸」外观：无整条基线、透明底 + 圆角选中块。
+
+    主题 QSS 里唯一的页签外观契约（``QTabWidget#PillTabs`` / ``QTabBar#PillTabBar``）：
+    页签与内容同底色衔接，不再出现页签上方 / 下方的多余横条。运行页的
+    「对话 / 编程 / 画图…」与模型行展开后的「详细信息 / 文件列表」都用它。
+
+    ``object_name`` 用于换容器底色：行卡展开区用 ``RowTabs``（与行卡同为
+    ``$surface``），页面级用法保持默认的透明底。
+    """
+    tabs.setDocumentMode(True)
+    tabs.setObjectName(object_name)
+    bar = tabs.tabBar()
+    bar.setObjectName("PillTabBar")
+    bar.setDrawBase(False)
+    bar.setExpanding(False)
+    bar.setUsesScrollButtons(False)
+    bar.setElideMode(Qt.TextElideMode.ElideNone)
+    return tabs
 
 
 class RowListWidget(QListWidget):  # pragma: no cover - Qt 控件

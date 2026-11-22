@@ -540,6 +540,13 @@ QFrame#Card QTreeWidget, QFrame#Card QTableWidget {
     border: none;
     border-radius: 0;
 }
+/* 行卡展开区里的表格（如模型文件列表）：与行卡 / 详情区同底色，不另起一个盒子。 */
+QTableWidget#ModelFiles {
+    background: transparent;
+    alternate-background-color: transparent;
+    border: none;
+    border-radius: 0;
+}
 
 QTabWidget::pane { border: none; background: transparent; }
 QTabBar::tab {
@@ -553,10 +560,17 @@ QTabBar::tab {
 }
 QTabBar::tab:selected { background: $surface_active; color: $text; font-weight: 600; }
 QTabBar::tab:hover { color: $text; }
-/* 运行页「对话 / 编程 / 画图」：药丸页签，无整条基线，与内容同底色衔接。 */
-QTabWidget#RunTabs::pane { border: none; background: transparent; top: 4px; }
-QTabBar#RunTabBar { background: transparent; border: none; }
-QTabBar#RunTabBar::tab {
+/* 药丸页签（运行页「对话 / 编程 / 画图」、模型行展开的「详细信息 / 文件列表」）：
+   无整条基线，与内容同底色衔接。 */
+QTabWidget#PillTabs::pane { border: none; background: transparent; top: 4px; }
+/* 行卡展开区里的页签：不另起底色，跟着行卡走（选中时也一起变成选中底）。
+   QTabWidget 内部的 QStackedWidget 默认按窗口底色填充，必须显式置透明，
+   否则详情区会露出一块与行卡不同的底色。 */
+QTabWidget#RowTabs { background: transparent; }
+QTabWidget#RowTabs::pane { border: none; background: transparent; top: 4px; }
+QTabWidget#RowTabs QStackedWidget { background: transparent; }
+QTabBar#PillTabBar { background: transparent; border: none; }
+QTabBar#PillTabBar::tab {
     background: transparent;
     color: $muted;
     border: 1px solid transparent;
@@ -565,13 +579,13 @@ QTabBar#RunTabBar::tab {
     margin: 0 6px 4px 0;
     min-height: 22px;
 }
-QTabBar#RunTabBar::tab:selected {
+QTabBar#PillTabBar::tab:selected {
     background: $surface_active;
     color: $text;
     border-color: $border;
     font-weight: 600;
 }
-QTabBar#RunTabBar::tab:hover:!selected { background: $surface_hover; color: $text; }
+QTabBar#PillTabBar::tab:hover:!selected { background: $surface_hover; color: $text; }
 
 QProgressBar {
     background: $surface_hover;
