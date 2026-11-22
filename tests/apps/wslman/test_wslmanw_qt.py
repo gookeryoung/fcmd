@@ -17,13 +17,14 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
-from fcmd.apps.wslman import _wslmanw_qt, wslmanw
+from fcmd.apps.wslman import _initenv, _wslmanw_qt, wslmanw
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman._config import WslmanConfig, default_path
 from fcmd.apps.wslman._distro import Distro, DistroView
 from fcmd.apps.wslman._registry import RegistrySnapshot
+from fcmd.apps.wslman._runner import CommandResult
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
@@ -90,9 +91,13 @@ def _image_row(window: _wslmanw_qt.WslmanQtWindow, index: int) -> _wslmanw_qt._I
 def _wait_idle(window: _wslmanw_qt.WslmanQtWindow, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     app = QApplication.instance()
-    while window._busy and time.monotonic() < deadline:
+    # 先让 ``_task_finished`` 里 singleShot(0) 排队的轻量状态刷新落地，再等它完成；
+    # 只等 ``_busy`` 会在状态刷新线程仍在跑时提前返回，读到旧行卡。
+    while time.monotonic() < deadline:
         if app is not None:
             app.processEvents()
+        if not window._busy and not window._status_busy:
+            break
         time.sleep(0.01)
     if app is not None:
         app.processEvents()
@@ -1479,6 +1484,182 @@ def test_distro_config_button_dialog_and_persisted_cwd(home: Path, monkeypatch: 
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
+
+
+def test_init_env_dialog_defaults_status_copy_and_execute(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """初始化对话框：已就绪勾选 + 禁用 + 绿色标签、展开详情、复制公钥、root 步骤加 -u root。"""
+    public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc me@host"
+    owner = QWidget()
+    dialog = _wslmanw_qt._InitEnvDialog(owner, _distro("Ubuntu"))
+    try:
+        assert set(dialog.checks) == {task.key for task in _initenv.TASKS}
+        assert set(dialog.status_tags) == {task.key for task in _initenv.TASKS}
+        assert all(box.isChecked() for box in dialog.checks.values())
+        assert all(box.isEnabled() for box in dialog.checks.values())
+        assert all(tag.isHidden() for tag in dialog.status_tags.values())
+        assert dialog.details.isHidden() is True
+
+        dialog._apply_status(
+            _initenv.EnvStatus(
+                user="me",
+                home="/home/me",
+                os_name="Ubuntu 24.04",
+                mirror="mirrors.aliyun.com",
+                ssh_public_key=public_key,
+                python="3.12.3",
+                node="20.11.0",
+                rust="1.80.0",
+                pip_index="https://pypi.tuna.tsinghua.edu.cn/simple",
+                npm_registry="https://registry.npmmirror.com/",
+            )
+        )
+        # 全部就绪：保持勾选但禁用，绿色「已初始化」标签可见。
+        assert all(box.isChecked() for box in dialog.checks.values())
+        assert not any(box.isEnabled() for box in dialog.checks.values())
+        for tag in dialog.status_tags.values():
+            assert tag.isHidden() is False
+            assert tag.text() == "已初始化"
+            assert tag.tone() == "success"
+        dialog._set_all(False)
+        assert all(box.isChecked() for box in dialog.checks.values())
+        assert dialog.copy_key.isEnabled() is True
+        assert "Python 3.12.3" in dialog.summary.text()
+
+        dialog._toggle_details()
+        assert dialog.details.isHidden() is False
+        assert dialog.toggle.text() == "收起环境详情"
+        dialog._copy_ssh_key()
+        assert QApplication.clipboard().text() == public_key
+
+        dialog._apply_status(_initenv.EnvStatus(python="3.12.3"))
+        # 仅 Python 就绪：只有它勾选 + 禁用 + 绿标，其余仍可操作。
+        assert dialog._done == {"python"}
+        assert dialog.checks["python"].isEnabled() is False
+        assert dialog.checks["python"].isChecked() is True
+        assert dialog.status_tags["python"].isHidden() is False
+        for key in ("mirror", "ssh", "node", "rust"):
+            assert dialog.checks[key].isEnabled() is True
+            assert dialog.checks[key].isChecked() is True
+            assert dialog.status_tags[key].isHidden() is True
+        dialog._set_all(False)
+        assert dialog.checks["python"].isChecked() is True
+        assert not any(dialog.checks[key].isChecked() for key in ("mirror", "ssh", "node", "rust"))
+
+        dialog._apply_status(_initenv.EnvStatus())
+        assert dialog.copy_key.isEnabled() is False
+        assert all(tag.isHidden() for tag in dialog.status_tags.values())
+        QApplication.clipboard().setText("sentinel")
+        dialog._copy_ssh_key()
+        assert QApplication.clipboard().text() == "sentinel"
+
+        calls: list[list[str]] = []
+
+        class _FakeRunner:
+            def run(self, argv: Any, *, timeout: float | None = None, env: Any = None) -> CommandResult:
+                calls.append(list(argv))
+                return CommandResult(argv=tuple(argv), returncode=0, stdout=b"done\n", stderr=b"", duration_ms=1)
+
+        class _FakeEnv:
+            runner = _FakeRunner()
+
+        monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+        monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+        assert dialog._execute(_initenv.steps_for(["ssh"])) == "初始化完成"
+        assert calls[0][:6] == ["wsl.exe", "-d", "Ubuntu", "-u", "root", "--exec"]
+        assert calls[1][:4] == ["wsl.exe", "-d", "Ubuntu", "--exec"]
+        assert "-u" not in calls[1]
+        assert calls[0][-1] == _initenv.steps_for(["ssh"])[0].script
+        assert calls[1][-1] == _initenv.steps_for(["ssh"])[1].script
+    finally:
+        dialog.deleteLater()
+        owner.deleteLater()
+
+
+def test_init_env_detect_parses_probe_output(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = QWidget()
+    dialog = _wslmanw_qt._InitEnvDialog(owner, _distro("Ubuntu"))
+    try:
+        calls: list[list[str]] = []
+
+        class _FakeRunner:
+            def run(self, argv: Any, *, timeout: float | None = None, env: Any = None) -> CommandResult:
+                calls.append(list(argv))
+                return CommandResult(
+                    argv=tuple(argv),
+                    returncode=0,
+                    stdout=b"WSLMAN_USER=me\nWSLMAN_MIRROR=mirrors.aliyun.com\nWSLMAN_PYTHON=3.12.3\n",
+                    stderr=b"",
+                    duration_ms=1,
+                )
+
+        class _FakeEnv:
+            runner = _FakeRunner()
+
+        monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+        monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+        status = dialog._detect()
+        assert status.user == "me"
+        assert status.mirror == "mirrors.aliyun.com"
+        assert status.python == "3.12.3"
+        assert calls == [["wsl.exe", "-d", "Ubuntu", "--exec", "bash", "-lc", _initenv.probe_script()]]
+    finally:
+        dialog.deleteLater()
+        owner.deleteLater()
+
+
+def test_init_env_run_skips_ready_items(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """开始初始化只跑「未就绪且勾选」的项目，已就绪的不重复执行。"""
+    owner = QWidget()
+    dialog = _wslmanw_qt._InitEnvDialog(owner, _distro("Ubuntu"))
+    try:
+        dialog._apply_status(_initenv.EnvStatus(python="3.12.3"))
+        dialog._set_all(False)
+        dialog.checks["node"].setChecked(True)
+        dialog.checks["python"].setChecked(True)  # 已就绪，禁用后即使勾着也不执行
+        seen: list[tuple[str, ...]] = []
+
+        def fake_submit(fn: Any, *, on_done: Any = None, on_error: Any = None, on_finished: Any = None) -> None:
+            if on_done is not None:
+                on_done(fn())
+            if on_finished is not None:
+                on_finished()
+
+        monkeypatch.setattr(_wslmanw_qt, "submit_daemon", fake_submit)
+        monkeypatch.setattr(dialog, "refresh_status", lambda: None)
+        monkeypatch.setattr(
+            dialog, "_execute", lambda steps: seen.append(tuple(step.label for step in steps)) or "初始化完成"
+        )
+        dialog._run_selected()
+        assert seen == [("安装 Node.js 软件包", "配置 npm 镜像")]
+    finally:
+        dialog.deleteLater()
+        owner.deleteLater()
+
+
+def test_distro_config_opens_init_env_dialog(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    class _FakeInitEnvDialog:
+        def __init__(self, _parent: Any, distro: Distro) -> None:
+            seen.append(distro.name)
+
+        def refresh_status(self) -> None:
+            seen.append("refresh")
+
+        def exec(self) -> int:
+            seen.append("exec")
+            return 0
+
+    monkeypatch.setattr(_wslmanw_qt, "_InitEnvDialog", _FakeInitEnvDialog)
+    owner = QWidget()
+    dialog = _wslmanw_qt._DistroConfigDialog(owner, _distro("Ubuntu"), "~")  # type: ignore[arg-type]
+    try:
+        assert dialog.init_button.text() == "打开初始化环境…"
+        dialog.init_button.click()
+        assert seen == ["Ubuntu", "refresh", "exec"]
+    finally:
+        dialog.deleteLater()
+        owner.deleteLater()
 
 
 def test_image_manager_exports_deletes_and_cleans_cache(

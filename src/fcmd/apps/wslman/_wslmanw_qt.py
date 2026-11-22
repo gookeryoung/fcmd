@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.wslman import _images, _mirrors
+from fcmd.apps.wslman import _images, _initenv, _mirrors
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman import wslmanw as w
 from fcmd.apps.wslman._config import (
@@ -62,6 +62,7 @@ from fcmd.apps.wslman._config import (
     load_config,
     work_root,
 )
+from fcmd.apps.wslman._decode import decode_console
 from fcmd.apps.wslman._disk import distro_disk_bytes, distro_export_bytes, format_bytes
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
@@ -93,6 +94,7 @@ from fcmd.gui.qt.workers import EventBridge, ProgressBridge, periodic, submit, s
 from fcmd.infras.download import SpeedMeter, format_speed
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing import Any
 
     from fcmd.apps.wslman._images import ImageEntry
@@ -1887,6 +1889,311 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
         return True
 
 
+_INIT_LOG_LINES_MAX = 400
+"""初始化对话框的日志缓冲上限（行）。"""
+
+
+class _InitEnvDialog(QDialog):  # pragma: no cover - 模态对话框
+    """实例环境初始化：勾选项目、查看当前状态、在实例内执行并复制 SSH 公钥。
+
+    探测与安装都走 ``wsl.exe -d <实例> --exec bash -lc``，命令在后台线程执行，
+    界面只负责调度；需要 root 的步骤（APT / 系统源）由
+    :class:`~fcmd.apps.wslman._initenv.InitStep` 的 ``root`` 标记决定加 ``-u root``。
+    """
+
+    def __init__(self, parent: QWidget, distro: Distro) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"初始化环境 · {distro.name}")
+        self.setMinimumWidth(680)
+        self._distro = distro
+        self._status: _initenv.EnvStatus | None = None
+        self._done: set[str] = set()
+        """检测结果里已就绪的项目 key；这些勾选框保持勾选 + 禁用，并显示绿色标签。"""
+        self._busy = False
+        self._closing = False
+        self._refresh_after_run = False
+        self._log_lines: list[str] = []
+        self._bridge = EventBridge(self)
+        self._bridge.event.connect(self._append_log)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(8)
+        outer.addWidget(hint_label(f"实例：{distro.name}。检测与安装会启动该实例（若尚未运行）。"))
+
+        self.summary = ElidedLabel("正在检测环境…", parent=self)
+        self.summary.setObjectName("Hint")
+        outer.addWidget(self.summary)
+
+        card = Card("初始化项目", self)
+        self.checks: dict[str, QCheckBox] = {}
+        self.status_tags: dict[str, StatusTag] = {}
+        for task in _initenv.TASKS:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+            box = QCheckBox(task.label, card)
+            box.setToolTip(task.detail)
+            box.setChecked(_initenv.default_checked(task.key, _initenv.EnvStatus()))
+            row.addWidget(box)
+            tag = StatusTag("已初始化", tone="success", parent=card)
+            tag.setToolTip("环境已就绪：保持勾选但不可再执行，需要重跑时请手动在实例内操作")
+            tag.setVisible(False)
+            row.addWidget(tag)
+            row.addStretch(1)
+            card.body.addLayout(row)
+            self.checks[task.key] = box
+            self.status_tags[task.key] = tag
+        select_row = QHBoxLayout()
+        select_row.setContentsMargins(0, 0, 0, 0)
+        select_row.setSpacing(6)
+        select_all = button("全选", kind="ghost")
+        select_all.clicked.connect(lambda: self._set_all(True))
+        select_none = button("全不选", kind="ghost")
+        select_none.clicked.connect(lambda: self._set_all(False))
+        select_row.addWidget(select_all)
+        select_row.addWidget(select_none)
+        select_row.addStretch(1)
+        card.body.addLayout(select_row)
+        outer.addWidget(card)
+
+        self.toggle = button("展开环境详情", kind="ghost")
+        self.toggle.setCheckable(True)
+        self.toggle.clicked.connect(self._toggle_details)
+        outer.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignLeft)
+
+        self.details = Card("环境配置情况", self)
+        grid = FormGrid(self.details)
+        self._status_values: dict[str, QLabel] = {}
+        for label, _value, _ok in _initenv.status_rows(_initenv.EnvStatus()):
+            value = QLabel("—", self.details)
+            value.setWordWrap(True)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid.add_row(label, value)
+            self._status_values[label] = value
+        self.details.body.addWidget(grid)
+
+        key_row = QHBoxLayout()
+        key_row.setContentsMargins(0, 0, 0, 0)
+        key_row.setSpacing(6)
+        self.copy_key = button("复制 SSH 公钥", kind="ghost")
+        self.copy_key.setEnabled(False)
+        self.copy_key.setToolTip("SSH 密钥生成后可用；复制的是 ~/.ssh/id_ed25519.pub 全文")
+        self.copy_key.clicked.connect(self._copy_ssh_key)
+        key_row.addWidget(self.copy_key)
+        key_row.addStretch(1)
+        self.details.body.addLayout(key_row)
+
+        self.log = QPlainTextEdit(self.details)
+        self.log.setReadOnly(True)
+        self.log.setPlaceholderText("执行日志…")
+        self.log.setMinimumHeight(100)
+        self.log.setMaximumHeight(180)
+        self.details.body.addWidget(self.log)
+        self.details.setVisible(False)
+        outer.addWidget(self.details)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.addStretch(1)
+        self.detect_button = button("检测环境")
+        self.detect_button.clicked.connect(self.refresh_status)
+        actions.addWidget(self.detect_button)
+        self.run_button = button("开始初始化", kind="primary")
+        self.run_button.clicked.connect(self._run_selected)
+        actions.addWidget(self.run_button)
+        close = button("关闭")
+        close.clicked.connect(self.reject)
+        actions.addWidget(close)
+        outer.addLayout(actions)
+        fit_dialog_to_content(self, min_width=680)
+
+    # ------------------------------------------------------------------ #
+    # 展示
+    # ------------------------------------------------------------------ #
+    def _set_all(self, checked: bool) -> None:
+        if self._busy:
+            return
+        # 已就绪的项目是禁用状态，全选 / 全不选都不应改变它们的勾选。
+        for box in self.checks.values():
+            if box.isEnabled():
+                box.setChecked(checked)
+
+    def _toggle_details(self) -> None:
+        visible = self.details.isHidden()
+        self.details.setVisible(visible)
+        self.toggle.setText("收起环境详情" if visible else "展开环境详情")
+        self.toggle.setChecked(visible)
+        fit_dialog_to_content(self, min_width=680)
+
+    def _apply_status(self, status: _initenv.EnvStatus) -> None:
+        """回填详情；已就绪的项目勾选 + 禁用 + 绿色标签，其余按「尚未完成」默认勾选。"""
+        self._status = status
+        self._done = {key for key in self.checks if _initenv.present(key, status)}
+        self.summary.setText(_initenv.summary_text(status))
+        for key, box in self.checks.items():
+            box.setChecked(_initenv.present(key, status) or _initenv.default_checked(key, status))
+        for label, value, _ok in _initenv.status_rows(status):
+            widget = self._status_values.get(label)
+            if widget is not None:
+                widget.setText(value)
+                widget.setToolTip(value)
+        self._sync_check_states()
+        self.copy_key.setEnabled(status.ssh_ready)
+        if status.user:
+            self._append_log(f"用户 {status.user} · 主目录 {status.home or '未知'} · {status.os_name or '未知系统'}")
+
+    def _append_log(self, text: str) -> None:
+        for line in str(text).splitlines():
+            if line.strip():
+                self._log_lines.append(line)
+        if len(self._log_lines) > _INIT_LOG_LINES_MAX:
+            del self._log_lines[: len(self._log_lines) - _INIT_LOG_LINES_MAX]
+        self.log.setPlainText("\n".join(self._log_lines))
+        self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+
+    def _copy_ssh_key(self) -> None:
+        key = self._status.ssh_public_key if self._status is not None else ""
+        if not key:
+            return
+        QGuiApplication.clipboard().setText(key)
+        self.summary.setText("已复制 SSH 公钥")
+        self._append_log("已复制 SSH 公钥到剪贴板")
+
+    # ------------------------------------------------------------------ #
+    # 检测 / 执行
+    # ------------------------------------------------------------------ #
+    def _sync_check_states(self) -> None:
+        """按「已就绪 / 执行中」同步勾选框可用性与绿色标签。"""
+        for key, box in self.checks.items():
+            done = key in self._done
+            box.setEnabled(not self._busy and not done)
+            self.status_tags[key].setVisible(done)
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.detect_button.setEnabled(not busy)
+        self.run_button.setEnabled(not busy)
+        self._sync_check_states()
+        self.copy_key.setEnabled(not busy and self._status is not None and self._status.ssh_ready)
+
+    def refresh_status(self) -> None:
+        """后台探测实例环境；探测失败只写日志，不打断用户操作。"""
+        if self._busy:
+            return
+        self._set_busy(True)
+        self.summary.setText("正在检测环境…")
+        submit_daemon(
+            self._detect,
+            on_done=self._detection_done,
+            on_error=self._detection_error,
+            on_finished=self._detection_finished,
+        )
+
+    def _detect(self) -> _initenv.EnvStatus:
+        env = cli._build_environment()
+        wsl_path = cli._require_wsl(env)
+        result = env.runner.run(
+            [wsl_path, "-d", self._distro.name, "--exec", "bash", "-lc", _initenv.probe_script()],
+            timeout=180.0,
+        )
+        text = decode_console(result.stdout + result.stderr)
+        status = _initenv.parse_status(text)
+        if result.returncode != 0 and not status.user:
+            raise runtime_error(
+                f"检测 {self._distro.name} 的环境失败（退出码 {result.returncode}）",
+                hint=_initenv.tail_lines(text, 3)[-1] if text.strip() else "确认实例可启动，或运行 fcmd wslman doctor",
+            )
+        return status
+
+    def _detection_done(self, status: _initenv.EnvStatus) -> None:
+        if self._closing:
+            return
+        self._apply_status(status)
+        self._append_log("环境检测完成")
+
+    def _detection_error(self, message: str) -> None:
+        if self._closing:
+            return
+        self.summary.setText("检测失败")
+        self._append_log(f"检测失败：{message}")
+        if self.details.isHidden():
+            self._toggle_details()
+
+    def _detection_finished(self) -> None:
+        if not self._closing:
+            self._set_busy(False)
+
+    def _run_selected(self) -> None:
+        # 已就绪的项目是禁用状态，勾着也不重新执行。
+        keys = [key for key, box in self.checks.items() if box.isChecked() and box.isEnabled()]
+        if not keys:
+            QMessageBox.information(self, "未选择项目", "请至少勾选一项初始化内容。")
+            return
+        steps = _initenv.steps_for(keys)
+        self._set_busy(True)
+        self._refresh_after_run = False
+        self._append_log("开始初始化：" + "、".join(_initenv.task_labels(keys)))
+        if self.details.isHidden():
+            self._toggle_details()
+        submit_daemon(
+            lambda: self._execute(steps),
+            on_done=self._run_done,
+            on_error=self._run_error,
+            on_finished=self._run_finished,
+        )
+
+    def _execute(self, steps: Sequence[_initenv.InitStep]) -> str:
+        """按顺序执行步骤；输出通过事件桥增量回到界面，失败即停止。"""
+        env = cli._build_environment()
+        wsl_path = cli._require_wsl(env)
+        for step in steps:
+            self._bridge.event.emit(f"[{step.label}] 开始…")
+            argv = [wsl_path, "-d", self._distro.name]
+            if step.root:
+                argv.extend(["-u", "root"])
+            # 必须用 --exec：``wsl --`` 仍会经过默认 shell，脚本里的 ``$HOME`` /
+            # ``$(...)`` 会被提前展开成空串。--exec 直接 exec，变量留给 bash -lc。
+            argv.extend(["--exec", "bash", "-lc", step.script])
+            result = env.runner.run(argv, timeout=step.timeout_s)
+            text = decode_console(result.stdout + result.stderr).strip()
+            for line in _initenv.tail_lines(text):
+                self._bridge.event.emit(line)
+            if result.returncode != 0:
+                tail = _initenv.tail_lines(text, 3)
+                raise runtime_error(
+                    f"{step.label}失败（退出码 {result.returncode}）",
+                    hint=tail[-1] if tail else "查看上方日志，或在实例内手动执行",
+                )
+            self._bridge.event.emit(f"[{step.label}] 完成")
+        return "初始化完成"
+
+    def _run_done(self, message: str) -> None:
+        self._refresh_after_run = True
+        self._append_log(message)
+        self.summary.setText("初始化完成，正在刷新环境…")
+
+    def _run_error(self, message: str) -> None:
+        self._refresh_after_run = True
+        self._append_log(f"初始化失败：{message}")
+        self.summary.setText("初始化失败")
+        QMessageBox.critical(self, "初始化失败", message)
+
+    def _run_finished(self) -> None:
+        if self._closing:
+            return
+        self._set_busy(False)
+        if self._refresh_after_run:
+            self.refresh_status()
+
+    def reject(self) -> None:
+        """初始化在后台进行时允许关闭，但先说明任务不会中止。"""
+        if self._busy and not confirm(self, "初始化仍在运行", "命令会在后台继续执行；现在关闭对话框？"):
+            return
+        self._closing = True
+        super().reject()
+
+
 class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
     """实例配置：设为默认发行版、打开终端时的默认目录。"""
 
@@ -1924,6 +2231,17 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
             hint_label("打开终端时作为 wsl --cd 的目录；可填 ~（用户主目录）或 /home/me/project 这类 Linux 路径。")
         )
 
+        init_card = Card("初始化环境", self)
+        init_card.body.addWidget(
+            hint_label(
+                "配置国内镜像源、生成 SSH 密钥，并安装 Python / Node.js / Rust；打开后可查看当前环境状态并复制公钥。"
+            )
+        )
+        self.init_button = button("打开初始化环境…", kind="ghost")
+        self.init_button.clicked.connect(self._open_init_env)
+        init_card.body.addWidget(self.init_button)
+        outer.addWidget(init_card)
+
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.addStretch(1)
@@ -1935,6 +2253,11 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         actions.addWidget(save)
         outer.addLayout(actions)
         fit_dialog_to_content(self, min_width=520)
+
+    def _open_init_env(self) -> None:
+        dialog = _InitEnvDialog(self, self._distro)
+        dialog.refresh_status()
+        dialog.exec()
 
     def payload(self) -> tuple[bool, str]:
         """返回 ``(是否设为默认, 终端默认目录)``；目录为空时回落 ``~``。"""
