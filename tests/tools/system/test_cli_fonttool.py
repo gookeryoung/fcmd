@@ -110,7 +110,6 @@ def _manifest_entry(spec: FontSpec, path: Path, target_dir: Path) -> InstalledFo
 # ============================================================================ #
 # 注册验证
 # ============================================================================ #
-pytestmark = pytest.mark.slow
 
 
 def test_tool_registered() -> None:

@@ -84,7 +84,7 @@ def _check_disk(models_root: Path | None, home: Path | None) -> Check:
     return Check("磁盘", status, f"{target.drive or target} 剩余 {free_gib:.1f} GiB")
 
 
-def _file_version(dll: Path) -> tuple[int, int, int, int] | None:
+def _file_version(dll: Path) -> tuple[int, int, int, int] | None:  # pragma: no cover - Windows PE 版本资源
     """读取 Windows PE 文件版本（非 Windows 或读取失败返回 ``None``）。"""
     if os.name != "nt":
         return None

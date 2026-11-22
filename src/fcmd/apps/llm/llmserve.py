@@ -301,7 +301,7 @@ def _in_job() -> bool:  # pragma: no cover - Windows ctypes，Linux CI 不执行
     try:
         import ctypes
 
-        windll_cls = getattr(ctypes, "WinDLL", None)
+        windll_cls: Any = getattr(ctypes, "WinDLL", None)
         if windll_cls is None:  # pragma: no cover - 非 Windows 解释器
             return False
         kernel32 = windll_cls("kernel32", use_last_error=True)
