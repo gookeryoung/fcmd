@@ -485,7 +485,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
 
     def _backup_engine_tag(self, tag: str) -> None:
         """选择保存位置并把引擎目录打包为 zip（后台执行，避免大目录卡住界面）。"""
-        default = llmengine.engines_root() / "backups" / f"llama-{tag}.zip"
+        default = llmenv.engines_root() / "backups" / f"llama-{tag}.zip"
         chosen, _filter = QFileDialog.getSaveFileName(
             self, "备份引擎", str(default), "Zip 压缩包 (*.zip);;所有文件 (*.*)"
         )

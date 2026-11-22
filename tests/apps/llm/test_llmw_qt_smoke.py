@@ -1250,6 +1250,26 @@ def test_settings_engine_rows_are_compact_single_line(
     assert selected == ["b2"]
 
 
+def test_backup_engine_default_path_uses_engine_root(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """备份默认路径取 FCMD_HOME 下的引擎根（回归：engines_root 属于 llmenv）。"""
+    from PySide6.QtWidgets import QFileDialog
+
+    window.show_page("settings")
+    page = window.page("settings")
+    seen: list[str] = []
+
+    def _save(_parent: Any, _title: str, default: str, *_args: Any, **_kwargs: Any) -> tuple[str, str]:
+        seen.append(default)
+        return "", ""
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", _save)
+    page._backup_engine_tag("b9")
+    assert seen and "backups" in seen[0]
+    assert seen[0].endswith("llama-b9.zip")
+
+
 def test_settings_has_no_source_hint(window: Any) -> None:
     """设置页不再显示「来源：配置 / 环境变量」说明。"""
     window.show_page("settings")
