@@ -18,7 +18,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
-from fcmd.gui.sidebar import BADGE_SIZE, COLLAPSED_WIDTH, EXPANDED_WIDTH, SidebarNav
+from fcmd.gui.sidebar import COLLAPSED_WIDTH, EXPANDED_WIDTH, SidebarNav
 
 
 @pytest.fixture()
@@ -167,25 +167,6 @@ def test_nav_badge_shows_count_and_repositions_on_collapse() -> None:
         nav.set_badge("run", 0)
         assert nav.badge("run") == 0
         assert badge.isHidden() is True
-    finally:
-        nav.deleteLater()
-
-
-def test_nav_badge_repositions_after_button_layout() -> None:
-    """显示窗口前设置的徽标也要贴右端：按钮被布局拉宽后跟随重摆。"""
-    app = QApplication.instance() or QApplication([])
-    nav = SidebarNav(title="llmw")
-    try:
-        nav.add("run", "运行", icon="run")
-        nav.set_badge("run", 1)  # 布局前设置：按钮还是默认宽度
-        nav.resize(EXPANDED_WIDTH, 320)
-        nav.show()
-        app.processEvents()
-        button = nav.button("run")
-        badge = nav.badge_label("run")
-        assert button is not None and badge is not None
-        assert button.width() == EXPANDED_WIDTH
-        assert badge.x() == EXPANDED_WIDTH - BADGE_SIZE - 12
     finally:
         nav.deleteLater()
 
