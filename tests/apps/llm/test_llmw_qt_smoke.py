@@ -1097,6 +1097,8 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     ]
     assert page.refresh_engine_button.text() == "刷新"
     assert page.refresh_engine_button.parent() is engine
+    assert page.cleanup_engines_button.text() == "清理…"
+    assert page.cleanup_engines_button.parent() is engine
     assert page.engine_source_tag.parent() is engine
     title_row = engine.title_row
     assert title_row is not None
@@ -1216,6 +1218,11 @@ def test_settings_engine_rows_are_compact_single_line(
     assert other_row.use_button is not None
     assert other_row.use_button.text() == "设为默认"
     assert other_row.use_button.isEnabled()
+    assert other_row.backup_button.text() == "备份"
+    assert other_row.remove_button.text() == "删除"
+    assert other_row.remove_button.isEnabled()
+    assert current_row.remove_button.isEnabled() is False
+    assert current_row.backup_button.isEnabled()
     other_widgets = [other_row.layout().itemAt(pos).widget() for pos in range(other_row.layout().count())]
     assert other_widgets[-2] is other_row.use_button
     assert other_widgets[-1].text() == "CPU"

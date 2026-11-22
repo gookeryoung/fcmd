@@ -1194,6 +1194,74 @@ class TestEngine:
             (directory / llmengine.engine_exe_name()).write_text("", encoding="utf-8")
         assert llmengine.resolve_engine(home=home).tag == "b2"
 
+    def test_backup_engine_creates_zip(self, home: Path) -> None:
+        directory = llmenv.engines_root(home) / "b9"
+        directory.mkdir(parents=True)
+        (directory / llmengine.engine_exe_name()).write_text("server", encoding="utf-8")
+        (directory / "engine.json").write_text("{}", encoding="utf-8")
+        (directory / "notes.txt").write_text("keep", encoding="utf-8")
+
+        archive = llmengine.backup_engine("b9", home=home)
+        assert archive.parent == llmenv.engines_root(home) / "backups"
+        assert archive.suffix == ".zip" and archive.is_file()
+        with zipfile.ZipFile(archive) as bundle:
+            names = set(bundle.namelist())
+        assert llmengine.engine_exe_name() in names
+        assert "engine.json" in names
+        assert "notes.txt" in names
+
+    def test_backup_engine_requires_installed(self, home: Path) -> None:
+        with pytest.raises(ServeError, match="未安装"):
+            llmengine.backup_engine("missing", home=home)
+
+    def test_remove_engine_refuses_current(self, home: Path) -> None:
+        root = llmenv.engines_root(home)
+        for tag in ("b1", "b2"):
+            directory = root / tag
+            directory.mkdir(parents=True)
+            (directory / llmengine.engine_exe_name()).write_text("", encoding="utf-8")
+        llmengine.use_engine("b2", home)
+        with pytest.raises(ServeError, match="默认引擎"):
+            llmengine.remove_engine("b2", home)
+        assert llmengine.remove_engine("b1", home) == "b1"
+        assert not (root / "b1").exists()
+        assert (root / "b2").is_dir()
+
+    def test_cleanup_engines_keeps_backups_and_runtime(self, home: Path) -> None:
+        root = llmenv.engines_root(home)
+        tag_dir = root / "b1"
+        tag_dir.mkdir(parents=True)
+        (tag_dir / llmengine.engine_exe_name()).write_text("server", encoding="utf-8")
+        cached = tag_dir / "llama-b1-bin.zip"
+        cached.write_bytes(b"zip")
+        part = tag_dir / "cudart.zip.part"
+        part.write_bytes(b"partial")
+        staging = tag_dir / ".llama.cpp.extract"
+        staging.mkdir()
+        (staging / "convert_hf_to_gguf.py").write_text("x", encoding="utf-8")
+        source = tag_dir / "llama.cpp"
+        source.mkdir()
+        (source / "convert_hf_to_gguf.py").write_text("x", encoding="utf-8")
+        backups = root / "backups"
+        backups.mkdir()
+        keep = backups / "keep.zip"
+        keep.write_bytes(b"backup")
+
+        result = llmengine.cleanup_engines(home, downloads=True, sources=True)
+        assert result.removed_files == 2  # 下载缓存 zip + .part
+        assert result.removed_dirs >= 2  # 临时解压目录 + 源码目录
+        assert result.freed_bytes > 0
+        assert result.removed_sources == ("b1",)
+        assert not cached.exists() and not part.exists() and not source.exists()
+        assert keep.is_file()
+        assert (tag_dir / llmengine.engine_exe_name()).is_file()
+        assert "释放" in result.summary
+
+    def test_cleanup_engines_noop(self, home: Path) -> None:
+        result = llmengine.cleanup_engines(home)
+        assert result.changed is False
+        assert result.summary == "没有可清理的内容"
+
     def test_path_fallback(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         exe = tmp_path / llmengine.engine_exe_name()
         exe.write_text("", encoding="utf-8")

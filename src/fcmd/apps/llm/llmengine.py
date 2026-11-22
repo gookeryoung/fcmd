@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import platform
@@ -42,10 +43,13 @@ from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
     "ENGINE_VARIANTS",
+    "CleanupResult",
     "EngineAsset",
     "EngineRelease",
     "ZipInspection",
+    "backup_engine",
     "check_engine",
+    "cleanup_engines",
     "current_engine_tag",
     "detect_gpu",
     "download_file",
@@ -62,6 +66,7 @@ __all__ = [
     "parse_engine_releases",
     "probe_version",
     "quantize_exe",
+    "remove_engine",
     "resolve_engine",
     "run_with_engine",
     "use_engine",
@@ -867,6 +872,143 @@ def use_engine(tag: str, home: Path | None = None) -> EngineInfo:
     root.mkdir(parents=True, exist_ok=True)
     write_json_atomic(root / CURRENT_MARKER, {"tag": tag, "updated_at": now_iso()})
     return info
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupResult:
+    """引擎目录清理结果：删除的文件 / 目录数与释放字节数。"""
+
+    removed_files: int = 0
+    removed_dirs: int = 0
+    freed_bytes: int = 0
+    removed_sources: tuple[str, ...] = ()
+
+    @property
+    def changed(self) -> bool:
+        """是否有任何内容被删除。"""
+        return bool(self.removed_files or self.removed_dirs or self.removed_sources)
+
+    @property
+    def summary(self) -> str:
+        """一行摘要（设置页提示用）。"""
+        if not self.changed:
+            return "没有可清理的内容"
+        parts = [f"释放 {human_size(self.freed_bytes)}"]
+        if self.removed_files:
+            parts.append(f"{self.removed_files} 个缓存文件")
+        if self.removed_dirs:
+            parts.append(f"{self.removed_dirs} 个临时目录")
+        if self.removed_sources:
+            parts.append("源码 " + "、".join(self.removed_sources))
+        return "，".join(parts)
+
+
+def backup_engine(tag: str, dest: Path | None = None, home: Path | None = None) -> Path:
+    """把已安装引擎目录打包为 zip，默认存到 ``<引擎根>/backups/llama-<tag>-<时间>.zip``。
+
+    备份包含运行时需要的全部文件（含本地源码），只跳过 ``.part`` 等未完成下载；
+    目标先写 ``.part`` 再原子替换，避免中途失败留下半截压缩包。
+    """
+    root = llmenv.engines_root(home)
+    target = root / tag
+    if _engine_info(target, tag) is None:
+        raise ServeError(f"引擎 {tag!r} 未安装，无法备份")
+    if dest is None:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dest = root / "backups" / f"llama-{tag}-{stamp}.zip"
+    dest = Path(dest).expanduser()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".part")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for path in sorted(target.rglob("*")):
+                if path.is_file() and not path.name.endswith(".part"):
+                    bundle.write(path, path.relative_to(target))
+        tmp.replace(dest)
+    except OSError as exc:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        raise ServeError(f"备份引擎失败: {exc}") from exc
+    return dest
+
+
+def remove_engine(tag: str, home: Path | None = None) -> str:
+    """删除一个非默认引擎目录；默认引擎需先切换到其它引擎。"""
+    root = llmenv.engines_root(home)
+    target = root / tag
+    if _engine_info(target, tag) is None:
+        raise ServeError(f"引擎 {tag!r} 未安装")
+    if current_engine_tag(root) == tag:
+        raise ServeError(f"引擎 {tag!r} 是当前默认引擎；请先切换到其它引擎再删除")
+    shutil.rmtree(target)
+    return tag
+
+
+def cleanup_engines(
+    home: Path | None = None,
+    *,
+    downloads: bool = True,
+    sources: bool = False,
+) -> CleanupResult:
+    """清理引擎目录：下载缓存（zip / .part / 临时解压目录）与可选的 llama.cpp 源码。
+
+    ``backups/`` 子目录永不清理（用户手动备份的压缩包）。``sources=True`` 会删除
+    每个引擎目录下的 ``llama.cpp`` 源码，下次转换时按需重新获取。
+    """
+    root = llmenv.engines_root(home)
+    if not root.is_dir():
+        return CleanupResult()
+    removed_files = 0
+    removed_dirs = 0
+    freed_bytes = 0
+    removed_sources: list[str] = []
+    for path in sorted(root.rglob("*"), reverse=True):
+        try:
+            relative = path.relative_to(root)
+        except ValueError:  # pragma: no cover - rglob 结果总在 root 下
+            continue
+        if relative.parts and relative.parts[0] == "backups":
+            continue
+        if path.is_dir():
+            if path.name == ".extract" or path.name.endswith(".extract"):
+                size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+                shutil.rmtree(path, ignore_errors=True)
+                removed_dirs += 1
+                freed_bytes += size
+            continue
+        if not path.is_file():
+            continue
+        name = path.name.casefold()
+        source_archive = name.startswith("llama.cpp") and name.endswith(".zip")
+        remove = (
+            downloads
+            and not source_archive
+            and (name.endswith(".part") or name.endswith(".zip") or name.endswith(".zip.tmp"))
+        )
+        remove = remove or (sources and source_archive)
+        if remove:
+            try:
+                freed_bytes += path.stat().st_size
+                path.unlink()
+                removed_files += 1
+            except OSError:
+                continue
+    if sources:
+        for tag_dir in sorted(root.iterdir()):
+            source_dir = tag_dir / "llama.cpp"
+            if tag_dir.name == "backups" or not source_dir.is_dir():
+                continue
+            size = sum(item.stat().st_size for item in source_dir.rglob("*") if item.is_file())
+            shutil.rmtree(source_dir, ignore_errors=True)
+            removed_dirs += 1
+            freed_bytes += size
+            removed_sources.append(tag_dir.name)
+    return CleanupResult(
+        removed_files=removed_files,
+        removed_dirs=removed_dirs,
+        freed_bytes=freed_bytes,
+        removed_sources=tuple(removed_sources),
+    )
 
 
 def check_engine(engine: EngineInfo, runner: Runner = run_command) -> Check:
