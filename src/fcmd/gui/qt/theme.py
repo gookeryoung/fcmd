@@ -36,6 +36,7 @@ __all__ = [
     "active_theme",
     "apply_theme",
     "control_height",
+    "font_families",
     "load_theme",
     "pick_font_family",
     "runtime_control_height",
@@ -44,6 +45,7 @@ __all__ = [
     "template_tokens",
     "theme_names",
     "tiered_value_html",
+    "ui_font_families",
 ]
 
 UI_FONT_CANDIDATES = _guitheme.UI_FONT_CANDIDATES
@@ -703,6 +705,35 @@ QLabel#ScoreBadge[band="limited"] { color: $on_accent; background: $danger; bord
 )
 
 
+def ui_font_families(available: Iterable[str]) -> tuple[str, ...]:
+    """界面字体链（拉丁 Cascadia Code + CJK 回退），纯函数，便于无 Qt 单测。"""
+    return _guitheme.ui_font_families(available)
+
+
+def font_families() -> tuple[str, ...]:
+    """当前应用可见的字体族集合（缓存；无 ``QApplication`` 时返回空元组）。
+
+    枚举字体在部分平台需要数百毫秒，``apply_theme`` 已经缓存过一份；这里复用它，
+    让 ``mono_font`` 这类运行期取字体的调用不再重复枚举。
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return ()
+    cached = _FAMILIES.get(app)
+    if cached is not None:
+        return cached
+    from PySide6.QtGui import QFontDatabase
+
+    try:
+        families = tuple(QFontDatabase.families())
+    except TypeError:  # PySide2 / Qt5：families 是实例方法
+        families = tuple(QFontDatabase().families())
+    _FAMILIES[app] = families
+    return families
+
+
 def pick_font_family(
     available: Iterable[str],
     candidates: tuple[str, ...] = UI_FONT_CANDIDATES,
@@ -850,7 +881,9 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
         except TypeError:  # PySide2 / Qt5：families 是实例方法
             families = tuple(QFontDatabase().families())
         _FAMILIES[app] = families
-    family = pick_font_family(families)
+    # 英文 / 数字走 Cascadia Code，中文逐字回退到 CJK 字体（Qt 6 的 setFamilies）
+    chain = ui_font_families(families)
+    family = chain[0]
     mono = pick_font_family(families, MONO_FONT_CANDIDATES)
     app.setStyle("Fusion")
     app.setPalette(_qt_palette(theme, app))
@@ -861,6 +894,9 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
 
     refresh_icons()
     font = QFont(family)
+    if len(chain) > 1 and hasattr(font, "setFamilies"):
+        # Qt 5（PySide2）没有 setFamilies：只认第一个族，行为退化为主族仍是 CJK 字体。
+        font.setFamilies(list(chain))
     font.setPointSize(theme.fonts.body)
     font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
     app.setFont(font)

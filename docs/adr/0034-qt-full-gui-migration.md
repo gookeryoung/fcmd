@@ -72,6 +72,7 @@ Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已�
 | L6 | 分栏与列宽记忆：`QSplitter` 尺寸、表头宽度写入各自 `ui/<name>.json`，越界回退默认 |
 | L7 | 键盘：`Ctrl+Q` 退出、主题菜单与「关于」位置一致；分页窗口沿用 `Alt+1..9` |
 | L8 | 控件高度：按钮、单行输入、下拉、数值框统一由 `gui/qt/theme.py` 的字体行高基准推导（`QFontMetrics` 逻辑像素 + `CONTROL_HEIGHT_EXTRA`），窗口内不单独写死高度 |
+| L9 | 字体：GUI 英文（拉丁 / 数字 / 符号）一律 `Cascadia Code`，中文按 `UI_FONT_CANDIDATES` 逐字回退；`apply_theme` 用 `QFont.setFamilies` 组字体链，等宽控件（日志 / 代码 / 十六进制）同样优先 `Cascadia Code` |
 
 ## 分批计划与验收
 
@@ -107,6 +108,10 @@ B7 与 B1–B6 平行排期，迁移期间任何一批的提交都不应把 cmde
   `app.py` 只保留纯逻辑（设置、扫描、排序、历史、传输计划、归档成员、预览与格式化）；
 - 断言 Tk 内部实现的入口测试已改写为 Qt 等价断言（对话页服务选择、概览页已加载服务、
   量化勾选、闹钟时钟与提醒、校验和比较等），纯逻辑与设置测试保持原样；
+- 字体口径（L9）：`gui/theme.py` 新增 `LATIN_FONT_CANDIDATES`（`Cascadia Code` →
+  `Cascadia Mono`）与 `ui_font_families()`，`apply_theme` 把「拉丁字体 + CJK 字体」链写进
+  `QFont.setFamilies`（Qt 5 退化为单族），英文 / 数字落在 `Cascadia Code`、中文逐字回退；
+  `mono_font()` 同样优先该族，系统未安装时回退原 CJK / 系统等宽字体，行为不变。
 - 共享层同时落地统一控件高度基准（L8）：按钮 / 单行输入 / 下拉 / 数值框按字体行高
   推导逻辑像素，高 DPI 下随缩放同比换算；
 - 单页工具窗口的内容统一放进纵向滚动页面，窗口缩矮到内容最小高度以下时改为整页滚动，

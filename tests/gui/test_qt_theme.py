@@ -363,3 +363,31 @@ def test_secondary_buttons_keep_visible_border() -> None:
     hover_block = text.split("QPushButton#Ghost:hover {", 1)[1].split("}", 1)[0]
     assert "border-color" in hover_block
     assert "border-color: transparent" not in text
+
+
+def test_apply_theme_sets_cascadia_code_font_chain() -> None:
+    """应用字体：Cascadia Code 为主族，CJK 字体作为第二族逐字回退。"""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    families = list(_qt_theme.font_families())
+    _qt_theme.apply_theme(app, _guitheme.resolve_theme("dark-blue"))
+    resolved = app.font().families()
+    if any(name.casefold() == "cascadia code" for name in families):
+        assert resolved[0].casefold() == "cascadia code"
+        assert len(resolved) >= 2  # CJK 回退族
+    else:  # pragma: no cover - 无 Cascadia 的环境（CI 的 offscreen 字体库）
+        assert resolved == [app.font().family()]
+
+
+def test_mono_font_uses_cascadia_code_when_available() -> None:
+    """日志 / 代码类等宽控件同样优先 Cascadia Code。"""
+    from fcmd.gui.qt.widgets import mono_font
+
+    families = _qt_theme.font_families()
+    font = mono_font()
+    if any(name.casefold() == "cascadia code" for name in families):
+        assert font.family().casefold() == "cascadia code"
+        assert font.pointSize() >= 9
+    else:  # pragma: no cover - 无 Cascadia 的环境
+        assert font.pointSize() >= 9

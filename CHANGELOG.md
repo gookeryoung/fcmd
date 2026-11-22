@@ -7,6 +7,9 @@
 
 ### 变更
 
+- GUI 英文字体统一为 `Cascadia Code`：`apply_theme` 用 `QFont.setFamilies` 组「拉丁字体 +
+  CJK 字体」链（英文 / 数字走 Cascadia Code，中文逐字回退到微软雅黑等），等宽控件
+  （日志 / 代码 / 十六进制视图）同样优先 Cascadia Code；系统未安装时回退原行为。
 - `wslman` 默认工作目录统一为 `${FCMD_HOME:-~/.fcmd}/wsl`，按用途细分 `download/`
   （镜像归档）、`install/`（安装目录根，每个发行版一个子目录）、`backup/`（导出备份）：
   wslmanw 下载 / 安装 / 备份默认落在对应子目录（设置页新增「工作目录」卡片展示这些路径），

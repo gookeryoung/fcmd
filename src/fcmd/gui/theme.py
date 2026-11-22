@@ -27,6 +27,7 @@ __all__ = [
     "DEFAULT_THEME_NAME",
     "FONTS",
     "GEOMETRY_RULES",
+    "LATIN_FONT_CANDIDATES",
     "MONO_FONT_CANDIDATES",
     "PALETTE",
     "SPACING",
@@ -49,6 +50,7 @@ __all__ = [
     "save_theme",
     "theme_config_path",
     "theme_names",
+    "ui_font_families",
 ]
 
 
@@ -134,6 +136,16 @@ class Theme:
     description: str = ""
 
 
+LATIN_FONT_CANDIDATES: Final[tuple[str, ...]] = (
+    "Cascadia Code",
+    "Cascadia Mono",
+)
+"""拉丁（英文 / 数字 / 符号）界面字体候选：GUI 里英文一律用 Cascadia Code。
+
+系统没装时按 :data:`MONO_FONT_CANDIDATES` 之外的正常 CJK 字体回退，中文不受影响：
+Qt 6 用 :meth:`QFont.setFamilies` 组成字体链，逐字回退到 CJK 字体。
+"""
+
 UI_FONT_CANDIDATES: Final[tuple[str, ...]] = (
     "Microsoft YaHei UI",
     "Microsoft YaHei",
@@ -156,8 +168,8 @@ UI_FONT_CANDIDATES: Final[tuple[str, ...]] = (
 """界面字体候选，按优先级排列；Qt 侧用 ``QFontDatabase`` 挑第一个可用族。"""
 
 MONO_FONT_CANDIDATES: Final[tuple[str, ...]] = (
-    "Cascadia Mono",
     "Cascadia Code",
+    "Cascadia Mono",
     "Consolas",
     "JetBrains Mono",
     "Source Code Pro",
@@ -346,6 +358,26 @@ def save_theme(name: str | Theme, path: Path | None = None) -> Theme:
     theme = resolve_theme(name if isinstance(name, str) else name.name)
     _guiconfig.write_settings({_THEME_SETTINGS_KEY: theme.name}, path or theme_config_path())
     return theme
+
+
+def ui_font_families(available: Iterable[str]) -> tuple[str, ...]:
+    """界面字体链：拉丁字体（Cascadia Code）在前，CJK 字体在后做逐字回退。
+
+    返回值的第一个元素即 ``QFont`` 的主族（Qt 5 只认第一个），Qt 6 下整个链会通过
+    ``setFamilies`` 生效，因此英文 / 数字落在 Cascadia Code、中文自动回退到 CJK 字体。
+    系统没装 Cascadia系列时退化为原来的行为（只有 CJK 字体）。
+    """
+    lookup = {name.casefold(): name for name in available}
+    chain: list[str] = []
+    for candidate in LATIN_FONT_CANDIDATES:
+        found = lookup.get(candidate.casefold())
+        if found is not None:
+            chain.append(found)
+            break
+    cjk = pick_font_family(available)
+    if cjk not in chain:
+        chain.append(cjk)
+    return tuple(chain)
 
 
 def pick_font_family(

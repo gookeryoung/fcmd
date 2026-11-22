@@ -360,9 +360,21 @@ class StatusTag(QLabel):  # pragma: no cover - Qt 控件
 
 
 def mono_font(point_size: int = 9) -> QFont:  # pragma: no cover - Qt 控件
-    """系统等宽字体，字号不小于 ``point_size``（日志 / 代码 / 十六进制视图共用）。"""
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-    font.setPointSize(max(font.pointSize(), point_size))
+    """等宽字体，字号不小于 ``point_size``（日志 / 代码 / 十六进制视图共用）。
+
+    优先用界面约定的拉丁字体 Cascadia Code（GUI 英文一律这一族），系统没装时回退
+    到 Qt 的系统等宽字体；中文由系统的逐字回退补上。
+    """
+    from fcmd.gui.qt import theme as _qt_theme
+    from fcmd.gui.theme import MONO_FONT_CANDIDATES
+
+    base = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).pointSize()
+    size = max(base, point_size)
+    families = _qt_theme.font_families()
+    font = QFont(_qt_theme.pick_font_family(families, MONO_FONT_CANDIDATES)) if families else QFont()
+    if not families:
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+    font.setPointSize(size)
     return font
 
 
