@@ -143,10 +143,23 @@ MODEL_SORTS: tuple[tuple[str, str], ...] = (
 DEFAULT_MODEL_SORT = "downloads"
 
 #: 分类筛选命中的关键词：用于判断已安装模型是否属于当前类别（置顶条件）。
+#: 关键词按「具体 → 宽泛」使用：媒体类（画图 / 视频 / 音频）优先于「对话」，
+#: 避免 ``文本生成`` 命中 ``文本生成图片`` / ``文本生成视频`` 这类任务名。
 _FILTER_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "chat": ("chat", "instruct", "conversation", "对话", "文本生成"),
+    "chat": ("chat", "instruct", "conversation", "对话", "assistant"),
     "code": ("code", "coder", "coding", "编程", "代码生成"),
-    "vision": ("vision", "vl", "visual", "image", "multimodal", "看图", "视觉", "图像"),
+    "vision": (
+        "vision",
+        "vl",
+        "visual",
+        "multimodal",
+        "看图",
+        "视觉",
+        "图像理解",
+        "图片理解",
+        "图文",
+        "ocr",
+    ),
     "paint": (
         "diffusion",
         "stable-diffusion",
@@ -156,7 +169,6 @@ _FILTER_KEYWORDS: dict[str, tuple[str, ...]] = {
         "qwen-image",
         "z-image",
         "z_image",
-        "minimax",
         "minimax-h3-image",
         "h3-image",
         "hidream",
@@ -167,9 +179,43 @@ _FILTER_KEYWORDS: dict[str, tuple[str, ...]] = {
         "图像生成",
     ),
     "reasoning": ("reasoning", "think", "r1", "qwq", "推理", "思考"),
-    "video": ("video", "视频"),
-    "audio": ("audio", "speech", "voice", "asr", "tts", "音频", "语音"),
+    "video": (
+        "video",
+        "视频",
+        "wan2",
+        "wan-ai",
+        "cogvideo",
+        "hunyuan-video",
+        "ltx-video",
+        "mochi",
+        "seedance",
+        "kling",
+    ),
+    "audio": (
+        "audio",
+        "speech",
+        "voice",
+        "asr",
+        "tts",
+        "音频",
+        "语音",
+        "whisper",
+        "cosyvoice",
+        "sensevoice",
+        "funasr",
+        "musicgen",
+    ),
 }
+
+#: 任务名里的「准确」分类：ModelScope 的任务标签是中文短语，不能用
+#: ``文本生成`` 做子串匹配（会命中 ``文本生成图片`` / ``文本生成视频``）。
+_CHAT_TASKS = frozenset({"文本生成", "自然语言推理", "对话生成", "文本分类", "文本摘要", "机器翻译"})
+_PAINT_TASKS = frozenset(
+    {"文本生成图片", "图片生成图片", "文生图", "图生图", "图像生成", "图片生成", "图像编辑", "图片编辑", "文生图编辑"}
+)
+_AUDIO_TASK_HINTS = ("语音", "音频", "音乐")
+_VISION_TASK_HINTS = ("图像理解", "图片理解", "视觉", "图文", "看图", "ocr")
+_VIDEO_TASK_HINTS = ("视频生成", "生成视频", "视频编辑", "视频生视频", "文生视频", "图生视频")
 _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw", "s", "se", "sw", "w"]]] = {
     "repo": ("模型", 180, "w"),
     "series": ("系列", 112, "w"),
@@ -414,26 +460,80 @@ def is_usable_item(item: ModelSummary, usable_repos: set[str]) -> bool:
     return item.repo.casefold() in usable_repos
 
 
+def _haystack(item: ModelSummary) -> str:
+    """分类匹配的文本面：仓库、名称、任务与标签（全部小写）。"""
+    return " ".join((item.repo, item.name, item.chinese_name, *item.tasks, *item.tags)).casefold()
+
+
+def _keyword_match(text: str, keywords: Sequence[str]) -> bool:
+    return any(keyword.casefold() in text for keyword in keywords)
+
+
+def _task_match(item: ModelSummary, tasks: frozenset[str]) -> bool:
+    return any(task in tasks for task in item.tasks)
+
+
+def _task_hint_match(item: ModelSummary, hints: Sequence[str]) -> bool:
+    lowered = " ".join(item.tasks).casefold()
+    return any(hint.casefold() in lowered for hint in hints)
+
+
+def _is_paint(item: ModelSummary) -> bool:
+    if _is_video(item) or _is_audio(item):
+        return False
+    return _task_match(item, _PAINT_TASKS) or _keyword_match(_haystack(item), _FILTER_KEYWORDS["paint"])
+
+
+def _is_video(item: ModelSummary) -> bool:
+    return _task_hint_match(item, _VIDEO_TASK_HINTS) or _keyword_match(_haystack(item), _FILTER_KEYWORDS["video"])
+
+
+def _is_audio(item: ModelSummary) -> bool:
+    return _task_hint_match(item, _AUDIO_TASK_HINTS) or _keyword_match(_haystack(item), _FILTER_KEYWORDS["audio"])
+
+
+def _is_vision(item: ModelSummary) -> bool:
+    return _task_hint_match(item, _VISION_TASK_HINTS) or _keyword_match(_haystack(item), _FILTER_KEYWORDS["vision"])
+
+
+_MEDIA_MATCHERS = {"paint": _is_paint, "video": _is_video, "audio": _is_audio, "vision": _is_vision}
+"""需要任务名精确判断的媒体 / 视觉分类。"""
+
+
 def matches_filter(item: ModelSummary, filter_key: str) -> bool:
-    """模型是否属于指定用途分类；``all`` / ``local`` / 空串视为全部符合。"""
+    """模型是否属于指定用途分类；``all`` / ``local`` / 空串视为全部符合。
+
+    媒体类优先于「对话」：画图 / 视频 / 音频任务里常带「文本生成」前缀，
+    只看关键词会把它们混进对话列表（Qwen-Image、Wan 视频等）。
+    """
     if filter_key in ("", "all", "local"):
         return True
-    keywords = _FILTER_KEYWORDS.get(filter_key, ())
-    haystack = " ".join((item.repo, item.name, *item.tasks, *item.tags)).casefold()
-    return any(keyword.casefold() in haystack for keyword in keywords)
+    matcher = _MEDIA_MATCHERS.get(filter_key)
+    if matcher is not None:
+        return matcher(item)
+    haystack = _haystack(item)
+    if filter_key == "chat":
+        if _is_paint(item) or _is_video(item) or _is_audio(item):
+            return False
+        return _task_match(item, _CHAT_TASKS) or _keyword_match(haystack, _FILTER_KEYWORDS.get("chat", ()))
+    return _keyword_match(haystack, _FILTER_KEYWORDS.get(filter_key, ()))
 
 
 def matches_category(name: str, filter_key: str) -> bool:
     """本地模型名是否属于指定用途分类（运行页视频 / 音频候选筛选）。
 
     与 :func:`matches_filter` 共用同一张分类关键字表；``all`` / ``local`` / 空串
-    视为全部符合，未登记的分类视为无匹配。
+    视为全部符合，未登记的分类视为无匹配。只有名称可用，因此按关键词判断；
+    「对话」同样排除画图 / 视频 / 音频关键词，避免媒体模型落到聊天页签。
     """
     if filter_key in ("", "all", "local"):
         return True
-    keywords = _FILTER_KEYWORDS.get(filter_key, ())
     lowered = name.casefold()
-    return any(keyword.casefold() in lowered for keyword in keywords)
+    if filter_key == "chat":
+        for media in ("paint", "video", "audio"):
+            if _keyword_match(lowered, _FILTER_KEYWORDS[media]):
+                return False
+    return _keyword_match(lowered, _FILTER_KEYWORDS.get(filter_key, ()))
 
 
 USAGE_KEYS: tuple[str, ...] = ("chat", "code", "paint", "video", "audio")

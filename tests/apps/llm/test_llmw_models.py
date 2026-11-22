@@ -378,6 +378,36 @@ class TestBrowseHelpers:
         assert not matches_filter(ModelSummary(repo="Qwen/chat", tasks=("文本生成",)), "video")
         assert matches_filter(ModelSummary(repo="Qwen/chat"), "all")
 
+    def test_matches_filter_keeps_media_out_of_chat(self) -> None:
+        """「文本生成」不能按子串命中「文本生成图片 / 视频」；媒体分类优先。"""
+        image = ModelSummary(repo="Qwen/Qwen-Image", tasks=("文本生成图片",))
+        video = ModelSummary(repo="Wan-AI/Wan2.1-T2V-1.3B", tasks=("文本生成视频",), tags=("video",))
+        audio = ModelSummary(repo="pzc163/chatTTS", tasks=("语音合成",))
+        for item in (image, video, audio):
+            assert matches_filter(item, "chat") is False
+        assert matches_filter(image, "paint") is True
+        assert matches_filter(video, "video") is True
+        assert matches_filter(video, "paint") is False
+        assert matches_filter(audio, "audio") is True
+
+    def test_matches_filter_video_family_stays_out_of_paint(self) -> None:
+        """MiniMax-H3 视频（diffusion 标签）不能被画图分类吞掉；H3-Image 仍属画图。"""
+        video = ModelSummary(
+            repo="Comfy-Org/MiniMax-H3",
+            tasks=("文本生成视频",),
+            tags=("comfyui", "diffusion-single-file"),
+        )
+        image = ModelSummary(repo="MiniMax/MiniMax-H3-Image", tasks=("文本生成图片",))
+        assert matches_filter(video, "video") is True
+        assert matches_filter(video, "paint") is False
+        assert matches_filter(image, "paint") is True
+
+    def test_matches_filter_vision_excludes_image_generation(self) -> None:
+        """「看图」只收视觉理解模型，不收文生图 / 视频生成。"""
+        image = ModelSummary(repo="Qwen/Qwen-Image-Edit", tasks=("图片生成图片",))
+        assert matches_filter(image, "vision") is False
+        assert matches_filter(ModelSummary(repo="Qwen/Qwen-VL-Chat", tags=("vision",)), "vision") is True
+
     def test_merge_installed_items_adds_local_models_missing_from_page(self) -> None:
         page = (ModelSummary(repo="Qwen/chat"),)
         installed = {
