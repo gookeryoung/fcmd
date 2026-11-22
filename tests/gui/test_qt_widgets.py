@@ -390,6 +390,47 @@ def test_progress_row_keeps_actions_and_optional_bar() -> None:
         status_only.deleteLater()
 
 
+def _alignment(row: ItemRow, widget: QWidget) -> Qt.AlignmentFlag:
+    """取行卡右侧某个控件在布局里的对齐方式（PySide 的 alignment() 不接受控件参数）。"""
+    for index in range(row.header_row.count()):
+        item = row.header_row.itemAt(index)
+        if item is not None and item.widget() is widget:
+            return item.alignment()
+    raise AssertionError("控件不在行卡头部布局里")
+
+
+def test_item_row_centers_actions_with_tag_or_title_line() -> None:
+    """右侧动作与「标签行」居中对齐；只有一行标题时整行居中。"""
+    row = ItemRow("Ubuntu", "v2")
+    try:
+        action = button("启动", kind="primary")
+        row.add_action(action)
+        assert _alignment(row, action) == Qt.AlignmentFlag.AlignBottom
+        tag = StatusTag("已停止", tone="muted")
+        row.add_tag(tag)
+        # 有第二行（版本 / 标签）时按钮与它底部对齐，中线基本重合
+        assert _alignment(row, action) == Qt.AlignmentFlag.AlignBottom
+        assert _alignment(row, row.expand_button) == Qt.AlignmentFlag.AlignBottom
+    finally:
+        row.deleteLater()
+
+    plain = ItemRow("Debian", "")
+    try:
+        act = button("启动")
+        plain.add_action(act)
+        # 空副标题不占位：单行行卡不再多出一条空白行
+        assert plain.sub_label.isHidden() is True
+        assert _alignment(plain, act) == Qt.AlignmentFlag.AlignVCenter
+        plain.set_subtitle("v1")
+        assert plain.sub_label.isHidden() is False
+        assert _alignment(plain, act) == Qt.AlignmentFlag.AlignBottom
+        plain.set_subtitle("")
+        assert plain.sub_label.isHidden() is True
+        assert _alignment(plain, act) == Qt.AlignmentFlag.AlignVCenter
+    finally:
+        plain.deleteLater()
+
+
 def test_selection_row_toggles_property() -> None:
     """行控件选中态由 mixin 统一切换 selected 动态属性。"""
     row = QFrame()

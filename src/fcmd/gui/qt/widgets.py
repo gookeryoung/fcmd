@@ -558,6 +558,9 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self._collapse_hint = collapse_hint
         self.metrics_label: QLabel | None = None
         self._note_extras = 0
+        self._chip_count = 0
+        # 副标题行是否真的有内容：决定右侧动作是与第二行（标签 / 版本）对齐还是整行居中。
+        self._note_has_content = bool(subtitle)
         self.setObjectName("ItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # 共享行卡外观的选择器：所有应用的可展开行卡共用这一条契约。
@@ -597,6 +600,8 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.sub_label.setMinimumWidth(0)
         self.sub_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.sub_label.setToolTip(subtitle)
+        # 空副标题不占位：否则单行行卡会多出一条空白行，文字与右侧按钮对不齐。
+        self.sub_label.setVisible(bool(subtitle))
         _click_through(self.sub_label)
         self.note_row.addWidget(self.sub_label, 0)
         self.note_row.addStretch(1)
@@ -628,6 +633,8 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.detail_layout.setContentsMargins(0, 0, 0, 0)
         self.detail_layout.setSpacing(0)
         outer.addWidget(self.detail_host)
+        # 初始对齐：有副标题 / 标签就与第二行对齐，否则整行居中。
+        self._sync_note_state()
 
     # ------------------------------------------------------------------ #
     # 内容插槽
@@ -638,9 +645,30 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.title_label.setToolTip(text)
 
     def set_subtitle(self, text: str) -> None:
-        """换副标题（版本 / 占用、架构 / 来源等）。"""
+        """换副标题（版本 / 占用、架构 / 来源等）；空串时收起这一行。"""
         self.sub_label.setText(text)
         self.sub_label.setToolTip(text)
+        self.sub_label.setVisible(bool(text))
+        self._sync_note_state()
+
+    def _sync_note_state(self) -> None:
+        """记录副标题行是否有内容，并把右侧动作对齐到「标签行」或整行居中。
+
+        行卡是「标题 + 副标题 / 标签」两行结构：右侧按钮与第二行**居中对齐**（两者
+        中线重合）看起来最稳；没有第二行（只有标题）时改为整行垂直居中，避免按钮
+        贴在行底、标题悬空。
+        """
+        self._note_has_content = bool(self.sub_label.text()) or self._note_extras > 0 or bool(self._chip_count)
+        align = Qt.AlignmentFlag.AlignBottom if self._note_has_content else Qt.AlignmentFlag.AlignVCenter
+        if getattr(self, "_action_align", None) == align:
+            return  # 轮询里每条状态刷新都调到这里，对齐没变就别再触发一次布局
+        self._action_align = align
+        left_index = self.header_row.indexOf(self.left)
+        for index in range(max(left_index, 0) + 1, self.header_row.count()):
+            item = self.header_row.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                self.header_row.setAlignment(widget, align)
 
     def add_title_widget(self, widget: QWidget) -> None:
         """标题右侧的小标记（如发布方）。"""
@@ -657,9 +685,11 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         _click_through(widget)
         index = 1 + self._note_extras
         self.note_row.insertWidget(index, widget, stretch)
+        self._action_align = None
         self._note_extras += 1
         if stretch:
             self.note_row.setStretch(index + 1, 0)
+        self._sync_note_state()
 
     def add_tag(self, widget: QWidget) -> None:
         """副标题行右端的状态胶囊 / 进度小字，调用顺序即显示顺序。
@@ -670,6 +700,9 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         _click_through(widget)
         widget.setProperty("rowChip", "true")
         self.note_row.addWidget(widget, 0)
+        self._chip_count += 1
+        self._action_align = None
+        self._sync_note_state()
 
     def add_action(self, widget: QWidget) -> None:
         """右侧动作按钮：始终插在展开箭头之前，并在首次调用时补上动作分隔线。"""
@@ -681,6 +714,8 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self._action_divider_added = True
             index += 1
         self.header_row.insertWidget(index, widget, 0)
+        self._action_align = None  # 新控件也要套用同一对齐
+        self._sync_note_state()
 
     def set_selected(self, selected: bool) -> None:
         """同步选中态到动作分隔线：选中底较深，必须换成更亮的线才能看清。"""
@@ -702,7 +737,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.metrics_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.metrics_label.setToolTip(text)
             self.metrics_label.setFixedWidth(self._metrics_lane_width())
-            self.add_action(self.metrics_label)
+            self.add_action(self.metrics_label)  # 内部会重置对齐缓存并重新套用
             return self.metrics_label
         self.metrics_label.setText(text)
         self.metrics_label.setToolTip(text)
