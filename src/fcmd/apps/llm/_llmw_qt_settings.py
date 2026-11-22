@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,13 +25,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidgetItem,
-    QMenu,
     QMessageBox,
     QSpinBox,
     QWidget,
 )
 
-from fcmd.apps.llm import _llmw_convert, _llmw_models, llmconvert, llmengine, llmenv
+from fcmd.apps.llm import _llmw_convert, _llmw_models, llmconvert, llmenv
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
@@ -47,11 +45,9 @@ from fcmd.gui.qt.widgets import (
     SelectionRow,
     StatusTag,
     button,
-    confirm,
     hint_label,
     link_button,
 )
-from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
     from fcmd.apps.llm._llmw_qt_state import LlmState
@@ -68,8 +64,6 @@ class _EngineRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     """已安装引擎行：单行紧凑布局（标签 + 状态 + 可执行文件 + 行内动作）。"""
 
     useRequested = Signal(str)
-    backupRequested = Signal(str)
-    removeRequested = Signal(str)
 
     def __init__(self, info: EngineInfo, *, current: bool, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -92,19 +86,6 @@ class _EngineRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         exe = ElidedLabel(str(info.exe), mode=Qt.TextElideMode.ElideMiddle, parent=self)
         exe.setObjectName("Hint")
         row.addWidget(exe, 1)
-
-        self.backup_button = button("备份", kind="ghost")
-        self.backup_button.setToolTip("把该引擎目录打包为 zip 备份")
-        self.backup_button.clicked.connect(lambda: self.backupRequested.emit(self.info.tag))
-        row.addWidget(self.backup_button, 0)
-
-        self.remove_button = button("删除", kind="danger")
-        self.remove_button.setToolTip(
-            "默认引擎需先切换到其它引擎再删除" if current else "删除该引擎目录（不影响其它引擎）"
-        )
-        self.remove_button.setEnabled(not current)
-        self.remove_button.clicked.connect(lambda: self.removeRequested.emit(self.info.tag))
-        row.addWidget(self.remove_button, 0)
 
         self.use_button = None
         if current:
@@ -133,6 +114,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(state, parent, spacing=0)
         self._engines: list[EngineInfo] = []
+        self._engine_manager_dialog: QWidget | None = None
         outer = self.body
         scroll = PageScroll(self)
         layout = scroll.body
@@ -334,9 +316,9 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.engine_source_tag = StatusTag("", tone="muted", parent=card)
         self.engine_source_tag.setToolTip("当前转换使用的引擎 tag 是否已带 llama.cpp 转换源码")
         card.add_title_action(self.engine_source_tag)
-        self.cleanup_engines_button = link_button("清理…", tooltip="清理引擎下载缓存 / 临时文件 / llama.cpp 源码")
-        self.cleanup_engines_button.clicked.connect(self._open_engine_cleanup_menu)
-        card.add_title_action(self.cleanup_engines_button)
+        self.manage_engines_button = link_button("管理…", tooltip="备份 / 删除引擎，清理下载缓存与 llama.cpp 源码")
+        self.manage_engines_button.clicked.connect(self._open_engine_manager)
+        card.add_title_action(self.manage_engines_button)
         self.refresh_engine_button = link_button("刷新", tooltip="重新读取已安装引擎与默认引擎")
         card.add_title_action(self.refresh_engine_button)
 
@@ -420,8 +402,6 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
             list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             row = _EngineRow(info, current=info.source == "current", parent=self.engines_list)
             row.useRequested.connect(self._use_engine_tag)
-            row.backupRequested.connect(self._backup_engine_tag)
-            row.removeRequested.connect(self._remove_engine_tag)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.engines_list.setItemWidget(list_item, row)
         self.engines_list.sync_row_widths()
@@ -483,83 +463,23 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self._set_engine_hint(f"默认引擎：{chosen.tag} · {chosen.exe}")
         self.refresh_engines()
 
-    def _backup_engine_tag(self, tag: str) -> None:
-        """选择保存位置并把引擎目录打包为 zip（后台执行，避免大目录卡住界面）。"""
-        default = llmenv.engines_root() / "backups" / f"llama-{tag}.zip"
-        chosen, _filter = QFileDialog.getSaveFileName(
-            self, "备份引擎", str(default), "Zip 压缩包 (*.zip);;所有文件 (*.*)"
-        )
-        if not chosen:
-            return
-        dest = Path(chosen)
-        if dest.suffix.lower() != ".zip":
-            dest = dest.with_suffix(".zip")
-        self._set_engine_hint(f"正在备份 {tag}…")
-        self.status(f"正在备份引擎 {tag}…")
-        submit(
-            llmengine.backup_engine,
-            tag,
-            dest,
-            on_done=lambda path: self._backup_engine_done(tag, path),
-            on_error=lambda message: self._engine_action_error("备份失败", message),
-        )
+    def _open_engine_manager(self) -> None:
+        """打开（或聚焦）引擎管理对话框：备份 / 删除 / 清理集中在这里。"""
+        if self._engine_manager_dialog is None:
+            from fcmd.apps.llm._llmw_qt_engine_manage import EngineManageDialog
 
-    def _backup_engine_done(self, tag: str, path: Path) -> None:
-        self.state.log(f"已备份引擎 {tag} -> {path}")
-        self.status(f"已备份引擎 {tag}")
-        self._set_engine_hint(f"已备份 {tag}：{path}")
+            dialog = EngineManageDialog(self)
+            dialog.changed.connect(self._engine_manager_changed)
+            self._engine_manager_dialog = dialog
+        dialog = self._engine_manager_dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
-    def _remove_engine_tag(self, tag: str) -> None:
-        """确认后删除非默认引擎目录。"""
-        if not confirm(self, "删除引擎", f"将删除引擎目录 {tag}（不可恢复，不影响其它引擎）。确定继续？"):
-            return
-        self._set_engine_hint(f"正在删除 {tag}…")
-        submit(
-            llmengine.remove_engine,
-            tag,
-            on_done=lambda _tag: self._remove_engine_done(tag),
-            on_error=lambda message: self._engine_action_error("删除失败", message),
-        )
-
-    def _remove_engine_done(self, tag: str) -> None:
-        self.state.log(f"已删除引擎 {tag}")
-        self.status(f"已删除引擎 {tag}")
-        self._set_engine_hint(f"已删除引擎 {tag}")
+    def _engine_manager_changed(self) -> None:
+        """管理对话框删除 / 清理后刷新引擎列表与源码状态。"""
+        self.status("引擎目录已更新")
         self.refresh()
-
-    def _open_engine_cleanup_menu(self) -> None:
-        """清理菜单：下载缓存 / llama.cpp 源码 / 两者。"""
-        menu = QMenu(self)
-        menu.addAction("清理下载缓存…", lambda: self._cleanup_engines(downloads=True, sources=False))
-        menu.addAction("清理 llama.cpp 源码…", lambda: self._cleanup_engines(downloads=False, sources=True))
-        menu.addAction("清理下载缓存 + 源码…", lambda: self._cleanup_engines(downloads=True, sources=True))
-        menu.exec(QCursor.pos())
-
-    def _cleanup_engines(self, *, downloads: bool, sources: bool) -> None:
-        parts = [
-            "下载缓存（zip / .part / 临时解压目录）" if downloads else "",
-            "各引擎目录下的 llama.cpp 源码" if sources else "",
-        ]
-        scope = " + ".join(part for part in parts if part)
-        if not confirm(self, "清理引擎目录", f"将清理{scope}；下次转换会按需重新获取源码。确定继续？"):
-            return
-        self._set_engine_hint("正在清理引擎目录…")
-        submit(
-            lambda: llmengine.cleanup_engines(downloads=downloads, sources=sources),
-            on_done=self._cleanup_engines_done,
-            on_error=lambda message: self._engine_action_error("清理失败", message),
-        )
-
-    def _cleanup_engines_done(self, result: llmengine.CleanupResult) -> None:
-        self.state.log(f"清理引擎目录：{result.summary}")
-        self.status(f"引擎清理：{result.summary}")
-        self._set_engine_hint(f"引擎清理：{result.summary}")
-        self.refresh()
-
-    def _engine_action_error(self, title: str, message: str) -> None:
-        self.state.log(f"{title}: {message}")
-        self._set_engine_hint(f"{title}：{message}")
-        QMessageBox.critical(self, title, message)
 
     def _ask_engine_tag(self, default: str) -> str | None:
         """询问引擎标签并做安全校验（只允许单级目录名）。"""

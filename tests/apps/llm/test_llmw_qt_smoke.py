@@ -1097,8 +1097,8 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     ]
     assert page.refresh_engine_button.text() == "刷新"
     assert page.refresh_engine_button.parent() is engine
-    assert page.cleanup_engines_button.text() == "清理…"
-    assert page.cleanup_engines_button.parent() is engine
+    assert page.manage_engines_button.text() == "管理…"
+    assert page.manage_engines_button.parent() is engine
     assert page.engine_source_tag.parent() is engine
     title_row = engine.title_row
     assert title_row is not None
@@ -1218,11 +1218,8 @@ def test_settings_engine_rows_are_compact_single_line(
     assert other_row.use_button is not None
     assert other_row.use_button.text() == "设为默认"
     assert other_row.use_button.isEnabled()
-    assert other_row.backup_button.text() == "备份"
-    assert other_row.remove_button.text() == "删除"
-    assert other_row.remove_button.isEnabled()
-    assert current_row.remove_button.isEnabled() is False
-    assert current_row.backup_button.isEnabled()
+    assert not hasattr(other_row, "backup_button")
+    assert not hasattr(other_row, "remove_button")
     other_widgets = [other_row.layout().itemAt(pos).widget() for pos in range(other_row.layout().count())]
     assert other_widgets[-2] is other_row.use_button
     assert other_widgets[-1].text() == "CPU"
@@ -1250,24 +1247,53 @@ def test_settings_engine_rows_are_compact_single_line(
     assert selected == ["b2"]
 
 
-def test_backup_engine_default_path_uses_engine_root(
-    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """备份默认路径取 FCMD_HOME 下的引擎根（回归：engines_root 属于 llmenv）。"""
-    from PySide6.QtWidgets import QFileDialog
+def test_backup_default_path_uses_engine_root(tmp_path: Path) -> None:
+    """备份默认路径取引擎根下的 backups/（回归：engines_root 属于 llmenv）。"""
+    from fcmd.apps.llm._llmw_qt_engine_manage import backup_default_path
 
+    path = backup_default_path("b9", tmp_path, stamp="20260101")
+    assert path.parent == tmp_path / "engines" / "llama.cpp" / "backups"
+    assert path.name == "llama-b9-20260101.zip"
+
+
+def test_engine_manage_dialog_lists_and_scopes_actions(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """管理入口集中备份 / 删除 / 清理；默认引擎不可删除。"""
+    from fcmd.apps.llm import llmengine
+    from fcmd.apps.llm._llmw_qt_engine_manage import EngineManageDialog
+    from fcmd.apps.llm.llmbase import EngineInfo
+
+    engines = [
+        EngineInfo("b2", Path("b2") / "llama-server.exe", str(Path("source"))),
+        EngineInfo("b1", Path("b1") / "llama-server.exe", "current"),
+    ]
+    monkeypatch.setattr(llmengine, "list_engines", lambda _home=None: engines)
+    dialog = EngineManageDialog()
+    try:
+        assert dialog.list.count() == 2
+        dialog.list.setCurrentRow(0)  # b2 非默认
+        assert dialog.delete_button.isEnabled()
+        assert dialog.backup_button.isEnabled()
+        dialog.list.setCurrentRow(1)  # b1 默认
+        assert not dialog.delete_button.isEnabled()
+        assert "切换到其它引擎" in dialog.delete_button.toolTip()
+        dialog._set_busy(True)
+        assert not dialog.cleanup_all_button.isEnabled()
+        dialog._set_busy(False)
+        assert dialog.cleanup_all_button.isEnabled()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_settings_opens_engine_manager(window: Any) -> None:
+    """卡片标题行「管理…」打开引擎管理对话框。"""
     window.show_page("settings")
     page = window.page("settings")
-    seen: list[str] = []
-
-    def _save(_parent: Any, _title: str, default: str, *_args: Any, **_kwargs: Any) -> tuple[str, str]:
-        seen.append(default)
-        return "", ""
-
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", _save)
-    page._backup_engine_tag("b9")
-    assert seen and "backups" in seen[0]
-    assert seen[0].endswith("llama-b9.zip")
+    page.manage_engines_button.click()
+    dialog = page._engine_manager_dialog
+    assert dialog is not None
+    assert dialog.isVisible() or dialog.isHidden() is False
+    dialog.close()
 
 
 def test_settings_has_no_source_hint(window: Any) -> None:
