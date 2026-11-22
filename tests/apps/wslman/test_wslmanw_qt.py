@@ -1486,20 +1486,42 @@ def test_distro_config_button_dialog_and_persisted_cwd(home: Path, monkeypatch: 
         window.deleteLater()
 
 
-def test_init_env_dialog_defaults_status_copy_and_execute(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """初始化对话框：已就绪勾选 + 禁用 + 绿色标签、展开详情、复制公钥、root 步骤加 -u root。"""
+def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """初始化环境卡片：已就绪勾选 + 禁用 + 绿色标签、复制公钥、root 步骤加 -u root。"""
     public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc me@host"
     owner = QWidget()
-    dialog = _wslmanw_qt._InitEnvDialog(owner, _distro("Ubuntu"))
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"))
     try:
-        assert set(dialog.checks) == {task.key for task in _initenv.TASKS}
-        assert set(dialog.status_tags) == {task.key for task in _initenv.TASKS}
-        assert all(box.isChecked() for box in dialog.checks.values())
-        assert all(box.isEnabled() for box in dialog.checks.values())
-        assert all(tag.isHidden() for tag in dialog.status_tags.values())
-        assert dialog.details.isHidden() is True
+        assert set(section.checks) == {task.key for task in _initenv.TASKS}
+        assert set(section.status_tags) == {task.key for task in _initenv.TASKS}
+        assert all(box.isChecked() for box in section.checks.values())
+        assert all(box.isEnabled() for box in section.checks.values())
+        assert all(tag.isHidden() for tag in section.status_tags.values())
+        # 默认收起：只显示已初始化情况与展开按钮；勾选 / 状态 / 日志隐藏。
+        assert section.collapsed is True
+        assert section.details.isHidden() is True
+        assert section.collapsed_hint.isHidden() is False
+        assert section.toggle_button.text() == "展开"
+        assert all(tag.isHidden() for tag in section._collapsed_tags.values())
+        # 三个动作不随详情收起：收起态下也能检测环境 / 复制 SSH / 开始初始化。
+        assert section.detect_button.isHidden() is False
+        assert section.run_button.isHidden() is False
+        assert section.copy_key.isHidden() is False
+        # 状态直接铺在卡片里，不再藏进可展开的详情。
+        assert all(not label.isHidden() for label in section._status_values.values())
 
-        dialog._apply_status(
+        section.toggle_collapsed()
+        assert section.collapsed is False
+        assert section.details.isHidden() is False
+        assert section.toggle_button.text() == "收起"
+        assert section.collapsed_hint.isHidden() is True
+        # 收起按钮的 clicked 会带 checked 参数：点第二下必须真的收起。
+        section.toggle_button.click()
+        assert section.collapsed is True
+        assert section.details.isHidden() is True
+        assert section.toggle_button.text() == "展开"
+
+        section._apply_status(
             _initenv.EnvStatus(
                 user="me",
                 home="/home/me",
@@ -1514,42 +1536,57 @@ def test_init_env_dialog_defaults_status_copy_and_execute(home: Path, monkeypatc
             )
         )
         # 全部就绪：保持勾选但禁用，绿色「已初始化」标签可见。
-        assert all(box.isChecked() for box in dialog.checks.values())
-        assert not any(box.isEnabled() for box in dialog.checks.values())
-        for tag in dialog.status_tags.values():
+        assert all(box.isChecked() for box in section.checks.values())
+        assert not any(box.isEnabled() for box in section.checks.values())
+        for tag in section.status_tags.values():
             assert tag.isHidden() is False
             assert tag.text() == "已初始化"
             assert tag.tone() == "success"
-        dialog._set_all(False)
-        assert all(box.isChecked() for box in dialog.checks.values())
-        assert dialog.copy_key.isEnabled() is True
-        assert "Python 3.12.3" in dialog.summary.text()
+        section._set_all(False)
+        assert all(box.isChecked() for box in section.checks.values())
+        assert section.copy_key.isEnabled() is True
+        # 全部项目已初始化：开始初始化直接禁用。
+        assert section.run_button.isEnabled() is False
+        assert "已初始化" in section.run_button.toolTip()
+        assert "Python 3.12.3" in section.summary.fullText()
+        assert section._status_values["SSH 密钥"].text().startswith("ssh-ed25519 ")
 
-        dialog._toggle_details()
-        assert dialog.details.isHidden() is False
-        assert dialog.toggle.text() == "收起环境详情"
-        dialog._copy_ssh_key()
+        section._copy_ssh_key()
         assert QApplication.clipboard().text() == public_key
 
-        dialog._apply_status(_initenv.EnvStatus(python="3.12.3"))
-        # 仅 Python 就绪：只有它勾选 + 禁用 + 绿标，其余仍可操作。
-        assert dialog._done == {"python"}
-        assert dialog.checks["python"].isEnabled() is False
-        assert dialog.checks["python"].isChecked() is True
-        assert dialog.status_tags["python"].isHidden() is False
-        for key in ("mirror", "ssh", "node", "rust"):
-            assert dialog.checks[key].isEnabled() is True
-            assert dialog.checks[key].isChecked() is True
-            assert dialog.status_tags[key].isHidden() is True
-        dialog._set_all(False)
-        assert dialog.checks["python"].isChecked() is True
-        assert not any(dialog.checks[key].isChecked() for key in ("mirror", "ssh", "node", "rust"))
+        # 收起后只留已初始化标签：全就绪时 5 个短标签全部可见。
+        section.toggle_collapsed(True)
+        assert section.details.isHidden() is True
+        assert section.collapsed_hint.text() == "已初始化："
+        assert all(not tag.isHidden() for tag in section._collapsed_tags.values())
+        assert section._collapsed_tags["node"].text() == "Node.js"
+        section.toggle_collapsed(False)
+        assert section.details.isHidden() is False
+        assert all(tag.isHidden() for tag in section._collapsed_tags.values())
 
-        dialog._apply_status(_initenv.EnvStatus())
-        assert dialog.copy_key.isEnabled() is False
-        assert all(tag.isHidden() for tag in dialog.status_tags.values())
+        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
+        # 仅 Python 就绪：只有它勾选 + 禁用 + 绿标，其余仍可操作。
+        assert section._done == {"python"}
+        assert section.run_button.isEnabled() is True
+        assert section.collapsed_hint.text() == "已初始化："
+        assert section.checks["python"].isEnabled() is False
+        assert section.checks["python"].isChecked() is True
+        assert section.status_tags["python"].isHidden() is False
+        for key in ("mirror", "ssh", "node", "rust"):
+            assert section.checks[key].isEnabled() is True
+            assert section.checks[key].isChecked() is True
+            assert section.status_tags[key].isHidden() is True
+        section._set_all(False)
+        assert section.checks["python"].isChecked() is True
+        assert not any(section.checks[key].isChecked() for key in ("mirror", "ssh", "node", "rust"))
+
+        section._apply_status(_initenv.EnvStatus())
+        assert section.copy_key.isEnabled() is False
+        assert all(tag.isHidden() for tag in section.status_tags.values())
+        assert section.collapsed_hint.text() == "尚未检测到已初始化的项目。"
+        assert all(tag.isHidden() for tag in section._collapsed_tags.values())
         QApplication.clipboard().setText("sentinel")
-        dialog._copy_ssh_key()
+        section._copy_ssh_key()
         assert QApplication.clipboard().text() == "sentinel"
 
         calls: list[list[str]] = []
@@ -1564,20 +1601,20 @@ def test_init_env_dialog_defaults_status_copy_and_execute(home: Path, monkeypatc
 
         monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
         monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
-        assert dialog._execute(_initenv.steps_for(["ssh"])) == "初始化完成"
+        assert section._execute(_initenv.steps_for(["ssh"])) == "初始化完成"
         assert calls[0][:6] == ["wsl.exe", "-d", "Ubuntu", "-u", "root", "--exec"]
         assert calls[1][:4] == ["wsl.exe", "-d", "Ubuntu", "--exec"]
         assert "-u" not in calls[1]
         assert calls[0][-1] == _initenv.steps_for(["ssh"])[0].script
         assert calls[1][-1] == _initenv.steps_for(["ssh"])[1].script
     finally:
-        dialog.deleteLater()
+        section.deleteLater()
         owner.deleteLater()
 
 
-def test_init_env_detect_parses_probe_output(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_env_section_detect_parses_probe_output(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     owner = QWidget()
-    dialog = _wslmanw_qt._InitEnvDialog(owner, _distro("Ubuntu"))
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"))
     try:
         calls: list[list[str]] = []
 
@@ -1597,25 +1634,25 @@ def test_init_env_detect_parses_probe_output(home: Path, monkeypatch: pytest.Mon
 
         monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
         monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
-        status = dialog._detect()
+        status = section._detect()
         assert status.user == "me"
         assert status.mirror == "mirrors.aliyun.com"
         assert status.python == "3.12.3"
         assert calls == [["wsl.exe", "-d", "Ubuntu", "--exec", "bash", "-lc", _initenv.probe_script()]]
     finally:
-        dialog.deleteLater()
+        section.deleteLater()
         owner.deleteLater()
 
 
-def test_init_env_run_skips_ready_items(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """开始初始化只跑「未就绪且勾选」的项目，已就绪的不重复执行。"""
     owner = QWidget()
-    dialog = _wslmanw_qt._InitEnvDialog(owner, _distro("Ubuntu"))
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"))
     try:
-        dialog._apply_status(_initenv.EnvStatus(python="3.12.3"))
-        dialog._set_all(False)
-        dialog.checks["node"].setChecked(True)
-        dialog.checks["python"].setChecked(True)  # 已就绪，禁用后即使勾着也不执行
+        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
+        section._set_all(False)
+        section.checks["node"].setChecked(True)
+        section.checks["python"].setChecked(True)  # 已就绪，禁用后即使勾着也不执行
         seen: list[tuple[str, ...]] = []
 
         def fake_submit(fn: Any, *, on_done: Any = None, on_error: Any = None, on_finished: Any = None) -> None:
@@ -1625,38 +1662,44 @@ def test_init_env_run_skips_ready_items(home: Path, monkeypatch: pytest.MonkeyPa
                 on_finished()
 
         monkeypatch.setattr(_wslmanw_qt, "submit_daemon", fake_submit)
-        monkeypatch.setattr(dialog, "refresh_status", lambda: None)
+        monkeypatch.setattr(section, "refresh_status", lambda: None)
         monkeypatch.setattr(
-            dialog, "_execute", lambda steps: seen.append(tuple(step.label for step in steps)) or "初始化完成"
+            section, "_execute", lambda steps: seen.append(tuple(step.label for step in steps)) or "初始化完成"
         )
-        dialog._run_selected()
+        section._run_selected()
         assert seen == [("安装 Node.js 软件包", "配置 npm 镜像")]
     finally:
-        dialog.deleteLater()
+        section.deleteLater()
         owner.deleteLater()
 
 
-def test_distro_config_opens_init_env_dialog(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[str] = []
-
-    class _FakeInitEnvDialog:
-        def __init__(self, _parent: Any, distro: Distro) -> None:
-            seen.append(distro.name)
-
-        def refresh_status(self) -> None:
-            seen.append("refresh")
-
-        def exec(self) -> int:
-            seen.append("exec")
-            return 0
-
-    monkeypatch.setattr(_wslmanw_qt, "_InitEnvDialog", _FakeInitEnvDialog)
+def test_distro_config_embeds_init_env_section(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """配置对话框直接内嵌初始化环境卡片：一层可见、首次显示自动检测、忙时确认关闭。"""
     owner = QWidget()
     dialog = _wslmanw_qt._DistroConfigDialog(owner, _distro("Ubuntu"), "~")  # type: ignore[arg-type]
     try:
-        assert dialog.init_button.text() == "打开初始化环境…"
-        dialog.init_button.click()
-        assert seen == ["Ubuntu", "refresh", "exec"]
+        assert isinstance(dialog.init_env, _wslmanw_qt._InitEnvSection)
+        assert dialog.init_env.parent() is dialog
+        assert dialog.init_env.details.isHidden() is True
+        assert dialog.init_env.toggle_button.text() == "展开"
+        for name in ("detect_button", "run_button", "copy_key"):
+            assert dialog.isAncestorOf(getattr(dialog.init_env, name))
+
+        calls: list[str] = []
+        monkeypatch.setattr(dialog.init_env, "refresh_status", lambda: calls.append("detect"))
+        dialog.show()
+        assert calls == ["detect"]
+        dialog.hide()
+        dialog.show()
+        assert calls == ["detect"]  # 只自动检测一次
+
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: False)
+        dialog.init_env._busy = True
+        dialog.reject()
+        assert dialog.init_env._closing is False
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
+        dialog.reject()
+        assert dialog.init_env._closing is True
     finally:
         dialog.deleteLater()
         owner.deleteLater()

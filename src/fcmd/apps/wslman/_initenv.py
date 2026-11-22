@@ -27,6 +27,7 @@ __all__ = [
     "parse_status",
     "present",
     "probe_script",
+    "short_label",
     "ssh_key_short",
     "status_rows",
     "steps_for",
@@ -250,6 +251,20 @@ TASKS: tuple[InitTask, ...] = (
 
 def task_by_key(key: str) -> InitTask | None:
     return next((task for task in TASKS if task.key == key), None)
+
+
+_TASK_SHORT: dict[str, str] = {
+    "mirror": "镜像源",
+    "ssh": "SSH 密钥",
+    "python": "Python",
+    "node": "Node.js",
+    "rust": "Rust",
+}
+
+
+def short_label(key: str) -> str:
+    """项目短名：收起态把已初始化情况挤在一行标签里时用。"""
+    return _TASK_SHORT.get(key, key)
 
 
 def steps_for(keys: Sequence[str]) -> tuple[InitStep, ...]:

@@ -14,6 +14,17 @@ def test_tasks_cover_required_items() -> None:
     assert _initenv.task_by_key("missing") is None
 
 
+def test_short_label_covers_all_tasks_and_falls_back() -> None:
+    assert tuple(_initenv.short_label(task.key) for task in _initenv.TASKS) == (
+        "镜像源",
+        "SSH 密钥",
+        "Python",
+        "Node.js",
+        "Rust",
+    )
+    assert _initenv.short_label("unknown") == "unknown"
+
+
 def test_steps_for_keeps_task_order_and_root_flags() -> None:
     steps = _initenv.steps_for(["rust", "mirror"])
     assert [step.label for step in steps] == ["配置系统镜像源", "安装编译依赖", "安装 Rust 工具链"]
