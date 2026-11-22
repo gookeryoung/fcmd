@@ -243,6 +243,12 @@
 
 ### 修复
 
+- `llmw` 侧边栏「运行」徽标重启后丢失：画图服务探针在 `RunPage` 构造期就完成，
+  早于窗口连接 `runningChanged`，只跑着 sd-server 时徽标停在 0；窗口连好信号后
+  补一次同步，重启应用即可恢复运行中模型数量。
+- `llmw` / `llmpaint` 画图服务异常结束：sd-server 启动时显式 `stdin=DEVNULL`、
+  不再继承父进程控制台句柄，关闭 / 重启窗口或父进程控制台不会因 stdin EOF 带走服务；
+  画图服务健康检查默认等待从 300s 放宽到 900s，大模型冷加载不再被超时终止。
 - 任务日志统一为公共组件：所有 Qt 窗口的日志入口统一挂在「帮助 → 任务日志…」
   （`Ctrl+Shift+L`），由 `gui/logdialog.py` 的 `LogChannelMixin` 提供缓冲 / 回放 / 实时追加 /
   清空 / 关闭联动；`dynacalcw`、`filesyncw`、`mirrortoolw`、`img2icow`、`ncmconvertw`、

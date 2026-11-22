@@ -81,7 +81,7 @@ class PaintPlan:
     log: Path
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
-    wait_s: float = 300.0
+    wait_s: float = 900.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +196,7 @@ def make_paint_plan(  # noqa: PLR0913 - 与 make_plan 对齐的入口参数
     port: int = DEFAULT_PORT,
     engine_tag: str | None = None,
     home: Path | None = None,
-    wait_s: float = 300.0,
+    wait_s: float = 900.0,
 ) -> PaintPlan:
     """解析引擎并构造启动计划。"""
     if not 1 <= port <= 65535:
@@ -366,6 +366,9 @@ def launch_paint(
     argv = plan_argv(plan)
     kwargs: dict[str, Any] = {
         "cwd": str(plan.engine.exe.parent),
+        # DETACHED_PROCESS 下不再继承父进程的控制台句柄：显式给 DEVNULL，
+        # 关闭 / 重启 llmw 或父进程控制台时 sd-server 不会被 stdin EOF 带走。
+        "stdin": subprocess.DEVNULL,
         "stderr": subprocess.STDOUT,
         "creationflags": llmserve.spawn_flags(),
     }

@@ -295,6 +295,44 @@ def test_running_models_show_count_badges(window: Any) -> None:
     assert window.nav.badge("run") == 0
 
 
+def test_sidebar_badge_restores_paint_only_after_restart(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """重启应用时只跑着画图服务：侧边栏「运行」徽标也要恢复（探针早于信号连接）。"""
+    from fcmd.apps.llm import _llmpaint_server
+    from fcmd.apps.llm._llmw_qt_window import LlmWindow
+
+    state = _llmpaint_server.PaintState(
+        pid=1234,
+        create_time=1.0,
+        host="127.0.0.1",
+        port=1234,
+        engine_tag="sd-test",
+        exe="sd-server.exe",
+        model="qwen-image.safetensors",
+        components={},
+        fingerprint=("sd-test",),
+        log="sd-server.log",
+        started_at="",
+    )
+    monkeypatch.setattr(_llmpaint_server, "status", lambda home=None: (state, True))
+    monkeypatch.setattr(
+        _llmpaint_server,
+        "probe_paint",
+        lambda *_args, **_kwargs: _llmpaint_server.PaintProbe(state, True, True, True),
+    )
+    restarted = LlmWindow(tmp_path / "ui" / "llmw-restart.json")
+    try:
+        restarted.overview.stop()
+        QApplication.processEvents()
+        assert restarted.run_page.running_counts()["paint"] == 1
+        assert restarted.run_page.tabs.tabBar().badge(2) == 1
+        assert restarted.nav.badge("run") == 1
+    finally:
+        restarted.overview.stop()
+        restarted.deleteLater()
+
+
 def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     """运行页分「对话 / 编程 / 画图 / 视频 / 音频」：前四项共用参数，画图只配启动参数与启停。"""
     window.show_page("run")

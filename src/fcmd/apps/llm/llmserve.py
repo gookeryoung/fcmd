@@ -395,6 +395,8 @@ def _launch_once(  # noqa: PLR0913
     argv = plan.argv()
     kwargs: dict[str, Any] = {
         "cwd": str(plan.engine.exe.parent),
+        # 与服务进程解耦：不继承父进程控制台 / stdin，避免窗口关闭后子进程被 EOF 带走。
+        "stdin": subprocess.DEVNULL,
         "stderr": subprocess.STDOUT,
         "creationflags": _creation_flags(),
     }

@@ -14,6 +14,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import zipfile
 from email.message import Message
 from pathlib import Path
@@ -1169,13 +1170,21 @@ class TestLifecycle:
                 return None
 
         monkeypatch.setattr(_llmpaint_server.llmserve, "process_create_time", lambda pid: 1.0)
+        popen_kwargs: dict[str, object] = {}
+
+        def _popen(argv: list[str], **kwargs: object) -> _Proc:
+            popen_kwargs.update(kwargs)
+            return _Proc()
+
         state = _llmpaint_server.launch_paint(
             _plan(tmp_path),
             home=tmp_path,
-            popen=lambda argv, **kwargs: _Proc(),
+            popen=_popen,
             health=lambda host, port: True,
         )
         assert state.pid == 424242
+        # 服务进程与父控制台 / stdin 解耦：GUI 关闭不会让 sd-server 收到 EOF。
+        assert popen_kwargs["stdin"] is subprocess.DEVNULL
         assert state.create_time == 1.0
         assert state.fingerprint == _llmpaint_server.fingerprint(_plan(tmp_path))
         assert _llmpaint_server.load_state(tmp_path) == state

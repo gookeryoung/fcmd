@@ -95,7 +95,10 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._show_models_updated_at(self.state.models_updated_at or "")
         self.state.sampleCapacityChanged.connect(self.run_page.update_service_and_fit)
         # 运行中模型数量：侧边栏「运行」页按钮上的圆形徽标。
+        # 画图探针在 RunPage 构造时已同步出结果，早于这里的 connect；先补一次，
+        # 重启应用后只跑着 sd-server 时徽标也不会丢。
         self.run_page.runningChanged.connect(self._sync_run_badge)
+        self._sync_run_badge(self.run_page.running_counts())
         self.state.recommendationApplied.connect(self.run_page.apply_recommendation)
         self.state.modelsChanged.connect(self._on_models_changed)
         self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
