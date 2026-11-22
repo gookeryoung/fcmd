@@ -776,8 +776,8 @@ def test_convert_can_be_stopped_from_status_row(window: Any) -> None:
         browse._convert_cancel = None
 
 
-def test_settings_shows_convert_source_status(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """设置页「模型转换」卡片显示当前引擎是否带有 llama.cpp 转换源码。"""
+def test_settings_shows_engine_source_status(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """设置页「推理引擎（llama.cpp）」卡片显示当前引擎是否带有转换源码。"""
     from fcmd.apps.llm import _llmw_convert
 
     window.show_page("settings")
@@ -786,10 +786,12 @@ def test_settings_shows_convert_source_status(window: Any, monkeypatch: pytest.M
         ready=True, tag="b9", path=Path("/engines/b9/llama.cpp/convert_hf_to_gguf.py")
     )
     monkeypatch.setattr(_llmw_convert, "convert_source_status", lambda _tag=None: ready)
-    page._refresh_convert_source()
-    assert page.convert_source_tag.text() == "已包含源码"
-    assert page.convert_source_tag.property("tone") == "success"
-    assert "convert_hf_to_gguf.py" in page.convert_source_hint.text()
+    page._refresh_engine_source()
+    assert page.engine_source_tag.text() == "已包含源码"
+    assert page.engine_source_tag.property("tone") == "success"
+    assert "convert_hf_to_gguf.py" in page.engine_source_tag.toolTip()
+    # 模型转换卡片不再重复显示源码状态。
+    assert not hasattr(page, "convert_source_tag")
 
 
 def test_convert_preparation_shows_busy_status(window: Any) -> None:
@@ -1066,6 +1068,10 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     ]
     assert page.refresh_engine_button.text() == "刷新"
     assert page.refresh_engine_button.parent() is engine
+    assert page.engine_source_tag.parent() is engine
+    title_row = engine.title_row
+    assert title_row is not None
+    assert page.engine_source_tag in [title_row.itemAt(index).widget() for index in range(title_row.count())]
     assert page.models_path.browse.text() == "更改"
     assert page.engines_path.browse.text() == "更改"
     assert page.download_engine_button.text() == "下载引擎"

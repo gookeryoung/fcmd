@@ -257,14 +257,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.convert_overwrite = QCheckBox("覆盖已存在的输出文件", card)
         self.convert_overwrite.setChecked(settings.overwrite)
         grid.addWidget(self.convert_overwrite, 3, 0, 1, 2)
-        grid.addWidget(QLabel("llama.cpp 源码"), 4, 0, Qt.AlignmentFlag.AlignRight)
-        self.convert_source_tag = StatusTag("", tone="muted", parent=card)
-        grid.addWidget(self.convert_source_tag, 4, 1)
-        self.convert_source_hint = hint_label("", wrap=False)
-        self.convert_source_hint.setWordWrap(False)
-        grid.addWidget(self.convert_source_hint, 4, 2, 1, 3)
         card.body.addLayout(grid)
-        self._refresh_convert_source()
         self.convert_outtype.currentIndexChanged.connect(lambda _index: self._save_convert())
         self.convert_tag.editingFinished.connect(self._save_convert)
         self.convert_python.editingFinished.connect(self._save_convert)
@@ -293,23 +286,21 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         )
         self.state.settings.convert = _llmw_convert.convert_settings_to_dict(settings)
         self.state.persist()
-        self._refresh_convert_source()
+        self._refresh_engine_source()
         self.state.log("已自动保存模型转换设置")
         self.status("已自动保存模型转换设置")
 
-    def _refresh_convert_source(self) -> None:
-        """刷新「llama.cpp 源码」状态：当前引擎 tag 是否已带转换脚本。"""
+    def _refresh_engine_source(self) -> None:
+        """刷新推理引擎卡片上的 llama.cpp 源码状态（按当前转换引擎 tag）。"""
         tag = self.convert_tag.text().strip() or None
         try:
             status = _llmw_convert.convert_source_status(tag)
         except OSError as exc:  # pragma: no cover - 读盘失败时只提示，不阻断设置页
-            self.convert_source_tag.set_status("读取失败", "warning")
-            self.convert_source_hint.setText(str(exc))
+            self.engine_source_tag.set_status("读取失败", "warning")
+            self.engine_source_tag.setToolTip(str(exc))
             return
-        self.convert_source_tag.set_status(status.title, status.tone)
-        self.convert_source_tag.setToolTip(f"引擎 {status.tag} / {status.path}")
-        self.convert_source_hint.setText(status.hint)
-        self.convert_source_hint.setToolTip(str(status.path))
+        self.engine_source_tag.set_status(status.title, status.tone)
+        self.engine_source_tag.setToolTip(f"引擎 {status.tag} / {status.hint} / {status.path}")
 
     # ------------------------------------------------------------------ #
     # 引擎
@@ -321,6 +312,9 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         空态 / 错误态由同一提示行承接。
         """
         card = Card("推理引擎（llama.cpp）")
+        self.engine_source_tag = StatusTag("", tone="muted", parent=card)
+        self.engine_source_tag.setToolTip("当前转换使用的引擎 tag 是否已带 llama.cpp 转换源码")
+        card.add_title_action(self.engine_source_tag)
         self.refresh_engine_button = link_button("刷新", tooltip="重新读取已安装引擎与默认引擎")
         card.add_title_action(self.refresh_engine_button)
 
@@ -380,7 +374,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.migration_note.setVisible(bool(note))
         self.refresh_engines()
         self.refresh_engine_cards()
-        self._refresh_convert_source()
+        self._refresh_engine_source()
 
     def refresh_engine_cards(self) -> None:
         """刷新 sd.cpp 引擎卡（画图 / 视频 / 音频共用同一份列表与默认 tag）。"""
