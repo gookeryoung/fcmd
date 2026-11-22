@@ -68,6 +68,7 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command, spawn_detached
 from fcmd.apps.wslman._transfer import sha256_file
+from fcmd.gui.geometry import format_geometry
 from fcmd.gui.qt import icons as _qt_icons
 from fcmd.gui.qt.logdialog import LogChannelMixin
 from fcmd.gui.qt.page import PageBody, PageSpec
@@ -91,7 +92,7 @@ from fcmd.gui.qt.widgets import (
     set_button_kind,
     set_button_text,
 )
-from fcmd.gui.qt.window import QtMainWindow
+from fcmd.gui.qt.window import QtMainWindow, restore_geometry
 from fcmd.gui.qt.workers import EventBridge, ProgressBridge, periodic, submit, submit_daemon
 from fcmd.infras.download import SpeedMeter, format_speed
 
@@ -1222,9 +1223,18 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
         if row is None or self._busy:
             return
         self.focus_row("distros", row)
-        dialog = _DistroConfigDialog(self, row.distro, w.terminal_cwd(self.settings, row.distro.name))
+        dialog = _DistroConfigDialog(
+            self,
+            row.distro,
+            w.terminal_cwd(self.settings, row.distro.name),
+            selected=w.init_task_keys(self.settings, row.distro.name),
+        )
+        self._restore_dialog_geometry("distro_config", dialog)
         if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._save_dialog_geometry("distro_config", dialog)
             return
+        self._save_dialog_geometry("distro_config", dialog)
+        self._save_init_tasks(row.distro.name, dialog.init_env.selected_keys())
         make_default, cwd = dialog.payload()
         self._save_terminal_cwd(row.distro.name, cwd)
         if not make_default:
@@ -1242,6 +1252,32 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
     def _save_terminal_cwd(self, name: str, cwd: str) -> None:
         """把实例的终端默认目录写进窗口设置（``~`` 等同于未配置）。"""
         self.settings = w.with_terminal_cwd(self.settings, name, cwd)
+        self._persist_settings(self.geometry_text())
+
+    def _save_init_tasks(self, name: str, keys: Sequence[str]) -> None:
+        """保存实例的初始化勾选，下次打开配置窗口沿用。"""
+        self.settings = w.with_init_task_keys(self.settings, name, keys)
+
+    def _restore_dialog_geometry(self, key: str, dialog: QDialog) -> None:
+        """对话框打开前恢复上次的位置与尺寸；未记录时保持按内容居中。"""
+        saved = w.dialog_geometry(self.settings, key)
+        if not saved:
+            return
+        restore_geometry(
+            dialog,
+            saved,
+            default_size=(dialog.width(), dialog.height()),
+            min_size=(max(dialog.minimumWidth(), 360), max(dialog.minimumHeight(), 240)),
+        )
+
+    def _save_dialog_geometry(self, key: str, dialog: QDialog) -> None:
+        """关闭对话框时写回几何（取消打开也记位置，下次在原处打开）。"""
+        geometry = getattr(dialog, "geometry", None)
+        if not callable(geometry):
+            return
+        rect = geometry()
+        text = format_geometry(rect.width(), rect.height(), rect.x(), rect.y())
+        self.settings = w.with_dialog_geometry(self.settings, key, text)
         self._persist_settings(self.geometry_text())
 
     def _log(self, text: str) -> None:
@@ -1394,8 +1430,10 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
             QMessageBox.information(self, "请稍候", "已有任务在执行")
             return
         dialog = _ImageManagerDialog(self, self._download_dir_path(), self._catalog_entries())
+        self._restore_dialog_geometry("image_manager", dialog)
         try:
             dialog.exec()
+            self._save_dialog_geometry("image_manager", dialog)
         finally:
             changed = dialog.changed
             cleared = dialog.cache_cleared
@@ -1411,7 +1449,10 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
             QMessageBox.information(self, "请稍候", "已有任务在执行")
             return
         dialog = _InstallLocalDialog(self, self._catalog_entries())
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        self._restore_dialog_geometry("install_local", dialog)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        self._save_dialog_geometry("install_local", dialog)
+        if not accepted:
             return
         payload = dialog.payload()
         if payload is None:
@@ -1567,7 +1608,10 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
             return
         if entry.archive and Path(entry.archive).is_file():
             dialog = _InstallLocalDialog(self, self._catalog_entries(), preset=Path(entry.archive))
-            if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._restore_dialog_geometry("install_local", dialog)
+            accepted = dialog.exec() == QDialog.DialogCode.Accepted
+            self._save_dialog_geometry("install_local", dialog)
+            if not accepted:
                 return
             payload = dialog.payload()
             if payload is None:
@@ -1874,6 +1918,8 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
                 image_source=self.image_source.currentData() or w.DEFAULT_IMAGE_SOURCE,
                 backup_dir=self.backup_dir.value(),
                 distro_terminal_dirs=self.settings.distro_terminal_dirs,
+                dialog_geometry=self.settings.dialog_geometry,
+                distro_init_tasks=self.settings.distro_init_tasks,
             ),
             self._own_settings_path,
         )
@@ -1894,6 +1940,9 @@ class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: 
 _INIT_LOG_LINES_MAX = 400
 """初始化环境卡片的日志缓冲上限（行）。"""
 
+_INIT_ENV_HINT = "检测与执行都会启动该实例（若尚未运行）；已就绪的项目保持勾选并禁用，不会重复执行。"
+"""展开区的说明文字：收进 tooltip，不占版面高度。"""
+
 
 class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
     """初始化环境卡片：就地检测、勾选项目、执行并复制 SSH 公钥。
@@ -1904,9 +1953,12 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
     不做成独立对话框：配置对话框一层里就能看到各项状态并操作，避免多层弹窗。
     """
 
-    def __init__(self, parent: QWidget, distro: Distro) -> None:
+    def __init__(self, parent: QWidget, distro: Distro, selected: Sequence[str] | None = None) -> None:
         super().__init__("初始化环境", parent)
         self._distro = distro
+        self._selected = None if selected is None else {key for key in selected if key in _initenv.task_keys()}
+        """上次保存的勾选（``None`` 表示未保存过，按默认勾选）。"""
+        self.setToolTip(_INIT_ENV_HINT)
         self._status: _initenv.EnvStatus | None = None
         self._done: set[str] = set()
         """检测结果里已就绪的项目 key；这些勾选框保持勾选 + 禁用，并显示绿色标签。"""
@@ -1922,8 +1974,8 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self._collapsed = True
         self._collapsed_tags: dict[str, StatusTag] = {}
 
-        # 收起时只留「已初始化情况」一行：每个已就绪项目一个绿色小标签 + 展开按钮；
-        # 三个动作（检测 / 复制 SSH / 开始初始化）不随详情收起，收起态下也直接可用。
+        # 收起 / 展开共用一行：收起显示「已初始化情况」，展开换成一行摘要。
+        # 三个动作（检测 / 复制 SSH / 开始初始化）与全选不随详情收起。
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(6)
@@ -1935,7 +1987,11 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             tag.setVisible(False)
             header.addWidget(tag)
             self._collapsed_tags[task.key] = tag
-        header.addStretch(1)
+        self.summary = ElidedLabel("尚未检测环境。", parent=self)
+        self.summary.setObjectName("Hint")
+        self.summary.setToolTip(_INIT_ENV_HINT)
+        self.summary.setVisible(False)
+        header.addWidget(self.summary, 1)
         self.toggle_button = icon_button("", tooltip="展开详情")
         self.toggle_button.setIconSize(QSize(16, 16))
         _qt_icons.set_icon(self.toggle_button, "chevron-down", tone="muted")
@@ -1946,18 +2002,21 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         header.addWidget(self.toggle_button)
         self.body.addLayout(header)
 
-        # 展开后才出现的内容：说明、勾选、状态与日志。
+        # 展开后才出现的内容：左右两栏（勾选 / 状态）+ 日志；说明只在 tooltip。
         self.details = QWidget(self)
         details = QVBoxLayout(self.details)
         details.setContentsMargins(0, 0, 0, 0)
-        details.setSpacing(8)
-        details.addWidget(
-            hint_label("检测与执行都会启动该实例（若尚未运行）；已就绪的项目保持勾选并禁用，不会重复执行。")
-        )
+        details.setSpacing(2)
 
-        self.summary = ElidedLabel("尚未检测环境。", parent=self)
-        self.summary.setObjectName("Hint")
-        details.addWidget(self.summary)
+        columns = QHBoxLayout()
+        columns.setContentsMargins(0, 0, 0, 0)
+        columns.setSpacing(12)
+        checks_col = QVBoxLayout()
+        checks_col.setContentsMargins(0, 0, 0, 0)
+        checks_col.setSpacing(2)
+        status_col = QVBoxLayout()
+        status_col.setContentsMargins(0, 0, 0, 0)
+        status_col.setSpacing(2)
 
         self.checks: dict[str, QCheckBox] = {}
         self.status_tags: dict[str, StatusTag] = {}
@@ -1967,50 +2026,52 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             row.setSpacing(6)
             box = QCheckBox(task.label, self)
             box.setToolTip(task.detail)
-            box.setChecked(_initenv.default_checked(task.key, _initenv.EnvStatus()))
+            box.setChecked(self._initial_checked(task.key))
             row.addWidget(box)
             tag = StatusTag("已初始化", tone="success", parent=self)
             tag.setToolTip("环境已就绪：保持勾选但不可再执行，需要重跑时请手动在实例内操作")
             tag.setVisible(False)
             row.addWidget(tag)
             row.addStretch(1)
-            details.addLayout(row)
+            checks_col.addLayout(row)
             self.checks[task.key] = box
             self.status_tags[task.key] = tag
+        checks_col.addStretch(1)
 
-        select_row = QHBoxLayout()
-        select_row.setContentsMargins(0, 0, 0, 0)
-        select_row.setSpacing(6)
-        select_all = button("全选", kind="ghost")
-        select_all.clicked.connect(lambda: self._set_all(True))
-        select_none = button("全不选", kind="ghost")
-        select_none.clicked.connect(lambda: self._set_all(False))
-        select_row.addWidget(select_all)
-        select_row.addWidget(select_none)
-        select_row.addStretch(1)
-        details.addLayout(select_row)
-
+        # 状态值单行显示（不换行才不撑高），完整内容放 tooltip；
+        # 两对一行排布，7 项压到 4 行。
         self.status_grid = FormGrid(self)
         self._status_values: dict[str, QLabel] = {}
-        for label, _value, _ok in _initenv.status_rows(_initenv.EnvStatus()):
-            value = QLabel("—", self)
-            value.setWordWrap(True)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.status_grid.add_row(label, value)
-            self._status_values[label] = value
-        details.addWidget(self.status_grid)
+        rows = _initenv.status_rows(_initenv.EnvStatus())
+        for index in range(0, len(rows), 2):
+            left_label = rows[index][0]
+            left_value = self._make_status_value()
+            self._status_values[left_label] = left_value
+            if index + 1 < len(rows):
+                right_label = rows[index + 1][0]
+                right_value = self._make_status_value()
+                self._status_values[right_label] = right_value
+                self.status_grid.add_pair(left_label, left_value, right_label, right_value)
+            else:
+                self.status_grid.add_row(left_label, left_value)
+        status_col.addWidget(self.status_grid)
+        status_col.addStretch(1)
+
+        columns.addLayout(checks_col, 1)
+        columns.addLayout(status_col, 1)
+        details.addLayout(columns)
 
         self.log = QPlainTextEdit(self)
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("执行日志…")
-        self.log.setMinimumHeight(90)
-        self.log.setMaximumHeight(140)
+        self.log.setMinimumHeight(56)
+        self.log.setMaximumHeight(72)
         details.addWidget(self.log)
 
         self.body.addWidget(self.details)
         self.details.setVisible(False)
 
-        # 动作行固定在卡片里，不随详情显隐：收起态下也能检测环境、复制 SSH、开始初始化。
+        # 动作行固定在卡片里，不随详情显隐：收起态下也能全选 / 检测 / 复制 / 初始化。
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(6)
@@ -2019,6 +2080,12 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self.copy_key.setToolTip("SSH 密钥生成后可用；复制的是 ~/.ssh/id_ed25519.pub 全文")
         self.copy_key.clicked.connect(self._copy_ssh_key)
         actions.addWidget(self.copy_key)
+        select_all = button("全选", kind="ghost")
+        select_all.clicked.connect(lambda: self._set_all(True))
+        select_none = button("全不选", kind="ghost")
+        select_none.clicked.connect(lambda: self._set_all(False))
+        actions.addWidget(select_all)
+        actions.addWidget(select_none)
         actions.addStretch(1)
         self.detect_button = button("检测环境")
         self.detect_button.clicked.connect(self.refresh_status)
@@ -2061,10 +2128,30 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         for key, tag in self._collapsed_tags.items():
             tag.setVisible(self._collapsed and key in self._done)
         self.collapsed_hint.setVisible(self._collapsed)
+        self.summary.setVisible(not self._collapsed)
         self.details.setVisible(not self._collapsed)
         _qt_icons.set_icon(self.toggle_button, "chevron-up" if not self._collapsed else "chevron-down", tone="muted")
         self.toggle_button.setToolTip("收起详情" if not self._collapsed else "展开详情")
         self.toggle_button.setAccessibleName(self.toggle_button.toolTip())
+
+    def _make_status_value(self) -> QLabel:
+        """状态值控件：单行 + 超宽省略靠 tooltip，避免长 URL 换行把卡片撑高。"""
+        value = QLabel("—", self)
+        value.setWordWrap(False)
+        value.setMinimumWidth(64)
+        value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        return value
+
+    def _initial_checked(self, key: str) -> bool:
+        """首次渲染的勾选：有保存值用保存值，否则按「未完成就勾选」默认。"""
+        if self._selected is not None:
+            return key in self._selected
+        return _initenv.default_checked(key, _initenv.EnvStatus())
+
+    def selected_keys(self) -> tuple[str, ...]:
+        """当前勾选且未就绪的项目 key，用于保存「已设置参数」。"""
+        return tuple(key for key, box in self.checks.items() if box.isChecked() and key not in self._done)
 
     @property
     def busy(self) -> bool:
@@ -2093,9 +2180,17 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         """回填详情；已就绪的项目勾选 + 禁用 + 绿色标签，其余按「尚未完成」默认勾选。"""
         self._status = status
         self._done = {key for key in self.checks if _initenv.present(key, status)}
-        self.summary.setText(_initenv.summary_text(status))
+        summary = _initenv.summary_text(status)
+        self.summary.setText(summary)
+        # 摘要行会自动省略，完整文案放 tooltip。
+        self.summary.setToolTip(summary)
         for key, box in self.checks.items():
-            box.setChecked(_initenv.present(key, status) or _initenv.default_checked(key, status))
+            if key in self._done:
+                box.setChecked(True)
+            elif self._selected is not None:
+                box.setChecked(key in self._selected)
+            else:
+                box.setChecked(_initenv.default_checked(key, status))
         for label, value, _ok in _initenv.status_rows(status):
             widget = self._status_values.get(label)
             if widget is not None:
@@ -2255,15 +2350,22 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
 class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
     """实例配置：设为默认发行版、终端默认目录，以及就地完成的环境初始化卡片。"""
 
-    def __init__(self, owner: WslmanQtWindow, distro: Distro, cwd: str) -> None:
+    def __init__(
+        self,
+        owner: WslmanQtWindow,
+        distro: Distro,
+        cwd: str,
+        *,
+        selected: Sequence[str] | None = None,
+    ) -> None:
         super().__init__(owner)
         self.setWindowTitle(f"配置 {distro.name}")
+        self.setToolTip(f"实例：{distro.name}")
         self._distro = distro
         self._detected = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(8)
-        outer.addWidget(hint_label(f"实例：{distro.name}"))
 
         self.make_default = QCheckBox("设为默认发行版", self)
         self.make_default.setChecked(distro.default)
@@ -2290,7 +2392,7 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         )
 
         # 初始化环境就地铺在配置对话框里：状态、勾选与三个动作都在同一层，不再开二级对话框。
-        self.init_env = _InitEnvSection(self, distro)
+        self.init_env = _InitEnvSection(self, distro, selected)
         outer.addWidget(self.init_env)
 
         actions = QHBoxLayout()

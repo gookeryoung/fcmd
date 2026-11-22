@@ -1558,6 +1558,9 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert section.run_button.isEnabled() is False
         assert "已初始化" in section.run_button.toolTip()
         assert "Python 3.12.3" in section.summary.fullText()
+        # 摘要行会省略，完整文案同步进 tooltip；展开区说明也收在卡片 tooltip 里。
+        assert section.summary.toolTip() == section.summary.fullText()
+        assert "检测与执行都会启动该实例" in section.toolTip()
         assert section._status_values["SSH 密钥"].text().startswith("ssh-ed25519 ")
 
         section._copy_ssh_key()
@@ -1616,6 +1619,28 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert "-u" not in calls[1]
         assert calls[0][-1] == _initenv.steps_for(["ssh"])[0].script
         assert calls[1][-1] == _initenv.steps_for(["ssh"])[1].script
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_init_env_section_restores_saved_selection(home: Path) -> None:
+    """初始化勾选是「已设置参数」：有保存值时按保存值勾选，探测后也不被默认勾选覆盖。"""
+    owner = QWidget()
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"), selected=("python", "rust"))
+    try:
+        assert section.checks["python"].isChecked() is True
+        assert section.checks["rust"].isChecked() is True
+        assert section.checks["node"].isChecked() is False
+        assert section.selected_keys() == ("python", "rust")
+
+        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
+        # 已就绪的 python 被强制勾选并禁用，但不再计入待执行选择。
+        assert section.checks["python"].isChecked() is True
+        assert section.checks["python"].isEnabled() is False
+        assert section.checks["rust"].isChecked() is True
+        assert section.checks["node"].isChecked() is False
+        assert section.selected_keys() == ("rust",)
     finally:
         section.deleteLater()
         owner.deleteLater()
@@ -1736,6 +1761,45 @@ def test_distro_config_collapses_back_to_initial_height(home: Path, monkeypatch:
     finally:
         dialog.deleteLater()
         owner.deleteLater()
+
+
+def test_dialog_geometry_persists_and_restores(home: Path) -> None:
+    """配置窗口的位置 / 尺寸写进设置文件，下次打开在原处还原；初始化勾选一并持久化。"""
+    app = QApplication.instance()
+    assert app is not None
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        dialog = _wslmanw_qt._DistroConfigDialog(window, _distro("Ubuntu"), "~", selected=("node",))
+        dialog.show()
+        app.processEvents()
+        dialog.setGeometry(40, 30, 700, 520)
+        app.processEvents()
+        expected = dialog.geometry()
+        window._save_dialog_geometry("distro_config", dialog)
+        window._save_init_tasks("Ubuntu", dialog.init_env.selected_keys())
+        window._persist_settings(window.geometry_text())
+        dialog.deleteLater()
+
+        raw = json.loads(_guiconfig.config_path(wslmanw.SETTINGS_NAME).read_text(encoding="utf-8"))
+        assert raw["dialog_geometry"]["distro_config"] == _wslmanw_qt.format_geometry(
+            expected.width(), expected.height(), expected.x(), expected.y()
+        )
+        assert raw["distro_init_tasks"] == {"Ubuntu": ["node"]}
+
+        restored = _wslmanw_qt._DistroConfigDialog(
+            window, _distro("Ubuntu"), "~", selected=wslmanw.init_task_keys(wslmanw.load_settings(), "Ubuntu")
+        )
+        window._restore_dialog_geometry("distro_config", restored)
+        try:
+            assert restored.init_env.checks["node"].isChecked() is True
+            assert restored.init_env.checks["python"].isChecked() is False
+            assert restored.geometry() == expected
+        finally:
+            restored.deleteLater()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
 
 
 def test_image_manager_exports_deletes_and_cleans_cache(

@@ -34,6 +34,7 @@ __all__ = [
     "summary_text",
     "tail_lines",
     "task_by_key",
+    "task_keys",
     "task_labels",
 ]
 
@@ -275,6 +276,11 @@ def steps_for(keys: Sequence[str]) -> tuple[InitStep, ...]:
         if task.key in selected:
             steps.extend(task.steps)
     return tuple(steps)
+
+
+def task_keys() -> tuple[str, ...]:
+    """全部可初始化项目的 key（按固定顺序）。"""
+    return tuple(task.key for task in TASKS)
 
 
 def task_labels(keys: Sequence[str]) -> tuple[str, ...]:

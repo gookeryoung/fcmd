@@ -110,6 +110,8 @@ def test_settings_mapping_is_json_friendly() -> None:
         "image_sort": "name",
         "image_source": "all",
         "distro_terminal_dirs": {},
+        "dialog_geometry": {},
+        "distro_init_tasks": {},
     }
 
 
@@ -134,6 +136,34 @@ def test_terminal_dirs_tolerate_bad_values() -> None:
     )
     assert settings.distro_terminal_dirs == {"Ubuntu": "/srv/app", "Alpine": "~"}
     assert wslmanw.settings_from_mapping({"distro_terminal_dirs": "bogus"}).distro_terminal_dirs == {}
+
+
+def test_dialog_geometry_roundtrip_and_casefold_lookup() -> None:
+    """对话框几何按名字（大小写不敏感）保存；非法几何不写入。"""
+    settings = wslmanw.with_dialog_geometry(wslmanw.WslmanwSettings(), "distro_config", "720x480+10+20")
+    assert wslmanw.dialog_geometry(settings, "DISTRO_CONFIG") == "720x480+10+20"
+    assert wslmanw.dialog_geometry(settings, "image_manager") is None
+
+    cleared = wslmanw.with_dialog_geometry(settings, "distro_config", "bogus")
+    assert cleared.dialog_geometry == {}
+
+    raw = wslmanw.settings_to_mapping(settings)
+    assert wslmanw.settings_from_mapping(raw).dialog_geometry == {"distro_config": "720x480+10+20"}
+    dirty = wslmanw.settings_from_mapping({"dialog_geometry": {"ok": "640x400+0+0", "bad": "nope", 42: "x"}})
+    assert dirty.dialog_geometry == {"ok": "640x400+0+0"}
+
+
+def test_init_task_keys_roundtrip_and_validation() -> None:
+    """初始化勾选按实例保存：忽略未知 key，按任务固定顺序输出，未记录时返回 None。"""
+    settings = wslmanw.with_init_task_keys(wslmanw.WslmanwSettings(), "Ubuntu", ["node", "python", "node", "bogus"])
+    assert wslmanw.init_task_keys(settings, "ubuntu") == ("python", "node")
+    assert wslmanw.init_task_keys(settings, "Debian") is None
+
+    raw = wslmanw.settings_to_mapping(settings)
+    assert raw["distro_init_tasks"] == {"Ubuntu": ["python", "node"]}
+    assert wslmanw.settings_from_mapping(raw).distro_init_tasks == {"Ubuntu": ("python", "node")}
+    dirty = wslmanw.settings_from_mapping({"distro_init_tasks": {"Alt": ["rust", 1], "Bad": "python"}})
+    assert dirty.distro_init_tasks == {"Alt": ("rust",)}
 
 
 def test_image_view_options_fall_back_on_bad_values() -> None:

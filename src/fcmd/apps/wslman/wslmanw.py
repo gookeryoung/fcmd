@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.apps.wslman import _images, _mirrors
+from fcmd.apps.wslman import _images, _initenv, _mirrors
 from fcmd.apps.wslman._disk import format_bytes
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError
@@ -34,6 +34,7 @@ __all__ = [
     "action_states",
     "config_path",
     "detail_fields",
+    "dialog_geometry",
     "distro_image_text",
     "download_progress_text",
     "export_progress_text",
@@ -47,6 +48,7 @@ __all__ = [
     "image_sort_key",
     "image_source_text",
     "image_status_text",
+    "init_task_keys",
     "load_settings",
     "main",
     "pick_download",
@@ -59,6 +61,8 @@ __all__ = [
     "summary_text",
     "terminal_cwd",
     "unregister_confirm_enabled",
+    "with_dialog_geometry",
+    "with_init_task_keys",
     "with_terminal_cwd",
 ]
 
@@ -203,6 +207,10 @@ class WslmanwSettings:
     image_source: str = DEFAULT_IMAGE_SOURCE
     distro_terminal_dirs: Mapping[str, str] = field(default_factory=dict)
     """按实例名保存的终端默认目录；缺省 / ``~`` 时由 :data:`DEFAULT_TERMINAL_CWD` 接管。"""
+    dialog_geometry: Mapping[str, str] = field(default_factory=dict)
+    """按对话框名保存的几何：下次打开还原上次的尺寸与位置。"""
+    distro_init_tasks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    """按实例名保存的初始化勾选；未记录时按探测结果默认勾选。"""
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -216,6 +224,8 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "image_sort": settings.image_sort,
         "image_source": settings.image_source,
         "distro_terminal_dirs": dict(settings.distro_terminal_dirs),
+        "dialog_geometry": dict(settings.dialog_geometry),
+        "distro_init_tasks": {name: list(keys) for name, keys in settings.distro_init_tasks.items()},
     }
 
 
@@ -233,6 +243,8 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         image_sort=_choice(raw, "image_sort", IMAGE_SORTS, DEFAULT_IMAGE_SORT),
         image_source=_choice(raw, "image_source", IMAGE_SOURCES, DEFAULT_IMAGE_SOURCE),
         distro_terminal_dirs=_terminal_dirs(raw.get("distro_terminal_dirs")),
+        dialog_geometry=_dialog_geometries(raw.get("dialog_geometry")),
+        distro_init_tasks=_init_tasks(raw.get("distro_init_tasks")),
     )
 
 
@@ -275,6 +287,72 @@ def with_terminal_cwd(settings: WslmanwSettings, name: str, cwd: str) -> Wslmanw
     if target != DEFAULT_TERMINAL_CWD:
         dirs[name.strip()] = target
     return replace(settings, distro_terminal_dirs=dirs)
+
+
+def _dialog_geometries(value: Any) -> dict[str, str]:
+    """解析对话框 → 几何映射；忽略非法名称 / 几何文本。"""
+    if not isinstance(value, Mapping):
+        return {}
+    out: dict[str, str] = {}
+    for name, geometry in value.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(geometry, str):
+            continue
+        valid = _guiconfig.valid_geometry(geometry)
+        if valid is not None:
+            out[name.strip()] = valid
+    return out
+
+
+def _init_tasks(value: Any) -> dict[str, tuple[str, ...]]:
+    """解析实例 → 初始化勾选；只保留当前仍存在的任务 key，并按固定顺序排列。"""
+    if not isinstance(value, Mapping):
+        return {}
+    order = _initenv.task_keys()
+    known = set(order)
+    out: dict[str, tuple[str, ...]] = {}
+    for name, keys in value.items():
+        if not isinstance(name, str) or not name.strip() or isinstance(keys, str) or not isinstance(keys, Sequence):
+            continue
+        chosen = {key for key in keys if isinstance(key, str) and key in known}
+        out[name.strip()] = tuple(key for key in order if key in chosen)
+    return out
+
+
+def dialog_geometry(settings: WslmanwSettings, name: str) -> str | None:
+    """返回对话框上次的几何（大小写不敏感）；未记录时返回 ``None``。"""
+    key = name.strip().casefold()
+    for saved, geometry in settings.dialog_geometry.items():
+        if saved.strip().casefold() == key:
+            return geometry or None
+    return None
+
+
+def with_dialog_geometry(settings: WslmanwSettings, name: str, geometry: str) -> WslmanwSettings:
+    """返回写入对话框几何后的设置；几何非法时删掉该项。"""
+    key = name.strip().casefold()
+    saved = {item: value for item, value in settings.dialog_geometry.items() if item.strip().casefold() != key}
+    valid = _guiconfig.valid_geometry(geometry)
+    if valid is not None:
+        saved[name.strip()] = valid
+    return replace(settings, dialog_geometry=saved)
+
+
+def init_task_keys(settings: WslmanwSettings, name: str) -> tuple[str, ...] | None:
+    """返回实例上次保存的初始化勾选；未记录时返回 ``None``（按默认勾选）。"""
+    key = name.strip().casefold()
+    for saved, keys in settings.distro_init_tasks.items():
+        if saved.strip().casefold() == key:
+            return keys
+    return None
+
+
+def with_init_task_keys(settings: WslmanwSettings, name: str, keys: Sequence[str]) -> WslmanwSettings:
+    """返回写入实例初始化勾选后的设置；按任务固定顺序去重。"""
+    key = name.strip().casefold()
+    chosen = set(keys)
+    tasks = {saved: value for saved, value in settings.distro_init_tasks.items() if saved.strip().casefold() != key}
+    tasks[name.strip()] = tuple(item for item in _initenv.task_keys() if item in chosen)
+    return replace(settings, distro_init_tasks=tasks)
 
 
 def config_path() -> Path:
