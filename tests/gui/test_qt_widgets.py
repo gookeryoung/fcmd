@@ -399,6 +399,17 @@ def test_toggle_chip_is_pill_with_icon_and_checkable() -> None:
         chip.deleteLater()
 
 
+def test_toggle_chip_tall_matches_icon_button_height() -> None:
+    """输入区胶囊用 ``tall`` 与 34px 发送 / 设置图标按钮同高，外框上下沿对齐。"""
+    chip = ToggleChip("画图", icon="paint", tall=True)
+    try:
+        assert chip.property("tall") == "true"
+        assert chip.height() == 34
+        assert chip.sizeHint().height() == 34
+    finally:
+        chip.deleteLater()
+
+
 def test_toggle_chip_keeps_capsule_height_and_symmetric_padding() -> None:
     """胶囊应用 QSS 后仍是 30px 高（圆角才成胶囊），内容左右留白等宽。
 

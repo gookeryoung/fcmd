@@ -135,6 +135,7 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         *,
         icon: str = "",
         tooltip: str = "",
+        tall: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -143,7 +144,11 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.setText(text)
-        self.setFixedHeight(self._HEIGHT)
+        # 输入区工具行里的胶囊与 34px 图标按钮同高，外框上下沿对齐。
+        self._height = 34 if tall else self._HEIGHT
+        if tall:
+            self.setProperty("tall", "true")
+        self.setFixedHeight(self._height)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._icon_name = icon
         self._hovered = False
@@ -158,7 +163,7 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         icon_width = self.iconSize().width() if not self.icon().isNull() else 0
         gap = self._ICON_GAP if icon_width else 0
         width = 2 * self._H_PADDING + icon_width + gap + metrics.horizontalAdvance(self.text())
-        return QSize(width, self._HEIGHT)
+        return QSize(width, self._height)
 
     def minimumSizeHint(self) -> QSize:
         """布局压缩时也不低于内容宽度，避免文字贴边。"""
@@ -180,14 +185,18 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         icon_width = icon_size.width() if not icon.isNull() else 0
         gap = self._ICON_GAP if icon_width else 0
         text = self.text()
-        x = (self.width() - icon_width - gap - metrics.horizontalAdvance(text)) // 2
+        ink = metrics.tightBoundingRect(text)
+        # 用文字墨迹宽度（而非 advance）与图标一起做光学居中：advance 尾部留白会
+        # 让整组内容视觉偏左，胶囊右侧看起来比左侧空。
+        group = icon_width + gap + ink.width()
+        x = (self.width() - group) // 2
         if icon_width:
             painter.drawPixmap(x, (self.height() - icon_size.height()) // 2, icon.pixmap(icon_size))
             x += icon_width + gap
         painter.setPen(self._content_color())
-        # 用文字实际墨迹框（去掉字体上下 leading）居中，避免 CJK 比图标偏低。
-        bounds = metrics.tightBoundingRect(text)
-        painter.drawText(x, (self.height() - bounds.height()) // 2 - bounds.top(), text)
+        # 文字墨迹中心与图标中心重叠，避免 CJK 文字比图标偏高 / 偏低。
+        baseline = round(self.height() / 2 - (ink.top() + ink.bottom()) / 2)
+        painter.drawText(x - ink.left(), baseline, text)
 
     def _content_color(self) -> QColor:
         """内容色与 QSS 语义色一致：选中 accent、悬停 text、其余 muted。"""

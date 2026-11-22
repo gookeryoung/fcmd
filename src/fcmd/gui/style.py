@@ -329,6 +329,11 @@ QToolButton#ToggleChip {
     max-height: 30px;
     font-weight: 500;
 }
+QToolButton#ToggleChip[tall="true"] {
+    min-height: 34px;
+    max-height: 34px;
+    border-radius: 17px;
+}
 QToolButton#ToggleChip:hover { background: $surface_active; color: $text; }
 QToolButton#ToggleChip:checked {
     background: $accent_soft;

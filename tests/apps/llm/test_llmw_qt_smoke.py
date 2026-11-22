@@ -181,7 +181,7 @@ def test_chat_mode_chips_are_rounded_exclusive_toggles(window: Any) -> None:
         (chat.paint_toggle, "paint", "muted"),
     ):
         assert chip.isCheckable()
-        assert chip.height() == 30
+        assert chip.height() == 34  # 与右侧 34px 发送图标同高
         assert chip.text()
         assert chip.icon().isNull() is False
         assert chip.property("fcmdIconName") == icon

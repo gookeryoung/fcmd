@@ -476,6 +476,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
             "对话",
             icon="chat",
             tooltip="发送文字问题，由所选模型回答",
+            tall=True,
             parent=composer,
         )
         self.chat_toggle.setAccessibleName("对话")
@@ -484,6 +485,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
             "画图",
             icon="paint",
             tooltip="用提示词生成图片（sd.cpp）；采样 / 输出在 ⚙ 配置里，模型在运行页「画图」页签",
+            tall=True,
             parent=composer,
         )
         self.paint_toggle.setAccessibleName("画图")
