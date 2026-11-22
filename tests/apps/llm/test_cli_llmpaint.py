@@ -689,6 +689,32 @@ class TestInstallEngine:
         assert engine.exe == source / "sd-server.exe"
         assert (home / "engines" / "sd.cpp" / "local" / "engine.json").is_file()
 
+    def test_backup_remove_and_cleanup_sd_engines(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        for tag in ("sd-a", "sd-b"):
+            archive = _make_zip(tmp_path / f"{tag}.zip", {"sd-server.exe": b"exe"})
+            _llmpaint_engine.install_sd_engine(tag, archives=[archive], home=home, use=tag == "sd-b")
+        archive = _llmpaint_engine.backup_sd_engine("sd-a", home=home)
+        assert archive.parent == home / "engines" / "sd.cpp" / "backups"
+        assert archive.name.startswith("sd-sd-a-") and archive.is_file()
+        with pytest.raises(ServeError, match="默认引擎"):
+            _llmpaint_engine.remove_sd_engine("sd-b", home)
+        assert _llmpaint_engine.remove_sd_engine("sd-a", home) == "sd-a"
+
+        root = home / "engines" / "sd.cpp" / "sd-b"
+        cached = root / "sd-master-bin.zip"
+        cached.write_bytes(b"zip")
+        (root / "cudart.zip.part").write_bytes(b"part")
+        staging = root / ".sd.extract"
+        staging.mkdir()
+        (staging / "x").write_text("x", encoding="utf-8")
+        result = _llmpaint_engine.cleanup_sd_engines(home, downloads=True)
+        assert result.removed_files == 2
+        assert result.removed_dirs == 1
+        assert not cached.exists() and not staging.exists()
+        assert archive.is_file()
+        assert (root / "sd-server.exe").is_file()
+
     def test_install_rejects_bad_archives(self, tmp_path: Path) -> None:
         broken = tmp_path / "broken.zip"
         broken.write_bytes(b"not a zip")

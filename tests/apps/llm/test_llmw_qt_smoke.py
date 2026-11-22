@@ -1298,11 +1298,28 @@ def test_settings_paint_engine_card_matches_llama_layout(window: Any) -> None:
     assert not hasattr(card, "open_button") or card.open_button is None
     assert card.install_button.text() == "下载引擎"
     assert card.extra_buttons[0].text() == "导入压缩包"
+    assert card.manage_button is not None and card.manage_button.text() == "管理…"
     assert card.engines_list.objectName() == "PaintEngineList"
     assert card.engines_empty.text().startswith("还没有已安装 sd.cpp 引擎")
     # 旧的状态胶囊 / 自绘行布局已移除，改为与推理引擎一致的列表行。
     assert not hasattr(card, "engine_tag")
     assert not hasattr(card, "rows")
+
+
+def test_paint_engine_manage_dialog_uses_sd_admin(window: Any) -> None:
+    """sd.cpp 卡片提供与管理入口相同的对话框，只隐藏不适用的「清理源码」。"""
+    window.show_page("settings")
+    card = window.page("settings").paint_engine_card
+    card.manage_button.click()
+    dialog = card._manage_dialog
+    try:
+        assert dialog.windowTitle() == "管理画图引擎"
+        assert dialog.cleanup_source_button.isHidden()
+        assert dialog.cleanup_all_button.isHidden()
+        assert not dialog.cleanup_cache_button.isHidden()
+    finally:
+        dialog.close()
+        dialog.deleteLater()
 
 
 def test_settings_single_sd_engine_card_is_shared(window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

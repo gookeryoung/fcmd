@@ -12,7 +12,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -27,11 +29,18 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.apps.llm import llmengine, llmenv
+from fcmd.apps.llm._llmw_qt_engine_card import EngineOption
 from fcmd.apps.llm.llmbase import EngineInfo
 from fcmd.gui.qt.widgets import Card, button, confirm, hint_label
 from fcmd.gui.qt.workers import submit
 
-__all__ = ["EngineManageDialog", "backup_default_path"]
+__all__ = ["EngineAdminConfig", "EngineManageDialog", "backup_default_path", "llama_engine_admin"]
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from fcmd.apps.llm.llmengine import CleanupResult
 
 
 def backup_default_path(tag: str, home: Path | None = None, *, stamp: str | None = None) -> Path:
@@ -40,15 +49,66 @@ def backup_default_path(tag: str, home: Path | None = None, *, stamp: str | None
     return llmenv.engines_root(home) / "backups" / f"llama-{tag}{suffix}.zip"
 
 
+@dataclass(frozen=True, slots=True)
+class EngineAdminConfig:
+    """管理对话框的差异配置：llama.cpp / sd.cpp 只换回调与文案。"""
+
+    dialog_title: str
+    root: Callable[[], Path]
+    load: Callable[[], list[EngineOption]]
+    backup: Callable[[str, Path], Path]
+    remove: Callable[[str], str]
+    cleanup: Callable[[bool, bool], CleanupResult]
+    backup_prefix: str
+    supports_sources: bool = True
+    empty_text: str = "还没有已安装引擎"
+
+
+def llama_engine_admin() -> EngineAdminConfig:
+    """推理引擎（llama.cpp）的管理配置。"""
+
+    def load() -> list[EngineOption]:
+        return [
+            EngineOption(
+                tag=info.tag,
+                exe=info.exe,
+                current=info.source == "current",
+                display_name=info.tag,
+                badge="",
+                tooltip=f"{info.tag} / {info.exe}",
+            )
+            for info in llmengine.list_engines()
+        ]
+
+    return EngineAdminConfig(
+        dialog_title="管理推理引擎",
+        root=llmenv.engines_root,
+        load=load,
+        backup=llmengine.backup_engine,
+        remove=llmengine.remove_engine,
+        cleanup=lambda downloads, sources: llmengine.cleanup_engines(downloads=downloads, sources=sources),
+        backup_prefix="llama",
+        supports_sources=True,
+        empty_text="还没有已安装 llama.cpp 引擎",
+    )
+
+
 class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
     """推理引擎管理：备份 / 删除 / 清理。"""
 
     changed = Signal()
     """引擎目录发生变化（删除 / 清理）后发出，设置页据此刷新列表与源码状态。"""
 
-    def __init__(self, parent: QWidget | None = None, *, home: Path | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        home: Path | None = None,
+        admin: EngineAdminConfig | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("管理推理引擎")
+        self.admin = admin or llama_engine_admin()
+        self.setWindowTitle(self.admin.dialog_title)
         self.setModal(False)
         self.resize(620, 420)
         self._home = home
@@ -101,6 +161,9 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         self.cleanup_all_button = button("全部清理", kind="ghost")
         self.cleanup_all_button.clicked.connect(lambda: self._cleanup(downloads=True, sources=True))
         cleanup_row.addWidget(self.cleanup_all_button)
+        if not self.admin.supports_sources:
+            self.cleanup_source_button.setVisible(False)
+            self.cleanup_all_button.setVisible(False)
         cleanup_card.body.addLayout(cleanup_row)
         layout.addWidget(cleanup_card)
 
@@ -124,18 +187,18 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         """重新读取引擎列表并恢复选中项。"""
         selected = self.selected_tag()
         try:
-            self._engines = llmengine.list_engines(self._home)
+            self._engines = list(self.admin.load())
         except OSError as exc:
             self._engines = []
             self._set_status(f"读取引擎失败：{exc}")
         self.list.clear()
         for info in self._engines:
-            default = info.source == "current"
+            default = info.current
             text = f"{info.tag}{' · 默认' if default else ''}    {info.exe}"
             item = QListWidgetItem(text, self.list)
             item.setData(Qt.ItemDataRole.UserRole, info.tag)
             item.setData(Qt.ItemDataRole.UserRole + 1, default)
-            item.setToolTip(f"{info.tag}\n{info.exe}\n来源：{info.source or '-'}")
+            item.setToolTip(info.tooltip or f"{info.tag} / {info.exe}")
         if self.list.count():
             row = next((index for index, item in enumerate(self._items()) if item == selected), 0)
             self.list.setCurrentRow(row)
@@ -154,7 +217,7 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         item = self.list.currentItem()
         return str(item.data(Qt.ItemDataRole.UserRole) or "") if item is not None else ""
 
-    def selected_info(self) -> EngineInfo | None:
+    def selected_info(self) -> EngineOption | None:
         """当前选中的引擎信息。"""
         tag = self.selected_tag()
         return next((info for info in self._engines if info.tag == tag), None)
@@ -162,7 +225,7 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
     def _sync_buttons(self) -> None:
         info = self.selected_info()
         has = info is not None and not self._busy
-        current = bool(info is not None and info.source == "current")
+        current = bool(info is not None and info.current)
         self.backup_button.setEnabled(has)
         self.open_button.setEnabled(has)
         self.delete_button.setEnabled(has and not current)
@@ -200,8 +263,9 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         tag = self.selected_tag()
         if not tag:
             return
+        default = self.admin.root() / "backups" / f"{self.admin.backup_prefix}-{tag}.zip"
         chosen, _filter = QFileDialog.getSaveFileName(
-            self, "备份引擎", str(backup_default_path(tag, self._home)), "Zip 压缩包 (*.zip);;所有文件 (*.*)"
+            self, "备份引擎", str(default), "Zip 压缩包 (*.zip);;所有文件 (*.*)"
         )
         if not chosen:
             return
@@ -229,9 +293,7 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         self._set_busy(True)
         self._set_status(f"正在删除 {info.tag}…")
         submit(
-            llmengine.remove_engine,
-            info.tag,
-            self._home,
+            lambda: self.admin.remove(info.tag),
             on_done=self._delete_done,
             on_error=lambda message: self._error("删除失败", message),
         )
@@ -261,7 +323,7 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         self._set_busy(True)
         self._set_status("正在清理引擎目录…")
         submit(
-            lambda: llmengine.cleanup_engines(self._home, downloads=downloads, sources=sources),
+            lambda: self.admin.cleanup(downloads, sources),
             on_done=self._cleanup_done,
             on_error=lambda message: self._error("清理失败", message),
         )

@@ -7,6 +7,10 @@
 
 ### 变更
 
+- sd.cpp 引擎卡补齐管理入口：与推理引擎共用 `EngineCard` 与 `EngineManageDialog`，
+  支持备份（`<引擎根>/backups/sd-<tag>-<时间>.zip`）、删除（默认引擎需先切换）与清理
+  下载缓存（zip / .part / 临时解压目录，`backups/` 保留）；sd.cpp 无转换源码，管理
+  对话框自动隐藏「清理源码 / 全部清理」，仅保留下载缓存清理。
 - llmw「模型转换」的「引擎 tag」改为可编辑下拉框（列出已安装引擎，也可填自定义 tag）；
   新增「查看支持的架构…」读取当前转换脚本的 `conversion/` 注册表，方便判断某个模型
   架构（如 WeMM-Video-9B 的 `WeMMVideoForConditionalGeneration`）是否可转换。不支持时

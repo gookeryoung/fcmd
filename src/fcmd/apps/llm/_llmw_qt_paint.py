@@ -1172,6 +1172,26 @@ def build_paint_engine_card(parent: QWidget | None = None) -> EngineCard:
             on_error=lambda message: QMessageBox.critical(card, "导入失败", message),
         )
 
+    def manage(card: EngineCard) -> None:
+        from fcmd.apps.llm._llmw_qt_engine_manage import EngineAdminConfig, EngineManageDialog
+
+        admin = EngineAdminConfig(
+            dialog_title="管理画图引擎",
+            root=_llmconfig.paint_engines_root,
+            load=load,
+            backup=_llmpaint_engine.backup_sd_engine,
+            remove=_llmpaint_engine.remove_sd_engine,
+            cleanup=lambda downloads, _sources: _llmpaint_engine.cleanup_sd_engines(downloads=downloads),
+            backup_prefix="sd",
+            supports_sources=False,
+        )
+        dialog = EngineManageDialog(card, admin=admin)
+        dialog.changed.connect(lambda: (card.refresh(), card.changed.emit()))
+        card._manage_dialog = dialog  # type: ignore[attr-defined]
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     root_row = PathRow(
         value=str(_llmconfig.paint_engines_root()),
         directory=True,
@@ -1201,6 +1221,8 @@ def build_paint_engine_card(parent: QWidget | None = None) -> EngineCard:
         install=install,
         install_text="下载引擎",
         install_tooltip="从 GitHub releases 选择 stable-diffusion.cpp 版本与变体下载到引擎目录",
+        manage=manage,
+        manage_tooltip="备份 / 删除画图引擎，清理下载缓存",
         root_text=lambda: str(_llmconfig.paint_engines_root()),
         row_use_tooltip="把该引擎设为默认 sd.cpp 引擎（画图 / 视频 / 音频共用）",
         row_current_tooltip="画图 / 视频 / 音频共用该引擎",

@@ -9,10 +9,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import shutil
+import time
 import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -40,7 +42,9 @@ __all__ = [
     "SdAsset",
     "SdEngine",
     "SdRelease",
+    "backup_sd_engine",
     "check_sd_engine",
+    "cleanup_sd_engines",
     "current_sd_tag",
     "engine_backend",
     "engine_version",
@@ -52,6 +56,7 @@ __all__ = [
     "missing_cuda_runtime",
     "parse_sd_releases",
     "pick_default_variant",
+    "remove_sd_engine",
     "resolve_sd_engine",
     "sd_engine_env",
     "use_sd_engine",
@@ -356,6 +361,80 @@ def _write_engine_marker(target: Path, engine: SdEngine) -> None:
 def current_sd_tag(home: Path | None = None) -> str | None:
     """读取 ``current.json`` 中记录的当前引擎 tag。"""
     return llmengine.current_engine_tag(_llmconfig.paint_engines_root(home))
+
+
+def backup_sd_engine(tag: str, dest: Path | None = None, home: Path | None = None) -> Path:
+    """把已安装 sd.cpp 引擎目录打包为 zip（默认 ``<引擎根>/backups/sd-<tag>-<时间>.zip``）。"""
+    root = _llmconfig.paint_engines_root(home)
+    target = root / tag
+    if _engine_info(target, tag) is None:
+        raise ServeError(f"画图引擎 {tag!r} 未安装，无法备份")
+    if dest is None:
+        dest = root / "backups" / f"sd-{tag}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    dest = Path(dest).expanduser()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".part")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for path in sorted(target.rglob("*")):
+                if path.is_file() and not path.name.endswith(".part"):
+                    bundle.write(path, path.relative_to(target))
+        tmp.replace(dest)
+    except OSError as exc:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        raise ServeError(f"备份画图引擎失败: {exc}") from exc
+    return dest
+
+
+def remove_sd_engine(tag: str, home: Path | None = None) -> str:
+    """删除一个非默认 sd.cpp 引擎目录；默认引擎需先切换到其它引擎。"""
+    root = _llmconfig.paint_engines_root(home)
+    target = root / tag
+    if _engine_info(target, tag) is None:
+        raise ServeError(f"画图引擎 {tag!r} 未安装")
+    if current_sd_tag(home) == tag:
+        raise ServeError(f"画图引擎 {tag!r} 是当前默认引擎；请先切换到其它引擎再删除")
+    shutil.rmtree(target)
+    return tag
+
+
+def cleanup_sd_engines(home: Path | None = None, *, downloads: bool = True) -> llmengine.CleanupResult:
+    """清理 sd.cpp 引擎根下的下载缓存（zip / .part / 临时解压目录）。
+
+    ``backups/`` 永不清理；sd.cpp 没有转换源码目录，``sources`` 由调用方忽略。
+    """
+    root = _llmconfig.paint_engines_root(home)
+    if not root.is_dir():
+        return llmengine.CleanupResult()
+    removed_files = 0
+    removed_dirs = 0
+    freed_bytes = 0
+    for path in sorted(root.rglob("*"), reverse=True):
+        try:
+            relative = path.relative_to(root)
+        except ValueError:  # pragma: no cover
+            continue
+        if relative.parts and relative.parts[0] == "backups":
+            continue
+        if path.is_dir():
+            if path.name == ".extract" or path.name.endswith(".extract"):
+                size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+                shutil.rmtree(path, ignore_errors=True)
+                removed_dirs += 1
+                freed_bytes += size
+            continue
+        if not path.is_file():
+            continue
+        name = path.name.casefold()
+        if downloads and (name.endswith(".part") or name.endswith(".zip") or name.endswith(".zip.tmp")):
+            try:
+                freed_bytes += path.stat().st_size
+                path.unlink()
+                removed_files += 1
+            except OSError:
+                continue
+    return llmengine.CleanupResult(removed_files=removed_files, removed_dirs=removed_dirs, freed_bytes=freed_bytes)
 
 
 def use_sd_engine(tag: str, home: Path | None = None) -> SdEngine:
