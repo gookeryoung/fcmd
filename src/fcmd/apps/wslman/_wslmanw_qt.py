@@ -7,9 +7,9 @@
 
 布局与 llmw 对齐：复用共享 :class:`fcmd.gui.qt.window.QtMainWindow` 的左侧
 :class:`~fcmd.gui.qt.sidebar.SidebarNav` 导航（折叠、``Alt+1..4`` 切换与窗口
-几何记忆都由基座提供），右侧按「发行版 / 镜像 / 设置」分页，每页拿满整个
+几何记忆都由基座提供），右侧按「实例 / 镜像 / 设置」分页，每页拿满整个
 内容区，不再把详情、下载与配置挤进同一个底部标签页；任务日志不占分页，从
-「帮助 → 任务日志…」打开。发行版页用一个
+「帮助 → 任务日志…」打开。实例页用一个
 纵向分栏把列表与详情分开；下载目录 / 下载源 / 校验这类配置统一放设置页，
 镜像页只留列表与下载动作；镜像页参考 llmw 模型列表：自定义行卡铺满整页，
 详情与下载地址通过行内「展开」就地显示，不再占用右侧面板；进页先回显磁盘缓存
@@ -63,7 +63,7 @@ from fcmd.apps.wslman._config import (
 from fcmd.apps.wslman._disk import distro_disk_bytes, format_bytes, recommended_backup_dir
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
-from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command
+from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command, spawn_detached
 from fcmd.apps.wslman._transfer import sha256_file
 from fcmd.gui.qt.page import PageBody, PageSpec
 from fcmd.gui.qt.widgets import (
@@ -97,10 +97,18 @@ __all__ = ["WslmanQtWindow", "run_qt"]
 
 DEFAULT_SIZE = (1160, 760)
 
+_KEEPALIVE_LOOP = "while :; do sleep 3600; done"
+"""启动实例时的看护命令：常驻一个 sleep 循环，让实例在 wslmanw 关闭后仍保持运行。
+
+用 POSIX ``sh`` 循环而不是 ``sleep infinity``：部分镜像的 ``sleep`` 不认 ``infinity``，
+循环在任何有 ``/bin/sh`` 的发行版里都能work；用户点「停止」（``wsl --terminate``）
+会连同它一起结束。
+"""
+
 _LOG_LINES_MAX = 1000
 """任务日志缓冲上限（行）；超出后丢弃最旧的，避免长时间运行吃内存。"""
 
-TITLE = "WSL · 发行版管理"
+TITLE = "WSL · 实例管理"
 NAV_TITLE = "WSL"
 
 HOME_CWD = "~"
@@ -111,7 +119,7 @@ HOME_CWD = "~"
 """
 
 PAGES: tuple[PageSpec, ...] = (
-    PageSpec("distros", "发行版", "列表、详情、启动停止、导出与注销", "distros"),
+    PageSpec("distros", "实例", "列表、详情、启动停止、导出与注销", "distros"),
     PageSpec("images", "镜像", "在线镜像清单、本地安装与清单更新", "disc"),
     PageSpec("settings", "设置", "下载目录、下载源与校验", "settings"),
 )
@@ -155,14 +163,14 @@ class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
 
 
 def _state_tone(state: str) -> str:
-    """发行版状态 → 胶囊色调（与 ``state_label`` 的文案配套）。"""
+    """实例状态 → 胶囊色调（与 ``state_label`` 的文案配套）。"""
     return {"running": "success", "stopped": "muted", "unknown": "warning"}.get(state, "muted")
 
 
 class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
-    """发行版行卡：共享 :class:`ItemRow` 骨架 + 发行版自己的状态位。
+    """实例行卡：共享 :class:`ItemRow` 骨架 + 实例自己的状态位。
 
-    标题是发行版名，副标题行是「版本 + 对应的在线镜像」；状态胶囊与默认胶囊
+    标题是实例名，副标题行是「版本 + 对应的在线镜像」；状态胶囊与默认胶囊
     贴在同一行行尾，右侧是磁盘占用、行内启停按钮与展开箭头。详情（BasePath /
     虚拟磁盘 / 占用 / 默认用户 / 来源）由 ``_DistroDetailView`` 挂到
     ``detail_layout`` 就地显开，同一时间只展开一行。
@@ -217,7 +225,7 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self._apply_action_state()
 
     def update_image(self, entry: ImageEntry | None, *, known: bool) -> None:
-        """标注该发行版对应的在线镜像；``known=False`` 表示清单还没加载（留空）。"""
+        """标注该实例对应的在线镜像；``known=False`` 表示清单还没加载（留空）。"""
         text = w.distro_image_text(self.distro, (entry,) if entry is not None else (), known=known)
         self.image_label.setText(text)
         self.image_label.setVisible(bool(text))
@@ -256,7 +264,7 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
 
 
 class _DistroDetailView(QWidget):  # pragma: no cover - Qt 控件
-    """展开行里的发行版详情：字段网格 + 长路径可选中复制。
+    """展开行里的实例详情：字段网格 + 长路径可选中复制。
 
     同一个实例在行之间复用：展开哪一行就挂到哪一行的 ``detail_layout`` 下。
     """
@@ -421,7 +429,7 @@ class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
 
 
 class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """WSL 发行版管理：侧边栏分页（发行版 / 镜像 / 设置）+ 后台任务。
+    """WSL 实例管理：侧边栏分页（实例 / 镜像 / 设置）+ 后台任务。
 
     任务日志不占分页：顶部「帮助 → 任务日志…」打开非模态日志窗口，历史来自
     ``_log_lines`` 缓冲，窗口打开时回放、之后按 :attr:`logLine` 实时追加。
@@ -489,7 +497,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             page.hide()
             factories[spec.key] = lambda page=page: page
         self.add_pages(PAGES, factories)
-        # 发行版行要注明对应的在线镜像：启动时先把镜像缓存回显出来（同步读盘，
+        # 实例行要注明对应的在线镜像：启动时先把镜像缓存回显出来（同步读盘，
         # 只有几十 KB），镜像页进入时再按 30 分钟新鲜度决定是否联网刷新。
         self._images_cache_fresh = False
         cache = self._restore_images_cache()
@@ -567,11 +575,11 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 构建
     # ------------------------------------------------------------------ #
     def _build_distros_page(self) -> QWidget:
-        """发行版页：动作行 + 行卡列表（详情在行内展开）。
+        """实例页：动作行 + 行卡列表（详情在行内展开）。
 
         与 llmw 模型页同构：固定行只有动作条，列表吃满剩余空间并自带滚动；
         BasePath / 虚拟磁盘 / 占用等详情通过行内「展开」就地显示，不再占用
-        下方分栏，发行版多时也不会被详情面板压掉一半高度。
+        下方分栏，实例多时也不会被详情面板压掉一半高度。
         """
         page = PageBody(self, spacing=8)
         body = page.body
@@ -592,7 +600,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return page
 
     def _build_distro_actions(self, page: QWidget) -> QHBoxLayout:
-        """发行版动作行：按「终端 / 启停 → 导出 → 危险操作」分组。"""
+        """实例动作行：按「终端 / 启停 → 导出 → 危险操作」分组。"""
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(4)
@@ -813,7 +821,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         grid = FormGrid(card)
         for label, path, tip in (
             ("下载", default_download_dir(), "镜像归档（.wsl / .tar）默认保存位置"),
-            ("安装", default_install_root(), "安装本地镜像时的默认目录根，每个发行版一个子目录"),
+            ("安装", default_install_root(), "安装本地镜像时的默认目录根，每个实例一个子目录"),
             ("备份", default_backups_dir(), "导出 / 备份的 .tar 默认保存位置"),
         ):
             value = ElidedLabel(str(path), mode=Qt.TextElideMode.ElideMiddle, parent=card)
@@ -1027,7 +1035,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         for distro in view.distros:
             sizes[distro.name] = distro_disk_bytes(distro.base_path, distro.version)
         self.sizes = sizes
-        return f"已加载 {len(view.distros)} 个发行版"
+        return f"已加载 {len(view.distros)} 个实例"
 
     def _selected(self) -> Distro | None:
         row = self._selected_row()
@@ -1149,8 +1157,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _show_details(self) -> None:
         """选中行变化时只更新状态栏摘要与工具栏启停按钮（详情在行内）。
 
-        摘要属于**发行版页**：3 秒状态轮询在任意页都会跑到这里，必须写页内固定 key，
-        否则用户在镜像 / 设置页时会看到「Ubuntu · 已停止」这类发行版摘要混进
+        摘要属于**实例页**：3 秒状态轮询在任意页都会跑到这里，必须写页内固定 key，
+        否则用户在镜像 / 设置页时会看到「Ubuntu · 已停止」这类实例摘要混进
         当前页的状态栏。
         """
         distro = self._selected()
@@ -1233,13 +1241,13 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             target = cli._require_target(env, distro.name)
             if target.state == "running":
                 return f"{target.name} 已在运行"
-            # 用一次性命令把发行版带起来；直接 wsl -d 会进交互式 shell 并挂住线程。
-            cli._run_step(
-                env,
-                ["-d", target.name, "--exec", "/bin/true"],
-                action=f"启动 {target.name}",
-                hint="确认发行版仍已注册；若 WSL 未启用请以管理员运行 wsl --install",
-                timeout=120.0,
+            # 用**脱离父进程**的看护进程把实例带起来：一次性命令（如 /bin/true）跑完
+            # WSL 就把实例收回 Stopped，wslmanw 关闭后更会失去唯一的进程；这里让实例
+            # 里常驻一个 sleep 循环，关掉 wslmanw 也不会结束实例，只有用户点「停止」
+            # 或 wsl --shutdown 才会退出。
+            wsl_path = cli._require_wsl(env)
+            spawn_detached(
+                [wsl_path, "-d", target.name, "--exec", "/bin/sh", "-c", _KEEPALIVE_LOOP],
             )
             current = cli._require_target(env, target.name)
             if current.state != "running":
@@ -1255,7 +1263,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         distro = self._selected()
         if distro is None:
             return
-        if not confirm(self, "停止发行版", f"停止 {distro.name}？正在运行的任务会被中断。"):
+        if not confirm(self, "停止实例", f"停止 {distro.name}？正在运行的任务会被中断。"):
             return
 
         def work(_cancel: threading.Event) -> str:
@@ -1272,7 +1280,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return
         target, _ = QFileDialog.getSaveFileName(
             self,
-            f"导出发行版 {distro.name}",
+            f"导出实例 {distro.name}",
             f"{distro.name}.tar",
             "tar 归档 (*.tar)",
         )
@@ -1282,7 +1290,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if distro.state == "running":
             answer = QMessageBox.question(
                 self,
-                "发行版运行中",
+                "实例运行中",
                 "运行中导出可能不一致。选择「是」先停止，选择「否」接受风险继续？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
@@ -1349,8 +1357,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             if existing is not None:
                 if not replace:
                     raise invalid_argument(
-                        f"发行版 {name} 已存在",
-                        hint=f"勾选「替换同名发行版」后重试，或改用 CLI：{command} --replace --yes",
+                        f"实例 {name} 已存在",
+                        hint=f"勾选「替换同名实例」后重试，或改用 CLI：{command} --replace --yes",
                     )
                 running = existing.state == "running"
                 steps = [
@@ -1368,7 +1376,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                         env,
                         ["--export", existing.name, str(backup)],
                         action=f"备份 {existing.name}",
-                        hint="备份失败时不会注销旧发行版",
+                        hint="备份失败时不会注销旧实例",
                         timeout=3600.0,
                     )
                 cli._run_step(env, ["--unregister", existing.name], action=f"注销 {existing.name}")
@@ -1499,7 +1507,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._download_entry(name)
 
     def _entry_by_name(self, name: str) -> ImageEntry | None:
-        """按发行版名（大小写不敏感）取当前列表里的条目。"""
+        """按实例名（大小写不敏感）取当前列表里的条目。"""
         key = name.casefold()
         for entry in self.image_entries:
             if entry.name.casefold() == key:
@@ -1802,7 +1810,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         def work(_cancel: threading.Event) -> str:
             env = cli._build_environment()
             cli._run_step(env, ["--shutdown"], action="wsl --shutdown")
-            return "已关闭全部发行版与 WSL 虚拟机"
+            return "已关闭全部实例与 WSL 虚拟机"
 
         self._start("关闭全部", work)
 
@@ -1837,7 +1845,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
 
 class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
-    """注销确认：手输发行版名、可选先停止、可选先备份。"""
+    """注销确认：手输实例名、可选先停止、可选先备份。"""
 
     def __init__(self, owner: WslmanQtWindow, distro: Distro, size: tuple[int | None, bool]) -> None:
         super().__init__(owner)
@@ -1856,7 +1864,7 @@ class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
                 "虚拟磁盘删除后无回收站。"
             )
         )
-        self.terminate_first = QCheckBox("先停止发行版", self)
+        self.terminate_first = QCheckBox("先停止实例", self)
         self.terminate_first.setChecked(distro.state == "running")
         outer.addWidget(self.terminate_first)
         self.backup_enabled = QCheckBox("先导出备份到", self)
@@ -1871,7 +1879,7 @@ class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
         choose.clicked.connect(self._choose_backup)
         backup_row.addWidget(choose)
         outer.addLayout(backup_row)
-        outer.addWidget(hint_label(f"手输发行版名以确认：{distro.name}"))
+        outer.addWidget(hint_label(f"手输实例名以确认：{distro.name}"))
         self.typed = QLineEdit(self)
         self.typed.textChanged.connect(self._sync)
         outer.addWidget(self.typed)
@@ -1916,7 +1924,7 @@ class _ShutdownDialog(QDialog):  # pragma: no cover - 模态对话框
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(8)
-        outer.addWidget(hint_label("会停止全部发行版与 WSL 虚拟机，并连带停掉 Docker Desktop、IDE Remote 等后端。"))
+        outer.addWidget(hint_label("会停止全部实例与 WSL 虚拟机，并连带停掉 Docker Desktop、IDE Remote 等后端。"))
         self.checked = QCheckBox("我了解上述影响", self)
         self.checked.toggled.connect(lambda _checked: self._sync())
         outer.addWidget(self.checked)
@@ -1983,7 +1991,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         info_grid.setVerticalSpacing(4)
         info_grid.setColumnStretch(1, 1)
         self._info: dict[str, QLabel] = {}
-        for row, key in enumerate(("发行版", "大小", "来源", "校验状态")):
+        for row, key in enumerate(("实例", "大小", "来源", "校验状态")):
             info_grid.addWidget(hint_label(key, wrap=False), row, 0, Qt.AlignmentFlag.AlignTop)
             value = QLabel("—", self)
             value.setWordWrap(True)
@@ -1998,7 +2006,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         form.setVerticalSpacing(6)
         form.setColumnStretch(1, 1)
         self.name = QLineEdit(self)
-        form.addWidget(QLabel("发行版名称"), 0, 0)
+        form.addWidget(QLabel("实例名称"), 0, 0)
         form.addWidget(self.name, 0, 1)
         self.target = QLineEdit(self)
         form.addWidget(QLabel("安装目录"), 1, 0)
@@ -2006,7 +2014,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         choose = button("选择…")
         choose.clicked.connect(self._choose_dir)
         form.addWidget(choose, 1, 2)
-        self.replace = QCheckBox("替换同名发行版（会先注销，必要时先备份）", self)
+        self.replace = QCheckBox("替换同名实例（会先注销，必要时先备份）", self)
         form.addWidget(self.replace, 2, 1)
         outer.addLayout(form)
 
@@ -2084,7 +2092,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         if archive is None:
             return
         arch = archive.arch if archive.arch != "未知" else "架构未知"
-        self._info["发行版"].setText(f"{archive.distro}（{arch}）")
+        self._info["实例"].setText(f"{archive.distro}（{arch}）")
         self._info["大小"].setText(format_bytes(archive.size))
         self._info["来源"].setText(archive.source)
         if archive.expected_sha256 is None:
@@ -2108,13 +2116,13 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         name = self.name.text().strip()
         target_text = self.target.text().strip()
         if not name:
-            QMessageBox.critical(self, "安装本地镜像", "请填写发行版名称")
+            QMessageBox.critical(self, "安装本地镜像", "请填写实例名称")
             return
         if not target_text:
             QMessageBox.critical(self, "安装本地镜像", "请选择安装目录")
             return
         replace = self.replace.isChecked()
-        if replace and not confirm(self, "替换发行版", f"替换 {name} 会先注销现有发行版（运行中会先停止），继续？"):
+        if replace and not confirm(self, "替换实例", f"替换 {name} 会先注销现有实例（运行中会先停止），继续？"):
             return
         backup: Path | None = None
         if replace and load_config().require_backup_on_replace:

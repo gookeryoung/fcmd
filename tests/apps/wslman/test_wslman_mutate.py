@@ -178,6 +178,41 @@ def test_find_wt_checks_localappdata(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert _terminal.find_wt() == str(apps / "wt.exe")
 
 
+def test_spawn_detached_returns_pid_and_disconnects_streams(monkeypatch: pytest.MonkeyPatch) -> None:
+    """看护进程用脱离父进程的方式启动：不等退出、断开标准流、带 DETACHED_PROCESS。"""
+    recorded: dict[str, object] = {}
+
+    class _FakeProcess:
+        pid = 2468
+
+    def fake_popen(argv: object, **kwargs: object) -> _FakeProcess:
+        recorded["argv"] = argv
+        recorded.update(kwargs)
+        return _FakeProcess()
+
+    monkeypatch.setattr(_terminal.subprocess, "Popen", fake_popen)
+    pid = _terminal.spawn_detached(["wsl.exe", "-d", "Ubuntu", "--exec", "/bin/true"])
+    assert pid == 2468
+    assert recorded["argv"] == ["wsl.exe", "-d", "Ubuntu", "--exec", "/bin/true"]
+    assert recorded["stdin"] is _terminal.subprocess.DEVNULL
+    assert recorded["stdout"] is _terminal.subprocess.DEVNULL
+    assert recorded["stderr"] is _terminal.subprocess.DEVNULL
+    flags = recorded["creationflags"]
+    assert isinstance(flags, int)
+    assert flags & getattr(_terminal.subprocess, "DETACHED_PROCESS", 0)
+
+
+def test_spawn_detached_reports_missing_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("not found")
+
+    monkeypatch.setattr(_terminal.subprocess, "Popen", boom)
+    with pytest.raises(LaunchError) as excinfo:
+        _terminal.spawn_detached(["missing-wsl.exe"])
+    assert "missing-wsl.exe" in str(excinfo.value)
+    assert excinfo.value.hint is not None
+
+
 def test_subprocess_launcher_runs_and_reports_pid() -> None:
     launcher = _terminal.SubprocessLauncher()
     command = TerminalCommand(

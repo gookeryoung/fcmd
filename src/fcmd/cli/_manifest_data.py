@@ -277,7 +277,7 @@ DESCRIPTIONS: dict[str, str] = {
     "which": "查找可执行命令路径（跨平台）",
     "writefile": "写入文本内容到文件",
     "wslman": "列出已安装的 WSL 发行版（只读，不启动发行版）",
-    "wslmanw": "WSL 发行版管理的图形界面：列表/详情、打开终端、启动停止、导出导入、镜像下载、注销与关闭全部（Qt）",
+    "wslmanw": "WSL 实例管理的图形界面：列表/详情、打开终端、启动停止、导出导入、镜像下载、注销与关闭全部（Qt）",
     "xmltool": "格式化打印 XML",
     "yamtool": "格式化打印 YAML",
     "zipencrypt": "加密目录下文件为密码保护的 ZIP",
@@ -398,7 +398,7 @@ HELP: dict[str, str] = {
     "which": "usage: which [-h] [--dry-run] [-q] [--strategy STRATEGY]\n             commands [commands ...]\n\n查找可执行命令路径（跨平台）\n\npositional arguments:\n  commands             要查找的命令名称列表\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "writefile": "usage: writefile [-h] [--encoding ENCODING] [--dry-run] [-q]\n                 [--strategy STRATEGY]\n                 path content\n\n写入文本内容到文件\n\npositional arguments:\n  path                 目标文件路径\n  content              写入内容\n\noptions:\n  -h, --help           show this help message and exit\n  --encoding ENCODING  文件编码（默认 utf-8）\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "wslman": "wslman 子命令\n+-----------------------------------------------------------------------------+\n| 子命令        | 说明                                                        |\n|---------------+-------------------------------------------------------------|\n| available     | 列出可在线安装的发行版（只读，需联网；失败时给出离线降级提… |\n| backup-remove | 删除指定备份文件（破坏性，执行需要 --yes）                  |\n| backup-verify | 校验备份 tar / tar.gz 的完整性与 sha256（只读）             |\n| backups       | 列出备份目录内的 tar / tar.gz（只读）                       |\n| compress      | 把导出的 tar 压缩为 gzip（--remove-source 需同时 --yes）    |\n| config        | 查看并校验 .wslconfig（只读，不修改文件）                   |\n| copy          | 复制发行版为新名称（导出临时 tar 再导入，默认清理临时文件） |\n| doctor        | 检查 WSL 环境、注册表与 .wslconfig（有失败项时退出码 5）    |\n| download      | 下载发行版归档或调用 wsl                                    |\n|               | --install（会触发系统级安装、可能弹                         |\n|               | UAC，且不能指定自定义镜像；需要特定镜像请用 --source        |\n|               | manifest/file）                                             |\n| export        | 导出发行版为 tar（可选                                      |\n|               | gzip；运行中必须显式选择停机或接受一致性风险）              |\n| import        | 从 tar 导入为新发行版（覆盖已有发行版需 --replace           |\n|               | --yes，且默认强制先备份）                                   |\n| info          | 查看单个发行版的注册表信息与占用（默认不启动发行版）        |\n| list          | 列出已安装的 WSL 发行版（只读，不启动发行版）               |\n| open          | 在新终端窗口中打开发行版（会启动该发行版；--preview         |\n|               | 只打印命令）                                                |\n| set-default   | 设置默认发行版（执行后用 wsl -l -v 复核 * 标记）            |\n| shutdown      | 停止全部 WSL 发行版与虚拟机（破坏性，需 --yes；会连带停掉   |\n|               | Docker Desktop 等）                                         |\n| status        | 显示 WSL 状态、默认发行版与 .wslconfig 摘要（只读）         |\n| terminate     | 终止指定发行版（会杀掉其内部进程；不需要 --yes，GUI         |\n|               | 侧保留确认）                                                |\n| unregister    | 注销发行版并删除其虚拟磁盘（破坏性，需 --yes；可先 --backu… |\n|               | 导出）                                                      |\n+-----------------------------------------------------------------------------+\n",
-    "wslmanw": "usage: wslmanw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开 WSL 发行版管理窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
+    "wslmanw": "usage: wslmanw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开 WSL 实例管理窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "xmltool": "xmltool 子命令\n+----------------------------+\n| 子命令   | 说明            |\n|----------+-----------------|\n| extract  | 按 XPath 提取值 |\n| minify   | 压缩 XML 为单行 |\n| pretty   | 格式化打印 XML  |\n| validate | 校验 XML 良构性 |\n+----------------------------+\n",
     "yamtool": "yamtool 子命令\n+----------------------------+\n| 子命令   | 说明            |\n|----------+-----------------|\n| get      | 按点路径取值    |\n| keys     | 列出顶层键      |\n| pretty   | 格式化打印 YAML |\n| validate | 校验 YAML 语法  |\n+----------------------------+\n",
     "zipencrypt": "usage: zipencrypt [-h] [--replace] [--dry-run] [-q] [--strategy STRATEGY]\n                  directory password\n\n加密目录下文件为密码保护的 ZIP\n\npositional arguments:\n  directory            包含待加密文件/目录的目录\n  password             加密密码（UTF-8 编码后作为 AES 密钥口令）\n\noptions:\n  -h, --help           show this help message and exit\n  --replace            是否覆盖已存在的 ZIP 文件（默认跳过）\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
@@ -538,7 +538,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "c89b1246979b1763f7e2010eff834660"
+DIGEST = "d6d77d8596cb2d58048f929513863800"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 117

@@ -95,6 +95,12 @@
   已停止 / 未知时仍是主按钮「启动」；状态轮询原地切换（不重建行），任务进行中禁用时
   图标色调退回 `muted`，避免禁用底色变浅后图标看不清。共享层新增
   `widgets.set_button_kind`，动态动作按钮可在 `#Primary` / `#Danger` / 无变体间切换。
+- `wslmanw` 展示层把「发行版」统一改称**实例**（页面 / 标题 / 对话框 / 状态栏 / CLI 帮助文案），
+  内部模型与 CLI 输出仍是发行版 / `distro`，指同一对象。
+- `wslmanw` 启动实例改用**脱离父进程**的看护循环（`wsl.exe -d <名称> --exec /bin/sh -c
+  "while :; do sleep 3600; done"`，`DETACHED_PROCESS` + 断开标准流）：关闭 wslmanw
+  不再结束实例（此前一次性命令跑完就被 WSL 收回 Stopped），只有用户点「停止」/
+  「关闭全部」或 `wsl --shutdown` 才会停。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

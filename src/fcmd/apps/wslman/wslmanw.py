@@ -1,4 +1,4 @@
-"""wslmanw - WSL 发行版管理的 Qt 窗口。
+"""wslmanw - WSL 实例管理的 Qt 窗口。
 
 窗口只做编排：业务判断仍走 :mod:`fcmd.apps.wslman.wslman` 与
 :mod:`fcmd.apps.wslman._source` 的共享实现（导出核心、预检、注销前备份），
@@ -63,7 +63,7 @@ DEFAULT_GEOMETRY = "1160x760"
 MIN_WIDTH = 900
 MIN_HEIGHT = 600
 
-_DESCRIPTION = "WSL 发行版管理的图形界面：列表/详情、打开终端、启动停止、导出导入、镜像下载、注销与关闭全部（Qt）"
+_DESCRIPTION = "WSL 实例管理的图形界面：列表/详情、打开终端、启动停止、导出导入、镜像下载、注销与关闭全部（Qt）"
 
 _SOURCE_LABELS = {
     "cli": "CLI 安装（wsl --install）",
@@ -171,7 +171,7 @@ def detail_fields(distro: Distro, size: int | None, estimated: bool) -> tuple[tu
 
 
 def summary_text(distro: Distro, size: int | None, estimated: bool) -> str:
-    """状态栏的完整发行版摘要；列表里截断的名称在这里显示全名。"""
+    """状态栏的完整实例摘要；列表里截断的名称在这里显示全名。"""
     return (
         f"{distro.name} · {state_label(distro)} · "
         f"v{distro.version or '未知'} · {format_bytes(size, estimated=estimated)}"
@@ -500,7 +500,7 @@ class LocalArchive:
 def mark_downloaded(entries: Sequence[_images.ImageEntry], directory: Path) -> tuple[_images.ImageEntry, ...]:
     """按下载目录里的归档标注「已下载」，并记住归档路径供行内「安装」直接用。
 
-    同一发行版有多个架构时优先本机架构（:func:`pick_download`）；归档命名既认
+    同一实例有多个架构时优先本机架构（:func:`pick_download`）；归档命名既认
     官方 URL 原名，也认 CLI 的 ``名称-架构.tar``（:func:`match_archive`）。
     """
     found: dict[str, Path] = {}
@@ -525,9 +525,9 @@ def mark_downloaded(entries: Sequence[_images.ImageEntry], directory: Path) -> t
 
 
 def match_distro_image(distro: Distro, entries: Sequence[_images.ImageEntry]) -> _images.ImageEntry | None:
-    """把已安装发行版对应到在线镜像条目（大小写不敏感）。
+    """把已安装实例对应到在线镜像条目（大小写不敏感）。
 
-    依次尝试：名称全等 → 友好名全等 → 名称是发行版名的「词首前缀」
+    依次尝试：名称全等 → 友好名全等 → 名称是实例名的「词首前缀」
     （如 ``Ubuntu-24.04`` 对镜像 ``Ubuntu``，分隔符 ``-`` / ``_`` / 空格 / ``.``），
     多个前缀命中时取最长（更具体）的一个；都没有时返回 ``None``（自定义导入 / 已下架）。
     """
@@ -572,7 +572,7 @@ def local_archives(directory: Path) -> tuple[Path, ...]:
 
 
 def guess_distro_name(path: Path) -> str:
-    """从文件名推测发行版名：去掉归档后缀与架构尾巴，非法字符换成 ``_``。"""
+    """从文件名推测实例名：去掉归档后缀与架构尾巴，非法字符换成 ``_``。"""
     name = path.name
     for suffix in _ARCHIVE_SUFFIXES:
         if name.casefold().endswith(suffix):
@@ -600,7 +600,7 @@ def match_archive(
 
 
 def inspect_archive(path: Path, entries: Sequence[_images.ImageEntry]) -> LocalArchive:
-    """汇总本地包信息：发行版、架构、来源与官方 sha256（未收录时为 ``None``）。"""
+    """汇总本地包信息：实例、架构、来源与官方 sha256（未收录时为 ``None``）。"""
     size = path.stat().st_size
     matched = match_archive(path, entries)
     if matched is None:
@@ -641,9 +641,9 @@ def run_gui(settings_path: Path | None = None) -> None:
     run_qt(settings_path)
 
 
-@fcmd.tool("wslmanw", help="打开 WSL 发行版管理窗口（Qt）", description=_DESCRIPTION)
+@fcmd.tool("wslmanw", help="打开 WSL 实例管理窗口（Qt）", description=_DESCRIPTION)
 def launch_cmd() -> None:
-    """打开 WSL 发行版管理窗口。"""
+    """打开 WSL 实例管理窗口。"""
     run_gui()
 
 

@@ -21,10 +21,13 @@ __all__ = [
     "TerminalCommand",
     "build_command",
     "find_wt",
+    "spawn_detached",
     "uses_windows_path",
 ]
 
 _CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0)
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _LAUNCH_TIMEOUT_S = 5.0
 
 
@@ -78,6 +81,31 @@ class SubprocessLauncher:
         if returncode != 0:
             raise LaunchError(f"{command.argv[0]} 退出码 {returncode}")
         return process.pid
+
+
+def spawn_detached(argv: Sequence[str]) -> int:
+    """以「脱离父进程」的方式启动 ``argv``，返回 pid。
+
+    用于实例的看护进程（``sleep`` 循环）：wslmanw 关闭后它必须继续运行，所以用
+    ``DETACHED_PROCESS`` + ``CREATE_NO_WINDOW`` 拉起并断开标准流；用户点「停止」
+    或 ``wsl --shutdown`` 才会结束它。与 :meth:`SubprocessLauncher.launch`
+    的区别是不等退出、不挂控制台窗口。
+    """
+    try:
+        process = subprocess.Popen(
+            list(argv),
+            creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError as exc:
+        raise LaunchError(
+            f"启动 {argv[0]} 失败：{exc}",
+            hint="确认 wsl.exe 可用；若 WSL 未启用请以管理员运行 wsl --install",
+        ) from exc
+    return process.pid
 
 
 def find_wt() -> str | None:

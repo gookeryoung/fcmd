@@ -513,7 +513,7 @@ def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
         assert window.nav.keys() == ("distros", "images", "settings")
         assert window.nav.selected() == "distros"
         assert window.current_page() == "distros"
-        assert window.page_title.text() == "发行版"
+        assert window.page_title.text() == "实例"
         # 四页控件建窗即存在（设置落盘与下载动作会直接读设置页 / 镜像页控件）；
         # 页面本身仍由共享骨架在首次切换时挂进页面栈。
         assert window.distro_list.count() == 0
@@ -629,6 +629,57 @@ def _catalog(entries: tuple[Any, ...], *, from_cache: bool = False, stale: bool 
         stale=stale,
         warnings=(),
     )
+
+
+def test_start_selected_spawns_detached_keepalive(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """启动实例用脱离父进程的看护循环：wslmanw 退出后实例仍在运行。"""
+    from types import SimpleNamespace
+
+    stopped = _distro("Ubuntu", "stopped")
+    running = _distro("Ubuntu", "running")
+    states = iter([stopped, running])
+    monkeypatch.setattr(cli, "_view", lambda env: _view(stopped))
+    monkeypatch.setattr(cli, "_build_environment", lambda: SimpleNamespace(config=WslmanConfig(path=default_path())))
+    monkeypatch.setattr(cli, "_require_target", lambda env, name: next(states))
+    monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+    spawned: list[list[str]] = []
+
+    def fake_spawn(argv: Any) -> int:
+        spawned.append(list(argv))
+        return 4321
+
+    monkeypatch.setattr(_wslmanw_qt, "spawn_detached", fake_spawn)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        window._start_selected()
+        _wait_idle(window)
+        assert spawned == [
+            ["wsl.exe", "-d", "Ubuntu", "--exec", "/bin/sh", "-c", "while :; do sleep 3600; done"],
+        ]
+        assert "启动完成" in window.status_text()
+        assert "[启动] 已启动 Ubuntu" in "\n".join(window._log_lines)
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_closing_window_does_not_stop_instances(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """退出 wslmanw 不结束任何实例：关闭流程不发 terminate / shutdown。"""
+    view = _view(_distro("Ubuntu", "running"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(cli, "_run_step", lambda env, argv, **_kwargs: calls.append(list(argv)))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        assert window._on_close() is True
+        assert calls == []
+        assert window._poll is not None and window._poll.isActive() is False
+    finally:
+        window.deleteLater()
 
 
 def test_open_selected_starts_in_user_home(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
