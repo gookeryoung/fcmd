@@ -19,11 +19,16 @@ import pytest
 
 from fcmd.apps.llm._llmw_models import (
     DEFAULT_MODEL_FILTER,
+    FILE_STATE_DONE,
+    FILE_STATE_MISSING,
+    FILE_STATE_PARTIAL,
     MIN_ONLINE_MODEL_BYTES,
     MODEL_FILTERS,
     DownloadGuiSettings,
     dedupe_by_repo,
     detail_pairs,
+    file_local_state,
+    files_needing_download,
     filter_by_local_fit,
     filter_by_name,
     filter_models,
@@ -49,7 +54,7 @@ from fcmd.apps.llm._llmw_models import (
     sort_browse_items,
     sort_models,
 )
-from fcmd.apps.llm.llmdown import LocalModel, ModelInfo, ModelSummary, format_timestamp
+from fcmd.apps.llm.llmdown import LocalModel, ModelFile, ModelInfo, ModelSummary, format_timestamp
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
@@ -180,6 +185,32 @@ class TestFormatting:
         assert [(item.repo, count) for item, count in grouped] == [
             ("Qwen/Qwen3.8-27B", 2),
             ("Qwen3.8-27B", 1),
+        ]
+
+    def test_file_local_state_and_pending_files(self, tmp_path: Path) -> None:
+        """文件状态只看本地文件系统：完整文件 / .part / 缺失，据此算「还差哪些」。"""
+        root = tmp_path / "org" / "demo"
+        (root / "split_files" / "vae").mkdir(parents=True)
+        (root / "model.gguf").write_bytes(b"x" * 16)
+        (root / "split_files" / "vae" / "ae.safetensors.part").write_bytes(b"y" * 4)
+        files = [
+            ModelFile("model.gguf", 16),
+            ModelFile("split_files/vae/ae.safetensors", 8),
+            ModelFile("mmproj.gguf", 4),
+        ]
+        assert file_local_state(root, "model.gguf") == FILE_STATE_DONE
+        assert file_local_state(root, "split_files/vae/ae.safetensors") == FILE_STATE_PARTIAL
+        assert file_local_state(root, "mmproj.gguf") == FILE_STATE_MISSING
+        # 本地位置未知（纯在线浏览）：状态未知，保守起见所有文件都算待下载
+        assert file_local_state(None, "model.gguf") == "-"
+        assert [file.path for file in files_needing_download(root, files)] == [
+            "split_files/vae/ae.safetensors",
+            "mmproj.gguf",
+        ]
+        assert [file.path for file in files_needing_download(None, files)] == [
+            "model.gguf",
+            "split_files/vae/ae.safetensors",
+            "mmproj.gguf",
         ]
 
     def test_sort_by_name_and_size(self) -> None:

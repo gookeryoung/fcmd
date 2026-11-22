@@ -20,6 +20,7 @@ from fcmd.apps.llm._llmgguf import detect_precision
 from fcmd.apps.llm.llmbase import human_size
 from fcmd.apps.llm.llmdown import (
     LocalModel,
+    ModelFile,
     ModelInfo,
     ModelSummary,
     format_timestamp,
@@ -30,12 +31,17 @@ from fcmd.apps.llm.llmdown import (
 __all__ = [
     "DEFAULT_MODEL_FILTER",
     "DEFAULT_MODEL_SORT",
+    "FILE_STATE_DONE",
+    "FILE_STATE_MISSING",
+    "FILE_STATE_PARTIAL",
     "MIN_ONLINE_MODEL_BYTES",
     "MODEL_FILTERS",
     "MODEL_SORTS",
     "DownloadGuiSettings",
     "dedupe_by_repo",
     "detail_pairs",
+    "file_local_state",
+    "files_needing_download",
     "filter_by_local_fit",
     "filter_by_name",
     "filter_models",
@@ -246,6 +252,34 @@ def model_row(item: ModelSummary) -> tuple[str, str, str, str, str]:
 def model_owner(item: ModelSummary) -> str:
     """仓库发布方（优先元数据，其次从 ``组织/模型`` 推导）。"""
     return item.owner or (item.repo.split("/", 1)[0] if "/" in item.repo else "")
+
+
+FILE_STATE_DONE = "已下载"
+FILE_STATE_PARTIAL = "部分下载"
+FILE_STATE_MISSING = "未下载"
+"""文件列表「状态」列取值；本地位置未知（纯在线浏览）时用 ``-``。"""
+
+
+def file_local_state(root: Path | None, relative: str) -> str:
+    """仓库内单个文件在本地的下载状态（只看文件系统，不发网络请求）。
+
+    完整文件优先：最终文件存在即「已下载」（同名的残留 ``.part`` 由下载层自行清理）；
+    否则 ``<文件>.part`` 存在即「部分下载」；都没有算「未下载」。``root`` 为 ``None``
+    表示本地位置未知（未配置模型目录 / 仅在线浏览），返回 ``-``。
+    """
+    if root is None:
+        return "-"
+    target = root / Path(str(relative))
+    if target.is_file():
+        return FILE_STATE_DONE
+    if target.with_name(target.name + ".part").is_file():
+        return FILE_STATE_PARTIAL
+    return FILE_STATE_MISSING
+
+
+def files_needing_download(root: Path | None, files: Sequence[ModelFile]) -> tuple[ModelFile, ...]:
+    """``files`` 里还没下载完的部分：已下载的跳过，``.part`` 与未开始都算待下载。"""
+    return tuple(file for file in files if file_local_state(root, file.path) != FILE_STATE_DONE)
 
 
 def dedupe_by_repo(items: Sequence[ModelSummary]) -> tuple[ModelSummary, ...]:

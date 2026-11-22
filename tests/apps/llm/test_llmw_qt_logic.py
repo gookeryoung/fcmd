@@ -379,7 +379,8 @@ def test_model_detail_view_reset_and_metadata() -> None:
     assert view.tabs.tabBar().objectName() == "PillTabBar"
     assert view.tabs.tabBar().drawBase() is False
     assert view.files_table.objectName() == "ModelFiles"
-    assert view.files_table.columnCount() == 2
+    assert view.files_table.columnCount() == 3
+    assert [view.files_table.horizontalHeaderItem(i).text() for i in range(3)] == ["文件", "大小", "状态"]
     # 文件表与详情区同底色：不画交替行底色（否则会突出于行卡背景之外）。
     assert view.files_table.alternatingRowColors() is False
     view.set_error("网络错误")
@@ -403,6 +404,56 @@ def test_model_detail_view_reset_and_metadata() -> None:
     view._files_failed("Qwen/demo", "超时")
     assert view.files_table.rowCount() == 0
     assert "超时" in view.files_status.text()
+
+
+def test_model_detail_files_show_state_and_download_all(tmp_path: Path) -> None:
+    """文件列表显示每个文件的下载状态；「下载全部」只补未下载完的文件。"""
+    from PySide6.QtWidgets import QApplication
+
+    from fcmd.apps.llm.llmdown import ModelFile
+
+    QApplication.instance() or QApplication([])
+    root = tmp_path / "Qwen" / "demo"
+    root.mkdir(parents=True)
+    (root / "a.gguf").write_bytes(b"x" * 32)
+    (root / "split_files").mkdir()
+    (root / "split_files" / "b.safetensors.part").write_bytes(b"y" * 8)
+    picked: list[tuple[str, tuple[ModelFile, ...]]] = []
+    view = _ModelDetailView(
+        lambda _repo: [],
+        lambda repo, files: picked.append((repo, files)),
+        local_dir=lambda _repo: root,
+    )
+    view.reset("Qwen/demo")
+    view._files_ready(
+        "Qwen/demo",
+        [
+            ModelFile("a.gguf", 32),
+            ModelFile("split_files/b.safetensors", 64),
+            ModelFile("mmproj.gguf", 16),
+        ],
+    )
+    assert [view.files_table.item(row, 2).text() for row in range(3)] == ["已下载", "部分下载", "未下载"]
+    assert "已下载 1 / 未下载 2" in view.files_status.text()
+    # 「下载全部」只补未下载完的（含 .part 续传），已下载的跳过
+    assert view.files_download_all_button.isHidden() is False
+    assert view.files_download_all_button.isEnabled() is True
+    assert "2 个" in view.files_download_all_button.toolTip()
+    view.files_download_all_button.click()
+    assert len(picked) == 1
+    assert [file.path for file in picked[0][1]] == ["split_files/b.safetensors", "mmproj.gguf"]
+
+    # 补完之后再刷新：全部已下载 → 「下载全部」禁用并给出提示
+    (root / "split_files" / "b.safetensors").write_bytes(b"y" * 64)
+    (root / "mmproj.gguf").write_bytes(b"z" * 16)
+    view.refresh_file_states()
+    assert [view.files_table.item(row, 2).text() for row in range(3)] == ["已下载", "已下载", "已下载"]
+    assert view.files_download_all_button.isEnabled() is False
+    assert view.files_download_all_button.toolTip() == "全部文件已下载"
+
+    # 同仓库重新展开不重拉清单，只刷新状态
+    view.reset("Qwen/demo")
+    assert [view.files_table.item(row, 2).text() for row in range(3)] == ["已下载", "已下载", "已下载"]
 
 
 def test_model_detail_view_downloads_selected_files() -> None:

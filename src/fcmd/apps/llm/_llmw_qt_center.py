@@ -371,13 +371,18 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self,
         load_files: Callable[[str], list[ModelFile]] | None = None,
         download_files: Callable[[str, tuple[ModelFile, ...]], None] | None = None,
+        local_dir: Callable[[str], Path | None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.repo: str | None = None
         self._load_files = load_files
         self._download_files = download_files
+        # 仓库在本地模型目录里的落盘位置：文件列表据此标「已下载 / 部分下载 / 未下载」。
+        self._local_dir = local_dir
+        self._files_root: Path | None = None
         self._files_repo: str | None = None
+        self._files_list: list[ModelFile] = []
         self._files_loading = False
         self._online = True
         self._files: dict[str, ModelFile] = {}
@@ -445,9 +450,9 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.files_status = hint_label("", wrap=True)
         self.files_status.setVisible(False)
         files_layout.addWidget(self.files_status)
-        self.files_table = QTableWidget(0, 2, files_page)
+        self.files_table = QTableWidget(0, 3, files_page)
         self.files_table.setObjectName("ModelFiles")
-        self.files_table.setHorizontalHeaderLabels(["文件", "大小"])
+        self.files_table.setHorizontalHeaderLabels(["文件", "大小", "状态"])
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.files_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -458,19 +463,27 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         header = self.files_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.files_table.setFixedHeight(220)
         self.files_table.itemSelectionChanged.connect(self._sync_files_actions)
         files_layout.addWidget(self.files_table)
 
         files_actions = QHBoxLayout()
         files_actions.setContentsMargins(0, 0, 0, 0)
-        files_actions.addWidget(hint_label("Ctrl / Shift 多选后可单独下载（如 VAE / 文本编码器）", wrap=False))
+        files_actions.addWidget(
+            hint_label("Ctrl / Shift 多选后可单独下载（如 VAE / 文本编码器）；「下载全部」只补未下载的", wrap=False)
+        )
         files_actions.addStretch(1)
         self.files_download_button = button("下载所选", kind="ghost")
         self.files_download_button.setToolTip("只下载文件列表里选中的文件，不影响已下载的量化")
         self.files_download_button.setVisible(False)
         self.files_download_button.clicked.connect(self._download_selected)
         files_actions.addWidget(self.files_download_button)
+        self.files_download_all_button = button("下载全部", kind="primary")
+        self.files_download_all_button.setToolTip("下载列表里所有尚未下载的文件（已下载的跳过）")
+        self.files_download_all_button.setVisible(False)
+        self.files_download_all_button.clicked.connect(self._download_all)
+        files_actions.addWidget(self.files_download_all_button)
         files_layout.addLayout(files_actions)
         # 表格高度固定（行高度可控），剩余空间留在下方，文件列表紧跟页签顶部。
         files_layout.addStretch(1)
@@ -495,11 +508,17 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
             self.error.setVisible(True)
         for value in self.meta_values.values():
             value.setText("-")
-        self._files_repo = None
-        self._files = {}
-        self.files_table.setRowCount(0)
-        self.files_status.setText("")
-        self.files_status.setVisible(False)
+        if repo != self._files_repo:
+            self._files_repo = None
+            self._files = {}
+            self._files_list = []
+            self._files_root = None
+            self.files_table.setRowCount(0)
+            self.files_status.setText("")
+            self.files_status.setVisible(False)
+        else:
+            # 同一个仓库重新展开（例如刚下载完）：清单不重拉，只刷新状态列。
+            self._sync_file_states()
         self._sync_files_actions()
         if self.tabs.currentIndex() == 1:
             self._ensure_files()
@@ -529,7 +548,11 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
 
     def _ensure_files(self) -> None:
         repo = self.repo
-        if not repo or self._files_loading or self._files_repo == repo:
+        if not repo or self._files_loading:
+            return
+        if self._files_repo == repo:
+            # 清单已读过：只按当前文件系统刷新状态（下载完成后回到这个页签）。
+            self._sync_file_states()
             return
         if not self._online:
             self._files = {}
@@ -561,8 +584,12 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
     def _files_ready(self, repo: str, files: list[ModelFile]) -> None:
         if repo != self.repo:
             return
+        # 记住这份清单属于哪个仓库：再次展开同一个仓库时可以只刷新状态、不重拉在线清单。
+        self._files_repo = repo
         self.files_table.setRowCount(0)
         self._files = {}
+        self._files_list = list(files)
+        self._files_root = self._resolve_files_root(repo)
         total = 0
         for file in files:
             row = self.files_table.rowCount()
@@ -576,7 +603,12 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
             size_item = QTableWidgetItem(human_size(size) if size else "-")
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.files_table.setItem(row, 1, size_item)
+            self.files_table.setItem(row, 2, self._state_item(file))
+        pending = len(_llmw_models.files_needing_download(self._files_root, self._files_list))
+        downloaded = len(self._files_list) - pending
         summary = f"共 {len(files)} 个文件" + (f" · 合计 {human_size(total)}" if total else "")
+        if self._files_root is not None:
+            summary += f" · 已下载 {downloaded} / 未下载 {pending}"
         self.files_status.setText(summary)
         self.files_status.setVisible(True)
         self._sync_files_actions()
@@ -587,6 +619,8 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
             return
         self._files_repo = None
         self._files = {}
+        self._files_list = []
+        self._files_root = None
         self.files_table.setRowCount(0)
         self.files_status.setText(f"读取文件清单失败：{message}")
         self.files_status.setVisible(True)
@@ -605,11 +639,62 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
                 selected.append(file)
         return tuple(selected)
 
+    def _resolve_files_root(self, repo: str) -> Path | None:
+        """仓库在本地的落盘目录（本地位置未知时为 ``None``）。"""
+        if self._local_dir is None or not repo:
+            return None
+        return self._local_dir(repo)
+
+    def _state_item(self, file: ModelFile) -> QTableWidgetItem:
+        """文件状态列：已下载 / 部分下载 / 未下载（本地目录未知时 ``-``）。"""
+        state = _llmw_models.file_local_state(self._files_root, file.path)
+        item = QTableWidgetItem(state)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        item.setToolTip(
+            "本地已存在完整文件"
+            if state == _llmw_models.FILE_STATE_DONE
+            else "有 .part 断点，尚未下完"
+            if state == _llmw_models.FILE_STATE_PARTIAL
+            else "本地没有这个文件"
+            if state == _llmw_models.FILE_STATE_MISSING
+            else "无法确定本地目录"
+        )
+        return item
+
+    def refresh_file_states(self) -> None:
+        """按照前文件系统刷新每一行的状态列（不重新拉清单；下载完成后由页面调用）。"""
+        self._sync_file_states()
+
+    def _sync_file_states(self) -> None:
+        if not self._files_list:
+            return
+        # 仓库 / 模型目录可能变化（设置里改过模型目录），每次刷新都重新解析。
+        self._files_root = self._resolve_files_root(self.repo or "")
+        for row, file in enumerate(self._files_list):
+            item = self._state_item(file)
+            old = self.files_table.item(row, 2)
+            if old is None:
+                self.files_table.setItem(row, 2, item)
+            else:
+                old.setText(item.text())
+                old.setToolTip(item.toolTip())
+        self._sync_files_actions()
+
+    def _pending_files(self) -> tuple[ModelFile, ...]:
+        """清单里还没下载完的文件（「下载全部」用）。"""
+        return _llmw_models.files_needing_download(self._files_root, self._files_list)
+
     def _sync_files_actions(self) -> None:
-        """有在线清单来源且选中了文件时才允许「下载所选」。"""
-        available = self._online and self._download_files is not None and bool(self._files)
-        self.files_download_button.setVisible(self._online and self._download_files is not None)
-        self.files_download_button.setEnabled(available and bool(self._selected_files()))
+        """按「是否有清单 / 是否选中 / 还剩多少未下载」启用两个下载动作。"""
+        visible = self._online and self._download_files is not None and bool(self._files)
+        self.files_download_button.setVisible(visible)
+        self.files_download_button.setEnabled(visible and bool(self._selected_files()))
+        pending = self._pending_files() if visible else ()
+        self.files_download_all_button.setVisible(visible)
+        self.files_download_all_button.setEnabled(bool(pending))
+        self.files_download_all_button.setToolTip(
+            f"下载 {len(pending)} 个尚未下载的文件（已下载的跳过）" if pending else "全部文件已下载"
+        )
 
     def _download_selected(self) -> None:
         repo = self.repo
@@ -617,6 +702,14 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         if not repo or not files or self._download_files is None:
             return
         self._download_files(repo, files)
+
+    def _download_all(self) -> None:
+        """只补下「还没下载完」的文件：已下载的跳过，``.part`` 继续续传。"""
+        repo = self.repo
+        pending = self._pending_files()
+        if not repo or not pending or self._download_files is None:
+            return
+        self._download_files(repo, pending)
 
 
 class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
@@ -801,7 +894,12 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self.download_status.setVisible(False)
         layout.addWidget(self.download_status)
 
-        self.detail_view = _ModelDetailView(self._load_repo_files, self._download_selected_files, self)
+        self.detail_view = _ModelDetailView(
+            self._load_repo_files,
+            self._download_selected_files,
+            local_dir=self._repo_local_dir,
+            parent=self,
+        )
         self.detail_view.heightChanged.connect(self._on_detail_height_changed)
         self.detail_view.setVisible(False)
 
@@ -1491,6 +1589,11 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self._log(f"按文件列表下载 {repo} 的 {len(files)} 个文件")
         self.start_download(repo, files=files)
 
+    @staticmethod
+    def _repo_local_dir(repo: str) -> Path:
+        """仓库在本地模型目录里的落盘位置（与下载目标一致，供文件状态列判断）。"""
+        return _llmconfig.models_dir() / repo
+
     def _on_detail_height_changed(self) -> None:
         """详情页签内容变化（切页签 / 文件清单加载完）后重算展开行高度。"""
         if self._expanded_row is not None:
@@ -2119,6 +2222,8 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self._sync_download_buttons()
         self._drain_queue()
         self._update_download_summary()
+        # 文件列表的状态列（已下载 / 部分下载）跟着刷新，不必重新拉在线清单。
+        self.detail_view.refresh_file_states()
 
     def stop_download(self) -> None:
         if self._converting and self._convert_cancel is not None:
