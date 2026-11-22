@@ -360,6 +360,28 @@ QPushButton#ChoiceCard {
 }
 QPushButton#ChoiceCard:hover { background: $surface_hover; border-color: $border_strong; }
 QPushButton#ChoiceCard:checked { background: $accent_soft_strong; border-color: $accent; }
+/* 存储卡片（llmw 设置页，参考 Steam 的磁盘库）：
+   并排的磁盘卡 + 末尾虚线添加卡；卡片只描述存储位置，不抢标题层级。 */
+QFrame#StorageCard {
+    background: $background;
+    border: 1px solid $border;
+    border-radius: ${radius}px;
+}
+QFrame#StorageCard:hover { border-color: $border_strong; }
+QLabel#StorageDrive { color: $text; font-size: ${font_heading}pt; font-weight: 700; }
+QLabel#StorageMeta { color: $muted; font-size: ${font_small}pt; }
+QLabel#StoragePath { color: $text; font-size: ${font_small}pt; }
+QProgressBar#StorageBar { background: $surface_hover; border: none; border-radius: 3px; }
+QProgressBar#StorageBar::chunk { background: $accent; border-radius: 3px; }
+QPushButton#StorageAdd {
+    background: transparent;
+    border: 1px dashed $border_strong;
+    border-radius: ${radius}px;
+    color: $muted;
+    padding: 8px;
+}
+QPushButton#StorageAdd:hover { background: $surface_hover; border-color: $accent; color: $text; }
+
 QLabel#ChoiceTitle {
     background: transparent;
     color: $text;

@@ -1080,7 +1080,14 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
     def _scan_installed() -> _InstalledSnapshot:  # noqa: PLR0912 - 一次扫描归集安装 / 转换 / 量化状态
         """在线程池里扫描本地模型目录（不碰任何 Qt 控件）。"""
         try:
-            models = scan_local_models(_llmconfig.models_dir())
+            models = []
+            seen_repos: set[str] = set()
+            for root in _llmconfig.models_dirs():
+                for model in scan_local_models(root):
+                    if model.repo.casefold() in seen_repos:
+                        continue
+                    seen_repos.add(model.repo.casefold())
+                    models.append(model)
         except OSError:
             return _InstalledSnapshot({}, set(), {}, {}, {}, {}, {}, {}, set())
         installed = {
@@ -1608,8 +1615,13 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
 
     @staticmethod
     def _repo_local_dir(repo: str) -> Path:
-        """仓库在本地模型目录里的落盘位置（与下载目标一致，供文件状态列判断）。"""
-        return _llmconfig.models_dir() / repo
+        """仓库在本地模型目录里的落盘位置：优先已存在的目录，否则主目录。"""
+        roots = _llmconfig.models_dirs()
+        for root in roots:
+            candidate = root / repo
+            if candidate.is_dir():
+                return candidate
+        return (roots[0] if roots else _llmconfig.models_dir()) / repo
 
     def _on_detail_height_changed(self) -> None:
         """详情页签内容变化（切页签 / 文件清单加载完）后重算展开行高度。"""

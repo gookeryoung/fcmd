@@ -1,7 +1,7 @@
 """llmw（Qt）设置页：存储、引擎（llama.cpp / sd.cpp）、下载参数与模型转换。
 
-目录口径与 CLI 完全一致：模型目录只有 ``models_dir`` 一个来源（:mod:`fcmd.apps.llm._llmconfig`），
-引擎目录独立登记；改动即时写配置并通知其它页刷新（``configChanged``）。
+目录口径与 CLI 完全一致：模型目录列表由 :mod:`fcmd.apps.llm._llmconfig` 提供，
+存储卡片以 Steam 式磁盘卡并排展示；引擎目录独立登记；改动即时写配置并通知其它页刷新。
 引擎安装 / 切换仍复用 :mod:`fcmd.apps.llm.llmengine` 的既有实现（在线下载入口是
 :class:`~fcmd.apps.llm._llmw_qt_engine_install.EngineDownloadDialog`，版本列表与
 ``fcmd llmengine releases`` 同源），页面只做展示与「设为默认」这类轻动作。
@@ -28,10 +28,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.llm import _llmw_convert, _llmw_models, llmconvert, llmengine, llmenv
+from fcmd.apps.llm import _llmw_convert, _llmw_models, _llmw_storage, llmconvert, llmengine, llmenv
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineDirAction, EngineOption
+from fcmd.apps.llm._llmw_qt_storage import StorageGrid
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
 from fcmd.gui.page import AppPage
 from fcmd.gui.widgets import (
@@ -83,21 +84,76 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
     # 存储
     # ------------------------------------------------------------------ #
     def _build_storage(self) -> Card:
-        """存储卡片：只放模型目录与迁移提示；引擎独立成卡片紧随其后。"""
+        """存储卡片：Steam 式磁盘卡并排展示全部模型目录，末尾为添加卡。"""
         card = Card("存储")
-        row = QHBoxLayout()
-        row.addWidget(hint_label("模型目录", wrap=False))
-        self.models_path = PathRow(value="", directory=True, show_reset=True, browse_text="更改")
-        row.addWidget(self.models_path, 1)
-        self.models_open = button("打开", kind="ghost")
-        row.addWidget(self.models_open)
-        card.body.addLayout(row)
+        header = QHBoxLayout()
+        header.addWidget(hint_label("模型目录（首个为下载与转换产物落点，可添加多个）", wrap=False))
+        header.addStretch(1)
+        self.storage_add_button = button("添加目录", kind="ghost", icon="plus")
+        self.storage_add_button.clicked.connect(self._add_model_dir)
+        header.addWidget(self.storage_add_button)
+        card.body.addLayout(header)
+        self.storage_grid = StorageGrid(card)
+        self.storage_grid.addRequested.connect(self._add_model_dir)
+        self.storage_grid.openRequested.connect(lambda path: open_path(Path(path)))
+        self.storage_grid.removeRequested.connect(self._remove_model_dir)
+        self.storage_grid.primaryRequested.connect(self._make_primary_dir)
+        card.body.addWidget(self.storage_grid)
         self.migration_note = HintLabel("")
         card.body.addWidget(self.migration_note)
-        self.models_path.committed.connect(lambda text: self._save_path("models_dir", text))
-        self.models_path.reset.clicked.connect(lambda: self._save_path("models_dir", None))
-        self.models_open.clicked.connect(lambda: open_path(llmenv.models_dir()))
         return card
+
+    # -- 存储动作 ------------------------------------------------------ #
+    def _add_model_dir(self) -> None:
+        """选择并登记一个新模型目录；重复目录不会重复添加。"""
+        chosen = QFileDialog.getExistingDirectory(self, "添加模型目录", str(Path.home()))
+        if not chosen:
+            return
+        try:
+            locations = _llmw_storage.add_location(chosen)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "添加失败", str(exc))
+            return
+        self.state.log(f"已添加模型目录: {chosen}")
+        self.status(f"已添加模型目录：{chosen}")
+        self._apply_storage(locations)
+        self.state.refresh_models()
+
+    def _remove_model_dir(self, path: str) -> None:
+        """从列表移除模型目录（不删磁盘文件）；至少保留一个目录。"""
+        if len(_llmw_storage.locations()) <= 1:
+            self.status("至少要保留一个模型目录")
+            return
+        message = f"从列表移除以下目录？\n{path}\n\n磁盘文件不会被删除。"
+        if not confirm(self, "移除模型目录", message):
+            return
+        try:
+            locations = _llmw_storage.remove_location(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "移除失败", str(exc))
+            return
+        self.state.log(f"已移除模型目录: {path}")
+        self.status(f"已移除模型目录：{path}")
+        self._apply_storage(locations)
+        self.state.refresh_models()
+
+    def _make_primary_dir(self, path: str) -> None:
+        """把目录设为主目录：下载与转换产物写入这里，扫描顺序随之提前。"""
+        try:
+            locations = _llmw_storage.make_primary(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "切换失败", str(exc))
+            return
+        self.state.log(f"主模型目录已切换为: {path}")
+        self.status(f"主模型目录：{path}")
+        self._apply_storage(locations)
+
+    def _apply_storage(self, locations: list[_llmw_storage.StorageLocation]) -> None:
+        """重绘存储卡片并刷新迁移提示（写配置的副作用已由调用方完成）。"""
+        self.storage_grid.set_locations(locations)
+        note = settings_logic.migration_note()
+        self.migration_note.setText(note)
+        self.migration_note.setVisible(bool(note))
 
     def _build_paint_engine(self) -> Card:
         """sd.cpp 引擎卡片：画图 / 视频 / 音频共用一张（同目录、同安装、同一个默认 tag）。
@@ -403,9 +459,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     def refresh(self) -> None:
         """重新读取配置与引擎列表。"""
-        directories = settings_logic.directory_rows()
-        for _name, path, _source in directories:
-            self.models_path.set_value(path)
+        self._apply_storage(_llmw_storage.locations())
         for _name, path, _source in settings_logic.engine_rows():
             self.engines_path.set_value(path)
         note = settings_logic.migration_note()

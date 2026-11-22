@@ -77,9 +77,22 @@ def gpu_usage(runner: llmbase.Runner = llmbase.run_command) -> tuple[int, int] |
 
 
 def scan_models(port: int | None = None) -> _ScanOutcome:
-    """扫描模型目录并收集引擎 / GPU / 默认端口状态（阻塞，供线程池调用）。"""
-    root = llmenv.models_dir()
-    entries, issue = _scan_dir(root)
+    """扫描全部模型目录并收集引擎 / GPU / 默认端口状态（阻塞，供线程池调用）。"""
+    roots = llmenv.models_dirs()
+    entries: list[ModelEntry] = []
+    issues: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        found, issue = _scan_dir(root)
+        if issue:
+            issues.append(issue)
+        for entry in found:
+            key = llmenv.path_key(entry.path)
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append(entry)
+    issue = "；".join(issues) if issues else None
     try:
         states = llmenv.list_states()
     except (OSError, ServeError):
@@ -104,7 +117,7 @@ def scan_models(port: int | None = None) -> _ScanOutcome:
         issue=issue,
         engine_missing=engine_missing,
         port_busy=default_port_busy(states, port),
-        models_root=root,
+        models_root=roots[0] if roots else llmenv.models_dir(),
     )
 
 
@@ -214,7 +227,11 @@ class LlmState(LogChannelMixin, QObject):  # pragma: no cover - 依赖 Qt 事件
         """
         from fcmd.apps.llm import _llmconfig, _llmw_models
 
-        repo = _llmw_models.repo_for_model_path(path, llmenv.models_dir())
+        repo = ""
+        for root in llmenv.models_dirs():
+            repo = _llmw_models.repo_for_model_path(path, root)
+            if repo:
+                break
         label = _llmw_models.quant_precision_label(path)
         if not repo or not label or repo.casefold() == _llmconfig.PRODUCTS_DIRNAME:
             return

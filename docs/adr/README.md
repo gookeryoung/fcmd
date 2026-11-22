@@ -36,7 +36,7 @@
 | [0028](0028-llmw-overview.md) | locllmw 概览：硬件检测 / 模型盘 / 智能推荐（预测与实测口径） | 已落地 |
 | [0029](0029-llmw-chat-page.md) | locllmw 对话页：整合 llmchatw 的多轮流式对话，移除独立窗口工具 | 已落地 |
 | [0030](0030-llmw-models-page.md) | locllmw 模型页：整合 llmdownw 的浏览与行内下载 / 转换 / 量化，移除独立窗口工具 | 已落地 |
-| [0031](0031-llm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析；模型目录收敛为单一 `models_dir`；设置页卡片式单页，存储 / 引擎独立卡片（引擎位于存储下方）并承接原引擎管理窗口 | 已落地 |
+| [0031](0031-llm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析；模型目录支持多目录列表与主目录（见 0043）；设置页卡片式单页，存储 / 引擎独立卡片（引擎位于存储下方）并承接原引擎管理窗口 | 已落地 |
 | [0032](0032-llmw-startup-latency.md) | locllmw 启动加载速度：非首屏页延迟构建 + GGUF 精度快路径与缓存 + 配置读取缓存 | 已落地 |
 | [0033](0033-qt-gui-migration.md) | locllmw 迁移到 Qt：GUI 基座（主题 / 导航 / 窗口 / 控件 / 后台任务）、五页与模型下载 / 转换 / 量化向导重构；Qt 绑定选择见 0036 | 生效（已全部落地，Tk 实现已删除） |
 | [0034](0034-qt-full-gui-migration.md) | 全量 GUI 迁移到 Qt：共享层（应用入口 / 单页窗口 / 主题菜单 / 布局纯函数）、布局与高 DPI 规范、B0–B7 分批 | 已落地（全部窗口 Qt 化，Tk 代码已删除） |
@@ -47,3 +47,4 @@
 | [0040](0040-llmw-paint-in-chat.md) | llmw 画图并入对话：取消独立画图页，对话页「画图」开关 + 画图配置合并进对话配置窗口，画图引擎安装 / 状态移到运行页 | 已落地 |
 | [0041](0041-cli-progress-output.md) | CLI 执行过程输出用户化：内部任务名不外泄、命令回显改 `$ …`、单行步骤结果 + 一行收尾，移除任务汇总表 | 已落地 |
 | [0042](0042-shared-gui-shell-and-theme.md) | 通用 GUI 组件与主题整合：窗口外壳 mixin、页面基类 `AppPage` / `PageSpec`、主题 `Metrics` 与按窗口覆盖 | 已落地 |
+| [0043](0043-llmw-multi-model-dirs.md) | llmw 多模型目录：`models_dirs` 列表 + 首个主目录，设置页参考 Steam 并排展示盘符 / 文件系统 / 剩余空间的磁盘卡片 | 已落地 |

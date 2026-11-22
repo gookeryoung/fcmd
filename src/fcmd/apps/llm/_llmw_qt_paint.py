@@ -337,11 +337,11 @@ def request_from_settings(settings: dict[str, Any]) -> _llmpaint.PaintRequest:
 
 
 def model_roots(settings: dict[str, Any]) -> list[Path]:
-    """模型扫描根：页面覆盖目录优先，否则模型目录 + ``converted`` 产物目录。"""
+    """模型扫描根：页面覆盖目录优先，否则全部模型目录 + 主目录的 ``converted`` 产物目录。"""
     override = settings.get("model_dir")
     if isinstance(override, str) and override.strip():
         return [Path(override).expanduser()]
-    return list(dict.fromkeys((_llmconfig.models_dir(), _llmconfig.products_dir())))
+    return list(dict.fromkeys((*_llmconfig.models_dirs(), _llmconfig.products_dir())))
 
 
 def output_dir(settings: dict[str, Any]) -> Path:

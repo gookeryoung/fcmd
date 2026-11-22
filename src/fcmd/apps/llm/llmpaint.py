@@ -20,7 +20,7 @@ __all__ = ["main"]
 def _scan_roots(directory: Path | None = None) -> list[Path]:
     if directory is not None:
         return [directory]
-    roots = [_llmconfig.models_dir(), _llmconfig.products_dir()]
+    roots = [*_llmconfig.models_dirs(), _llmconfig.products_dir()]
     return list(dict.fromkeys(roots))
 
 

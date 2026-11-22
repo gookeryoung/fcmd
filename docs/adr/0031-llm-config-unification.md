@@ -29,13 +29,14 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
 
 | 键 | 含义 | 默认 |
 | --- | --- | --- |
-| `models_dir` | **唯一**目录：模型下载落点，也是转换等产物的根 | `D:/models`（存在时）否则 `${home}/models` |
+| `models_dirs` | **目录列表**：首个为主目录，下载 / 转换产物落点；扫描遍历全部目录（见 [0043](0043-llmw-multi-model-dirs.md)） | `D:/models`（存在时）否则 `${home}/models` |
+| `models_dir` | 旧版单目录键：可读，写入时同步为 `models_dirs` 首项 | 同 `models_dirs` 首项 |
 | `engines_root` | llama.cpp 引擎根目录 | `${home}/engines/llama.cpp` |
 | `serve_dir` | 服务状态与日志目录 | `${home}/serve` |
 
 优先级统一为「显式参数 > 环境变量 > `config.json` > 内置默认」：
 
-- 模型目录：`--models-root` → `FCMD_MODELS` → `models_dir` → 默认；
+- 模型目录：`--models-root` → `FCMD_MODELS` → `models_dirs` / `models_dir` → 默认；
 - 引擎目录：`FCMD_ENGINES` → `engines_root` → 默认；
 - 服务目录：`FCMD_SERVE_DIR` → `serve_dir` → 默认；
 - 配置文件路径只由 `FCMD_CONFIG` / `FCMD_HOME` 决定，避免自引用。
@@ -46,20 +47,17 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
 
 所有写入改为合并式：保留其他键；恢复默认只删除对应目录键，不删除配置文件。
 
-### 2. 模型目录收为单一值
+### 2. 模型目录：列表 + 主目录
 
-模型目录不再支持列表。`models_roots`、`models_root`、`model_roots`、`models` 等旧键
-仍可读入，但只取第一个作为 `models_dir`：
+模型目录支持多个（多盘并排管理，详见 [0043](0043-llmw-multi-model-dirs.md)）：
+`models_dirs` 保存列表，首个为主目录（下载与转换产物落点），扫描遍历全部目录并按
+真实路径去重。`models_dir` 保留为旧版单值键：读取时作为列表回退，写入时同步为首项，
+`set_models_dir` / `configured_models_dir` 继续按「设置唯一目录 / 读取主目录」工作。
 
-- 旧列表中的其余目录写入 `models_dir_extra` 迁移记录，作为设置页与 `llmenv show`
-  的提示展示，**不再参与扫描**，避免静默丢弃；
-- 迁移后旧键会被移除，此后只写 `models_dir`；再次设置模型目录会清除迁移记录；
-- 读取点（`llmmodel`、`llmdoctor`、`llmconvert`、`llmqnt`、locllmw 模型页 /
-  运行页 / 概览页）统一调用 `_llmconfig.models_dir()`，不再各自遍历列表。
-
-选择单一目录的理由：真实使用中模型目录只有一个主盘；多值带来的“主目录/次目录”
-优先级、跨目录去重与下载落点歧义，比它解决的问题更多，也让设置页与 CLI 难以解释。
-需要换盘时改一个目录即可，其余路径由迁移记录保留可追溯。
+`models_roots`、`models_root`、`model_roots`、`models` 等旧键仍可读入，但只取第一个
+作为主目录；其余目录写入 `models_dir_extra` 迁移记录，仅在设置页提示用户按需添加，
+**不自动参与扫描**，避免把已失效路径重新引入。迁移后旧键会被移除；再次设置模型目录
+会清除迁移记录。
 
 ### 3. 产物落在模型目录的固定子目录
 
@@ -97,7 +95,8 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
 
 原独立窗口能力并入 locllmw「设置」页的卡片式单页：
 
-1. **存储**：模型目录（单一目录，可改可恢复默认，**窗口内唯一写入口**）；
+1. **存储**：模型目录列表（Steam 式磁盘卡并排：盘符 / 文件系统 / 剩余空间 / 主目录
+   标记，可添加、移除、设为主目录，**窗口内唯一写入口**）；
    迁移提示（`models_dir_extra` / `ignored_work_dir`）无内容时不占位；
 2. **引擎**：紧随存储卡片下方，引擎目录、已安装引擎列表（可执行文件右侧为
    默认标签或「设为默认」按钮，CUDA / CPU 类别标签在行尾）、设为默认；

@@ -190,11 +190,17 @@ def scan_models(
     root: Path | None = None,
     home: Path | None = None,
 ) -> list[ModelEntry]:
-    """递归扫描模型目录，返回 GGUF 清单（忽略 mmproj 与扩散权重，按大小降序）。"""
+    """递归扫描模型目录，返回 GGUF 清单（忽略 mmproj 与扩散权重，按大小降序）。
+
+    ``root`` 显式指定时只扫该目录；否则遍历配置的全部模型目录，按真实路径去重，
+    每条结果的 ``root`` 记录它实际来自哪个模型目录。不存在 / 不可读的目录跳过。
+    """
     entries: list[ModelEntry] = []
     seen: set[str] = set()
-    resolved_root = (root if root is not None else llmenv.models_dir(home=home)).expanduser()
-    if resolved_root.is_dir():
+    roots = [root.expanduser()] if root is not None else llmenv.models_dirs(home=home)
+    for resolved_root in roots:
+        if not resolved_root.is_dir():
+            continue
         for path in resolved_root.rglob("*.gguf"):
             if "mmproj" in path.name.lower() or _is_diffusion_weight(path):
                 continue
@@ -232,6 +238,7 @@ def find_model(
     ``model`` 可为 GGUF 文件或目录（覆盖模型目录配置）；未指定时在模型目录中
     递归查找文件名包含 ``quant`` 的 GGUF（忽略 mmproj），同名取最大。
     """
+    roots: list[Path]
     if model is not None:
         target = model.expanduser()
         if target.is_file():
@@ -240,24 +247,28 @@ def find_model(
             return target.resolve()
         if not target.is_dir():
             raise ServeError(f"模型路径不存在: {target}")
-        directory = target
+        roots = [target]
     else:
-        directory = llmenv.models_dir(models_root, home)
-        if not directory.is_dir():
+        roots = [path for path in llmenv.models_dirs(models_root, home) if path.is_dir()]
+        if not roots:
             raise ServeError(
-                f"模型目录不存在: {directory}；先下载模型："
-                f"fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --quant {quant} --dest {directory}"
+                f"模型目录不存在: {llmenv.models_dir(models_root, home)}；先下载模型："
+                "fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF "
+                f"--quant {quant} --dest {llmenv.models_dir(models_root, home)}"
             )
 
-    entries = scan_models(directory)
+    entries: list[ModelEntry] = []
+    for directory in roots:
+        entries.extend(scan_models(directory))
     matched = [entry for entry in entries if matches_profile(entry.path, quant)]
     if not matched:
         available = sorted({entry.path.name for entry in entries})[:5]
         hint = f"；已发现: {', '.join(available)}" if available else ""
+        places = "、".join(str(path) for path in roots)
         raise ServeError(
-            f"在 {directory} 未找到量化 {quant} 的 GGUF{hint}；"
+            f"在 {places} 未找到量化 {quant} 的 GGUF{hint}；"
             f"可执行 fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --quant {quant} "
-            f"--dest {directory}"
+            f"--dest {roots[0]}"
         )
     exact = [entry for entry in matched if exact_quant_match(entry.path, quant)]
     return max(exact or matched, key=lambda entry: entry.size).path
@@ -456,7 +467,7 @@ def list_cmd(models_root: Path | None = None) -> None:
     Parameters
     ----------
     models_root:
-        只扫描该目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
+        只扫描该目录；默认遍历全部已登记模型目录。
     """
     directory = llmenv.models_dir(models_root)
     if not directory.is_dir():

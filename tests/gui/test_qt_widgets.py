@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QRect, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -295,7 +295,7 @@ def test_pill_tab_bar_badge_keeps_text_position() -> None:
         tabs.show()
         QApplication.processEvents()
 
-        def label_rect() -> object:
+        def label_rect() -> QRect:
             option = QStyleOptionTab()
             bar.initStyleOption(option, 0)
             return bar._label_rect(option, 0)

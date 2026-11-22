@@ -67,7 +67,7 @@ def _source(env_name: str, config_key: str, home: Path | None = None) -> str:
 
 
 def directory_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
-    """返回「存储」页 ``(项目, 路径, 来源)``：只有模型目录。"""
+    """返回主模型目录 ``(项目, 路径, 来源)``（多目录以存储卡片为准）。"""
     return [
         ("模型目录", str(_llmconfig.models_dir(home=home)), _source("FCMD_MODELS", "models_dir", home)),
     ]
@@ -83,7 +83,7 @@ def migration_note(home: Path | None = None) -> str:
     notes: list[str] = []
     extras = _llmconfig.models_dir_extra(home)
     if extras:
-        notes.append("旧配置的其它模型目录不再扫描：" + "、".join(extras))
+        notes.append("旧配置的其它模型目录未自动加入（可在存储卡片添加）：" + "、".join(extras))
     ignored = _llmconfig.ignored_work_dir(home)
     if ignored:
         notes.append(f"旧工作目录已忽略：{ignored}")

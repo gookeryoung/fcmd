@@ -381,3 +381,42 @@ def test_missing_config_is_cached_as_empty(home: Path, monkeypatch: pytest.Monke
     after_first = list(reads)
     assert _llmconfig.load_config(home) == {}
     assert reads == after_first
+
+
+# ---------------------------------------------------------------------- #
+# 多模型目录
+# ---------------------------------------------------------------------- #
+def test_models_dirs_lists_configured_dirs(home: Path, tmp_path: Path) -> None:
+    first, second = tmp_path / "a", tmp_path / "b"
+    _llmconfig.set_models_dirs([first, second], home)
+    assert _llmconfig.configured_models_dirs(home) == [first, second]
+    assert _llmconfig.models_dirs(home=home) == [first, second]
+    assert _llmconfig.models_dir(home=home) == first
+    saved = _read(home / "serve" / "config.json")
+    assert saved["models_dirs"] == [str(first), str(second)]
+    assert saved["models_dir"] == str(first)
+
+
+def test_add_and_remove_models_dirs(home: Path, tmp_path: Path) -> None:
+    first, second = tmp_path / "a", tmp_path / "b"
+    _llmconfig.set_models_dir(first, home)
+    assert _llmconfig.add_models_dir(second, home) == [first, second]
+    assert _llmconfig.add_models_dir(first, home) == [first, second]  # 重复不追加
+    assert _llmconfig.remove_models_dir(first, home) == [second]
+    assert _llmconfig.models_dir(home=home) == second
+
+
+def test_models_dirs_env_override_is_single(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _llmconfig.set_models_dirs([tmp_path / "a", tmp_path / "b"], home)
+    env_models = tmp_path / "env"
+    monkeypatch.setenv("FCMD_MODELS", str(env_models))
+    assert _llmconfig.models_dirs(home=home) == [env_models]
+    assert _llmconfig.models_dir(home=home) == env_models
+
+
+def test_set_models_dirs_empty_resets_to_default(home: Path, tmp_path: Path) -> None:
+    _llmconfig.set_models_dirs([tmp_path / "a", tmp_path / "b"], home)
+    assert _llmconfig.set_models_dirs([], home) == [_llmconfig.default_models_dir()]
+    saved = _read(home / "serve" / "config.json")
+    assert "models_dirs" not in saved
+    assert "models_dir" not in saved

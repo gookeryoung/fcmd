@@ -26,6 +26,7 @@ __all__ = [
     "detect_hardware",
     "detect_memory_gen",
     "disk_for_path",
+    "disk_infos",
     "format_disk",
     "snapshot_from_dict",
     "snapshot_to_dict",
@@ -128,6 +129,11 @@ def detect_memory_gen(runner: Runner = run_command) -> str:
             return ""
         return SMBIOS_MEMORY_TYPES.get(code, "")
     return ""
+
+
+def disk_infos() -> tuple[DiskInfo, ...]:
+    """枚举固定磁盘分区（公开入口，供存储卡片等界面复用）。"""
+    return _disk_infos()
 
 
 def _disk_infos() -> tuple[DiskInfo, ...]:

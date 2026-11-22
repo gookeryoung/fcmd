@@ -696,7 +696,8 @@ def test_generated_pages_expose_core_widgets(window: Any) -> None:
     window.show_page("settings")
     settings_page = window.page("settings")
     settings_page.refresh()
-    assert settings_page.models_path.value()
+    assert settings_page.storage_grid is not None
+    assert settings_page.storage_grid.findChildren(object)
 
 
 def test_loading_bar_sits_right_in_status_bar(window: Any) -> None:
@@ -1279,7 +1280,7 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
 
     window.show_page("settings")
     page = window.page("settings")
-    storage = card_of(page.models_path)
+    storage = card_of(page.storage_grid)
     engine = card_of(page.engines_path)
     assert storage.title_label.text() == "存储"
     assert engine.title_label.text() == "推理引擎（llama.cpp）"
@@ -1300,7 +1301,6 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     title_row = engine.title_row
     assert title_row is not None
     assert page.engine_source_tag in [title_row.itemAt(index).widget() for index in range(title_row.count())]
-    assert page.models_path.browse.text() == "更改"
     assert page.engines_path.browse.text() == "更改"
     assert page.download_engine_button.text() == "下载引擎"
     assert page.import_engine_archive_button.text() == "导入压缩包"
