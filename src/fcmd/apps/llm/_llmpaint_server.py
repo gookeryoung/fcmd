@@ -11,6 +11,7 @@ import contextlib
 import json
 import os
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -70,6 +71,9 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 1234
 SERVER_STATE_FILE = "server.json"
 SERVER_LOG_FILE = "logs/sd-server.log"
+
+_GENERATION_LOCK = threading.Lock()
+"""进程内串行化 txt2img：sd-server 同时只能稳定处理一个生成请求，并发会互相拖垮。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -612,6 +616,17 @@ def _retry_without_sampler(status_code: int, body: str) -> bool:
     )
 
 
+def _service_failure_hint() -> str:
+    """连接中断时补一句服务状态 / 日志，区分「服务崩了」与「仍活着但请求被中断」。"""
+    state, alive = status()
+    if state is None:
+        return ""
+    tail = "" if alive else _failure_tail(Path(state.log))
+    if alive:
+        return f"\n画图服务仍在运行（pid {state.pid}）；日志: {state.log}"
+    return f"\n画图服务已退出（pid {state.pid}）。日志: {state.log}\n关键日志:\n{tail}"
+
+
 def txt2img(
     host: str,
     port: int,
@@ -620,16 +635,24 @@ def txt2img(
     timeout: float = 600.0,
     opener: Opener | None = None,
 ) -> list[str]:
-    """调用 ``POST /sdapi/v1/txt2img``，返回 base64 图片列表。"""
+    """调用 ``POST /sdapi/v1/txt2img``，返回 base64 图片列表。
+
+    生成请求在进程内串行执行：sd-server 同时处理多个 txt2img 容易互相抢显存 /
+    HTTP 连接，表现为 ``WinError 10054`` 之类的连接重置。
+    """
     url = http_base_url(host, port) + "/sdapi/v1/txt2img"
-    status_code, body = _post(url, payload, opener, timeout)
-    if (
-        not 200 <= status_code < 300
-        and _retry_without_sampler(status_code, body)
-        and ("sampler_name" in payload or "scheduler" in payload)
-    ):
-        minimal = {key: value for key, value in payload.items() if key not in {"sampler_name", "scheduler"}}
-        status_code, body = _post(url, minimal, opener, timeout)
+    with _GENERATION_LOCK:
+        try:
+            status_code, body = _post(url, payload, opener, timeout)
+        except ServeError as exc:
+            raise ServeError(f"{exc}{_service_failure_hint()}") from exc
+        if (
+            not 200 <= status_code < 300
+            and _retry_without_sampler(status_code, body)
+            and ("sampler_name" in payload or "scheduler" in payload)
+        ):
+            minimal = {key: value for key, value in payload.items() if key not in {"sampler_name", "scheduler"}}
+            status_code, body = _post(url, minimal, opener, timeout)
     if not 200 <= status_code < 300:
         raise ServeError(f"画图接口返回 HTTP {status_code}: {body.strip()[:300]}")
     try:

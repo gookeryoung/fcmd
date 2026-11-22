@@ -290,13 +290,21 @@ BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000
 
 
 def _in_job() -> bool:
-    """当前进程是否在 Windows Job Object 中（终端 / IDE / 测试启动器常见）。"""
+    """当前进程是否在 Windows Job Object 中（终端 / IDE / 测试启动器常见）。
+
+    必须显式声明 64 位 HANDLE 签名：``ctypes`` 默认按 C ``int`` 传参，
+    ``GetCurrentProcess()`` 的伪句柄会被截断，导致明明在 Job 里却返回 ``False``，
+    进而漏加 ``CREATE_BREAKAWAY_FROM_JOB``，llmw 退出时服务被 Job 一起结束。
+    """
     if os.name != "nt":
         return False
     try:
         import ctypes
 
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.IsProcessInJob.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        kernel32.IsProcessInJob.restype = ctypes.c_bool
         in_job = ctypes.c_int(0)
         if not kernel32.IsProcessInJob(kernel32.GetCurrentProcess(), None, ctypes.byref(in_job)):
             return False

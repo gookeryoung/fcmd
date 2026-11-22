@@ -3161,6 +3161,40 @@ class TestServeMiscBranches:
         assert "可能 OOM" in out
 
 
+def test_spawn_flags_include_breakaway_when_in_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    """父进程在 Job 中时必须带 ``CREATE_BREAKAWAY_FROM_JOB``，否则退出应用会带走服务。"""
+    from fcmd.apps.llm import llmserve
+
+    monkeypatch.setattr(llmserve, "_in_job", lambda: True)
+    flags = llmserve.spawn_flags()
+    assert flags & llmserve.BREAKAWAY_FROM_JOB
+    assert flags & subprocess.DETACHED_PROCESS
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Job Object 仅 Windows")
+def test_in_job_detects_actual_job_in_subprocess() -> None:
+    """回归 64 位句柄截断：真实 Job 内 ``_in_job`` 必须返回 True。
+
+    在当前 pytest 进程里建 Job 会影响后续子进程，因此放到独立子进程里验证。
+    """
+    script = """
+import ctypes
+from fcmd.apps.llm import llmserve
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+kernel32.AssignProcessToJobObject.restype = ctypes.c_bool
+job = kernel32.CreateJobObjectW(None, None)
+assert job
+assert kernel32.AssignProcessToJobObject(job, kernel32.GetCurrentProcess())
+print(llmserve._in_job())
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60, check=True)
+    assert result.stdout.strip() == "True"
+
+
 def test_spawn_child_retries_without_job_breakaway() -> None:
     """Job 不允许 breakaway 时自动退回普通创建标志，而不是直接启动失败。"""
     from fcmd.apps.llm import llmserve

@@ -1121,6 +1121,22 @@ class TestTxt2Img:
         with pytest.raises(ServeError, match="请求失败"):
             _llmpaint_server.txt2img("127.0.0.1", 1234, {}, opener=opener)
 
+    def test_connection_failure_reports_dead_service_log(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """生成途中服务崩溃：错误信息要带服务日志尾部，而不是只给 WinError。"""
+        log = tmp_path / "sd.log"
+        log.write_text("loading model\n[E] CUDA out of memory\n", encoding="utf-8")
+        state = _state(tmp_path, log=str(log))
+        monkeypatch.setattr(_llmpaint_server, "status", lambda home=None: (state, False))
+
+        def opener(request: Request, timeout: float = 2.0) -> Any:
+            raise OSError("[WinError 10054] 远程主机强迫关闭了一个现有的连接")
+
+        with pytest.raises(ServeError) as caught:
+            _llmpaint_server.txt2img("127.0.0.1", 1234, {"prompt": "x"}, opener=opener)
+        message = str(caught.value)
+        assert "画图服务已退出" in message
+        assert "CUDA out of memory" in message
+
     def test_invalid_json_and_empty_images(self) -> None:
         with pytest.raises(ServeError, match="不是 JSON"):
             _llmpaint_server.txt2img("127.0.0.1", 1234, {}, opener=_opener(b"<html>", 200))

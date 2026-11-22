@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -400,12 +401,22 @@ def settings_summary(settings: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+_PAINT_OPERATION_LOCK = threading.RLock()
+"""串行化画图启动 / 出图：聊天、工作流、看护自动重启不能同时停启同一个 sd-server。"""
+
+
 def generate_images(settings: dict[str, Any]) -> tuple[list[Path], bool]:
     """确保 sd-server 按当前配置运行 → 出图 → 保存（阻塞，供线程池调用）。
 
     返回（图片路径, 是否本次新启动服务）。``auto_start`` 关闭且服务指纹不匹配时
-    直接报错，把「先启动」的决定权留给用户，而不是偷偷重启服务。
+    直接报错，把「先启动」的决定权留给用户，而不是偷偷重启服务。一次生成期间
+    持有操作锁，避免看护 / 其它页面把服务停掉。
     """
+    with _PAINT_OPERATION_LOCK:
+        return _generate_images_locked(settings)
+
+
+def _generate_images_locked(settings: dict[str, Any]) -> tuple[list[Path], bool]:
     components = components_from_settings(settings)
     request = request_from_settings(settings)
     plan = _llmpaint_server.make_paint_plan(
@@ -423,24 +434,34 @@ def generate_images(settings: dict[str, Any]) -> tuple[list[Path], bool]:
             _llmpaint_server.stop_paint()
         _llmpaint_server.start_paint(plan)
         started = True
-    images = _llmpaint_server.txt2img(plan.host, plan.port, _llmpaint.build_payload(request))
+    payload = _llmpaint.build_payload(request)
+    try:
+        images = _llmpaint_server.txt2img(plan.host, plan.port, payload)
+    except ServeError:
+        state, alive = _llmpaint_server.status()
+        # 生成途中服务退出：自动重启一次再重试；仍失败则把日志交给上层提示。
+        if alive or not bool(settings.get("auto_start")):
+            raise
+        _llmpaint_server.start_paint(plan)
+        images = _llmpaint_server.txt2img(plan.host, plan.port, payload)
     return _llmpaint.save_images(images, output_dir(settings), seed=request.seed), started
 
 
 def start_paint_service(settings: dict[str, Any]) -> bool:
     """按当前配置启动 / 复用 sd-server；返回是否本次新启动（阻塞）。"""
-    plan = _llmpaint_server.make_paint_plan(
-        components_from_settings(settings),
-        port=int(settings.get("port") or _llmpaint_server.DEFAULT_PORT),
-        engine_tag=_engine_tag(settings),
-    )
-    state, alive = _llmpaint_server.status()
-    if alive and state is not None and state.fingerprint == _llmpaint_server.fingerprint(plan):
-        return False
-    if state is not None and alive:
-        _llmpaint_server.stop_paint()
-    _llmpaint_server.start_paint(plan)
-    return True
+    with _PAINT_OPERATION_LOCK:
+        plan = _llmpaint_server.make_paint_plan(
+            components_from_settings(settings),
+            port=int(settings.get("port") or _llmpaint_server.DEFAULT_PORT),
+            engine_tag=_engine_tag(settings),
+        )
+        state, alive = _llmpaint_server.status()
+        if alive and state is not None and state.fingerprint == _llmpaint_server.fingerprint(plan):
+            return False
+        if state is not None and alive:
+            _llmpaint_server.stop_paint()
+        _llmpaint_server.start_paint(plan)
+        return True
 
 
 class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件

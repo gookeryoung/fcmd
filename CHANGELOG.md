@@ -259,6 +259,15 @@
 
 ### 修复
 
+- 提升画图生成稳定性：sd-server 的 `txt2img` 在进程内串行执行，聊天 / 工作流 /
+  看护不会同时向同一服务发多个生成请求；画图启动 / 出图共用操作锁，避免自动重启
+  与生成互相踩踏。生成途中服务退出时自动重启并重试一次；连接重置（如
+  `WinError 10054`）会附带画图服务状态与日志尾部，便于定位 OOM / 崩溃原因。
+- 修复 llmw 退出后画图模型（sd-server）随机被结束：`_in_job` 的 ctypes 调用未声明
+  64 位 HANDLE 签名，`GetCurrentProcess()` 伪句柄被截断，导致明明在 Windows Job
+  Object 里却判定为「不在 Job」，漏加 `CREATE_BREAKAWAY_FROM_JOB`；从 IDE / 终端
+  启动时 Job 关闭会连带结束服务。现按 64 位句柄显式声明参数 / 返回类型，Job 内
+  启动的 sd-server 能正确脱离，退出应用后继续运行。
 - 提升画图服务稳定性：Windows 下从 IDE / 终端（父进程在 Job Object 中）启动时，
   sd-server 增加 `CREATE_BREAKAWAY_FROM_JOB`，避免 llmw 退出后被 Job 连带结束；
   Job 不允许 breakaway 时自动退回普通创建方式。llmw 运行期间每 5 秒看护一次
