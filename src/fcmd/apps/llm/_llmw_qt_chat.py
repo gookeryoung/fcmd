@@ -68,6 +68,7 @@ from fcmd.apps.llm.llmbase import (
 from fcmd.apps.llm.llmchat import ChatMessage, ChatRole, ChatSession
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.icons import set_icon as _set_icon
+from fcmd.gui.qt.page import AppPage
 from fcmd.gui.qt.widgets import (
     Collapsible,
     ElidedLabel,
@@ -325,12 +326,13 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         self._fit_to_content()
 
 
-class ChatPage(QWidget):  # pragma: no cover - Qt 控件
+class ChatPage(AppPage):  # pragma: no cover - Qt 控件
     """对话页：连接参数 + 流式对话记录 + 输入区。"""
 
+    PAGE_KEY = "chat"
+
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.state = state
+        super().__init__(state, parent, spacing=0)
         self._conversations, self._active = self._restore_history()
         self._running = False
         self._services: list[tuple[str, ServeState]] = []
@@ -354,9 +356,10 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     # 构建
     # ------------------------------------------------------------------ #
     def _build(self) -> None:
-        outer = QHBoxLayout(self)
+        outer = QHBoxLayout()
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        self.body.addLayout(outer, 1)
         # 侧边栏宽度可拖动：默认记住上次宽度，向左收窄、向右展开；
         # 与右侧对话区之间放共享 splitter，不再写死固定宽度。
         self._sidebar_width = max(120, self.state.settings.chat_sidebar_width)
@@ -525,7 +528,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     def _set_status(self, text: str) -> None:
         """状态统一写到窗口底部状态栏（归属对话页，切走再切回仍可见）。"""
-        self.state.page_status("chat", text)
+        self.status(text)
 
     def refresh_services(self) -> None:
         """按最新状态刷新服务下拉项，默认选中第一个可用服务并刷新状态提示。"""

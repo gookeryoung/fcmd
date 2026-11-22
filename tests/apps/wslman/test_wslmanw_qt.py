@@ -133,6 +133,42 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
         window.deleteLater()
 
 
+def test_running_distro_row_uses_red_stop_button(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """运行中的发行版给红色危险按钮「停止」；待机仍是主按钮「启动」。"""
+    view = _view(_distro("Ubuntu", "running"), _distro("Debian", "stopped", default=False))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        running, stopped = _distro_row(window, 0), _distro_row(window, 1)
+        assert running.start_stop_button.text() == "停止"
+        assert running.start_stop_button.objectName() == "Danger"
+        assert running.start_stop_button.property("fcmdIconTone") == "danger"
+        assert stopped.start_stop_button.text() == "启动"
+        assert stopped.start_stop_button.objectName() == "Primary"
+        assert stopped.start_stop_button.property("fcmdIconTone") == "on_accent"
+
+        # 任务进行中禁用：变体不丢，图标色调退回 muted（禁用底色变浅后仍看得清）。
+        running.set_busy(True)
+        assert running.start_stop_button.isEnabled() is False
+        assert running.start_stop_button.objectName() == "Danger"
+        assert running.start_stop_button.property("fcmdIconTone") == "muted"
+        running.set_busy(False)
+        assert running.start_stop_button.isEnabled() is True
+        assert running.start_stop_button.property("fcmdIconTone") == "danger"
+
+        # 状态原地变化时按钮变体跟着切（轮询不重建行）。
+        stopped.update_distro(_distro("Debian", "running", default=False), 2048, False)
+        assert stopped.start_stop_button.text() == "停止"
+        assert stopped.start_stop_button.objectName() == "Danger"
+        stopped.update_distro(_distro("Debian", "stopped", default=False), 2048, False)
+        assert stopped.start_stop_button.objectName() == "Primary"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_distro_row_selects_when_clicking_title_and_tags(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """点标题文字 / 状态胶囊也要能选中整行（行内文字不抢鼠标）。"""
     view = _view(_distro("Ubuntu", "running"), _distro("Debian", "stopped", default=False))

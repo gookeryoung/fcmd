@@ -25,6 +25,7 @@ from fcmd.apps.llm._llmw_qt_overview import OverviewPage
 from fcmd.apps.llm._llmw_qt_run import RunPage
 from fcmd.apps.llm._llmw_qt_state import LlmState
 from fcmd.gui.qt import theme as _qt_theme
+from fcmd.gui.qt.page import PageSpec
 from fcmd.gui.qt.window import QtMainWindow
 
 if TYPE_CHECKING:
@@ -37,12 +38,12 @@ NAV_TITLE = "LLM"
 DEFAULT_SIZE = (1180, 900)
 MIN_SIZE = (1040, 600)
 
-PAGES = (
-    ("overview", "概览", "系统信息、实时性能与智能推荐", "overview"),
-    ("models", "模型", "GGUF 模型与显存适配", "models"),
-    ("run", "运行", "档位、上下文与启动参数", "run"),
-    ("chat", "对话", "多轮流式对话 / 画图（sd.cpp）", "chat"),
-    ("settings", "设置", "存储、引擎、下载与转换", "settings"),
+PAGES: tuple[PageSpec, ...] = (
+    PageSpec("overview", "概览", "系统信息、实时性能与智能推荐", "overview"),
+    PageSpec("models", "模型", "GGUF 模型与显存适配", "models"),
+    PageSpec("run", "运行", "档位、上下文与启动参数", "run"),
+    PageSpec("chat", "对话", "多轮流式对话 / 画图（sd.cpp）", "chat"),
+    PageSpec("settings", "设置", "存储、引擎、下载与转换", "settings"),
 )
 """侧边栏页面顺序与提示；系统采样与实时性能已并入概览页。"""
 
@@ -70,6 +71,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             sidebar_collapsed=self.state.settings.sidebar_collapsed,
             icon=window_icon(),
             settings_path=settings_path,
+            theme_app="llmw",
         )
         self.overview = OverviewPage(self.state)
         self.run_page = RunPage(self.state)
@@ -79,8 +81,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log_dialog: Any = None
         self._bench_dialog: Any = None
 
-        for key, label, hint, icon in PAGES:
-            self.add_page(key, label, hint=hint, icon=icon, factory=self._factory(key))
+        self.add_pages(PAGES, {spec.key: self._factory(spec.key) for spec in PAGES})
 
         self.state.statusText.connect(self.set_status)
         self.state.pageStatus.connect(self.set_page_status)

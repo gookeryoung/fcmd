@@ -42,6 +42,7 @@ from fcmd.apps.llm._llmw_monitor import (
 from fcmd.apps.llm._llmw_recommend import Recommendation, recommend
 from fcmd.apps.llm.llmbase import ServeError, ServeState, human_size
 from fcmd.gui.qt import theme as _qt_theme
+from fcmd.gui.qt.page import AppPage
 from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
@@ -396,12 +397,13 @@ def _attach_process(pid: int) -> Any | None:
         return None
 
 
-class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
+class OverviewPage(AppPage):  # pragma: no cover - Qt 控件
     """概览页：系统信息（规格 + 实时格图 + 运行中的模型）→ 智能推荐。"""
 
+    PAGE_KEY = "overview"
+
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.state = state
+        super().__init__(state, parent, margins=(0, 0, 0, 8), spacing=8)
         self._recommendations: tuple[Recommendation, ...] = ()
         self._window = RATE_WINDOW_SECONDS
         self._rates: dict[str, RateWindow] = {}
@@ -410,9 +412,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._paint_key = ""
         self._inflight = False
         self._timer: QTimer | None = None
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 8)
-        layout.setSpacing(8)
+        layout = self.body
         layout.addWidget(self._build_hardware())
         layout.addWidget(self._build_recommendations(), 1)
         layout.addLayout(self._build_recommend_actions())
@@ -929,7 +929,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._recommendations = rows
         self._render_recommendations()
         if not rows:
-            self.state.status(
+            self.status(
                 "未检测到可用模型：先在「模型」页刷新，或在「设置 → 存储」中登记模型目录。"
                 if not self.state.models
                 else "当前模型都放不进整卡显存：建议换更小量化，或释放显存后重新检测。"
@@ -939,7 +939,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         """把推荐行的模型与启动配置带到运行页。"""
         row = self._recommend_list.currentRow()
         if row < 0 or row >= len(self._recommendations):
-            self.state.status("先在推荐列表中选择一行，再点「启动服务」。")
+            self.status("先在推荐列表中选择一行，再点「启动服务」。")
             return
         recommendation = self._recommendations[row]
         self.state.recommendationApplied.emit(recommendation)

@@ -7,6 +7,15 @@
 
 ### 变更
 
+- GUI 共享层整合：`QtMainWindow` / `QtToolWindow` 的设置 / 几何 / 主题 / 关闭逻辑拆成
+  `gui/qt/shell.py` 的 mixin 并由 `WindowShellMixin` 组合，两个窗口骨架不再各存一份；
+  应用页面统一继承 `gui/qt/page.py` 的 `AppPage`（页面 key + 按页状态通道 + 卡片辅助），
+  页面登记改用 `PageSpec` / `QtMainWindow.add_pages`。llmw 五个页面与 wslmanw 三个页面
+  已迁移；页面状态改为写入自己的分页，后台回调切页后不再串页。
+- 主题可配置性：`Theme` 新增 `Metrics`（圆角 / 控件高度补偿 / 按钮内边距），QSS 只从
+  主题度量生成；`ui/theme.json` 支持 `overrides` 与 `apps.<窗口名>` 覆盖调色板 token、
+  字号与度量（非法值逐项忽略），切主题时保留手写覆盖段；同一主题 id 的不同覆盖会重新
+  应用样式表。
 - 状态栏页内补充（如「Ubuntu-24.04 · 已停止 · v2 · ≈12.0 GiB」）改为**右对齐**：
   主状态文字靠左、选中项摘要靠右并紧挨右侧备注 / 加载条；原来两段各占一半宽度且都左对齐，
   摘要看起来悬在状态栏中间。
@@ -74,6 +83,10 @@
   点击被标签吃掉，`QListWidget` 收不到、选不中这一行。现在行内文字统一
   `NoTextInteraction`（标题、副标题、数值、胶囊、备注小字），点标题即可选中整行，
   wslmanw 发行版 / 镜像列表与 llmw 模型列表同时生效。
+- `wslmanw` 发行版行的启停按钮按状态换主题：运行中显示**红色危险按钮**「停止」，
+  已停止 / 未知时仍是主按钮「启动」；状态轮询原地切换（不重建行），任务进行中禁用时
+  图标色调退回 `muted`，避免禁用底色变浅后图标看不清。共享层新增
+  `widgets.set_button_kind`，动态动作按钮可在 `#Primary` / `#Danger` / 无变体间切换。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

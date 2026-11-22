@@ -3,7 +3,9 @@
 本模块只保存**主题数据与纯函数**（四套内置主题、别名、`ui/theme.json` 读写、
 调色板 token 校验、字体挑选与相对亮度），不导入任何 GUI 工具包：
 
-- Qt 侧 :mod:`fcmd.gui.qt.theme` 把 :class:`Palette` 翻译成 QSS / QPalette；
+- Qt 侧 :mod:`fcmd.gui.qt.theme` 把 :class:`Palette` / :class:`Metrics` 翻译成 QSS / QPalette；
+- ``ui/theme.json`` 的 ``overrides`` / ``apps.<窗口名>`` 可按全局或窗口覆盖调色板、
+  字号与度量，见 :func:`apply_theme_overrides` / :func:`merge_theme_overrides`；
 - CI（不装 PySide6）也能直接单测主题解析与持久化；
 - 窗口几何与主题选择互不影响，主题文件位于
   ``${FCMD_HOME:-~/.fcmd}/ui/theme.json``。
@@ -12,10 +14,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, fields
+from collections.abc import Mapping
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from fcmd.gui import config as _guiconfig
 
@@ -28,20 +31,30 @@ __all__ = [
     "FONTS",
     "GEOMETRY_RULES",
     "LATIN_FONT_CANDIDATES",
+    "METRICS",
+    "METRIC_KEYS",
     "MONO_FONT_CANDIDATES",
     "PALETTE",
+    "PALETTE_TOKENS",
     "SPACING",
     "THEMES",
     "THEME_ALIASES",
+    "THEME_APPS_KEY",
+    "THEME_APP_KEY",
+    "THEME_FONT_KEYS",
+    "THEME_OVERRIDES_KEY",
     "UI_FONT_CANDIDATES",
     "FontScale",
     "GeometryRules",
+    "Metrics",
     "Palette",
     "Spacing",
     "Theme",
+    "apply_theme_overrides",
     "font_renders_cjk",
     "is_dark_palette",
     "load_theme",
+    "merge_theme_overrides",
     "missing_palette_tokens",
     "pick_font_family",
     "read_theme_name",
@@ -124,6 +137,21 @@ class GeometryRules:
 
 
 @dataclass(frozen=True, slots=True)
+class Metrics:
+    """控件度量（圆角 / 控件高度补偿 / 水平内边距）。
+
+    与 :class:`Palette` 一起构成主题基线：QSS 里的圆角与单行控件高度都从这里取，
+    主题或窗口可以在 ``ui/theme.json`` 覆盖其中任意一项，而不必改样式表。
+    """
+
+    radius: int = 8
+    control_height_extra: int = 9
+    run_control_height_extra: int = 6
+    button_pad_x: str = "0.9em"
+    input_pad_x: str = "0.45em"
+
+
+@dataclass(frozen=True, slots=True)
 class Theme:
     """一套可切换主题：稳定 id、显示名与完整调色板。"""
 
@@ -132,6 +160,7 @@ class Theme:
     palette: Palette
     fonts: FontScale = FontScale()
     spacing: Spacing = Spacing()
+    metrics: Metrics = Metrics()
     native: bool = False
     description: str = ""
 
@@ -190,7 +219,28 @@ CJK_TEXT_SAMPLE: Final[str] = "中文测试"
 PALETTE: Final[Palette] = Palette()
 FONTS: Final[FontScale] = FontScale()
 SPACING: Final[Spacing] = Spacing()
+METRICS: Final[Metrics] = Metrics()
 GEOMETRY_RULES: Final[GeometryRules] = GeometryRules()
+
+PALETTE_TOKENS: Final[tuple[str, ...]] = tuple(item.name for item in fields(Palette))
+"""调色板允许覆盖的 token 名（与 :class:`Palette` 字段一一对应）。"""
+
+THEME_FONT_KEYS: Final[Mapping[str, str]] = MappingProxyType(
+    {"font_small": "small", "font_body": "body", "font_heading": "heading", "font_title": "title"}
+)
+"""``theme.json`` 覆盖键 → :class:`FontScale` 字段。"""
+
+METRIC_KEYS: Final[tuple[str, ...]] = tuple(item.name for item in fields(Metrics))
+"""``theme.json`` 可覆盖的度量键。"""
+
+THEME_OVERRIDES_KEY: Final[str] = "overrides"
+"""全局度量 / 调色板覆盖的配置键。"""
+
+THEME_APPS_KEY: Final[str] = "apps"
+"""按窗口（``config_name``）区分的覆盖配置键。"""
+
+THEME_APP_KEY: Final[str] = "app"
+"""单窗口覆盖段里的应用标识键（用于日志 / 诊断，不参与解析）。"""
 
 DEFAULT_THEME_NAME: Final[str] = "dark-blue"
 
@@ -301,6 +351,7 @@ THEME_ALIASES: Final[Mapping[str, str]] = MappingProxyType(
 
 _THEME_SETTINGS_KEY: Final[str] = "theme"
 _HEX_COLOR_RE: Final[re.Pattern[str]] = re.compile(r"^#[0-9a-fA-F]{6}$")
+_PAD_RE: Final[re.Pattern[str]] = re.compile(r"^\d+(?:\.\d+)?(?:em|px)$")
 
 
 def theme_names() -> tuple[str, ...]:
@@ -348,16 +399,108 @@ def read_theme_name(path: Path | None = None) -> str:
     return resolve_theme(value).name
 
 
-def load_theme(path: Path | None = None) -> Theme:
-    """按持久化配置加载主题；读取失败或值非法时返回默认主题。"""
-    return resolve_theme(read_theme_name(path))
+def load_theme(path: Path | None = None, *, app: str | None = None) -> Theme:
+    """按持久化配置加载主题；读取失败或值非法时返回默认主题。
+
+    ``app`` 非空时额外应用 ``apps[app]`` 段（按窗口的调色板 / 度量覆盖）；
+    覆盖值非法时逐项忽略，不影响主题本身。
+    """
+    raw = _guiconfig.read_settings(path or theme_config_path()) or {}
+    theme = resolve_theme(raw.get(_THEME_SETTINGS_KEY))
+    overrides = merge_theme_overrides(raw, app)
+    return apply_theme_overrides(theme, overrides) if overrides else theme
 
 
 def save_theme(name: str | Theme, path: Path | None = None) -> Theme:
-    """保存主题选择并返回规范化的主题；非法名写默认主题，写入失败静默。"""
+    """保存主题选择并返回规范化的主题；非法名写默认主题，写入失败静默。
+
+    只改 ``theme`` 字段，保留 ``overrides`` / ``apps`` 等手写覆盖段；
+    否则用户切一次主题就会把自定义度量冲掉。
+    """
     theme = resolve_theme(name if isinstance(name, str) else name.name)
-    _guiconfig.write_settings({_THEME_SETTINGS_KEY: theme.name}, path or theme_config_path())
+    target = path or theme_config_path()
+    raw = _guiconfig.read_settings(target) or {}
+    raw[_THEME_SETTINGS_KEY] = theme.name
+    _guiconfig.write_settings(raw, target)
     return theme
+
+
+def merge_theme_overrides(raw: Mapping[str, object] | None, app: str | None = None) -> dict[str, object]:
+    """把 ``overrides`` 与 ``apps[app]`` 合并成扁平覆盖表（应用段优先）。
+
+    只做结构合并，值是否可用交给 :func:`apply_theme_overrides` 逐项校验；
+    非映射段直接忽略，不抛异常。
+    """
+    merged: dict[str, object] = {}
+    if not isinstance(raw, Mapping):
+        return merged
+    global_section = raw.get(THEME_OVERRIDES_KEY)
+    if isinstance(global_section, Mapping):
+        merged.update(global_section)
+    app_section = raw.get(THEME_APPS_KEY)
+    if app and isinstance(app_section, Mapping):
+        scoped = app_section.get(app)
+        if isinstance(scoped, Mapping):
+            merged.update(scoped)
+    return merged
+
+
+def apply_theme_overrides(theme: Theme, overrides: Mapping[str, object] | None) -> Theme:
+    """在主题上应用调色板 / 字号 / 度量覆盖，返回新 :class:`Theme`。
+
+    覆盖键与 :class:`Palette` 字段、``font_*``、:class:`Metrics` 字段同名；
+    非法值（非 ``#rrggbb``、类型不符、超出合理范围）逐项忽略，始终返回可用主题。
+    """
+    if not isinstance(overrides, Mapping) or not overrides:
+        return theme
+    palette_values = {item.name: getattr(theme.palette, item.name) for item in fields(Palette)}
+    font_values: dict[str, int] = {}
+    metric_values: dict[str, Any] = {}
+    for key, value in overrides.items():
+        if not isinstance(key, str):
+            continue
+        name = key.strip()
+        if name in PALETTE_TOKENS:
+            if isinstance(value, str) and _HEX_COLOR_RE.fullmatch(value.strip()):
+                palette_values[name] = value.strip()
+            continue
+        if name in THEME_FONT_KEYS:
+            point = _coerce_int(value, low=5, high=32)
+            if point is not None:
+                font_values[THEME_FONT_KEYS[name]] = point
+            continue
+        if name in METRIC_KEYS:
+            validated = _coerce_metric(name, value)
+            if validated is not None:
+                metric_values[name] = validated
+    if (
+        not font_values
+        and not metric_values
+        and palette_values == {item.name: getattr(theme.palette, item.name) for item in fields(Palette)}
+    ):
+        return theme
+    return replace(
+        theme,
+        palette=replace(theme.palette, **palette_values),
+        fonts=replace(theme.fonts, **font_values),
+        metrics=replace(theme.metrics, **metric_values),
+    )
+
+
+def _coerce_int(value: object, *, low: int, high: int) -> int | None:
+    """把配置值收敛成 ``low..high`` 的整数；布尔 / 越界 / 非整数返回 ``None``。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if low <= value <= high else None
+
+
+def _coerce_metric(name: str, value: object) -> object | None:
+    """按度量字段校验覆盖值：整数度量限 0..40，内边距只接受 em / px 长度。"""
+    if name in {"radius", "control_height_extra", "run_control_height_extra"}:
+        return _coerce_int(value, low=0, high=40)
+    if name in {"button_pad_x", "input_pad_x"} and isinstance(value, str) and _PAD_RE.fullmatch(value.strip()):
+        return value.strip()
+    return None
 
 
 def ui_font_families(available: Iterable[str]) -> tuple[str, ...]:

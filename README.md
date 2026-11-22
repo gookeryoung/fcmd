@@ -115,11 +115,28 @@ fcmd completion --shell fish | source         # fish
 { "theme": "light" }
 ```
 
+还可以用 `overrides`（全局）与 `apps.<窗口名>`（按窗口）覆盖调色板 token、字号与控件度量；窗口名即设置文件名（`llmw` / `wslmanw` 等），窗口段优先，非法值逐项忽略：
+
+```json
+{
+  "theme": "dark-blue",
+  "overrides": { "radius": 10, "font_body": 10 },
+  "apps": {
+    "llmw": { "accent": "#ff7a00" },
+    "wslmanw": { "control_height_extra": 11 }
+  }
+}
+```
+
+可覆盖的键：调色板字段（`accent` / `background` / `muted` 等）、字号 `font_small` / `font_body` / `font_heading` / `font_title`，以及度量 `radius` / `control_height_extra` / `run_control_height_extra` / `button_pad_x` / `input_pad_x`。在窗口菜单里切主题只改 `theme` 字段，手写的覆盖段会原样保留。
+
 删除该文件、写入非法主题名或 JSON 损坏时，窗口启动会自动回退到 `dark-blue`，不会影响工具本身运行。
 
 `native` 贴近系统原生配色（Qt Fusion + 系统调色板），其余主题保持填充式按钮与统一圆角。
 
-高 DPI（125% / 150%）下 Qt 自动按逻辑像素缩放，按钮 / 输入框 / 下拉 / 数值框的高度统一由字体行高推导（`gui/qt/theme.py` 的 `CONTROL_HEIGHT_EXTRA`），避免「字变大、控件不变」。
+高 DPI（125% / 150%）下 Qt 自动按逻辑像素缩放，按钮 / 输入框 / 下拉 / 数值框的高度统一由字体行高推导（主题的 `metrics.control_height_extra`），避免「字变大、控件不变」。
+
+窗口外壳（设置 / 几何 / 主题 / 关闭）由 `gui/qt/shell.py` 的 mixin 组合，分页窗口与单页窗口不再各存一份；应用页面继承 `gui/qt/page.py` 的 `AppPage`，页面状态按 `PAGE_KEY` 写到自己的状态栏分页，不会串页。
 
 窗口设置统一以原子方式写入（临时文件 + 替换），并在每次有效写入前保留一份同名 `.bak` 备份。主文件缺失、损坏或顶层不是对象时，读取会自动回退到 `.bak`。
 

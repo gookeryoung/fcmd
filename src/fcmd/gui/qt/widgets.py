@@ -105,6 +105,7 @@ __all__ = [
     "section_header",
     "segment_band",
     "segment_fill",
+    "set_button_kind",
     "set_button_text",
     "splitter_sizes",
     "value_label",
@@ -129,6 +130,21 @@ def set_button_text(widget: QPushButton, text: str, *, tone: str | None = None) 
         return
     widget.setIcon(QIcon())
     widget.setProperty(ICON_NAME_PROPERTY, None)
+
+
+def set_button_kind(widget: QPushButton, kind: str) -> None:
+    """运行时切换按钮变体（``primary`` / ``danger`` / ``ghost`` / 空）。
+
+    动态动作按钮（启动 ↔ 停止）不能只改文案：配色 / 边框由 ``#Primary`` /
+    ``#Danger`` 的 QSS 决定，必须同时换 objectName 并重抛光；动作状态未变化时
+    直接返回，避免轮询里反复重解析样式。图标色调由 :func:`set_button_text` 负责。
+    """
+    name = kind.capitalize() if kind else ""
+    if widget.objectName() == name:
+        return
+    widget.setObjectName(name)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
 
 
 def button(

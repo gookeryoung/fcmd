@@ -97,3 +97,87 @@ def test_ui_font_families_fall_back_to_cascadia_mono_and_cjk() -> None:
 def test_mono_candidates_prefer_cascadia_code() -> None:
     """等宽候选把 Cascadia Code 排在 Cascadia Mono 之前（GUI 英文统一这一族）。"""
     assert _guitheme.MONO_FONT_CANDIDATES[:2] == ("Cascadia Code", "Cascadia Mono")
+
+
+# ---------------------------------------------------------------------- #
+# 主题覆盖：调色板 / 字号 / 度量，全局段与按窗口段
+# ---------------------------------------------------------------------- #
+def test_builtin_themes_expose_default_metrics() -> None:
+    """每套内置主题都带完整度量；默认值与历史常量一致。"""
+    metrics = _guitheme.METRICS
+    assert (metrics.radius, metrics.control_height_extra, metrics.run_control_height_extra) == (8, 9, 6)
+    for name in _guitheme.theme_names():
+        assert _guitheme.resolve_theme(name).metrics == metrics
+
+
+def test_apply_theme_overrides_palette_fonts_and_metrics() -> None:
+    base = _guitheme.resolve_theme("dark-blue")
+    themed = _guitheme.apply_theme_overrides(
+        base,
+        {
+            "accent": "#ff7a00",
+            "font_body": 11,
+            "radius": 12,
+            "button_pad_x": "1.1em",
+        },
+    )
+    assert themed.name == base.name  # 覆盖不改 id，主题菜单勾选仍成立
+    assert themed.palette.accent == "#ff7a00"
+    assert themed.palette.background == base.palette.background
+    assert themed.fonts.body == 11
+    assert themed.metrics.radius == 12
+    assert themed.metrics.button_pad_x == "1.1em"
+    assert _guitheme.missing_palette_tokens(themed.palette) == ()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"accent": "orange"},
+        {"font_body": 99},
+        {"font_body": True},
+        {"radius": -1},
+        {"button_pad_x": "huge"},
+        {"unknown_key": "#ffffff"},
+        {"accent": "#ff7a00", "background": "bad"},
+    ],
+)
+def test_apply_theme_overrides_ignores_invalid_values(overrides: dict[str, object]) -> None:
+    base = _guitheme.resolve_theme("light")
+    themed = _guitheme.apply_theme_overrides(base, overrides)
+    # 非法项被丢弃；没有合法项时原样返回同一个主题对象。
+    assert themed == base or _guitheme.missing_palette_tokens(themed.palette) == ()
+
+
+def test_merge_theme_overrides_app_section_wins() -> None:
+    raw = {
+        "theme": "dark-blue",
+        "overrides": {"accent": "#111111", "radius": 10},
+        "apps": {"llmw": {"accent": "#222222"}},
+    }
+    merged = _guitheme.merge_theme_overrides(raw, "llmw")
+    assert merged == {"accent": "#222222", "radius": 10}
+    assert _guitheme.merge_theme_overrides(raw, "wslmanw") == {"accent": "#111111", "radius": 10}
+    assert _guitheme.merge_theme_overrides(raw, None) == {"accent": "#111111", "radius": 10}
+    assert _guitheme.merge_theme_overrides(None, "llmw") == {}
+    assert _guitheme.merge_theme_overrides({"overrides": 3, "apps": []}, "llmw") == {}
+
+
+def test_load_theme_applies_per_app_overrides_and_save_keeps_them(tmp_path: Path) -> None:
+    path = tmp_path / "theme.json"
+    path.write_text(
+        '{"theme": "light", "overrides": {"radius": 10}, "apps": {"llmw": {"accent": "#ff0000"}}}',
+        encoding="utf-8",
+    )
+    scoped = _guitheme.load_theme(path, app="llmw")
+    assert scoped.name == "light"
+    assert scoped.palette.accent == "#ff0000"
+    assert scoped.metrics.radius == 10
+    other = _guitheme.load_theme(path, app="wslmanw")
+    assert other.palette.accent == _guitheme.resolve_theme("light").palette.accent
+    assert other.metrics.radius == 10
+
+    _guitheme.save_theme("dark-blue", path)
+    raw = path.read_text(encoding="utf-8")
+    assert '"overrides"' in raw and '"apps"' in raw
+    assert _guitheme.load_theme(path, app="llmw").palette.accent == "#ff0000"

@@ -8,8 +8,10 @@
 
 - :mod:`fcmd.gui.qt.theme`：调色板 → QSS / QPalette / 字体，纯函数可单测；
 - :mod:`fcmd.gui.qt.sidebar`：左侧分页导航（``SidebarNav`` 的 Qt 版本）；
+- :mod:`fcmd.gui.qt.shell`：窗口外壳 mixin（设置 / 几何 / 主题 / 关闭）+ ``WindowSpec``；
 - :mod:`fcmd.gui.qt.window`：QMainWindow 骨架（导航 + 分页栈 + 状态栏 + 主题菜单）；
 - :mod:`fcmd.gui.qt.toolwindow`：单页工具窗口骨架（菜单 + 状态栏 + 几何记忆）；
+- :mod:`fcmd.gui.qt.page`：页面骨架（``PageBody`` / ``AppPage`` / ``PageSpec``）；
 - :mod:`fcmd.gui.qt.theme_menu`：主题子菜单与即时切换（分页 / 单页窗口共用）；
 - :mod:`fcmd.gui.qt.app`：QApplication 生命周期、高 DPI 策略与 ``run_window``；
 - :mod:`fcmd.gui.qt.layout`：省略与列宽 / 分栏尺寸的纯函数；

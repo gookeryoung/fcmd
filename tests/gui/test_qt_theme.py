@@ -66,6 +66,10 @@ def test_stylesheet_contains_expected_selectors() -> None:
     ):
         assert selector in text
     assert f"{theme.fonts.body}pt" in text
+    # 危险按钮是红色主题：文字 / 边框取 danger 语义色。
+    danger_block = _rule(text, "QPushButton#Danger")
+    assert f"color: {theme.palette.danger}" in danger_block
+    assert f"border-color: {theme.palette.danger}" in danger_block
 
 
 def test_template_tokens_include_fonts_and_radius() -> None:
@@ -391,3 +395,33 @@ def test_mono_font_uses_cascadia_code_when_available() -> None:
         assert font.pointSize() >= 9
     else:  # pragma: no cover - 无 Cascadia 的环境
         assert font.pointSize() >= 9
+
+
+def test_template_tokens_follow_theme_metrics() -> None:
+    """圆角 / 控件高度差 / 内边距都从 ``theme.metrics`` 取，可被 ``theme.json`` 覆盖。"""
+    base = _guitheme.resolve_theme("dark-blue")
+    tuned = _guitheme.apply_theme_overrides(
+        base,
+        {"radius": 12, "control_height_extra": 14, "run_control_height_extra": 10, "button_pad_x": "1.2em"},
+    )
+    tokens = _qt_theme.template_tokens(tuned, control_height_px=30)
+    assert tokens["radius"] == "12"
+    assert tokens["run_control_height"] == "40px"
+    assert tokens["control_pad_x"] == "1.2em"
+    assert _qt_theme.control_height(tuned) == round(tuned.fonts.body * 96 / 72) + 14
+    text = _qt_theme.stylesheet(tuned, control_height_px=30)
+    card = text.split("QFrame#Card {", 1)[1].split("}", 1)[0]
+    assert "border-radius: 12px" in card
+
+
+def test_apply_theme_reapplies_when_only_overrides_change() -> None:
+    """主题 id 相同但覆盖不同（例如切到带窗口覆盖的主题）时必须重新应用样式。"""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    base = _guitheme.resolve_theme("dark-blue")
+    tuned = _guitheme.apply_theme_overrides(base, {"accent": "#ff7a00"})
+    _qt_theme.apply_theme(app, base)
+    _qt_theme.apply_theme(app, tuned)
+    assert _qt_theme.active_theme(app).palette.accent == "#ff7a00"
+    assert base.palette.accent in app.styleSheet() or "#ff7a00" in app.styleSheet()

@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QSpinBox,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -35,6 +34,7 @@ from fcmd.apps.llm import _llmw_convert, _llmw_models, llmconvert, llmenv
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
+from fcmd.gui.qt.page import AppPage
 from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
@@ -106,16 +106,15 @@ class _EngineRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.setMinimumHeight(self.fontMetrics().height() + 14)
 
 
-class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
+class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
     """设置页：存储、推理引擎（llama.cpp）、sd.cpp 引擎（画图 / 视频 / 音频共用）、下载参数与模型转换。"""
 
+    PAGE_KEY = "settings"
+
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.state = state
+        super().__init__(state, parent, spacing=0)
         self._engines: list[EngineInfo] = []
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        outer = self.body
         scroll = PageScroll(self)
         layout = scroll.body
         outer.addWidget(scroll)
@@ -219,7 +218,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.settings.download = _llmw_models.settings_to_dict(settings)
         self.state.persist()
         self.state.log("已自动保存下载设置")
-        self.state.status("已自动保存下载设置")
+        self.status("已自动保存下载设置")
 
     # ------------------------------------------------------------------ #
     # 转换
@@ -288,7 +287,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.settings.convert = _llmw_convert.convert_settings_to_dict(settings)
         self.state.persist()
         self.state.log("已自动保存模型转换设置")
-        self.state.status("已自动保存模型转换设置")
+        self.status("已自动保存模型转换设置")
 
     # ------------------------------------------------------------------ #
     # 引擎
@@ -421,7 +420,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
             return
         label = "模型目录" if key == "models_dir" else "引擎目录"
         self.state.log(f"已自动保存{label}: {resolved}")
-        self.state.status(f"已自动保存{label}：{resolved}")
+        self.status(f"已自动保存{label}：{resolved}")
         self.refresh()
         if key == "models_dir":
             self.state.refresh_models()
@@ -439,7 +438,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
             QMessageBox.critical(self, "切换失败", str(exc))
             return
         self.state.log(f"默认引擎已切换为 {chosen.tag} · {chosen.exe}")
-        self.state.status(f"默认引擎：{chosen.tag}")
+        self.status(f"默认引擎：{chosen.tag}")
         self._set_engine_hint(f"默认引擎：{chosen.tag} · {chosen.exe}")
         self.refresh_engines()
 
@@ -465,7 +464,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
             return
         self.state.log(f"{action}引擎 {info.tag} · {info.exe}")
         self._set_engine_hint(f"{action}引擎：{info.tag} · {info.exe}")
-        self.state.status(f"{action}引擎：{info.tag}")
+        self.status(f"{action}引擎：{info.tag}")
         self.refresh()
 
     def _open_engine_download(self) -> None:
@@ -479,7 +478,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
     def _on_engine_downloaded(self, tag: str) -> None:
         """下载安装完成：刷新列表、写状态栏与日志。"""
         self.state.log(f"已下载引擎：{tag}")
-        self.state.status(f"已下载引擎：{tag}")
+        self.status(f"已下载引擎：{tag}")
         self._set_engine_hint(f"已下载引擎：{tag}")
         self.refresh()
 

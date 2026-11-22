@@ -117,7 +117,7 @@ def test_apply_recommendation_emits_and_navigates(overview: Any, tmp_path: Path)
 def test_apply_recommendation_requires_selection(overview: Any) -> None:
     state, page = overview
     messages: list[str] = []
-    state.statusText.connect(messages.append)
+    state.pageStatus.connect(lambda _key, text: messages.append(text))
     page._recommendations = ()
     page.apply_recommendation()
     assert any("先在推荐列表中选择一行" in text for text in messages)

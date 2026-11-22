@@ -25,6 +25,7 @@ from fcmd.gui import theme as _guitheme
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from pathlib import Path
 
     from fcmd.gui.theme import Theme
 
@@ -51,13 +52,21 @@ __all__ = [
 UI_FONT_CANDIDATES = _guitheme.UI_FONT_CANDIDATES
 MONO_FONT_CANDIDATES = _guitheme.MONO_FONT_CANDIDATES
 theme_names = _guitheme.theme_names
-load_theme = _guitheme.load_theme
 save_theme = _guitheme.save_theme
 
-_RADIUS = 8
-"""卡片 / 输入框圆角（Qt 逻辑像素，高 DPI 由 Qt 自动缩放）。"""
 
-CONTROL_HEIGHT_EXTRA = 9
+def load_theme(path: Path | None = None, *, app: str | None = None) -> Theme:
+    """读取持久化主题；``app`` 非空时叠加该窗口的调色板 / 度量覆盖。"""
+    return _guitheme.load_theme(path, app=app)
+
+
+_RADIUS = _guitheme.METRICS.radius
+"""卡片 / 输入框默认圆角（Qt 逻辑像素，高 DPI 由 Qt 自动缩放）。
+
+实际生效值取 ``theme.metrics.radius``，本常量只是未覆盖时的默认值。
+"""
+
+CONTROL_HEIGHT_EXTRA = _guitheme.METRICS.control_height_extra
 """控件高度相对字体行高的补偿量（Qt 逻辑像素）。
 
 单行件的总高 = 字体行高 + 边框（上下各 1px）+ 呼吸空间。9pt 字体行高 12px，
@@ -65,18 +74,18 @@ CONTROL_HEIGHT_EXTRA = 9
 实测一致。数值固定为逻辑像素，高 DPI 下由 Qt 按缩放因子换算成设备像素。
 """
 
-RUN_CONTROL_HEIGHT_EXTRA = 6
+RUN_CONTROL_HEIGHT_EXTRA = _guitheme.METRICS.run_control_height_extra
 """主要动作按钮（启动 / 停止服务、新对话）相对常规单行控件的加高量（逻辑像素）。
 
 主按钮只保留“比常规按钮稍大”的层级感：高度比常规控件高 6px，配合更宽的
 左右内边距与强调色，不再写死 40px 的大按钮尺寸。
 """
 
-_CONTROL_PAD_X_BUTTON = "0.9em"
-_CONTROL_PAD_X_INPUT = "0.45em"
+_CONTROL_PAD_X_BUTTON = _guitheme.METRICS.button_pad_x
+_CONTROL_PAD_X_INPUT = _guitheme.METRICS.input_pad_x
 
-_APPLIED: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
-"""已应用主题的应用实例 → 主题 id；重复应用同一主题时直接返回。"""
+_APPLIED: weakref.WeakKeyDictionary[Any, Theme] = weakref.WeakKeyDictionary()
+"""已应用主题的应用实例 → 生效主题；重复应用同一主题（含覆盖）时直接返回。"""
 
 _FAMILIES: weakref.WeakKeyDictionary[Any, tuple[str, ...]] = weakref.WeakKeyDictionary()
 """按应用缓存 ``QFontDatabase.families()``：字体枚举在部分平台上需要数百毫秒。"""
@@ -121,7 +130,7 @@ def control_height(theme: Theme) -> int:
     运行时 :func:`apply_theme` 会用 ``QFontMetrics`` 的实际行高替代这里的估算，
     保证字体替换后控件仍与文字对齐；本函数保持纯函数，便于 CI 无 ``PySide6`` 单测。
     """
-    return round(theme.fonts.body * 96 / 72) + CONTROL_HEIGHT_EXTRA
+    return round(theme.fonts.body * 96 / 72) + theme.metrics.control_height_extra
 
 
 _QSS = Template(
@@ -774,11 +783,11 @@ def template_tokens(
             "font_body": str(theme.fonts.body),
             "font_heading": str(theme.fonts.heading),
             "font_title": str(theme.fonts.title),
-            "radius": str(_RADIUS),
+            "radius": str(theme.metrics.radius),
             "control_height": f"{height}px",
-            "run_control_height": f"{height + RUN_CONTROL_HEIGHT_EXTRA}px",
-            "control_pad_x": _CONTROL_PAD_X_BUTTON,
-            "control_pad_x_input": _CONTROL_PAD_X_INPUT,
+            "run_control_height": f"{height + theme.metrics.run_control_height_extra}px",
+            "control_pad_x": theme.metrics.button_pad_x,
+            "control_pad_x_input": theme.metrics.input_pad_x,
             "font_family": font_family or pick_font_family((), UI_FONT_CANDIDATES),
             "mono_family": mono_family or pick_font_family((), MONO_FONT_CANDIDATES),
         }
@@ -872,7 +881,7 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     """
     from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
 
-    if _APPLIED.get(app) == theme.name:
+    if _APPLIED.get(app) == theme:
         return
     families = _FAMILIES.get(app)
     if families is None:
@@ -900,7 +909,7 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     font.setPointSize(theme.fonts.body)
     font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
     app.setFont(font)
-    height = QFontMetrics(font).height() + CONTROL_HEIGHT_EXTRA
+    height = QFontMetrics(font).height() + theme.metrics.control_height_extra
     _RUNTIME_HEIGHTS[app] = height
     app.setStyleSheet(stylesheet(theme, font_family=family, mono_family=mono, control_height_px=height))
-    _APPLIED[app] = theme.name
+    _APPLIED[app] = theme

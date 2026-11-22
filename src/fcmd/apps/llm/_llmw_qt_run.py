@@ -77,6 +77,7 @@ from fcmd.apps.llm.llmbase import (
     human_size,
 )
 from fcmd.gui.qt import theme as _qt_theme
+from fcmd.gui.qt.page import AppPage
 from fcmd.gui.qt.widgets import (
     Card,
     ChoiceGroup,
@@ -453,12 +454,13 @@ def _mode_for_profile(profile: str) -> str:
     return "balanced"
 
 
-class RunPage(QWidget):  # pragma: no cover - Qt 控件
+class RunPage(AppPage):  # pragma: no cover - Qt 控件
     """运行页：参数表单 + 模型列表 + 计划预览 + 启停动作。"""
 
+    PAGE_KEY = "run"
+
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.state = state
+        super().__init__(state, parent, spacing=6)
         self._syncing_tune = False
         self._active_param_key: str | None = None
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
@@ -481,9 +483,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     # 构建
     # ------------------------------------------------------------------ #
     def _build(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(6)
+        outer = self.body
 
         # 运行页按用途分页：对话 / 编程共用同一套 llama.cpp 启动参数（模型候选按
         # 能力标签区分），画图页签配 sd.cpp；引擎安装 / 默认引擎统一归设置页。
@@ -681,7 +681,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         current = self.state.selected_model
         if current is not None and candidates and current not in candidates:
             self.state.select_model(candidates[0], update_name=True)
-        self.state.status(f"已切到「{_USAGE_LABELS[usage]}」启动参数")
+        self.status(f"已切到「{_USAGE_LABELS[usage]}」启动参数")
 
     def _usage_models(self) -> list[ModelEntry]:
         """当前用途的模型候选：按能力标签或分类关键字筛选；空时回退全部。"""
@@ -754,7 +754,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             return
         section = getattr(self, "paint_engine_section", None)
         hint = section.missing_model_hint() if section is not None else ""
-        self.state.status(hint or self._paint_default_hint())
+        self.status(hint or self._paint_default_hint())
 
     # ------------------------------------------------------------------ #
     # 画图服务
@@ -864,7 +864,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """画图页签「保存参数」：把当前启动参数立即写进 llmw.json（全局只一份）。"""
         self.state.settings.paint = self.paint_settings()
         self.state.persist()
-        self.state.status("画图启动参数已保存")
+        self.status("画图启动参数已保存")
         self.state.log("已保存画图启动参数")
 
     def _on_paint_action(self) -> None:
@@ -904,7 +904,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         if answer != QMessageBox.StandardButton.Yes:
             return
         self._set_paint_busy(True)
-        self.state.status("正在停止未登记的画图服务…")
+        self.status("正在停止未登记的画图服务…")
         submit_daemon(
             _llmpaint_server.stop_orphans,
             port,
@@ -915,10 +915,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _paint_orphans_stopped(self, pids: tuple[int, ...]) -> None:
         if pids:
-            self.state.status(f"已停止 {len(pids)} 个未登记的画图服务（pid {', '.join(map(str, pids))}）")
+            self.status(f"已停止 {len(pids)} 个未登记的画图服务（pid {', '.join(map(str, pids))}）")
             self.state.log(f"已停止未登记的画图服务：{pids}")
         else:
-            self.state.status("端口上没有可停止的 sd-server")
+            self.status("端口上没有可停止的 sd-server")
         self.refresh_paint()
 
     def _start_paint_service(self) -> None:
@@ -930,7 +930,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self._error("启动画图服务失败", str(exc))
             return
         self._set_paint_busy(True)
-        self.state.status("正在启动画图服务…")
+        self.status("正在启动画图服务…")
         submit_daemon(
             start_paint_service,
             settings,
@@ -940,13 +940,13 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         )
 
     def _paint_started(self, started: bool) -> None:
-        self.state.status("画图服务已就绪" if started else "画图服务已在按当前配置运行")
+        self.status("画图服务已就绪" if started else "画图服务已在按当前配置运行")
         self.state.log("已启动画图服务" if started else "画图服务已在运行")
         self.refresh_paint()
 
     def _stop_paint_service(self) -> None:
         self._set_paint_busy(True)
-        self.state.status("正在停止画图服务…")
+        self.status("正在停止画图服务…")
         submit_daemon(
             _llmpaint_server.stop_paint,
             on_done=self._paint_stopped,
@@ -955,7 +955,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         )
 
     def _paint_stopped(self, result: _llmpaint_server.PaintStopResult) -> None:
-        self.state.status("画图服务已停止" if result.stopped else "画图服务未运行")
+        self.status("画图服务已停止" if result.stopped else "画图服务未运行")
         if result.stopped:
             self.state.log("已停止画图服务")
         self.refresh_paint()
@@ -969,7 +969,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self._error("重启画图服务失败", str(exc))
             return
         self._set_paint_busy(True)
-        self.state.status("正在重启画图服务…")
+        self.status("正在重启画图服务…")
         submit_daemon(
             self._restart_paint_work,
             settings,
@@ -1099,7 +1099,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self._active_param_key = key
         self._persist_current_params()
         self.state.persist()
-        self.state.status("启动参数已保存")
+        self.status("启动参数已保存")
         self.state.log(f"已保存启动参数: {self.state.selected_model or '（未选择模型）'}")
 
     def _apply_saved_params(self, saved: dict[str, Any]) -> None:
@@ -1129,7 +1129,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         tail = startup_args_tail(base.argv())
         self.extra_args_edit.setPlainText(shlex.join(tail))
         self._refresh_command_preview()
-        self.state.status("已填入当前启动参数")
+        self.status("已填入当前启动参数")
 
     def _refresh_command_preview(self) -> None:
         try:
@@ -1434,7 +1434,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.remember_quant_choice(plan.model)
         self.state.persist()
         self.state.log(f"正在启动 {plan.name}，等待 /health（最多 {wait_s}s）…")
-        self.state.status(f"正在启动 {plan.name} · {plan.profile.name} · ctx {plan.context}…")
+        self.status(f"正在启动 {plan.name} · {plan.profile.name} · ctx {plan.context}…")
         self.state.set_busy(True)
         submit(
             llmserve.start_server,
@@ -1450,7 +1450,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.select_model(path, update_name=True)
         current = self.state.state_for_model(path)
         if current is not None and llmserve.process_alive(current.pid, current.create_time):
-            self.state.status(f"{current.name} · 运行中 · {current.base_url}")
+            self.status(f"{current.name} · 运行中 · {current.base_url}")
             self.state.log(f"{path.name} 已在运行，无需重复启动")
             return
         self.start()
@@ -1460,7 +1460,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.log(f"  模型: {state.model}")
         self.state.log(f"  档位: {state.profile} / ctx {state.context}")
         self.state.log(f"  日志: {state.log}")
-        self.state.status(f"{state.name} · 运行中 · {state.base_url} · pid {state.pid}")
+        self.status(f"{state.name} · 运行中 · {state.base_url} · pid {state.pid}")
         self.state.refresh_services()
 
     def _on_start_failed(self, message: str) -> None:
@@ -1490,7 +1490,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self._error("停止失败", str(exc))
             return
         if not names:
-            self.state.status("无已登记服务")
+            self.status("无已登记服务")
             self.state.log("没有已登记的服务，无需停止")
             self.state.refresh_services()
             return
@@ -1518,7 +1518,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             return
         current = self._selected_service_state()
         if current is None:
-            self.state.status("当前模型没有已登记服务")
+            self.status("当前模型没有已登记服务")
             self.state.log("当前模型没有已登记服务，无需停止")
             return
         name = current.name
@@ -1544,12 +1544,12 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             return
         current = self._selected_service_state()
         if current is None or not llmserve.process_alive(current.pid, current.create_time):
-            self.state.status("当前模型没有运行中的服务")
+            self.status("当前模型没有运行中的服务")
             self.state.log("当前模型没有运行中的服务，无法重启")
             self._refresh_action_states()
             return
         self.state.log(f"正在重启服务 {current.name}…")
-        self.state.status(f"正在重启 {current.name}…")
+        self.status(f"正在重启 {current.name}…")
         self.state.set_busy(True)
         submit(
             self._stop_worker,
@@ -1568,7 +1568,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.refresh_services()
         if failures:
             self.state.set_busy(False)
-            self.state.status("重启失败")
+            self.status("重启失败")
             self._error("重启失败", "\n".join(failures))
             self._refresh_action_states()
             return
@@ -1579,7 +1579,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def _on_restart_failed(self, message: str) -> None:
         """重启第一步失败（停止异常）：解除 busy 并报告原因。"""
         self.state.set_busy(False)
-        self.state.status("重启失败")
+        self.status("重启失败")
         self._error("重启失败", message)
         self._refresh_action_states()
 
@@ -1606,12 +1606,12 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         for failure in failures:
             self.state.log(f"停止失败: {failure}")
         if failures:
-            self.state.status(f"停止完成 · {len(stopped)} 个已停止 · {len(failures)} 个失败")
+            self.status(f"停止完成 · {len(stopped)} 个已停止 · {len(failures)} 个失败")
             self._error("停止失败", "\n".join(failures))
         elif stopped:
-            self.state.status(f"已停止 {len(stopped)} 个服务")
+            self.status(f"已停止 {len(stopped)} 个服务")
         else:
-            self.state.status("无运行中的服务（已清理残留状态）")
+            self.status("无运行中的服务（已清理残留状态）")
         self.state.refresh_services()
         self._refresh_action_states()
         self.state.refresh_models(self._port_value())
@@ -1622,11 +1622,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         name = self._service_name()
         state = self._load_state_safe(name)
         if state is None:
-            self.state.status(f"{name} · 未启动")
+            self.status(f"{name} · 未启动")
             self.state.log(f"服务 {name} 未启动（尚无状态文件，持续显示系统负载）")
             return
         alive = llmserve.process_alive(state.pid, state.create_time)
-        self.state.status(f"{state.name} · {'运行中' if alive else '已退出'} · {state.base_url} · pid {state.pid}")
+        self.status(f"{state.name} · {'运行中' if alive else '已退出'} · {state.base_url} · pid {state.pid}")
         self.state.log(f"服务 {state.name}: {'运行中' if alive else '已退出'}")
         self.state.log(f"  地址: {state.base_url}")
         self.state.log(f"  模型: {state.model}")
@@ -1720,7 +1720,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.ubatch_edit.setText(str(recommendation.ubatch))
         self.parallel_edit.setText(str(recommendation.parallel))
         self.state.navigate("run")
-        self.state.status(f"已带入推荐配置：{recommendation.model.path.name} · {recommendation.config_text}")
+        self.status(f"已带入推荐配置：{recommendation.model.path.name} · {recommendation.config_text}")
 
     # ------------------------------------------------------------------ #
     # 杂项

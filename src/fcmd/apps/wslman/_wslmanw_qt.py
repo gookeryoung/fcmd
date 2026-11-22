@@ -65,6 +65,7 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command
 from fcmd.apps.wslman._transfer import sha256_file
+from fcmd.gui.qt.page import PageBody, PageSpec
 from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
@@ -80,6 +81,8 @@ from fcmd.gui.qt.widgets import (
     hint_label,
     make_table,
     make_table_item,
+    set_button_kind,
+    set_button_text,
 )
 from fcmd.gui.qt.window import QtMainWindow
 from fcmd.gui.qt.workers import periodic, submit, submit_daemon
@@ -100,10 +103,10 @@ _LOG_LINES_MAX = 1000
 TITLE = "WSL · 发行版管理"
 NAV_TITLE = "WSL"
 
-PAGES: tuple[tuple[str, str, str, str], ...] = (
-    ("distros", "发行版", "列表、详情、启动停止、导出与注销", "distros"),
-    ("images", "镜像", "在线镜像清单、本地安装与清单更新", "disc"),
-    ("settings", "设置", "下载目录、下载源与校验", "settings"),
+PAGES: tuple[PageSpec, ...] = (
+    PageSpec("distros", "发行版", "列表、详情、启动停止、导出与注销", "distros"),
+    PageSpec("images", "镜像", "在线镜像清单、本地安装与清单更新", "disc"),
+    PageSpec("settings", "设置", "下载目录、下载源与校验", "settings"),
 )
 """侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。
 
@@ -184,9 +187,11 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         # 吃掉版本与状态胶囊之间的剩余宽度，长镜像名右侧省略，不会挤到状态胶囊。
         self.add_note_widget(self.image_label, stretch=1)
 
+        # 启停是动态动作：待机是主按钮（启动），运行中是红色危险按钮（停止）。
         self.start_stop_button = button("启动", kind="primary")
         self.start_stop_button.clicked.connect(lambda: self.startStopRequested.emit(distro.name))
         self.add_action(self.start_stop_button)
+        self._busy = False
 
         self.update_distro(distro, size, estimated)
 
@@ -202,10 +207,7 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.set_metrics(format_bytes(size, estimated=estimated))
         self.state_tag.set_status(state_label(distro), _state_tone(distro.state))
         self.default_tag.setVisible(distro.default)
-        can_start, can_stop = w.action_states(distro.state)
-        self.start_stop_button.setText("停止" if can_stop else "启动")
-        self.start_stop_button.setEnabled(can_start or can_stop)
-        self.start_stop_button.setToolTip(f"停止 {distro.name}" if can_stop else f"启动 {distro.name}")
+        self._apply_action_state()
 
     def update_image(self, entry: ImageEntry | None, *, known: bool) -> None:
         """标注该发行版对应的在线镜像；``known=False`` 表示清单还没加载（留空）。"""
@@ -219,13 +221,31 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         sources = w.image_source_text(entry)
         self.image_label.setToolTip(f"{entry.friendly_name or entry.name}\n可用架构：{arches}\n来源：{sources}")
 
+    def _apply_action_state(self) -> None:
+        """启停按钮的文案 / 变体 / 图标色调：运行中给红色的「停止」，否则主按钮「启动」。
+
+        禁用态（任务进行中 / 状态不可操作）统一用 ``muted`` 图标色调：主按钮与危险
+        按钮的禁用底色都会变浅，保留 ``on_accent`` 的白勾或 ``danger`` 的红标在白底上
+        会看不清。
+        """
+        can_start, can_stop = w.action_states(self.distro.state)
+        enabled = (can_start or can_stop) and not self._busy
+        if can_stop:
+            set_button_kind(self.start_stop_button, "danger")
+            tone = "danger" if enabled else "muted"
+            text = "停止"
+        else:
+            set_button_kind(self.start_stop_button, "primary")
+            tone = "on_accent" if enabled else "muted"
+            text = "启动"
+        set_button_text(self.start_stop_button, text, tone=tone)
+        self.start_stop_button.setEnabled(enabled)
+        self.start_stop_button.setToolTip(f"{text} {self.distro.name}")
+
     def set_busy(self, busy: bool) -> None:
         """任务进行中禁用行内启停按钮；结束后按当前状态重新计算。"""
-        if busy:
-            self.start_stop_button.setEnabled(False)
-            return
-        can_start, can_stop = w.action_states(self.distro.state)
-        self.start_stop_button.setEnabled(can_start or can_stop)
+        self._busy = busy
+        self._apply_action_state()
 
 
 class _DistroDetailView(QWidget):  # pragma: no cover - Qt 控件
@@ -443,6 +463,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             persist=self._persist_settings,
             sidebar_collapsed=self.settings.sidebar_collapsed,
             settings_path=settings_path,
+            theme_app="wslmanw",
         )
         self._progress_bridge = _ProgressBridge(self)
         self._progress_bridge.changed.connect(self._on_download_progress)
@@ -455,10 +476,12 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             "images": self._build_images_page,
             "settings": self._build_settings_page,
         }
-        for key, label, hint, icon in PAGES:
-            page = builders[key]()
+        factories: dict[str, Any] = {}
+        for spec in PAGES:
+            page = builders[spec.key]()
             page.hide()
-            self.add_page(key, label, hint=hint, icon=icon, factory=lambda page=page: page)
+            factories[spec.key] = lambda page=page: page
+        self.add_pages(PAGES, factories)
         # 发行版行要注明对应的在线镜像：启动时先把镜像缓存回显出来（同步读盘，
         # 只有几十 KB），镜像页进入时再按 30 分钟新鲜度决定是否联网刷新。
         self._images_cache_fresh = False
@@ -543,10 +566,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         BasePath / 虚拟磁盘 / 占用等详情通过行内「展开」就地显示，不再占用
         下方分栏，发行版多时也不会被详情面板压掉一半高度。
         """
-        page = QWidget(self)
-        body = QVBoxLayout(page)
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(8)
+        page = PageBody(self, spacing=8)
+        body = page.body
         body.addLayout(self._build_distro_actions(page))
 
         self.distro_list = RowListWidget(page)
@@ -603,10 +624,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         剩余空间并自带滚动，底部动作行只放下载相关控件。这样窗口压到最小高度时
         也不会出现「标签被压扁、底部动作行与列表重叠」。
         """
-        page = QWidget(self)
-        body = QVBoxLayout(page)
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(8)
+        page = PageBody(self, spacing=8)
+        body = page.body
 
         filters = QHBoxLayout()
         filters.setContentsMargins(0, 0, 0, 0)
@@ -699,10 +718,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         原来塞在镜像页「高级」折叠区里的配置项全部搬到这里（镜像页只留列表与
         下载动作），页面用 :class:`PageScroll` 包裹，窗口变矮时滚动而不是压扁控件。
         """
-        page = QWidget(self)
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        page = PageBody(self, spacing=0)
+        outer = page.body
         scroll = PageScroll(page)
         outer.addWidget(scroll)
         layout = scroll.body

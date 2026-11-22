@@ -15,10 +15,10 @@ Qt 窗口骨架负责「导航 / 菜单 / 状态栏 / 日志区 / 后台任务�
 from __future__ import annotations
 
 import platform
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -29,20 +29,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.gui import config as _guiconfig
 from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
-from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt._pyside_compat import binding_version
+from fcmd.gui.qt.page import PageSpec
+from fcmd.gui.qt.shell import WindowShellMixin, WindowSpec
 from fcmd.gui.qt.statusbar import DEFAULT_STATUS, WindowStatusBar
-from fcmd.gui.qt.theme_menu import ThemeMenu
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     from PySide6.QtGui import QIcon
-
-    from fcmd.gui.theme import Theme
 
 __all__ = [
     "DEFAULT_STATUS",
@@ -109,7 +106,7 @@ def restore_geometry(
     widget.setGeometry(x, y, width, height)
 
 
-class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+class QtMainWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """通用窗口骨架：左侧分页导航 + 右侧页面栈 + 状态栏 + 主题菜单。"""
 
     def __init__(  # noqa: PLR0913 - 窗口骨架参数成组出现，显式优于配置对象
@@ -125,24 +122,27 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         sidebar_collapsed: bool = False,
         icon: QIcon | None = None,
         settings_path: Path | None = None,
+        theme_app: str = "",
     ) -> None:
         super().__init__()
-        self._config_name = config_name
-        self._settings_path = settings_path or _guiconfig.config_path(config_name)
-        self._raw_settings = _guiconfig.read_settings(self._settings_path) or {}
-        self._on_close = on_close
-        self._persist = persist
+        self._init_window_shell(
+            WindowSpec(
+                title=title,
+                config_name=config_name,
+                nav_title=nav_title,
+                default_size=default_size,
+                min_size=min_size,
+                sidebar_collapsed=sidebar_collapsed,
+                app_name=theme_app,
+                settings_path=settings_path,
+            ),
+            on_close=on_close,
+            persist=persist,
+            icon=icon,
+        )
         self._factories: dict[str, Callable[[], QWidget]] = {}
         self._built: dict[str, QWidget] = {}
         self._current = ""
-        self._closing = False
-        self._theme: Theme = _qt_theme.load_theme()
-
-        self.setWindowTitle(title)
-        if icon is not None and not icon.isNull():
-            self.setWindowIcon(icon)
-        self.setMinimumSize(*min_size)
-        self._restore_geometry(default_size, min_size)
 
         from fcmd.gui.qt.sidebar import SidebarNav
 
@@ -150,7 +150,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        collapsed = sidebar_collapsed or bool(self._raw_settings.get("sidebar_collapsed"))
+        collapsed = self._window_spec.sidebar_collapsed or bool(self._raw_settings.get("sidebar_collapsed"))
         self.nav = SidebarNav(title=nav_title or title, collapsed=collapsed, icon=icon)
         self.nav.collapsedChanged.connect(self._handle_sidebar_collapsed)
         layout.addWidget(self.nav)
@@ -219,6 +219,19 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             # 首屏页面立即构建：否则右侧只有占位控件，点击已选中的首项也不会
             # 触发 changed，用户会一直看到空白 / 「读取中」。
             self.show_page(key)
+
+    def add_page_spec(self, spec: PageSpec, factory: Callable[[], QWidget]) -> None:
+        """按 :class:`~fcmd.gui.qt.page.PageSpec` 登记页面（``add_page`` 的配置化入口）。"""
+        self.add_page(spec.key, spec.label, hint=spec.hint, icon=spec.icon, factory=factory)
+
+    def add_pages(
+        self,
+        specs: Sequence[PageSpec],
+        factories: Mapping[str, Callable[[], QWidget]],
+    ) -> None:
+        """批量登记页面：``specs`` 决定顺序，``factories`` 按 key 提供构建函数。"""
+        for spec in specs:
+            self.add_page_spec(spec, factories[spec.key])
 
     def show_page(self, key: str) -> None:
         """切换到指定页，必要时先构建页面内容。"""
@@ -345,35 +358,6 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         """在状态栏右侧显示确定进度（下载进度 / 速度等）；空串收起。"""
         self.status_bar.show_progress(text, done, total)
 
-    def settings(self) -> dict[str, Any]:
-        """读取窗口设置文件原始内容（缺失字段按空处理）。"""
-        return dict(self._raw_settings)
-
-    def save_settings(self, payload: dict[str, Any]) -> None:
-        """把 ``payload`` 合并进设置文件（写入失败静默，不影响关闭）。"""
-        merged = {**self._raw_settings, **payload}
-        self._raw_settings = merged
-        _guiconfig.write_settings(merged, self._settings_path)
-
-    def _restore_geometry(self, default_size: tuple[int, int], min_size: tuple[int, int]) -> None:
-        """按记忆位置恢复窗口；越界 / 非法时用默认尺寸居中。"""
-        restore_geometry(
-            self,
-            self._raw_settings.get("geometry"),
-            default_size=default_size,
-            min_size=min_size,
-        )
-
-    def geometry_text(self) -> str:
-        """当前窗口的 ``WxH+X+Y``，用于关闭时写回设置。
-
-        取 ``geometry()``（客户区，不含窗口装饰）而不是 ``frameGeometry()``：
-        ``restore_geometry`` 用 ``setGeometry`` 恢复客户区，两者口径一致，
-        标题栏高度与边框不会在每次启动时被重复累加导致窗口漂移。
-        """
-        rect = self.geometry()
-        return format_geometry(rect.width(), rect.height(), rect.x(), rect.y())
-
     # ------------------------------------------------------------------ #
     # 菜单 / 主题
     # ------------------------------------------------------------------ #
@@ -393,23 +377,13 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.sidebar_action.triggered.connect(self.nav.set_collapsed)
         view_menu.addAction(self.sidebar_action)
         view_menu.addSeparator()
-        self.theme_menu = ThemeMenu(self, self._theme)
-        self.theme_menu.attach(view_menu.addMenu("主题"))
+        self._attach_theme_menu(view_menu.addMenu("主题"))
 
         # 子窗口可在「关于」之前插入自己的帮助项（如 llmw 的「服务日志…」）。
         self.help_menu = self.menuBar().addMenu("帮助")
         self.about_action = QAction("关于", self)
         self.about_action.triggered.connect(self._show_about)
         self.help_menu.addAction(self.about_action)
-
-    def set_theme(self, theme: Theme) -> None:
-        """切换主题：立即重设 QPalette / QSS 并持久化选择。"""
-        self.theme_menu.set_theme(theme)
-        self._theme = self.theme_menu.theme()
-
-    def theme(self) -> Theme:
-        """当前主题。"""
-        return self._theme
 
     def _handle_sidebar_collapsed(self, collapsed: bool) -> None:
         """同步菜单勾选状态；无自定义 persist 时把折叠状态写进窗口设置。"""
@@ -430,25 +404,3 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if not icon.isNull():
             box.setIconPixmap(icon.pixmap(64, 64))
         box.exec()
-
-    # ------------------------------------------------------------------ #
-    # 关闭
-    # ------------------------------------------------------------------ #
-    def closeEvent(self, event: QCloseEvent) -> None:
-        """关闭前回调 ``on_close``；返回 ``False`` 时取消关闭。"""
-        if self._closing:
-            event.accept()
-            return
-        if self._on_close is not None and not self._on_close():
-            event.ignore()
-            return
-        self._closing = True
-        if self._persist is not None:
-            self._persist(self.geometry_text())
-        else:
-            self.save_settings({"geometry": self.geometry_text()})
-        event.accept()
-
-    def is_closing(self) -> bool:
-        """窗口是否正在关闭（后台线程回调可据此提前返回）。"""
-        return self._closing

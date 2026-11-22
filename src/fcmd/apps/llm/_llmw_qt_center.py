@@ -84,6 +84,7 @@ from fcmd.apps.llm.llmdown import (
     search_models_multi,
     select_source,
 )
+from fcmd.gui.qt.page import AppPage
 from fcmd.gui.qt.widgets import (
     ItemRow,
     RowListWidget,
@@ -615,14 +616,15 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self._download_files(repo, files)
 
 
-class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
+class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
     """浏览页：筛选条、自定义结果行与行内展开的详情元数据。"""
+
+    PAGE_KEY = "models"
 
     downloadFinished = Signal()
 
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.state = state
+        super().__init__(state, parent, spacing=6)
         self.current_repo: str | None = None
         self.current_info: ModelInfo | None = None
         self._last_result: ModelSearch | None = None
@@ -678,9 +680,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._pending_convert: str | None = None
         self._import_convert = False
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout = self.body
 
         browse = QWidget(self)
         browse_layout = QVBoxLayout(browse)
@@ -906,12 +906,12 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def _cleanup_list_cache(self) -> None:
         self._list_cache.clear()
         self._log("已清理模型列表缓存")
-        self.state.status("模型列表缓存已清理")
+        self.status("模型列表缓存已清理")
 
     def delete_model(self, repo: str) -> None:
         """删除本地模型目录；只允许模型根目录内的安全路径。"""
         if self._jobs or self._converting or self._quantizing or self._listing_repo is not None:
-            self.state.status("任务进行中，暂不能删除模型")
+            self.status("任务进行中，暂不能删除模型")
             return
         models_root = _llmconfig.models_dir()
         target = models_root.joinpath(*repo.split("/"))
@@ -926,7 +926,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             delete_local_model(models_root, repo)
         except ModelToolError as exc:
             self._log(f"删除模型失败 {repo}: {exc}")
-            self.state.status(f"删除失败：{exc}")
+            self.status(f"删除失败：{exc}")
             QMessageBox.critical(self, "删除失败", str(exc))
             return
         key = repo.casefold()
@@ -949,7 +949,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self.state.settings.last_model = None
         self.state.persist()
         self._log(f"已删除本地模型 {repo} -> {target}")
-        self.state.status(f"已删除本地模型 {repo}")
+        self.status(f"已删除本地模型 {repo}")
         self.refresh_installed()
         self._render_results()
 
@@ -1116,9 +1116,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def manual_update(self) -> None:
         """手动更新：强制刷新当前页并重新扫描本地模型。"""
         if self._searching:
-            self.state.status("模型列表正在更新，请稍候…")
+            self.status("模型列表正在更新，请稍候…")
             return
-        self.state.status("正在更新模型列表…")
+        self.status("正在更新模型列表…")
         self.refresh_installed()
         self.start_search(self._page, force=True)
 
@@ -1185,7 +1185,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         try:
             plans = plan_import(sources, _llmconfig.models_dir())
         except (OSError, ValueError) as exc:
-            self.state.status(f"无法导入：{exc}")
+            self.status(f"无法导入：{exc}")
             QMessageBox.warning(self, "无法导入模型", str(exc))
             return
         if not plans:
@@ -1195,7 +1195,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return
         self._import_convert = convert
         self._begin_loading("import", f"正在导入 {len(plans)} 项模型…")
-        self.state.status(f"正在导入 {len(plans)} 项模型…")
+        self.status(f"正在导入 {len(plans)} 项模型…")
         self._log("开始导入：" + "、".join(str(plan.source) for plan in plans))
         submit(
             self._import_work,
@@ -1228,11 +1228,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._import_convert = False
         if convert and len(targets) == 1:
             self._pending_convert = Path(targets[0]).name
-        self.state.status(f"已导入 {len(targets)} 项模型，可继续转换或启动")
+        self.status(f"已导入 {len(targets)} 项模型，可继续转换或启动")
         self._log("已导入模型：" + "、".join(targets))
 
     def _import_error(self, message: str) -> None:
-        self.state.status(f"导入失败：{message}")
+        self.status(f"导入失败：{message}")
         self._log(f"导入失败: {message}")
         QMessageBox.warning(self, "导入失败", message)
 
@@ -1259,7 +1259,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 return
         self._searching = True
         text = f"正在加载第 {self._page} 页…" if cached is None else f"正在刷新第 {self._page} 页…"
-        self.state.status(text)
+        self.status(text)
         self._begin_loading("search", text)
         submit(
             self._search_work,
@@ -1307,7 +1307,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self.start_search(page, force=force)
 
     def _search_error(self, message: str) -> None:
-        self.state.status("模型列表加载失败")
+        self.status("模型列表加载失败")
         self._log(f"模型列表加载失败: {message}")
 
     def _remember_items(self, items: Sequence[ModelSummary]) -> None:
@@ -1447,7 +1447,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             matched += f" · 已隐藏无效 {hidden} 个"
         source_label = self.source_combo.currentText()
         total_text = f"已下载 {len(items)} 个" if local_view else f"{result.page}/{pages} · 共 {result.total:,} 条"
-        self.state.status(f"{filter_label} · {source_label} · {total_text}{matched}")
+        self.status(f"{filter_label} · {source_label} · {total_text}{matched}")
         self.prev_button.setEnabled(not local_view and result.page > 1)
         self.next_button.setEnabled(not local_view and result.page < pages)
         if selected is not None:
@@ -1654,7 +1654,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self._listing_repo = None
         self._sync_download_buttons()
         self.download_text.setText(f"读取清单失败：{message[:160]}")
-        self.state.status(f"{repo} · 读取清单失败")
+        self.status(f"{repo} · 读取清单失败")
         self._log(f"读取量化清单失败 {repo}: {message}")
 
     def _choose_quant(self, repo: str, options: tuple[QuantOption, ...]) -> None:
@@ -1670,7 +1670,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         choice, accepted = QInputDialog.getItem(self, "选择下载内容", "下载哪些文件：", labels, 0, False)
         if not accepted or not choice:
             self._update_download_summary()
-            self.state.status(f"{repo} · 已取消下载")
+            self.status(f"{repo} · 已取消下载")
             self._log(f"已取消下载 {repo}：未选择下载内容")
             return
         if choice == labels[0]:
@@ -1702,7 +1702,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if len(self._jobs) >= max(1, settings.parallel):
             self._queued.append((repo, selected))
             self._log(f"{repo} 已加入下载队列（并发上限 {settings.parallel}）")
-            self.state.status(f"{repo} 已排队，等待空闲下载位…")
+            self.status(f"{repo} 已排队，等待空闲下载位…")
             self._update_download_summary()
             self._sync_download_buttons()
             return
@@ -1760,7 +1760,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         selection = select_source(repo, source)  # type: ignore[arg-type]
         choice = describe_selection(selection)
         self._log(f"{choice}，仓库共 {len(selection.files)} 个文件")
-        self.state.status(choice)
+        self.status(choice)
         if only_paths:
             # 显式选中文件（文件列表 / 量化选项）优先于设置里的包含 / 排除掩码，
             # 否则选中的 VAE / 文本编码器可能被掩码过滤掉。
@@ -1952,7 +1952,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 self.state.settings.quant_choice = choices
                 self.state.persist()
         self._log(f"快捷启动: {path}")
-        self.state.status(f"正在准备启动 {path.name}…")
+        self.status(f"正在准备启动 {path.name}…")
         self.state.request_serve_model(path)
 
     def _on_quantize_requested(self, repo: str) -> None:
@@ -1979,7 +1979,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if self._quantizing or bool(self._jobs) or self._converting:
             return
         if quant.casefold() in {tag.casefold() for tag in self._quant_tags.get(repo.casefold(), ())}:
-            self.state.status(f"{repo} · {quant} 已量化，无需重复执行")
+            self.status(f"{repo} · {quant} 已量化，无需重复执行")
             self._log(f"跳过重复量化 {repo}: {quant} 已存在")
             return
         files = self._quant_candidates.get(repo.casefold())
@@ -2067,7 +2067,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         job = self._jobs.get(key)
         repo = job.repo if job is not None else key
         self._log(f"下载失败 {repo}: {message}")
-        self.state.status(f"{repo} · 下载失败：{message[:120]}")
+        self.status(f"{repo} · 下载失败：{message[:120]}")
 
     def _download_finished(self, key: str) -> None:
         job = self._jobs.pop(key, None)
@@ -2110,8 +2110,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         return True
 
 
-class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
+class ModelCenterPage(AppPage):  # pragma: no cover - Qt 控件
     """模型中心：ModelScope 浏览与行内下载 / 转换 / 量化。"""
+
+    PAGE_KEY = "models"
 
     def __init__(
         self,
@@ -2120,13 +2122,10 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
         *,
         fit_resolver: Any = None,
     ) -> None:
-        super().__init__(parent)
-        self.state = state
+        super().__init__(state, parent)
         del fit_resolver
         self.browse = _BrowsePanel(state, self)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.browse)
+        self.body.addWidget(self.browse)
 
     def refresh_config(self) -> None:
         """模型目录变化后刷新已安装标识与量化 / 转换状态。"""

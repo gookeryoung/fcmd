@@ -52,6 +52,7 @@ from fcmd.gui.qt.widgets import (
     section_header,
     segment_band,
     segment_fill,
+    set_button_kind,
     set_button_text,
 )
 
@@ -519,6 +520,23 @@ def test_button_attaches_shared_icon_automatically() -> None:
     assert forced.icon().isNull() is False
     disabled_icon = button("刷新", icon="")
     assert disabled_icon.icon().isNull() is True
+
+
+def test_set_button_kind_switches_variant() -> None:
+    """动态动作按钮可在主按钮 / 危险按钮间切换；变体未变时幂等。"""
+    widget = button("停止", kind="primary")
+    try:
+        assert widget.objectName() == "Primary"
+        set_button_kind(widget, "danger")
+        assert widget.objectName() == "Danger"
+        set_button_kind(widget, "danger")
+        assert widget.objectName() == "Danger"
+        set_button_text(widget, "停止", tone="danger")
+        assert widget.property("fcmdIconTone") == "danger"
+        set_button_kind(widget, "")
+        assert widget.objectName() == ""
+    finally:
+        widget.deleteLater()
 
 
 def test_set_button_text_updates_icon_and_tone() -> None:
