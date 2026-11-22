@@ -907,7 +907,7 @@ def test_selected_row_repolishes_child_widgets() -> None:
         def polish(self, _widget: object) -> None:
             counter["polish"] += 1
 
-    child.style = lambda: _ChildStyle()  # type: ignore[method-assign]
+    child.style = _ChildStyle  # type: ignore[method-assign]
     try:
         row.set_selected(True)
         assert counter == {"unpolish": 1, "polish": 1}
