@@ -38,7 +38,8 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 
 `ItemRow` 只负责这一段固定骨架与展开 / 收起：
 
-- 内容插槽：`add_title_widget`（标题右侧小标记）、`add_note_widget`（副标题之后、拉伸之前）、
+- 内容插槽：`add_title_widget`（标题右侧小标记）、`add_note_widget`（副标题之后、拉伸之前；
+  `stretch=1` 时这块小字吃掉剩余宽度，适合「镜像 …」这类可省略的补充说明）、
   `add_tag`（拉伸之后的状态胶囊 / 小字，追加顺序即显示顺序）、`set_metrics`（右侧数值）、
   `add_action`（右侧动作，始终在展开箭头之前）；
 - 展开态：`is_expanded` / `set_expanded` 只管详情区显隐与箭头图标，`detail_layout` 由页面

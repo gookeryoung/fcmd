@@ -139,9 +139,10 @@ def _state_tone(state: str) -> str:
 class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
     """发行版行卡：共享 :class:`ItemRow` 骨架 + 发行版自己的状态位。
 
-    标题是发行版名，副标题是版本 / 占用，状态胶囊与默认胶囊在副标题行；
-    右侧是行内启停按钮与展开箭头。详情（BasePath / 虚拟磁盘 / 占用 / 默认用户 /
-    来源）由 ``_DistroDetailView`` 挂到 ``detail_layout`` 就地显开，同一时间只展开一行。
+    标题是发行版名，副标题行是「版本 + 对应的在线镜像」；状态胶囊与默认胶囊
+    贴在同一行行尾，右侧是磁盘占用、行内启停按钮与展开箭头。详情（BasePath /
+    虚拟磁盘 / 占用 / 默认用户 / 来源）由 ``_DistroDetailView`` 挂到
+    ``detail_layout`` 就地显开，同一时间只展开一行。
     """
 
     startStopRequested = Signal(str)
@@ -161,12 +162,14 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.add_tag(self.state_tag)
         self.default_tag = StatusTag("默认", tone="accent", parent=self.header)
         self.add_tag(self.default_tag)
-        # 名称右侧注明对应的在线镜像（自定义导入 / 匹配不到时给「本地导入」）。
-        self.image_label = QLabel("", self.header)
+        # 对应的在线镜像（自定义导入 / 匹配不到时给「本地导入」）放在副标题行，
+        # 跟版本同一排：状态胶囊也在副标题行尾，两行各自独立，窄窗口或大字体现
+        # 也不会和「镜像 …」挤在一起。超长时右侧省略，完整文案走 tooltip。
+        self.image_label = ElidedLabel("", mode=Qt.TextElideMode.ElideRight, parent=self.header)
         self.image_label.setObjectName("Hint")
-        self.image_label.setWordWrap(False)
-        self.image_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        self.add_title_widget(self.image_label)
+        self.image_label.setVisible(False)
+        # 吃掉版本与状态胶囊之间的剩余宽度，长镜像名右侧省略，不会挤到状态胶囊。
+        self.add_note_widget(self.image_label, stretch=1)
 
         self.start_stop_button = button("启动", kind="primary")
         self.start_stop_button.clicked.connect(lambda: self.startStopRequested.emit(distro.name))
@@ -810,6 +813,13 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _set_buttons(self, enabled: bool) -> None:
         for widget in self._buttons:
             widget.setEnabled(enabled)
+        # 行内动作按钮跟着任务忙闲一起恢复：刷新任务结束时列表刚在忙态重建过，
+        # 若只靠 3 秒轮询回填，启动按钮会先以禁用态（灰底）显示一段时间。
+        if hasattr(self, "distro_list"):
+            for index in range(self.distro_list.count()):
+                row = self.distro_list.itemWidget(self.distro_list.item(index))
+                if isinstance(row, _DistroItemRow):
+                    row.set_busy(not enabled)
         if hasattr(self, "image_list"):
             for index in range(self.image_list.count()):
                 row = self.image_list.itemWidget(self.image_list.item(index))

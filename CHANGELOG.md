@@ -37,6 +37,11 @@
   与「详细信息」同为行卡底色，表格紧跟页签顶部。
 - `llmw` 模型行「已启动」勾选图标在浅色主题下不可见：禁用的主按钮底色会变浅，图标
   按可用性切 `on_accent` / `muted`（已启动与任务进行中都走 muted），不再留下白勾。
+- `wslmanw` 发行版行把「镜像 …」说明从名称行挪到副标题行（与版本同排、吃掉剩余宽度、
+  超长右侧省略），不再与行尾的「已停止 / 默认」胶囊挤在一起；`ItemRow.add_note_widget`
+  新增 `stretch` 参数，可让某块小字吃掉剩余宽度。
+- `wslmanw` 行内启动按钮不再停留在禁用态：任务结束后立刻按当前状态恢复（此前要等下一次
+  3 秒状态轮询，首屏刷新后「启动」会先以灰色禁用样式显示一段时间）。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

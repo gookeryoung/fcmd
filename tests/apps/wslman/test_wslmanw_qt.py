@@ -189,6 +189,49 @@ def test_status_refresh_updates_rows_in_place(home: Path, monkeypatch: pytest.Mo
         window.deleteLater()
 
 
+def test_start_button_recovers_after_initial_load(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """首屏刷新结束后行内启动按钮立刻回到主按钮态，不等下一次状态轮询。"""
+    view = _view(_distro("Ubuntu", "stopped"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        row = _distro_row(window, 0)
+        # 刷新任务进行中行按钮被禁用；任务一结束必须恢复（此前要等 3 秒轮询，
+        # 期间启动按钮一直是禁用态的灰底，看不出是主操作）。
+        assert window._busy is False
+        assert row.start_stop_button.isEnabled() is True
+        assert row.start_stop_button.objectName() == "Primary"
+        assert row.start_stop_button.property("fcmdIconTone") == "on_accent"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_distro_image_note_shares_the_subtitle_line(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """「镜像 …」说明在副标题行（与版本同排），不和名称 / 状态胶囊挤在一起。"""
+    view = _view(_distro("Ubuntu", "stopped"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entry = wslmanw._images.ImageEntry(name="Ubuntu", friendly_name="Ubuntu 24.04", sources=("cli",))
+        window.image_entries = (entry,)
+        window._refresh_distro_images()
+        row = _distro_row(window, 0)
+        assert row.image_label.fullText() == "镜像 Ubuntu 24.04"
+        assert row.image_label.isHidden() is False
+        # 副标题行：版本 + 镜像说明 + 拉伸 + 状态胶囊；标题行只有名称。
+        assert row.note_row.indexOf(row.image_label) >= 0
+        assert row.title_row.indexOf(row.image_label) == -1
+        assert row.title_row.indexOf(row.title_label) >= 0
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_image_rows_and_filter(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     window = _wslmanw_qt.WslmanQtWindow()
@@ -682,10 +725,10 @@ def test_distro_rows_note_matching_image(home: Path, monkeypatch: pytest.MonkeyP
         _wait_idle(window)
         rows = {_distro_row(window, index).distro.name: _distro_row(window, index) for index in range(2)}
         # 缓存里有的镜像：启动即回显，行内直接给出友好名
-        assert rows["Ubuntu-24.04"].image_label.text() == "镜像 Ubuntu 24.04 LTS"
+        assert rows["Ubuntu-24.04"].image_label.fullText() == "镜像 Ubuntu 24.04 LTS"
         assert "CLI" in rows["Ubuntu-24.04"].image_label.toolTip()
         # 清单里没有的发行版：标「本地导入」
-        assert rows["MyImport"].image_label.text() == "本地导入"
+        assert rows["MyImport"].image_label.fullText() == "本地导入"
 
         # 在线清单更新后就地刷新说明，不重建行卡
         row = rows["MyImport"]
@@ -693,7 +736,7 @@ def test_distro_rows_note_matching_image(home: Path, monkeypatch: pytest.MonkeyP
         window._apply_images((_catalog((ubuntu, got)), (ubuntu, got)))
         after = {_distro_row(window, i).distro.name: _distro_row(window, i) for i in range(2)}
         assert after["MyImport"] is row
-        assert row.image_label.text() == "镜像 My Import"
+        assert row.image_label.fullText() == "镜像 My Import"
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

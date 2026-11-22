@@ -476,6 +476,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self._expand_hint = expand_hint
         self._collapse_hint = collapse_hint
         self.metrics_label: QLabel | None = None
+        self._note_extras = 0
         self.setObjectName("ItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # 共享行卡外观的选择器：所有应用的可展开行卡共用这一条契约。
@@ -549,9 +550,18 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         """标题右侧的小标记（如发布方）。"""
         self.title_row.addWidget(widget, 0)
 
-    def add_note_widget(self, widget: QWidget) -> None:
-        """副标题之后、状态胶囊之前的小字（如发布时间）。"""
-        self.note_row.insertWidget(self.note_row.count() - 1, widget)
+    def add_note_widget(self, widget: QWidget, *, stretch: int = 0) -> None:
+        """副标题之后、状态胶囊之前的小字（如发布时间）。
+
+        ``stretch=1`` 表示这块小字吃掉剩余宽度（放不下时由控件自己省略），
+        拉伸空位让给它，后面的状态胶囊仍贴着行尾。
+        """
+        # 顺序恒为「副标题 → 小字 → 拉伸空位 → 状态胶囊」，与调用先后无关。
+        index = 1 + self._note_extras
+        self.note_row.insertWidget(index, widget, stretch)
+        self._note_extras += 1
+        if stretch:
+            self.note_row.setStretch(index + 1, 0)
 
     def add_tag(self, widget: QWidget) -> None:
         """副标题行右端的状态胶囊 / 进度小字，调用顺序即显示顺序。"""
