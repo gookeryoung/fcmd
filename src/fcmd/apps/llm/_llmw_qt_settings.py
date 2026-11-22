@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.llm import _llmw_convert, _llmw_models, llmconvert, llmenv
+from fcmd.apps.llm import _llmw_convert, _llmw_models, llmconvert, llmengine, llmenv
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
@@ -45,6 +45,7 @@ from fcmd.gui.qt.widgets import (
     SelectionRow,
     StatusTag,
     button,
+    confirm,
     hint_label,
     link_button,
 )
@@ -292,7 +293,18 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.status("已自动保存模型转换设置")
 
     def _refresh_engine_source(self) -> None:
-        """刷新推理引擎卡片上的 llama.cpp 源码状态（按当前转换引擎 tag）。"""
+        """刷新推理引擎卡片上的 llama.cpp 源码状态（显式脚本 / 当前转换引擎 tag）。"""
+        script_text = self.convert_script.text().strip()
+        if script_text:
+            script = Path(script_text).expanduser()
+            if script.is_file():
+                title = "已指定源码包" if script.suffix.lower() == ".zip" else "已指定转换脚本"
+                self.engine_source_tag.set_status(title, "success")
+                self.engine_source_tag.setToolTip(f"模型转换使用：{script}")
+                return
+            self.engine_source_tag.set_status("指定文件不存在", "warning")
+            self.engine_source_tag.setToolTip(script_text)
+            return
         tag = self.convert_tag.text().strip() or None
         try:
             status = _llmw_convert.convert_source_status(tag)
@@ -334,7 +346,9 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.import_engine_dir_button.setToolTip("选择已编译的 llama.cpp 目录，复制到引擎目录并设为默认")
         row.addWidget(self.import_engine_dir_button)
         self.import_engine_archive_button = button("导入压缩包", kind="ghost")
-        self.import_engine_archive_button.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
+        self.import_engine_archive_button.setToolTip(
+            "从本地 llama.cpp / cudart zip 安装引擎；选到源码包时会导入为转换源码"
+        )
         row.addWidget(self.import_engine_archive_button)
         card.body.addLayout(row)
 
@@ -538,7 +552,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self._after_engine_install(info, "已导入")
 
     def _import_engine_archive(self) -> None:
-        """选择一个或多个本地 zip，解压安装并设为默认引擎。"""
+        """本地 zip：引擎包安装为引擎，源码包导入为转换源码（不安装成引擎）。"""
         paths, _selected = QFileDialog.getOpenFileNames(
             self,
             "选择 llama.cpp 压缩包",
@@ -548,15 +562,26 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         if not paths:
             return
         archives = [Path(path) for path in paths]
-        default = archives[0].stem
+        inspections: list[llmengine.ZipInspection] = []
         try:
             for archive in archives:
-                inferred = next((item.tag for item in settings_logic.inspect_offline(archive) if item.tag), None)
-                if inferred:
-                    default = inferred
-                    break
-        except (OSError, ServeError):
-            pass
+                inspections.extend(settings_logic.inspect_offline(archive))
+        except (OSError, ServeError) as exc:
+            QMessageBox.critical(self, "导入失败", str(exc))
+            return
+        sources = [item for item in inspections if item.kind == "source"]
+        engines = [item for item in inspections if item.kind != "source"]
+        if sources and engines:
+            QMessageBox.information(
+                self,
+                "请分开导入",
+                "选择中同时包含引擎包与 llama.cpp 源码包；请先导入引擎包，再单独导入源码包。",
+            )
+            return
+        if sources:
+            self._import_convert_source(sources)
+            return
+        default = next((item.tag for item in engines if item.tag), archives[0].stem)
         tag = self._ask_engine_tag(default)
         if tag is None:
             return
@@ -566,3 +591,26 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
             QMessageBox.critical(self, "导入失败", str(exc))
             return
         self._after_engine_install(info, "已导入")
+
+    def _import_convert_source(self, sources: list[llmengine.ZipInspection]) -> None:
+        """把源码 zip 复制到引擎根并设为转换源码；不产生引擎条目。"""
+        if len(sources) > 1:
+            QMessageBox.information(self, "一次一个源码包", "一次只能导入一个 llama.cpp 源码包；请分开选择。")
+            return
+        source = sources[0]
+        if not confirm(
+            self,
+            "导入 llama.cpp 源码",
+            f"{source.path.name} 是 llama.cpp 源码包，不会安装成引擎。\n将复制到引擎根并设为模型转换源码，确认继续？",
+        ):
+            return
+        try:
+            dest = llmconvert.import_source_archive(source.path)
+        except (OSError, ServeError) as exc:
+            QMessageBox.critical(self, "导入失败", str(exc))
+            return
+        self.convert_script.setText(str(dest))
+        self._save_convert()
+        self.state.log(f"已导入转换源码包：{dest}")
+        self.status(f"已导入转换源码包：{dest.name}")
+        self._set_engine_hint(f"转换源码已就绪：{dest}")

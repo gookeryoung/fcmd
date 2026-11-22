@@ -44,6 +44,7 @@ __all__ = [
     "convert_source_root",
     "ensure_convert_script",
     "find_convert_python",
+    "import_source_archive",
     "is_hf_safetensors_dir",
     "plan_convert",
     "root_error_line",
@@ -358,6 +359,32 @@ def _download_convert_source(
         if extracted:
             return True
     return False
+
+
+def import_source_archive(archive: Path, home: Path | None = None, *, tag: str | None = None) -> Path:
+    """把本地 llama.cpp 源码 zip 复制到引擎根，作为转换源码缓存。
+
+    文件名保持 ``llama.cpp*.zip`` 前缀，:func:`ensure_convert_script` 在任意引擎
+    tag 下都能从引擎根发现并解压复用；同名文件存在时追加时间戳，不覆盖旧源码包。
+    """
+    source = Path(archive).expanduser()
+    if not source.is_file():
+        raise ServeError(f"源码包不存在: {source}")
+    if not _source_archive_ready(source):
+        raise ServeError(f"不是可用的 llama.cpp 源码包（缺少 {CONVERT_SCRIPT}）: {source}")
+    root = llmenv.engines_root(home)
+    root.mkdir(parents=True, exist_ok=True)
+    raw_tag = re.sub(r"[^A-Za-z0-9._-]+", "-", (tag or source.stem).strip()) or "source"
+    if raw_tag.casefold().startswith("llama.cpp"):
+        raw_tag = "source"
+    dest = root / f"llama.cpp-{raw_tag}.zip"
+    if dest.exists():
+        dest = root / f"llama.cpp-{raw_tag}-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    try:
+        shutil.copy2(source, dest)
+    except OSError as exc:
+        raise ServeError(f"复制源码包失败: {exc}") from exc
+    return dest
 
 
 def ensure_convert_script(  # noqa: PLR0912, PLR0913, PLR0917 - 兼容旧调用方，参数保持扁平

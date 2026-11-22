@@ -936,6 +936,21 @@ class TestConvert:
         assert plan.intermediate == str(plan.output.with_name(f"{plan.output.stem}-f16.gguf"))
         assert plan.quantize_argv() == [str(binary), plan.intermediate, str(plan.output), "Q4_K_M"]
 
+    def test_import_source_archive_copies_into_engine_root(self, home: Path, tmp_path: Path) -> None:
+        """源码 zip 复制到引擎根并保留 llama.cpp*.zip 前缀，供任意 tag 复用。"""
+        archive = tmp_path / "llama.cpp.zip"
+        archive.write_bytes(_zip_payload({"llama.cpp-b9/convert_hf_to_gguf.py": b"# src"}))
+        dest = llmconvert.import_source_archive(archive, home)
+        assert dest.parent == llmenv.engines_root(home)
+        assert dest.name.startswith("llama.cpp")
+        assert dest.read_bytes() == archive.read_bytes()
+
+    def test_import_source_archive_rejects_non_source_zip(self, home: Path, tmp_path: Path) -> None:
+        archive = tmp_path / "engine.zip"
+        archive.write_bytes(_zip_payload({"llama-server.exe": b"x"}))
+        with pytest.raises(ServeError, match="源码包"):
+            llmconvert.import_source_archive(archive, home)
+
     def test_find_convert_python_ok(self) -> None:
         calls: list[list[str]] = []
 

@@ -10,6 +10,7 @@ import itertools
 import json
 import os
 import time
+import zipfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -1067,6 +1068,30 @@ def test_settings_engine_directory_and_archive_actions(
     monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_args, **_kwargs: ([str(archive)], ""))
     page._import_engine_archive()
     assert calls[-1] == ("custom", "已导入")
+
+
+def test_import_source_archive_sets_convert_script(
+    window: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """导入压缩包识别到 llama.cpp 源码时，复制到引擎根并设为转换源码，不安装成引擎。"""
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    window.show_page("settings")
+    page = window.page("settings")
+    archive = tmp_path / "llama.cpp-source.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("llama.cpp-master/convert_hf_to_gguf.py", "# source")
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_a, **_k: ([str(archive)], ""))
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes)
+
+    page._import_engine_archive()
+    script = Path(page.convert_script.text())
+    assert script.is_file()
+    assert script.parent.name == "llama.cpp"
+    assert script.parent.parent.name == "engines"
+    assert script.read_bytes() == archive.read_bytes()
+    assert page.engine_source_tag.text() == "已指定源码包"
+    assert page.engine_source_tag.property("tone") == "success"
 
 
 def test_settings_engine_panel_is_compact(window: Any) -> None:
