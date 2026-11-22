@@ -28,7 +28,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.llm import _llmconfig, _llmw_convert, _llmw_models, _llmw_storage, llmconvert, llmengine, llmenv
+from fcmd.apps.llm import (
+    _llmconfig,
+    _llmw_compat,
+    _llmw_convert,
+    _llmw_models,
+    _llmw_storage,
+    llmconvert,
+    llmengine,
+    llmenv,
+)
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineDirAction, EngineOption
@@ -78,6 +87,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         layout.addWidget(self._build_convert())
         layout.addStretch(1)
         self.paint_engine_card.changed.connect(self.refresh_engine_cards)
+        self.state.hardwareChanged.connect(lambda *_args: self.refresh_engine_cards())
         self.refresh()
 
     # ------------------------------------------------------------------ #
@@ -138,7 +148,10 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         """
         from fcmd.apps.llm._llmw_qt_paint import build_paint_engine_card
 
-        self.paint_engine_card = build_paint_engine_card(self)
+        self.paint_engine_card = build_paint_engine_card(
+            self,
+            gpu_provider=lambda: _llmw_compat.gpu_status(self.state.hardware, self.state.gpu_mib),
+        )
         return self.paint_engine_card
 
     # ------------------------------------------------------------------ #
@@ -368,8 +381,10 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
 
         def load() -> list[EngineOption]:
             options: list[EngineOption] = []
+            gpu = _llmw_compat.gpu_status(self.state.hardware, self.state.gpu_mib)
             for info in settings_logic.installed_engines():
                 variant = settings_logic.engine_variant(info)
+                compat = _llmw_compat.engine_compat(variant, gpu=gpu)
                 tooltip = f"{info.tag} / {info.exe} / 来源：{info.source or '-'}"
                 options.append(
                     EngineOption(
@@ -381,6 +396,9 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
                         badge_tone="muted" if variant == "CPU" else "accent",
                         badge_tooltip=f"构建类别：{variant} / {settings_logic.variant_hint(variant)}",
                         tooltip=tooltip,
+                        compat_label=compat.label,
+                        compat_tone=compat.tone,
+                        compat_tooltip=f"本机适配：{compat.hint}",
                     )
                 )
             return options

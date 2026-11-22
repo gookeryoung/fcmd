@@ -113,7 +113,9 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         # 运行页下拉的「✓ 已启动」、模型页「已启动」按钮都要自己跟上，不能等用户操作。
         self._services_watch = periodic(self.state, SERVICE_WATCH_MS, self.state.watch_services)
         self.state.refresh_models()
-        if self.state.hardware is None:
+        snapshot = self.state.hardware
+        # 旧快照没有驱动版本时重测一次，适配标签才能判断 CUDA 驱动是否过旧。
+        if snapshot is None or (snapshot.gpu and not snapshot.gpu_driver):
             self.state.detect_hardware()
         else:
             self.overview.refresh_hardware()

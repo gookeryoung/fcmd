@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.llm import _llmconfig, _llmpaint, _llmpaint_engine, _llmpaint_server
+from fcmd.apps.llm import _llmconfig, _llmpaint, _llmpaint_engine, _llmpaint_server, _llmw_compat
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineDirAction, EngineOption
@@ -53,7 +53,7 @@ from fcmd.gui.widgets import (
 from fcmd.gui.workers import submit, submit_daemon
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 
 __all__ = [
@@ -1153,15 +1153,21 @@ class PaintSampleSection(QWidget):  # pragma: no cover - Qt 控件
             QMessageBox.critical(self, "打开失败", f"无法打开目录：{target}\n{exc}")
 
 
-def build_paint_engine_card(parent: QWidget | None = None) -> EngineCard:
+def build_paint_engine_card(
+    parent: QWidget | None = None,
+    *,
+    gpu_provider: Callable[[], _llmw_compat.GpuStatus] | None = None,
+) -> EngineCard:
     """sd.cpp 引擎卡片：复用共享 EngineCard，仅提供 sd.cpp 的配置。"""
 
     def load() -> list[EngineOption]:
         options: list[EngineOption] = []
+        gpu = gpu_provider() if gpu_provider is not None else _llmw_compat.GpuStatus()
         for engine in _llmpaint_engine.list_sd_engines():
             backend_tag = _llmpaint_engine.engine_backend(engine)
             label = _llmpaint_engine.variant_label(backend_tag) if backend_tag else "sd.cpp"
             tone = "muted" if backend_tag in {"", "cpu"} else "accent"
+            compat = _llmw_compat.engine_compat(backend_tag, gpu=gpu)
             options.append(
                 EngineOption(
                     tag=engine.tag,
@@ -1172,6 +1178,9 @@ def build_paint_engine_card(parent: QWidget | None = None) -> EngineCard:
                     badge_tone=tone,
                     badge_tooltip=f"构建后端：{backend_tag or '未标注'}",
                     tooltip=f"{engine.tag} / {engine.exe} / 后端：{engine.backend or '-'}",
+                    compat_label=compat.label,
+                    compat_tone=compat.tone,
+                    compat_tooltip=f"本机适配：{compat.hint}",
                 )
             )
         return options

@@ -40,6 +40,7 @@ from fcmd.apps.llm import (
     _llmpaint,
     _llmpaint_server,
     _llmtune,
+    _llmw_compat,
     _llmw_models,
     _llmw_recommend,
     llmbase,
@@ -85,6 +86,7 @@ from fcmd.gui.widgets import (
     FormGrid,
     PageScroll,
     button,
+    hint_label,
     set_button_text,
     tab_widget,
 )
@@ -559,6 +561,8 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.restart_button.clicked.connect(self.restart_selected)
         model_row.addWidget(self.restart_button)
         self.model_card.body.addLayout(model_row)
+        self.model_compat_hint = hint_label("", wrap=True)
+        self.model_card.body.addWidget(self.model_compat_hint)
         layout.addWidget(self.model_card)
 
         self.params_card = Card("启动参数")
@@ -740,10 +744,16 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.paint_restart_button.clicked.connect(self._restart_paint_service)
         model_row.addWidget(self.paint_restart_button)
         self.paint_model_card.body.addLayout(model_row)
+        self.paint_compat_hint = hint_label("", wrap=True)
+        self.paint_model_card.body.addWidget(self.paint_compat_hint)
         # 运行状态只看启停按钮文案 + 模型下拉的「✓ 已启动」标记（与文本页一致），
         # 不再在模型行右侧放状态胶囊，也不在下方占一行说明；明细在概览页。
         self.paint_engine_section.assetsLoaded.connect(self._report_paint_hint)
         self.paint_engine_section.assetsLoaded.connect(self._refresh_paint_marker)
+        self.paint_engine_section.assetsLoaded.connect(self._refresh_paint_compat_hint)
+        self.paint_engine_section.model_combo.currentIndexChanged.connect(
+            lambda _index: self._refresh_paint_compat_hint()
+        )
         layout.addWidget(self.paint_model_card)
 
         self.paint_config_card = Card("启动参数")
@@ -1091,6 +1101,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.extra_args_edit.textChanged.connect(self._refresh_command_preview)
         self.model_combo.currentIndexChanged.connect(self._refresh_command_preview)
         self.state.modelsChanged.connect(self._on_models_changed_signal)
+        self.state.hardwareChanged.connect(lambda *_args: self._refresh_compat_hints())
         self.state.servicesChanged.connect(self._on_services_changed)
         self.state.selectionChanged.connect(self._on_selection_changed)
         self.state.busyChanged.connect(self._on_busy_changed)
@@ -1375,6 +1386,60 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
             self.state.selected_model = None
             self.state.selectionChanged.emit(None, False)
         self._refresh_combo_current_color()
+        self._refresh_model_compat_hint()
+
+    def _gpu_status(self) -> _llmw_compat.GpuStatus:
+        """当前硬件快照里的 GPU 摘要；未检测到时按未知处理，不额外起进程。"""
+        return _llmw_compat.gpu_status(self.state.hardware, self.state.gpu_mib)
+
+    def _refresh_compat_hints(self) -> None:
+        self._refresh_model_compat_hint()
+        self._refresh_paint_compat_hint()
+
+    def _refresh_model_compat_hint(self) -> None:
+        """模型与推理引擎 / 硬件驱动的适配提示（选择或硬件变化时刷新）。"""
+        hint = getattr(self, "model_compat_hint", None)
+        if hint is None:
+            return
+        path = self.state.selected_model
+        if path is None:
+            hint.setText("")
+            return
+        target = llmenv.path_key(path)
+        entry = next((item for item in self._usage_models() if llmenv.path_key(item.path) == target), None)
+        if entry is None:
+            hint.setText("")
+            return
+        compat = _llmw_compat.model_compat(
+            entry,
+            _llmw_compat.current_engine_variant(),
+            gpu=self._gpu_status(),
+        )
+        self._set_compat_hint(hint, compat)
+
+    def _refresh_paint_compat_hint(self) -> None:
+        """扩散模型与 sd.cpp 引擎 / 硬件驱动的适配提示。"""
+        hint = getattr(self, "paint_compat_hint", None)
+        section = getattr(self, "paint_engine_section", None)
+        if hint is None or section is None:
+            return
+        data = section.model_combo.currentData()
+        if not isinstance(data, str) or not data.strip():
+            hint.setText("")
+            return
+        compat = _llmw_compat.image_compat(
+            Path(data),
+            _llmw_compat.current_image_backend(),
+            gpu=self._gpu_status(),
+        )
+        self._set_compat_hint(hint, compat)
+
+    @staticmethod
+    def _set_compat_hint(label: QLabel, compat: _llmw_compat.Compat) -> None:
+        label.setText(f"模型适配 · {compat.hint}")
+        label.setProperty("tone", compat.tone)
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def _service_status_text(self, path: Path) -> str:
         """只有正在运行的服务才返回状态；未运行不占用下拉项文本。"""
@@ -1406,6 +1471,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         if current is not None:
             self._select_model_combo(current)
         self._refresh_combo_current_color()
+        self._refresh_model_compat_hint()
 
     def _select_model_combo(self, path: Path) -> None:
         target = str(path)
@@ -1425,6 +1491,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.model_combo.setCurrentIndex(index)
         self.model_combo.blockSignals(False)
         self._refresh_combo_current_color()
+        self._refresh_model_compat_hint()
 
     def _on_selection_changed(self, path: object, update_name: bool) -> None:
         if path is None:
@@ -1432,6 +1499,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
             self.model_combo.setCurrentIndex(-1)
             self.model_combo.blockSignals(False)
             self._refresh_action_states()
+            self._refresh_model_compat_hint()
             return
         selected = Path(path)  # type: ignore[arg-type]
         self._select_model_combo(selected)

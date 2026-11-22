@@ -1682,7 +1682,9 @@ def test_settings_engine_rows_are_compact_single_line(
     assert not hasattr(other_row, "backup_button")
     assert not hasattr(other_row, "remove_button")
     other_widgets = [other_row.layout().itemAt(pos).widget() for pos in range(other_row.layout().count())]
-    assert other_widgets[-2] is other_row.use_button
+    assert other_widgets[-3] is other_row.use_button
+    assert other_widgets[-2].objectName() == "StatusTag"
+    assert "适配" in other_widgets[-2].text()
     assert other_widgets[-1].text() == "CPU"
     assert current_row.use_button is None
     current_labels = [label.objectName() for label in current_row.findChildren(QLabel)]
@@ -1690,7 +1692,8 @@ def test_settings_engine_rows_are_compact_single_line(
     assert "StatusTag" in current_labels
     assert "OwnerTag" not in current_labels
     current_widgets = [current_row.layout().itemAt(pos).widget() for pos in range(current_row.layout().count())]
-    assert current_widgets[-2].text() == "默认"
+    assert current_widgets[-3].text() == "默认"
+    assert "适配" in current_widgets[-2].text()
     assert current_widgets[-1].text() == "CPU"
     assert "构建类别：CPU" in current_widgets[-1].toolTip()
     assert "兼容性最好" in current_widgets[-1].toolTip()

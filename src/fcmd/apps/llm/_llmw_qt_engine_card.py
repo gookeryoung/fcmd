@@ -59,6 +59,9 @@ class EngineOption:
     badge_tone: str = "muted"
     badge_tooltip: str = ""
     tooltip: str = ""
+    compat_label: str = ""
+    compat_tone: str = "muted"
+    compat_tooltip: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +149,10 @@ class EngineOptionRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.use_button.clicked.connect(lambda: self.useRequested.emit(option.tag))
             row.addWidget(self.use_button, 0)
 
+        if option.compat_label:
+            compat = StatusTag(option.compat_label, tone=option.compat_tone, parent=self)
+            compat.setToolTip(option.compat_tooltip or option.compat_label)
+            row.addWidget(compat, 0)
         badge = StatusTag(option.badge, tone=option.badge_tone, parent=self)
         badge.setToolTip(option.badge_tooltip or option.badge)
         row.addWidget(badge, 0)

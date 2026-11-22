@@ -358,19 +358,24 @@ _gpu_cache = _GpuCache()
 
 
 def _query_gpu(runner: Runner) -> GpuInfo | None:
-    """实际执行一次 ``nvidia-smi`` 查询。"""
-    result = runner(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
+    """实际执行一次 ``nvidia-smi`` 查询（名称 / 显存 / 驱动版本）。"""
+    result = runner(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"])
     if result.returncode != 0 or not result.stdout.strip():
         return None
     line = result.stdout.strip().splitlines()[0]
-    name, _, memory = line.rpartition(",")
+    fields = [item.strip() for item in line.rsplit(",", 2)]
+    if len(fields) == 3:
+        name, memory, driver = fields
+    else:  # 兼容只返回名称 / 显存的旧版替身与测试输入
+        name, _, memory = line.rpartition(",")
+        driver = ""
     if not name:
         return None
     try:
         memory_mib = int(float(memory.strip()))
     except ValueError:
         return None
-    return GpuInfo(name.strip(), memory_mib)
+    return GpuInfo(name.strip(), memory_mib, driver)
 
 
 def detect_gpu(runner: Runner = run_command) -> GpuInfo | None:

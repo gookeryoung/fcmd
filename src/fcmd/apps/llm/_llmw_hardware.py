@@ -72,6 +72,7 @@ class HardwareSnapshot:
     memory_gen: str = ""
     gpu: str = ""
     gpu_mib: int | None = None
+    gpu_driver: str = ""
     disks: tuple[DiskInfo, ...] = ()
     model_root: str = ""
     detected_at: str = ""
@@ -179,6 +180,7 @@ def detect_hardware(
         memory_gen=detect_memory_gen(runner or run_command),
         gpu=gpu.name if gpu is not None else "",
         gpu_mib=gpu.memory_mib if gpu is not None else None,
+        gpu_driver=gpu.driver_version if gpu is not None else "",
         disks=_disk_infos(),
         model_root=str(_primary_model_root(models_root)),
         detected_at=now_iso(),
@@ -217,6 +219,7 @@ def snapshot_to_dict(snapshot: HardwareSnapshot) -> dict[str, Any]:
         "memory_gen": snapshot.memory_gen,
         "gpu": snapshot.gpu,
         "gpu_mib": snapshot.gpu_mib,
+        "gpu_driver": snapshot.gpu_driver,
         "disks": [
             {"mount": disk.mount, "fstype": disk.fstype, "total": disk.total, "free": disk.free}
             for disk in snapshot.disks
@@ -257,6 +260,7 @@ def snapshot_from_dict(raw: object) -> HardwareSnapshot | None:
         memory_gen=str(raw.get("memory_gen") or ""),
         gpu=str(raw.get("gpu") or ""),
         gpu_mib=_as_int(gpu_mib) if gpu_mib is not None else None,
+        gpu_driver=str(raw.get("gpu_driver") or ""),
         disks=tuple(disks),
         model_root=str(raw.get("model_root") or ""),
         detected_at=str(raw.get("detected_at") or ""),

@@ -113,10 +113,11 @@ Opener = Callable[..., Any]
 
 @dataclass(frozen=True, slots=True)
 class GpuInfo:
-    """NVIDIA GPU 信息。"""
+    """NVIDIA GPU 信息；``driver_version`` 供引擎适配判断使用。"""
 
     name: str
     memory_mib: int
+    driver_version: str = ""
 
 
 @dataclass(frozen=True, slots=True)
