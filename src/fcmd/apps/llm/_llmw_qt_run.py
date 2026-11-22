@@ -857,6 +857,13 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
             settings.update(section.settings())
         return parse_paint_settings(settings)
 
+    def apply_paint_settings(self, settings: dict[str, Any]) -> None:
+        """外部（工作流推荐）写入画图配置：同步图像页签控件并刷新未选模型提示。"""
+        parsed = parse_paint_settings(settings)
+        self.state.settings.paint = parsed
+        self.paint_engine_section.set_settings(parsed)
+        self._report_paint_hint()
+
     def refresh_paint_assets(self) -> None:
         """模型目录变化后重扫扩散模型（图像页签里的下拉）并刷新提示。"""
         self.paint_engine_section.refresh_assets()

@@ -427,6 +427,51 @@ def test_flow_page_builds_with_builtin_templates(window: Any) -> None:
     assert [card.definition.type for card in page._cards][:2] == ["text.input", "llm.chat"]
 
 
+def test_flow_page_applies_recommendation_to_nodes(window: Any) -> None:
+    """智能推荐写回节点：出图尺寸 / 步数 / CFG 随方案更新，推荐卡片可读。"""
+    from fcmd.apps.llm._llmw_flow_nodes import IMAGE_TXT2IMG
+    from fcmd.apps.llm._llmw_flow_recommend import FlowRecommendation
+
+    window.show_page("flow")
+    QApplication.processEvents()
+    page = window._flow_page
+    image_flow = next(flow for flow in page._flows if any(node.type == IMAGE_TXT2IMG for node in flow.nodes))
+    page._select_flow(image_flow.id)
+    page._recommendations = (
+        FlowRecommendation(
+            scene="image",
+            scene_label="文生图",
+            attribute="quality",
+            attribute_label="画质优先",
+            score=90,
+            score_parts=(100, 88),
+            llm_name="",
+            llm_path=None,
+            llm_profile="",
+            llm_context=0,
+            llm_temperature=0.7,
+            llm_max_tokens=1024,
+            llm_system="",
+            image_name="",
+            image_path=None,
+            width=1024,
+            height=1024,
+            steps=30,
+            cfg_scale=7.0,
+            rationale="测试方案",
+            basis="测试",
+        ),
+    )
+    page._render_recommendation()
+    assert page._apply_button.isEnabled() is True
+    page._apply_recommendation()
+    image_card = next(card for card in page._cards if card.node.type == IMAGE_TXT2IMG)
+    assert image_card.node.params["width"] == 1024
+    assert image_card.node.params["height"] == 1024
+    assert image_card.node.params["steps"] == 30
+    assert image_card.node.params["cfg_scale"] == 7.0
+
+
 def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     """运行页分「文本 / 图像」：文本配 llama.cpp 参数，图像只配 sd.cpp 参数与启停。"""
     window.show_page("run")
