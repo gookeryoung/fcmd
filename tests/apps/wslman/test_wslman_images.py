@@ -203,7 +203,7 @@ def test_collect_images_uses_fresh_cache_without_network(tmp_path: Path) -> None
 
 
 def test_collect_images_force_bypasses_fresh_cache(tmp_path: Path) -> None:
-    """GUI「刷新清单」传 ``force=True``：即使 TTL 内也要重新拉取两个在线源。"""
+    """GUI「更新列表」传 ``force=True``：即使 TTL 内也要重新拉取两个在线源。"""
     cache = tmp_path / "cache.json"
     _images.save_cache(_images.parse_distribution_info(_MANIFEST), 1_700_000_000, cache, ("cli", "manifest"))
     calls: list[str] = []

@@ -9,7 +9,9 @@
 几何记忆都由基座提供），右侧按「发行版 / 镜像 / 日志」分页，每页拿满整个
 内容区，不再把详情、下载与日志挤进同一个底部标签页。发行版页用一个纵向
 分栏把列表与详情分开；镜像页参考 llmw 模型列表：自定义行卡铺满整页，
-详情与下载地址通过行内「展开」就地显示，不再占用右侧面板。后台任务一律走
+详情与下载地址通过行内「展开」就地显示，不再占用右侧面板；进页先回显磁盘缓存
+（`cache/wslman-available.json`）再后台刷新，「更新列表」可手动绕过 30 分钟缓存。
+后台任务一律走
 :func:`fcmd.gui.qt.workers.submit`，运行状态每 3 秒轮询一次（最小化时暂停），
 关窗时取消进行中的任务。
 
@@ -96,6 +98,26 @@ PAGES: tuple[tuple[str, str, str, str], ...] = (
 """侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。"""
 
 _COLUMN_KEYS: tuple[str, ...] = tuple(key for key, _title, _minimum, _maximum in w._COLUMNS)
+
+
+def _images_stamp(fetched_at: float) -> str:
+    """镜像清单时间戳：当天只显示 ``HH:MM``，跨天补 ``月-日``。"""
+    stamp = time.localtime(fetched_at)
+    today = time.localtime()
+    if (stamp.tm_year, stamp.tm_yday) == (today.tm_year, today.tm_yday):
+        return time.strftime("%H:%M", stamp)
+    return time.strftime("%m-%d %H:%M", stamp)
+
+
+def _images_note_text(catalog: Any) -> str:
+    """状态行末尾的「来源 · 更新时间」备注（在线 / 缓存 / 过期缓存三种口径）。"""
+    sources = "+".join(catalog.sources) or "缓存"
+    stamp = _images_stamp(catalog.fetched_at)
+    if catalog.stale:
+        return f"{sources} · 过期缓存（{stamp}）"
+    if catalog.from_cache:
+        return f"本地缓存 · 更新于 {stamp}"
+    return f"{sources} · 更新于 {stamp}"
 
 
 class _LogBridge(QObject):  # pragma: no cover - Qt 信号桥
@@ -261,6 +283,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._cancel = threading.Event()
         self._status_busy = False
         self._images_busy = False
+        self._images_from_cache = False
         self._closing = False
         self._bridge: _LogBridge | None = None
         self._poll: QTimer | None = None
@@ -299,10 +322,35 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.refresh()
 
     def show_page(self, key: str) -> None:
-        """切页：首次进入镜像页时拉取在线清单（等价于旧版切到「下载」标签）。"""
-        super().show_page(key)
+        """切页：进入镜像页时先回显本地缓存，再后台刷新在线清单。
+
+        ``super().show_page`` 内部会 ``nav.select``，侧边栏再回发一次 ``changed``
+        到本方法；用重入标记把回调合并到最外层，避免同一页被处理两次
+        （否则镜像页会重复回显缓存 / 重复拉清单）。
+        """
+        if getattr(self, "_switching_page", False):
+            return
+        self._switching_page = True
+        try:
+            super().show_page(key)
+        finally:
+            self._switching_page = False
         if key == "images":
-            self._load_images()
+            self._open_images_page()
+
+    def _open_images_page(self) -> None:
+        """镜像页入口：磁盘缓存秒开（有就画），随后按需后台更新。
+
+        与 llmw 模型列表一致（陈旧回显 + 后台刷新）：断网 / 首次拉取较慢时
+        用户先看到上一次的清单与更新时间，而不是空白列表；缓存仍在 30 分钟
+        新鲜期内则直接当结果用，要强制刷新点「更新列表」。
+        """
+        if not self.image_entries:
+            cache = self._restore_images_cache()
+            if cache is not None and time.time() - cache.fetched_at <= _images.CACHE_TTL_SECONDS:
+                self._images_from_cache = False
+                return
+        self._load_images()
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -394,7 +442,12 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return card
 
     def _build_images_page(self) -> QWidget:
-        """镜像页：筛选条 + 搜索 / 排序 / 来源，清单与详情横向分栏、下载动作与高级选项。"""
+        """镜像页：筛选条（含手动更新）+ 搜索行 + 单行状态 + 行卡列表 + 下载动作。
+
+        布局与 llmw 模型页同构：固定行都是单行控件（不换行、不抢高度），列表吃满
+        剩余空间并自带滚动，底部动作行只放下载相关控件。这样窗口压到最小高度时
+        也不会出现「标签被压扁、底部动作行与列表重叠」。
+        """
         page = QWidget(self)
         body = QVBoxLayout(page)
         body.setContentsMargins(0, 0, 0, 0)
@@ -417,9 +470,16 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             filters.addWidget(chip)
             self.image_filter_buttons[key] = chip
         filters.addStretch(1)
-        self.images_refresh = button("刷新清单", kind="ghost")
-        self.images_refresh.setToolTip("跳过 30 分钟缓存，重新获取 wsl --list --online 与官方清单")
-        self.images_refresh.clicked.connect(lambda: self._load_images(force=True))
+        self.image_install_local = button("安装本地镜像…", kind="ghost")
+        self.image_install_local.setToolTip(f"安装磁盘上已有的镜像包；{w._DOWNLOAD_HINT}")
+        self.image_install_local.clicked.connect(self._install_local)
+        filters.addWidget(self.image_install_local)
+        self._buttons.append(self.image_install_local)
+        self._button_by_text["安装本地镜像…"] = self.image_install_local
+        # 手动更新（对齐 llmw「更新模型」）：绕过 30 分钟缓存重新拉两个在线源。
+        self.images_refresh = button("更新列表", kind="ghost")
+        self.images_refresh.setToolTip("重新获取 wsl --list --online 与官方镜像清单（绕过 30 分钟缓存）")
+        self.images_refresh.clicked.connect(self._manual_update_images)
         filters.addWidget(self.images_refresh)
         body.addLayout(filters)
 
@@ -430,6 +490,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.image_search = QLineEdit(self)
         self.image_search.setClearButtonEnabled(True)
         self.image_search.setPlaceholderText("按名称 / 友好名过滤…")
+        self.image_search.setMinimumWidth(220)
         self.image_search.textChanged.connect(self._schedule_image_filter)
         search_row.addWidget(self.image_search, 1)
         self.image_sort = QComboBox(self)
@@ -453,14 +514,20 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.mirror.currentIndexChanged.connect(self._on_mirror_changed)
         search_row.addWidget(self.mirror)
         body.addLayout(search_row)
-        self.images_status = hint_label("打开本页时自动获取镜像清单")
+
+        # 状态行固定单行（中间省略 + tooltip）：换行标签在矮窗口里会被压扁，
+        # 文字叠到下一行控件上，是「底部重叠」的直接来源。
+        self.images_status = ElidedLabel("打开本页时先显示本地缓存，再自动更新清单", parent=page)
+        self.images_status.setObjectName("Hint")
+        # 垂直策略固定：状态行永远只占一行高度，不参与窗口变高时的剩余空间分配。
+        self.images_status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         body.addWidget(self.images_status)
 
-        # 列表铺满整页：详情通过行内展开显示（与 llmw 模型列表同构），不再占用右侧面板。
+        # 列表铺满整页：详情通过行内展开显示（与 llmw 模型列表同构），不自带横向滚动。
         self.image_list = RowListWidget(page)
         self.image_list.setObjectName("ImageResultList")
         self.image_list.setSpacing(4)
-        self.image_list.setMinimumHeight(260)
+        self.image_list.setMinimumHeight(200)
         self.image_list.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
         self.image_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.image_list.currentRowChanged.connect(self._on_image_selected)
@@ -480,6 +547,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(6)
         self._download_button = button("下载选中镜像", kind="primary")
+        self._download_button.setToolTip(w._DOWNLOAD_HINT)
         self._download_button.clicked.connect(self._download_selected)
         self._download_button.setEnabled(False)
         actions.addWidget(self._download_button)
@@ -487,18 +555,10 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._cancel_button.clicked.connect(self._cancel_task)
         actions.addWidget(self._cancel_button)
         self.install_after = QCheckBox("下载后立即安装", self)
+        self.install_after.setToolTip(f"下载完成后立即 wsl --import；{w._DOWNLOAD_HINT}")
         actions.addWidget(self.install_after)
-        separator = QLabel("│", page)
-        separator.setObjectName("Hint")
-        actions.addWidget(separator)
-        install_local = button("安装本地镜像…")
-        install_local.clicked.connect(self._install_local)
-        actions.addWidget(install_local)
-        self._buttons.append(install_local)
-        self._button_by_text["安装本地镜像…"] = install_local
         actions.addStretch(1)
         body.addLayout(actions)
-        body.addWidget(hint_label(w._DOWNLOAD_HINT))
 
         self.advanced = Collapsible("高级：下载目录 / 校验", parent=page)
         self.download_dir = QLineEdit(self.settings.download_dir, self.advanced.content)
@@ -515,6 +575,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         form.addWidget(QLabel("期望 sha256"), 1, 0)
         form.addWidget(self.expected_sha, 1, 1)
         self.advanced.body.addLayout(form)
+        self.advanced.body.addWidget(hint_label(w._DOWNLOAD_HINT))
         body.addWidget(self.advanced)
         return page
 
@@ -1068,16 +1129,47 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if 0 <= self.mirror.currentIndex() < len(self.mirror_ids):
             self.set_status(f"下载源：{_mirrors.label(self.mirror_ids[self.mirror.currentIndex()])}")
 
+    def _restore_images_cache(self) -> Any:
+        """把上次落盘的镜像清单直接铺到列表上（不等网络），返回命中的缓存。"""
+        cache = _images.load_cache()
+        if cache is None or not cache.entries:
+            return None
+        self.image_entries = cache.entries
+        self._images_from_cache = True
+        self._images_note = f"本地缓存 · 更新于 {_images_stamp(cache.fetched_at)}"
+        self._render_images()
+        self._log(f"[镜像列表] 已载入本地缓存：{len(cache.entries)} 个，更新于 {_images_stamp(cache.fetched_at)}")
+        return cache
+
+    def _manual_update_images(self) -> None:
+        """「更新列表」按钮：绕过缓存重新拉取两个在线源（对齐 llmw「更新模型」）。"""
+        if self._images_busy:
+            self.set_status("镜像清单正在更新，请稍候…")
+            return
+        self.set_status("正在更新镜像清单…")
+        self._log("[镜像列表] 手动更新：重新获取 wsl --list --online 与官方清单")
+        self._load_images(force=True)
+
+    def _set_images_busy(self, busy: bool) -> None:
+        """更新镜像清单期间禁用「更新列表」，避免重复拉取。"""
+        self._images_busy = busy
+        if hasattr(self, "images_refresh"):
+            self.images_refresh.setEnabled(not busy)
+            self.images_refresh.setText("更新中…" if busy else "更新列表")
+
     def _load_images(self, *, force: bool = False) -> None:
         if self._images_busy or self._closing:
             return
-        if self.image_entries and not force:
+        # 只有「真正拉过一遍」的列表才跳过重复请求；缓存回显的列表必须继续后台刷新。
+        if self.image_entries and not force and not self._images_from_cache:
             return
-        self._images_busy = True
+        self._set_images_busy(True)
         self.images_status.setText(
-            "正在刷新镜像清单…（跳过缓存，重新拉取 wsl --list --online 与官方清单）"
+            "正在更新镜像清单…（跳过缓存，重新拉取 wsl --list --online 与官方清单）"
             if force
-            else "正在获取镜像清单…（wsl --list --online 首次较慢，可用缓存兜底）"
+            else "正在获取镜像清单…（已显示本地缓存，稍后自动更新）"
+            if self.image_entries
+            else "正在获取镜像清单…（wsl --list --online 首次较慢）"
         )
         # 拉清单要跑 ``wsl --list --online`` 再下载官方 JSON，网络不好时会长时间阻塞；
         # 放进 ``QThreadPool`` 会让进程在关窗后仍等任务结束（窗口关了进程却退不出），
@@ -1086,7 +1178,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             lambda: self._images_worker(force),
             on_done=self._apply_images,
             on_error=self._images_error,
-            on_finished=lambda: setattr(self, "_images_busy", False),
+            on_finished=lambda: self._set_images_busy(False),
         )
 
     @staticmethod
@@ -1105,17 +1197,15 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return catalog, entries
 
     def _images_error(self, message: str) -> None:
-        self.images_status.setText(f"镜像清单获取失败：{message}")
+        kept = "；列表仍是上一次的结果" if self.image_entries else ""
+        self.images_status.setText(f"镜像清单获取失败：{message}{kept}")
         self._log(f"[镜像列表] {message}")
 
     def _apply_images(self, payload: tuple[Any, tuple[ImageEntry, ...]]) -> None:
         catalog, entries = payload
         self.image_entries = entries
-        stamp = time.strftime("%H:%M", time.localtime(catalog.fetched_at))
-        note = f"{(catalog.sources and '+'.join(catalog.sources)) or '缓存'} · {stamp}"
-        if catalog.from_cache:
-            note += "（过期缓存）" if catalog.stale else "（缓存）"
-        self._images_note = note
+        self._images_from_cache = catalog.from_cache
+        self._images_note = _images_note_text(catalog)
         for warning in catalog.warnings:
             self._log(f"[镜像列表] {warning}")
         self._render_images()

@@ -47,7 +47,7 @@ from fcmd.core.context import describe_injection
 from fcmd.core.dag import Graph
 from fcmd.core.errors import TaskFailedError
 from fcmd.core.report import RunReport
-from fcmd.core.result import has_pending_error
+from fcmd.core.result import has_pending_error, reset_error_state
 from fcmd.core.task import EventCallback, RunConfig, TaskEvent, TaskStatus
 
 from .dependency_runner import _run_dependency, _run_dependency_sync, _sync_chain_fast_path_ok
@@ -220,6 +220,13 @@ def run(  # noqa: PLR0912, PLR0913
         only = list(config.only)
     if tags is None and config is not None and config.tags is not None:
         tags = list(config.tags)
+
+    # 进程级 pending error（_PENDING_EXIT_CODE_GLOBAL）由 CLI/tool 层登记，
+    # 测试环境或 xdist worker 里跨用例/跨 run() 调用不会自动清空。verbose
+    # 回调在 SUCCESS 分支有 has_pending_error() 守卫（避免与已呈现的错误
+    # 矛盾），若这里不先清就会出现"任务成功但 verbose 不打印完成行"的假阴性。
+    reset_error_state()
+
     if dry_run:
         layers = graph.layers()
         _print_dry_run(graph, layers)

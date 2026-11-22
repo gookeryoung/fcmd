@@ -7,6 +7,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -180,7 +181,7 @@ def test_image_rows_and_filter(home: Path, monkeypatch: pytest.MonkeyPatch) -> N
         window.image_source.setCurrentIndex(window.image_source.findData("all"))
         window.image_sort.setCurrentIndex(window.image_sort.findData("friendly"))
         assert _image_row(window, 0).entry.name == "Debian"
-        assert "共 2 个镜像" in window.images_status.text()
+        assert "共 2 个镜像" in window.images_status.fullText()
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
@@ -342,4 +343,147 @@ def test_close_asks_when_task_running(home: Path) -> None:
         window._busy = False
         assert window._on_close() is True
     finally:
+        window.deleteLater()
+
+
+# ---------------------------------------------------------------------- #
+# 镜像页：缓存秒开 / 手动更新 / 底部动作行不被压扁
+# ---------------------------------------------------------------------- #
+def _image_entry(name: str = "Ubuntu", *, downloads: bool = True) -> Any:
+    from fcmd.apps.wslman._images import ImageDownload, ImageEntry
+
+    return ImageEntry(
+        name=name,
+        friendly_name=f"{name} 24.04",
+        sources=("cli", "manifest"),
+        downloads=(ImageDownload("x86_64", f"https://e/{name.casefold()}.wsl", "a" * 64),) if downloads else (),
+    )
+
+
+def _catalog(entries: tuple[Any, ...], *, from_cache: bool = False, stale: bool = False) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        entries=entries,
+        sources=("cli", "manifest"),
+        fetched_at=time.time(),
+        from_cache=from_cache,
+        stale=stale,
+        warnings=(),
+    )
+
+
+def test_images_page_restores_cache_then_refreshes(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """进镜像页先铺过期缓存（秒开），随后仍后台刷新一次（陈旧回显）。"""
+    from fcmd.apps.wslman import _images
+
+    stale_at = time.time() - 2 * _images.CACHE_TTL_SECONDS
+    _images.save_cache((_image_entry("Ubuntu"), _image_entry("Debian")), stale_at)
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    calls: list[bool] = []
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: calls.append(force))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("images")
+        assert window.image_list.count() == 2
+        assert "本地缓存" in window.images_status.fullText()
+        # 缓存回显之后必须继续刷新，否则过期数据会一直停在界面上。
+        assert calls == [False]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_images_page_fresh_cache_skips_refresh(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """30 分钟内的缓存直接当结果用：不重复请求，要刷新点「更新列表」。"""
+    from fcmd.apps.wslman import _images
+
+    _images.save_cache((_image_entry("Ubuntu"),), time.time())
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    calls: list[bool] = []
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: calls.append(force))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("images")
+        assert window.image_list.count() == 1
+        assert calls == []
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_images_update_button_forces_refresh(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """「更新列表」是手动更新入口：force=True 且更新期间禁用按钮。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    calls: list[bool] = []
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: calls.append(force))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        assert window.images_refresh.text() == "更新列表"
+        window.images_refresh.click()
+        assert calls == [True]
+
+        window._set_images_busy(True)
+        assert window.images_refresh.isEnabled() is False
+        assert window.images_refresh.text() == "更新中…"
+        window.images_refresh.click()
+        assert calls == [True]  # 更新中重复点击被忽略
+
+        window._set_images_busy(False)
+        assert window.images_refresh.isEnabled() is True
+        assert window.images_refresh.text() == "更新列表"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_images_note_text_covers_online_and_cache() -> None:
+    """状态行备注区分「在线更新 / 本地缓存 / 过期缓存」三种口径。"""
+    from fcmd.apps.wslman._wslmanw_qt import _images_note_text, _images_stamp
+
+    stamp = _images_stamp(time.time())
+    assert "更新于" in _images_note_text(_catalog((), from_cache=False))
+    assert "本地缓存" in _images_note_text(_catalog((), from_cache=True))
+    assert "过期缓存" in _images_note_text(_catalog((), from_cache=True, stale=True))
+    assert isinstance(stamp, str) and stamp
+
+
+def test_images_page_keeps_bottom_actions_unsqueezed(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """回归：窗口压到最小高度时底部动作行 / 状态行不被列表压扁重叠。
+
+    原实现把「下载提示」「动作行」放在可换行标签 + 拉伸列表之间，矮窗口下
+    Qt 会把换行标签压到一行、动作行压到按钮最小高度以下，视觉上叠在一起。
+    """
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    # 布局用例不碰网络：切页时的后台刷新交给专门的两个用例覆盖。
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entries = tuple(_image_entry(f"Distro{i}") for i in range(30))
+        window._apply_images((_catalog(entries), entries))
+        window.resize(1040, 600)
+        window.show()
+        window.show_page("images")
+        QApplication.processEvents()
+
+        assert window.image_list.height() >= 200
+        assert window.images_status.height() == window.images_status.sizeHint().height()
+        for widget in (
+            window._download_button,
+            window._cancel_button,
+            window.install_after,
+            window.image_install_local,
+            window.images_refresh,
+            window.advanced,
+        ):
+            assert widget.height() >= widget.sizeHint().height(), widget.objectName() or widget
+        # 列表底边严格在动作行之上（不重叠）
+        assert window.image_list.geometry().bottom() < window._download_button.geometry().top()
+    finally:
+        window.hide()
+        window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
