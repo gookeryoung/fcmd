@@ -927,10 +927,11 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     font = QFont(family)
     installed = {name.casefold() for name in families}
     available_chain = [name for name in chain if name.casefold() in installed]
-    if len(available_chain) > 1 and hasattr(font, "setFamilies"):
+    if available_chain and hasattr(font, "setFamilies"):
         # Qt 5（PySide2）没有 setFamilies：只认第一个族，行为退化为主族仍是 CJK 字体。
-        # 只把**系统里真的存在**的族写进链路：Qt 遇到不存在的族会把 fonts() 清空，
-        # 于是回退分支断言的「默认族」也会丢失（CI 的空字体库就是这样）。
+        # 只把**系统里真的存在**的族写进链路：Qt 遇到不存在的族会把 families() 清空。
+        # 只有一个族也显式写进链路，这样 ``families()`` 与 ``family()`` 在
+        # Linux / offscreen 字体库下口径一致（不同平台对构造函数的记录方式不同）。
         font.setFamilies(available_chain)
     font.setPointSize(theme.fonts.body)
     font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)

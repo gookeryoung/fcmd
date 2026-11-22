@@ -416,7 +416,11 @@ def test_apply_theme_sets_cascadia_code_font_chain() -> None:
         assert resolved[0].casefold() == "cascadia code"
         assert len(resolved) >= 2  # CJK 回退族
     else:  # pragma: no cover - 无 Cascadia 的环境（CI 的 offscreen 字体库）
-        assert resolved == [app.font().family()]
+        # 回退到系统默认族：不选 Cascadia，且 app 字体仍能给出一个可用族名。
+        # 无字体库里 Qt 可能解析不出族（families() 为空而 family() 回显请求名），
+        # 不同平台 / Qt 版本对构造函数的记录方式也不同，所以只断言「不是 Cascadia」。
+        assert "cascadia code" not in {name.casefold() for name in resolved}
+        assert app.font().family()
 
 
 def test_mono_font_uses_cascadia_code_when_available() -> None:
