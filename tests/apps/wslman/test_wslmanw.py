@@ -428,6 +428,42 @@ def test_verification_label_never_calls_unverified_files_trusted() -> None:
     assert wslmanw.verification_label("a" * 64, "b" * 64) == "sha256 与官方清单不一致"
 
 
+def test_match_distro_image_by_name_and_friendly_name() -> None:
+    """发行版名 → 在线镜像：名称全等、友好名全等都能命中（大小写不敏感）。"""
+    ubuntu = _image("Ubuntu-24.04", friendly="Ubuntu 24.04 LTS")
+    debian = _image("Debian", friendly="Debian GNU/Linux")
+
+    assert wslmanw.match_distro_image(_distro(name="ubuntu-24.04"), (ubuntu, debian)) is ubuntu
+    assert wslmanw.match_distro_image(_distro(name="Ubuntu 24.04 LTS"), (ubuntu, debian)) is ubuntu
+    assert wslmanw.match_distro_image(_distro(name="Debian"), (ubuntu, debian)) is debian
+    assert wslmanw.match_distro_image(_distro(name="Arch"), (ubuntu, debian)) is None
+    # 清单为空时不误报「本地导入」
+    assert wslmanw.match_distro_image(_distro(name="Ubuntu"), ()) is None
+
+
+def test_match_distro_image_prefers_longest_word_prefix() -> None:
+    """发行版名是镜像名的「词首前缀」时也算命中，多个候选取最长的那个。"""
+    ubuntu = _image("Ubuntu")
+    ubuntu2404 = _image("Ubuntu-24.04")
+    entries = (ubuntu, ubuntu2404)
+
+    assert wslmanw.match_distro_image(_distro(name="Ubuntu-24.04-custom"), entries) is ubuntu2404
+    assert wslmanw.match_distro_image(_distro(name="Ubuntu-Preview"), entries) is ubuntu
+    # 非词首前缀（UbuntuX）不算命中，避免把无关发行版归到 Ubuntu
+    assert wslmanw.match_distro_image(_distro(name="UbuntuX"), entries) is None
+
+
+def test_distro_image_text_reports_match_and_local_import() -> None:
+    """行内说明：命中给友好名，未命中给「本地导入」，清单未知时留空。"""
+    ubuntu = _image("Ubuntu-24.04", friendly="Ubuntu 24.04 LTS")
+    assert wslmanw.distro_image_text(_distro(name="Ubuntu-24.04"), (ubuntu,)) == "镜像 Ubuntu 24.04 LTS"
+    # 没有友好名时退回镜像名
+    plain = _image("Alpine")
+    assert wslmanw.distro_image_text(_distro(name="Alpine"), (plain,)) == "镜像 Alpine"
+    assert wslmanw.distro_image_text(_distro(name="MyDistro"), (ubuntu,)) == "本地导入"
+    assert wslmanw.distro_image_text(_distro(name="MyDistro"), (), known=False) == ""
+
+
 def test_mark_downloaded_matches_archives_in_directory(tmp_path: Path) -> None:
     """下载目录里的归档把条目标成「已下载」，并记住路径供行内「安装」使用。"""
     ubuntu = _image("Ubuntu")

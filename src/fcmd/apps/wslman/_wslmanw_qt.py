@@ -161,6 +161,12 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.add_tag(self.state_tag)
         self.default_tag = StatusTag("默认", tone="accent", parent=self.header)
         self.add_tag(self.default_tag)
+        # 名称右侧注明对应的在线镜像（自定义导入 / 匹配不到时给「本地导入」）。
+        self.image_label = QLabel("", self.header)
+        self.image_label.setObjectName("Hint")
+        self.image_label.setWordWrap(False)
+        self.image_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.add_title_widget(self.image_label)
 
         self.start_stop_button = button("启动", kind="primary")
         self.start_stop_button.clicked.connect(lambda: self.startStopRequested.emit(distro.name))
@@ -184,6 +190,18 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.start_stop_button.setText("停止" if can_stop else "启动")
         self.start_stop_button.setEnabled(can_start or can_stop)
         self.start_stop_button.setToolTip(f"停止 {distro.name}" if can_stop else f"启动 {distro.name}")
+
+    def update_image(self, entry: ImageEntry | None, *, known: bool) -> None:
+        """标注该发行版对应的在线镜像；``known=False`` 表示清单还没加载（留空）。"""
+        text = w.distro_image_text(self.distro, (entry,) if entry is not None else (), known=known)
+        self.image_label.setText(text)
+        self.image_label.setVisible(bool(text))
+        if entry is None:
+            self.image_label.setToolTip("未匹配到在线镜像（自定义导入或已下架）" if known else "")
+            return
+        arches = "/".join(entry.arches) or "任意架构"
+        sources = w.image_source_text(entry)
+        self.image_label.setToolTip(f"{entry.friendly_name or entry.name}\n可用架构：{arches}\n来源：{sources}")
 
     def set_busy(self, busy: bool) -> None:
         """任务进行中禁用行内启停按钮；结束后按当前状态重新计算。"""
@@ -421,6 +439,11 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             page = builders[key]()
             page.hide()
             self.add_page(key, label, hint=hint, icon=icon, factory=lambda page=page: page)
+        # 发行版行要注明对应的在线镜像：启动时先把镜像缓存回显出来（同步读盘，
+        # 只有几十 KB），镜像页进入时再按 30 分钟新鲜度决定是否联网刷新。
+        self._images_cache_fresh = False
+        cache = self._restore_images_cache()
+        self._images_cache_fresh = cache is not None and (time.time() - cache.fetched_at <= _images.CACHE_TTL_SECONDS)
         self._schedule_poll()
         self.refresh()
 
@@ -481,9 +504,13 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         """
         if not self.image_entries:
             cache = self._restore_images_cache()
-            if cache is not None and time.time() - cache.fetched_at <= _images.CACHE_TTL_SECONDS:
-                self._images_from_cache = False
-                return
+            self._images_cache_fresh = cache is not None and (
+                time.time() - cache.fetched_at <= _images.CACHE_TTL_SECONDS
+            )
+        if self.image_entries and self._images_cache_fresh:
+            # 新鲜缓存直接当结果用：不重复请求，要强制刷新点「更新列表」。
+            self._images_from_cache = False
+            return
         self._load_images()
 
     # ------------------------------------------------------------------ #
@@ -903,6 +930,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             row.toggleRequested.connect(self._on_distro_toggle)
             row.startStopRequested.connect(self._toggle_distro_state)
             row.set_busy(self._busy)
+            entry, known = self._distro_image(distro)
+            row.update_image(entry, known=known)
             item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.distro_list.setItemWidget(item, row)
         self.distro_list.sync_row_widths()
@@ -920,6 +949,19 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                     self._expand_distro_row(row)
                     break
         self._show_details()
+
+    def _distro_image(self, distro: Distro) -> tuple[ImageEntry | None, bool]:
+        """``(命中的在线镜像, 清单是否已知)``；清单为空时行内不写「本地导入」。"""
+        entries = self._catalog_entries()
+        return w.match_distro_image(distro, entries), bool(entries)
+
+    def _refresh_distro_images(self) -> None:
+        """镜像清单变化后就地刷新每行的「镜像 …」说明（不重建列表）。"""
+        for index in range(self.distro_list.count()):
+            row = self.distro_list.itemWidget(self.distro_list.item(index))
+            if isinstance(row, _DistroItemRow):
+                entry, known = self._distro_image(row.distro)
+                row.update_image(entry, known=known)
 
     def _on_distro_selected(self, current: int) -> None:
         """选中行变化：同步行卡选中态、工具栏启停按钮与状态栏摘要。"""
@@ -1358,6 +1400,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._images_from_cache = True
         self._images_note = f"本地缓存 · 更新于 {_images_stamp(cache.fetched_at)}"
         self._render_images()
+        self._refresh_distro_images()
         self._log(f"[镜像列表] 已载入本地缓存：{len(cache.entries)} 个，更新于 {_images_stamp(cache.fetched_at)}")
         return cache
 
@@ -1387,6 +1430,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return
         self.image_entries = entries
         self._render_images()
+        self._refresh_distro_images()
 
     def _manual_update_images(self) -> None:
         """「更新列表」按钮：绕过缓存重新拉取两个在线源（对齐 llmw「更新模型」）。"""
@@ -1459,6 +1503,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         for warning in catalog.warnings:
             self._log(f"[镜像列表] {warning}")
         self._render_images()
+        self._refresh_distro_images()
 
     def _render_images(self) -> None:
         filter_key = self._image_filter_key

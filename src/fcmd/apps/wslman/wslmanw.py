@@ -33,6 +33,7 @@ __all__ = [
     "action_states",
     "config_path",
     "detail_fields",
+    "distro_image_text",
     "filter_images",
     "image_counts",
     "image_details",
@@ -477,6 +478,40 @@ def mark_downloaded(entries: Sequence[_images.ImageEntry], directory: Path) -> t
         )
         for entry in entries
     )
+
+
+def match_distro_image(distro: Distro, entries: Sequence[_images.ImageEntry]) -> _images.ImageEntry | None:
+    """把已安装发行版对应到在线镜像条目（大小写不敏感）。
+
+    依次尝试：名称全等 → 友好名全等 → 名称是发行版名的「词首前缀」
+    （如 ``Ubuntu-24.04`` 对镜像 ``Ubuntu``，分隔符 ``-`` / ``_`` / 空格 / ``.``），
+    多个前缀命中时取最长（更具体）的一个；都没有时返回 ``None``（自定义导入 / 已下架）。
+    """
+    if not entries:
+        return None
+    key = distro.name.strip().casefold()
+    if not key:
+        return None
+    for entry in entries:
+        if entry.name.casefold() == key:
+            return entry
+    for entry in entries:
+        if entry.friendly_name and entry.friendly_name.casefold() == key:
+            return entry
+    prefixes = [
+        entry
+        for entry in entries
+        if key.startswith(entry.name.casefold()) and key[len(entry.name) : len(entry.name) + 1] in {"-", "_", " ", "."}
+    ]
+    return max(prefixes, key=lambda entry: len(entry.name), default=None)
+
+
+def distro_image_text(distro: Distro, entries: Sequence[_images.ImageEntry], *, known: bool = True) -> str:
+    """行内「镜像」说明：命中给镜像友好名，未命中给「本地导入」，清单未知时留空。"""
+    entry = match_distro_image(distro, entries)
+    if entry is not None:
+        return f"镜像 {entry.friendly_name or entry.name}"
+    return "本地导入" if known else ""
 
 
 def local_archives(directory: Path) -> tuple[Path, ...]:

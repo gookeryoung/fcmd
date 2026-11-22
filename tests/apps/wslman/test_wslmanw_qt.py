@@ -662,6 +662,62 @@ def test_statusbar_is_single_line(home: Path, monkeypatch: pytest.MonkeyPatch) -
         window.deleteLater()
 
 
+def test_distro_rows_note_matching_image(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """发行版行标注对应的在线镜像；自定义导入给「本地导入」，清单未加载时留空。"""
+    from fcmd.apps.wslman import _images
+
+    ubuntu = wslmanw._images.ImageEntry(
+        name="Ubuntu-24.04",
+        friendly_name="Ubuntu 24.04 LTS",
+        sources=("cli", "manifest"),
+        downloads=(wslmanw._images.ImageDownload("x86_64", "https://e/ubuntu.wsl"),),
+    )
+    _images.save_cache((ubuntu,), time.time())
+    view = _view(_distro("Ubuntu-24.04"), _distro("MyImport", "stopped", default=False))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        rows = {_distro_row(window, index).distro.name: _distro_row(window, index) for index in range(2)}
+        # 缓存里有的镜像：启动即回显，行内直接给出友好名
+        assert rows["Ubuntu-24.04"].image_label.text() == "镜像 Ubuntu 24.04 LTS"
+        assert "CLI" in rows["Ubuntu-24.04"].image_label.toolTip()
+        # 清单里没有的发行版：标「本地导入」
+        assert rows["MyImport"].image_label.text() == "本地导入"
+
+        # 在线清单更新后就地刷新说明，不重建行卡
+        row = rows["MyImport"]
+        got = wslmanw._images.ImageEntry(name="MyImport", friendly_name="My Import", sources=("cli",))
+        window._apply_images((_catalog((ubuntu, got)), (ubuntu, got)))
+        after = {_distro_row(window, i).distro.name: _distro_row(window, i) for i in range(2)}
+        assert after["MyImport"] is row
+        assert row.image_label.text() == "镜像 My Import"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_distro_row_image_note_hidden_without_catalog(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """没有镜像清单（首次启动、断网且无缓存）时不写「本地导入」误导用户。"""
+    from fcmd.apps.wslman import _images
+
+    monkeypatch.setattr(_images, "load_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro("Ubuntu")))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        row = _distro_row(window, 0)
+        assert row.image_label.text() == ""
+        assert row.image_label.isVisible() is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_log_moves_to_help_menu(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """任务日志不占页面：「帮助 → 任务日志…」打开非模态窗口，回放缓冲并实时追加。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
