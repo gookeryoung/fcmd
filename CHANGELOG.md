@@ -114,6 +114,10 @@
   CREATE_NO_WINDOW`，两个标志互斥，Windows 反而给 `wsl.exe` 建了可见的空白控制台。
   改为与 `_runner` 同口径的 `CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW/SW_HIDE`
   （真机枚举顶层窗口验证：启动前后无新增可见窗口，实例仍 Running）。
+- 修复输入法组合时占位文字与组合串重影：`QPlainTextEdit`（llmw 对话输入框等）在 preedit
+  显示期间仍绘制 placeholder。新增应用级事件过滤器 `gui/qt/ime.py`
+  （`PlaceholderImeGuard`，`create_application` 里装一次）：组合期间临时清空占位文字，
+  组合结束 / 失焦后还原；覆盖全部窗口与后续新增输入框，不需要各自处理。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

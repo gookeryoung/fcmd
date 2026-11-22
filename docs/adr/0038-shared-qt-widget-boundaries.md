@@ -26,7 +26,17 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D6 | `ProgressRow` 用于独立进度行；与按钮 / 文字同处一行的进度条保留窗口自己的布局 | ncmconvert、filescan、devman、llmw 下载区 |
 | D7 | 图标统一走 `fcmd.gui.qt.icons`（内置 Lucide 线性图标），不引入外部图标包 | 侧边栏、按钮、行卡展开 / 收起 |
 | D9 | 行卡选中态走 `RowListWidget.sync_selection()`：只重抛光「旧 / 新」两行，`set_selected` 状态未变时空操作 | 共享 `ItemRow` 的所有列表（wslmanw 发行版 / 镜像、llmw 模型 / 推荐 / 引擎） |
+| D9 | 输入法组合期间的占位文字统一由应用级事件过滤器处理（`gui/qt/ime.py` 的 `PlaceholderImeGuard`），不在各输入框重复实现 | `create_application`、llmw 对话输入框等 |
 | D8 | 底部状态栏统一用 `WindowStatusBar`：单行高度（文字与页内补充都是 `ElidedLabel`，加载条用 `compact`），文字 / 页内补充按分页隔离，任务消息写回「发起任务的那一页」 | `gui/qt/statusbar.py`、`QtMainWindow`、wslmanw |
+
+### D9 为什么占位文字用应用级过滤器
+
+`QPlainTextEdit` 在输入法组合串（preedit）显示时仍会画占位文字：preedit 不在文档里，
+Qt 判定「文本为空」就继续画 placeholder，于是中文组合串和占位文字叠成重影
+（`QLineEdit` 由 Qt 自己处理，不受影响）。逐个输入框重写 `paintEvent` / 子类化代价高，
+而这是「所有输入框都该有」的行为：用一个 `QApplication` 级事件过滤器在组合期间临时
+清空 placeholder、组合结束 / 失焦后还原，`create_application` 里装一次即可覆盖全部
+窗口与后续新增的输入框。
 
 ### D1 行卡骨架为什么收敛到 ItemRow
 

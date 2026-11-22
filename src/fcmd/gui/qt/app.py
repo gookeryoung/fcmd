@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QApplication
 
 from fcmd.gui.qt import theme as _qt_theme
+from fcmd.gui.qt.ime import install_placeholder_ime_guard
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -44,11 +45,14 @@ def create_application(
     """创建（或复用）``QApplication``：应用名与组织名写入 Qt 设置根。"""
     existing = QApplication.instance()
     if existing is not None:
+        install_placeholder_ime_guard(existing)  # type: ignore[arg-type]
         return existing  # type: ignore[return-value]
     _configure_high_dpi()
     app = QApplication(list(argv) if argv is not None else [sys.argv[0]])
     app.setApplicationName(app_name)
     app.setOrganizationName("fcmd")
+    # 输入法组合期间隐藏占位文字（否则组合串与 placeholder 重影）。
+    install_placeholder_ime_guard(app)
     return app
 
 
