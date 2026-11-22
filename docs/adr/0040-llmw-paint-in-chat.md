@@ -25,7 +25,7 @@
 | D3 | 画图配置拆成两段：采样 / 输出（:class:`PaintSampleSection`）嵌对话的「模型与生成配置」窗口；引擎 / 模型组件（:class:`PaintEngineSection`）放运行页「画图」页签 | `_llmw_qt_paint.py` |
 | D4 | 运行页按用途分「对话 / 编程 / 画图」；画图页签只配启动参数与启停（启停样式对齐对话 / 编程的模型卡片） | `_llmw_qt_run.py` |
 | D5 | 出图结果作为图片消息写进当前对话（历史记录保存路径，重开时按路径重绘） | `_llmw_qt_chat.py` |
-| D6 | sd.cpp 引擎安装 / 设为默认移到设置页的「画图引擎（sd.cpp）」卡片，UI 与推理引擎（llama.cpp）卡片同构 | `_llmw_qt_paint.PaintEngineCard` + `_llmw_qt_settings.py` |
+| D6 | sd.cpp 引擎安装 / 设为默认移到设置页的「引擎（sd.cpp：画图 / 视频 / 音频）」卡片，UI 与推理引擎（llama.cpp）卡片同构；三种用途共用同一个引擎目录与同一个默认 tag | `_llmw_qt_paint.PaintEngineCard` + `_llmw_qt_settings.py` |
 | D7 | 设置仍持久化在 `ui/llmw.json` 的 `paint` 字段，新增 `enabled` 表示对话页勾选状态 | `_llmw_winsettings.py` / `_llmw_qt_paint.py` |
 
 ### D2 / D5 交互
@@ -116,7 +116,9 @@
   模型目录，完成后重扫资产并自动配对。错误文案同时保留「模型页画图分类 + 额外参数
   ``--vae`` / ``--llm`` 指定本地路径」两条人工兜底；「画图」分类的在线检索补充
   ``Z-Image`` / ``z_image`` 两种写法。
-- 引擎管理统一在设置页：新增「画图引擎（sd.cpp）」卡片，布局对齐推理引擎
+- 引擎管理统一在设置页：新增「引擎（sd.cpp：画图 / 视频 / 音频）」卡片，布局对齐推理引擎；
+  画图 / 视频 / 音频是同一个引擎，只保留一张卡与一个默认 tag（原按用途拆卡与
+  `video_engine` / `audio_engine` 覆盖 key 已删除）
   （llama.cpp）卡片——标题行右侧「刷新」、目录行「引擎目录 + 路径 + 打开 / 安装引擎…」、
   已安装引擎一律紧凑单行（版本号 + 可执行文件 + 「默认 / 设为默认」+ 后端胶囊；
   版本号取 release 资产名里的 ``master-...``，后端胶囊优先读 ``engine.json`` 的
@@ -164,7 +166,7 @@ src/fcmd/apps/llm/
   画图页签含选模型（无「未找到」占位项、无状态胶囊 / 细节行）+ 启停 + 加载方式
   方块 / 运行选项胶囊 / 只读命令预览）、画图主模型下拉无「未找到」占位项、端口可达但未登记时显示
   「运行中（未登记）」并可结束残留 sd-server、画图「保存参数」立即落盘与「填入
-  当前参数」不重复追加、设置页含「画图引擎（sd.cpp）」卡片（模型组件控件只在
+  当前参数」不重复追加、设置页含「引擎（sd.cpp：画图 / 视频 / 音频）」卡片（模型组件控件只在
   运行页，采样 / 输出只在对话配置）；
 - `tests/tools/net/test_cli_portcheck.py`：端口占用检测（含对端 `SO_REUSEADDR` 监听
   的 Windows 抢绑回归）。

@@ -12,11 +12,9 @@ llmqnt / llmserve / llmdoctor / llmw 等）都从这里解析目录与配置，�
     serve_dir        str     服务状态与日志目录
     paint_dir        str     画图工作目录（状态 / 日志 / 出图）
     sd_engines_root  str     stable-diffusion.cpp 引擎根目录
-    video_engine     str     视频使用的 sd.cpp 引擎 tag（空则跟随默认）
-    audio_engine     str     音频使用的 sd.cpp 引擎 tag（空则跟随默认）
 
-视频 / 音频引擎与画图共用 ``sd_engines_root`` 目录；``video_engine`` /
-``audio_engine`` 只记录各自选中的 tag，未指定时跟随 ``current.json`` 的默认引擎。
+画图 / 视频 / 音频共用同一个 sd.cpp 引擎目录与同一个默认引擎（``current.json``），
+不再有按用途区分的引擎 tag。
 模型目录只支持单一目录；下载的模型直接写入模型目录，转换等产物写入其中的
 固定子目录 :data:`PRODUCTS_DIRNAME`（``converted``）。设置页与所有 CLI 读取点
 都走 :func:`models_dir` / :func:`products_dir`。

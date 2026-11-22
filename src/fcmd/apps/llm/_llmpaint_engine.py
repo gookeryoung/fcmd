@@ -36,7 +36,6 @@ from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
     "SD_EXE",
-    "USAGE_ENGINE_KEYS",
     "VC_RUNTIME_DLLS",
     "SdAsset",
     "SdEngine",
@@ -55,9 +54,7 @@ __all__ = [
     "pick_default_variant",
     "resolve_sd_engine",
     "sd_engine_env",
-    "usage_engine_tag",
     "use_sd_engine",
-    "use_sd_engine_for",
     "variant_label",
 ]
 
@@ -362,7 +359,7 @@ def current_sd_tag(home: Path | None = None) -> str | None:
 
 
 def use_sd_engine(tag: str, home: Path | None = None) -> SdEngine:
-    """把指定 tag 设为默认画图引擎。"""
+    """把指定 tag 设为默认 sd.cpp 引擎（画图 / 视频 / 音频共用）。"""
     root = _llmconfig.paint_engines_root(home)
     info = _engine_info(root / tag, tag)
     if info is None:
@@ -372,39 +369,8 @@ def use_sd_engine(tag: str, home: Path | None = None) -> SdEngine:
     return info
 
 
-#: 视频 / 音频各自使用的 sd.cpp 引擎 tag；键值为空时跟随 ``current.json`` 的默认引擎。
-USAGE_ENGINE_KEYS: Final[dict[str, str]] = {"video": "video_engine", "audio": "audio_engine"}
-
-
-def usage_engine_tag(usage: str, home: Path | None = None) -> str | None:
-    """读取某用途（``video`` / ``audio``）使用的引擎 tag；未单独指定时跟随当前默认。"""
-    key = USAGE_ENGINE_KEYS.get(usage)
-    if key is not None:
-        raw = _llmconfig.get_option(key, home)
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-    return current_sd_tag(home)
-
-
-def use_sd_engine_for(usage: str, tag: str, home: Path | None = None) -> SdEngine:
-    """把指定 tag 设为某用途（``video`` / ``audio``）使用的 sd.cpp 引擎。
-
-    与 :func:`use_sd_engine` 的区别是不改全局默认（``current.json``）：视频 / 音频
-    可以各用一个引擎。选中的 tag 与默认引擎相同时删除用途键，回到「跟随默认」。
-    """
-    key = USAGE_ENGINE_KEYS.get(usage)
-    if key is None:
-        raise ServeError(f"未知用途: {usage!r}（可选：{'、'.join(USAGE_ENGINE_KEYS)}）")
-    root = _llmconfig.paint_engines_root(home)
-    info = _engine_info(root / tag, tag)
-    if info is None:
-        raise ServeError(f"sd.cpp 引擎 {tag!r} 未安装：fcmd llmpaint engine-install --tag {tag}")
-    _llmconfig.set_option(key, None if tag == current_sd_tag(home) else tag, home)
-    return info
-
-
 def list_sd_engines(home: Path | None = None) -> list[SdEngine]:
-    """列出已安装画图引擎（按 tag 降序，标记当前使用的 tag）。"""
+    """列出已安装 sd.cpp 引擎（按 tag 降序，标记当前使用的 tag）。"""
     root = _llmconfig.paint_engines_root(home)
     if not root.is_dir():
         return []

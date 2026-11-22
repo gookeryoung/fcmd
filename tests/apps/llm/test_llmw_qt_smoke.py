@@ -984,9 +984,7 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     assert [card.title_label.text() for card in page.findChildren(Card)] == [
         "存储",
         "推理引擎（llama.cpp）",
-        "画图引擎（sd.cpp）",
-        "视频引擎（sd.cpp）",
-        "音频引擎（sd.cpp）",
+        "引擎（sd.cpp：画图 / 视频 / 音频）",
         "下载",
         "模型转换",
     ]
@@ -1010,26 +1008,24 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
 
 
 def test_settings_paint_engine_card_matches_llama_layout(window: Any) -> None:
-    """画图引擎卡片对齐推理引擎：刷新在标题行、目录行动作、单行列表 + 空态提示。"""
+    """sd.cpp 引擎卡对齐推理引擎：刷新在标题行、目录行动作、单行列表 + 空态提示。"""
     window.show_page("settings")
     card = window.page("settings").paint_engine_card
-    assert card.title() == "画图引擎（sd.cpp）"
+    assert card.title() == "引擎（sd.cpp：画图 / 视频 / 音频）"
     assert card.refresh_button.text() == "刷新"
     assert card.refresh_button.parent() is card
     assert card.root_label.objectName() == "Hint"
     assert card.open_button.text() == "打开"
     assert card.install_button.text() == "安装引擎…"
     assert card.engines_list.objectName() == "PaintEngineList"
-    assert card.engines_empty.text().startswith("还没有已安装画图引擎")
+    assert card.engines_empty.text().startswith("还没有已安装 sd.cpp 引擎")
     # 旧的状态胶囊 / 自绘行布局已移除，改为与推理引擎一致的列表行。
     assert not hasattr(card, "engine_tag")
     assert not hasattr(card, "rows")
 
 
-def test_settings_video_audio_engine_cards_reuse_sd_engines(
-    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """视频 / 音频卡与画图卡同构：共用 sd.cpp 目录与安装控件，默认 tag 各自独立。"""
+def test_settings_single_sd_engine_card_is_shared(window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """画图 / 视频 / 音频共用一张 sd.cpp 引擎卡与一个默认 tag。"""
     from fcmd.apps.llm import _llmconfig, _llmpaint_engine
 
     root = tmp_path / "engines" / "sd.cpp"
@@ -1042,38 +1038,29 @@ def test_settings_video_audio_engine_cards_reuse_sd_engines(
     window.show_page("settings")
     page = window.page("settings")
     page.refresh_engine_cards()
-    video = page.video_engine_card
-    audio = page.audio_engine_card
-    for card, title in ((video, "视频引擎（sd.cpp）"), (audio, "音频引擎（sd.cpp）")):
-        assert card.title() == title
-        assert card.engines_list.objectName() == "PaintEngineList"
-        assert card.open_button.text() == "打开"
-        assert card.install_button.text() == "安装引擎…"
-        assert card.engines_empty.text().startswith("还没有已安装")
-        assert card.engines_list.count() == 2
+    card = page.paint_engine_card
+    assert card.engines_list.count() == 2
     assert _llmconfig.paint_engines_root() == root
-    # 未单独指定时跟随画图默认引擎：两卡的默认标记都落在 sd-a。
-    assert _llmpaint_engine.usage_engine_tag("video") == "sd-a"
-    assert _llmpaint_engine.usage_engine_tag("audio") == "sd-a"
+    # 按用途拆分的卡片与覆盖 key 都已移除
+    for name in ("video_engine_card", "audio_engine_card"):
+        assert not hasattr(page, name), name
+    assert not hasattr(_llmpaint_engine, "usage_engine_tag")
+    assert not hasattr(_llmpaint_engine, "use_sd_engine_for")
 
-    def row_for(card: Any, tag: str) -> Any:
+    def row_for(tag: str) -> Any:
         for index in range(card.engines_list.count()):
             row = card.engines_list.itemWidget(card.engines_list.item(index))
             if row.engine.tag == tag:
                 return row
         raise AssertionError(tag)
 
-    # 视频卡「设为默认」只写 video_engine，不改画图的 current.json。
-    row_for(video, "sd-b").use_button.click()
-    assert _llmconfig.get_option("video_engine") == "sd-b"
-    assert _llmpaint_engine.current_sd_tag() == "sd-a"
-    assert _llmpaint_engine.usage_engine_tag("audio") == "sd-a"
-    assert row_for(video, "sd-b").use_button is None
-
-    # 选回默认引擎时删除用途键，回到「跟随默认」。
-    row_for(video, "sd-a").use_button.click()
+    # 「设为默认」写全局 current.json，三种用途一起切过去
+    row_for("sd-b").use_button.click()
+    assert _llmpaint_engine.current_sd_tag() == "sd-b"
+    assert row_for("sd-b").use_button is None
+    assert row_for("sd-a").use_button is not None
     assert _llmconfig.get_option("video_engine") is None
-    assert _llmpaint_engine.usage_engine_tag("video") == "sd-a"
+    assert _llmconfig.get_option("audio_engine") is None
 
 
 def test_settings_engine_empty_and_error_states(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
