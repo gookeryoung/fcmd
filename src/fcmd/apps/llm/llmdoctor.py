@@ -122,9 +122,9 @@ def _check_msvc_runtime(engine: EngineInfo) -> Check:
     :func:`llmbase.ensure_vc_runtime` 一致），这样体检本身就能修好「启动即
     ``c0000005`` 且日志为空」的引擎。
     """
-    if os.name == "nt":
-        with contextlib.suppress(OSError):
-            ensure_vc_runtime(engine.exe.parent)
+    # 非 Windows 上找不到 VC Redist 来源，复制自然是空操作。
+    with contextlib.suppress(OSError):
+        ensure_vc_runtime(engine.exe.parent)
     local = engine.exe.parent / "msvcp140.dll"
     system = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "msvcp140.dll"
     for dll in (local, system):

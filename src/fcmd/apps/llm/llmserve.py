@@ -435,14 +435,15 @@ def _crash_hint(plan: LaunchPlan, code: int) -> str:
     if code not in (_ACCESS_VIOLATION, _ACCESS_VIOLATION - 2**32):
         return ""
     directory = plan.engine.exe.parent
-    if os.name == "nt":
-        with contextlib.suppress(OSError):
-            ensure_vc_runtime(directory)
+    # 非 Windows 上找不到 VC Redist 来源，复制自然是空操作；失败只影响提示内容。
+    with contextlib.suppress(OSError):
+        ensure_vc_runtime(directory)
     missing = [name for name in VC_RUNTIME_DLLS if not (directory / name).is_file()]
-    detail = f"缺 {', '.join(missing)}" if missing else f"目录 {directory} 内运行库版本过旧"
+    detail = f"缺 {', '.join(missing)}" if missing else "目录内运行库版本过旧"
     return (
         f"\n引擎进程启动即崩溃（{format_returncode(code)}，常见于引擎目录的 MSVC 运行库）：{detail}；"
-        "安装最新 VC++ 2015-2022 x64 运行库，或把新版 msvcp140.dll / vcruntime140*.dll 放入引擎目录"
+        f"引擎目录 {directory}；安装最新 VC++ 2015-2022 x64 运行库，"
+        "或把新版 msvcp140.dll / vcruntime140*.dll 放入引擎目录"
     )
 
 

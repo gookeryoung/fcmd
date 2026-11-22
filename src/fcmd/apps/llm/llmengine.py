@@ -574,8 +574,9 @@ def _heal_engine(info: EngineInfo) -> EngineInfo:
     llama.cpp 的 Windows 构建依赖新版 MSVC 运行库；只装引擎包、没装 cudart 包时
     目录里没有这些 DLL，进程会在加载阶段 ``c0000005`` 崩溃且日志为空。
     """
-    if os.name != "nt" or not info.exe.is_file():
+    if not info.exe.is_file():
         return info
+    # 非 Windows 上 `ensure_vc_runtime` 找不到来源目录，自然成为空操作。
     with contextlib.suppress(OSError):
         ensure_vc_runtime(info.exe.parent)
     return info
@@ -779,9 +780,9 @@ def _extract_zip(archive: Path, target: Path, *, remove: bool = True) -> None:
     finally:
         if remove:
             archive.unlink(missing_ok=True)
-    if os.name == "nt":
-        with contextlib.suppress(OSError):
-            ensure_vc_runtime(target)
+    # 非 Windows 上 `ensure_vc_runtime` 找不到来源目录，自然成为空操作。
+    with contextlib.suppress(OSError):
+        ensure_vc_runtime(target)
 
 
 def download_file(
@@ -847,9 +848,8 @@ def _install_from_path(tag: str, path: Path, target: Path, *, copy: bool = False
         exe = _engine_exe_in(target)
         if exe is None:
             raise ServeError(f"复制后仍找不到 {engine_exe_name()}: {target}")
-        if os.name == "nt":
-            with contextlib.suppress(OSError):
-                ensure_vc_runtime(target)
+        with contextlib.suppress(OSError):
+            ensure_vc_runtime(target)
     else:
         target.mkdir(parents=True, exist_ok=True)
         exe = source_exe
