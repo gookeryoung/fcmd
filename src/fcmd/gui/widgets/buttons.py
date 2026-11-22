@@ -146,6 +146,8 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         self.setText(text)
         # 输入区工具行里的胶囊与 34px 图标按钮同高，外框上下沿对齐。
         self._height = 34 if tall else self._HEIGHT
+        # 输入区胶囊略增左右留白：图标 + 文字有呼吸空间，视觉上更容易读成居中。
+        self._h_padding = 16 if tall else self._H_PADDING
         if tall:
             self.setProperty("tall", "true")
         self.setFixedHeight(self._height)
@@ -162,7 +164,7 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         metrics = self.fontMetrics()
         icon_width = self.iconSize().width() if not self.icon().isNull() else 0
         gap = self._ICON_GAP if icon_width else 0
-        width = 2 * self._H_PADDING + icon_width + gap + metrics.horizontalAdvance(self.text())
+        width = 2 * self._h_padding + icon_width + gap + metrics.horizontalAdvance(self.text())
         return QSize(width, self._height)
 
     def minimumSizeHint(self) -> QSize:
@@ -194,8 +196,9 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
             painter.drawPixmap(x, (self.height() - icon_size.height()) // 2, icon.pixmap(icon_size))
             x += icon_width + gap
         painter.setPen(self._content_color())
-        # 文字墨迹中心与图标中心重叠，避免 CJK 文字比图标偏高 / 偏低。
-        baseline = round(self.height() / 2 - (ink.top() + ink.bottom()) / 2)
+        # 按字体 ascent / descent 的几何中心放基线（与 Qt 原生按钮一致），
+        # 用墨迹中心会在部分 CJK 字体上把文字推得偏高 / 偏低。
+        baseline = (self.height() + metrics.ascent() - metrics.descent()) // 2
         painter.drawText(x - ink.left(), baseline, text)
 
     def _content_color(self) -> QColor:

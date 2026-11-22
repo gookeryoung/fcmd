@@ -470,7 +470,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         self.config_button.setFixedSize(34, 34)
         _set_icon(self.config_button, "settings", tone="muted")
         self.config_button.setAccessibleName("模型与生成配置")
-        buttons.addWidget(self.config_button, 0)
+        buttons.addWidget(self.config_button, 0, Qt.AlignmentFlag.AlignVCenter)
         # 对话 / 画图模式：参考元宝输入区的圆角胶囊开关，互斥选择发送内容。
         self.chat_toggle = ToggleChip(
             "对话",
@@ -480,7 +480,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
             parent=composer,
         )
         self.chat_toggle.setAccessibleName("对话")
-        buttons.addWidget(self.chat_toggle, 0)
+        buttons.addWidget(self.chat_toggle, 0, Qt.AlignmentFlag.AlignVCenter)
         self.paint_toggle = ToggleChip(
             "画图",
             icon="paint",
@@ -489,7 +489,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
             parent=composer,
         )
         self.paint_toggle.setAccessibleName("画图")
-        buttons.addWidget(self.paint_toggle, 0)
+        buttons.addWidget(self.paint_toggle, 0, Qt.AlignmentFlag.AlignVCenter)
         # 恢复上次模式：上次启用画图则选中「画图」，否则默认「对话」；
         # 初始状态先于信号连接，避免启动时多写一次盘 / 闪一条状态。
         paint_enabled = bool(self._paint_settings.get("enabled"))
@@ -505,7 +505,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         # 与齿轮图标按钮同一无边框风格，只用 accent 图标色表达主操作。
         _set_icon(self.send_button, "send", tone="accent")
         self.send_button.setAccessibleName("发送")
-        buttons.addWidget(self.send_button)
+        buttons.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignVCenter)
         input_area.addLayout(buttons)
         layout.addWidget(composer)
 
