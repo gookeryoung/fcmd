@@ -118,6 +118,12 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
 
         window.distro_list.setCurrentRow(0)
         assert window.status_detail_text().startswith("Ubuntu")
+        # 上下两行的数值列宽度一致：状态标签与启动按钮前的分隔线不会左右跳动。
+        first_metrics = _distro_row(window, 0).metrics_label
+        second_metrics = _distro_row(window, 1).metrics_label
+        assert first_metrics is not None and second_metrics is not None
+        assert first_metrics.width() == second_metrics.width()
+        assert not _distro_row(window, 0).action_divider.isHidden()
         assert window.start_button.isEnabled() is False
         assert window.stop_button.isEnabled() is True
         # 行内按钮跟着状态走：运行中显示「停止」，已停止显示「启动」

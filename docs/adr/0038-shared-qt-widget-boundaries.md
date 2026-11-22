@@ -70,7 +70,9 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 - `ItemRow.add_action` 在首个动作前插入 `QFrame#RowActionDivider`（1px、边框同色），
   把「标题 / 副标题 / 胶囊」与「数值摘要 / 动作按钮 / 展开箭头」分成两区；没有动作
   的行不显示分隔线；
-- 右侧数值摘要统一 `QLabel#RowMetrics`（小号、加粗、右对齐），与副标题区分；
+- 右侧数值摘要统一 `QLabel#RowMetrics`（小号、加粗、右对齐），与副标题区分；列宽按
+  `metrics_samples` 测量一次后固定（镜像行把「仅 wsl --install」也纳入样本），
+  同一列表里体积 / 状态文案长短不同也不会让分隔线、动作按钮和标签逐行左右跳动；
 - 行内动作按钮收紧左右内边距；次要动作（转换 / 量化）用 `#Ghost`，主操作
   （下载 / 启动服务 / 安装）保留填充色。
 

@@ -324,6 +324,9 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
             elide=Qt.TextElideMode.ElideMiddle,
             expand_hint="展开详情与下载地址",
             collapse_hint="收起详情",
+            # 镜像行的状态列会出现「仅 wsl --install」这类长文案：和它在同一列的
+            # 短文案也按同一宽度留位，上下行的分隔线 / 动作按钮才不会错位。
+            metrics_samples=("仅 wsl --install", "已下载 100%"),
             parent=parent,
         )
         self.entry = entry

@@ -483,6 +483,23 @@ def test_item_row_groups_tags_and_actions() -> None:
         row.deleteLater()
 
 
+def test_item_row_metrics_lane_has_fixed_width() -> None:
+    """数值 / 状态列固定宽度：长短文案不改变分隔线与动作按钮的横向位置。"""
+    short = ItemRow("Ubuntu", "v2")
+    long = ItemRow("Qwen/demo", "Qwen3 · 对话")
+    try:
+        short.set_metrics("2.0 KiB")
+        long.set_metrics("≈123.0 GiB")
+        assert short.metrics_label is not None
+        assert long.metrics_label is not None
+        assert short.metrics_label.width() == long.metrics_label.width()
+        assert short.action_divider.width() == 1
+        assert not short.action_divider.isHidden()
+    finally:
+        short.deleteLater()
+        long.deleteLater()
+
+
 def test_loading_bar_tracks_elapsed_and_stops() -> None:
     """加载条显示说明文字与已用时，stop 后收起且停止计时。"""
     bar = LoadingBar("正在加载模型列表…")

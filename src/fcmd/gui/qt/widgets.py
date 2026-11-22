@@ -24,6 +24,7 @@ from PySide6.QtGui import (
     QEnterEvent,
     QFont,
     QFontDatabase,
+    QFontMetrics,
     QIcon,
     QPainter,
     QPaintEvent,
@@ -492,6 +493,14 @@ class SelectionRow:
         self.style().polish(self)
 
 
+_METRICS_SAMPLES = ("000.0 GiB",)
+"""右侧数值 / 状态列的默认宽度样本：按它测量一次并固定列宽。
+
+同一列表里的行共用同一组样本（例如镜像行把「仅 wsl --install」也加进去），
+所以体积 / 状态文案长短不同时，分隔线与动作按钮仍逐行对齐。
+"""
+
+
 def _click_through(widget: QWidget) -> None:
     """让行卡里的文字标签不拦鼠标：点击落到列表上，才能选中整行。
 
@@ -539,10 +548,12 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         elide: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
         expand_hint: str = "展开详情",
         collapse_hint: str = "收起详情",
+        metrics_samples: Sequence[str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._expanded = False
+        self._metrics_samples = tuple(metrics_samples) if metrics_samples else _METRICS_SAMPLES
         self._expand_hint = expand_hint
         self._collapse_hint = collapse_hint
         self.metrics_label: QLabel | None = None
@@ -680,11 +691,26 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.metrics_label.setWordWrap(False)
             self.metrics_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.metrics_label.setToolTip(text)
+            self.metrics_label.setFixedWidth(self._metrics_lane_width())
             self.add_action(self.metrics_label)
             return self.metrics_label
         self.metrics_label.setText(text)
         self.metrics_label.setToolTip(text)
         return self.metrics_label
+
+    def _metrics_lane_width(self) -> int:
+        """数值 / 状态列的固定宽度（逻辑像素）。
+
+        各行体积 / 状态文案长短不同时，若按内容宽度分配，右侧分隔线与动作按钮会
+        逐行左右跳动，标签看起来「上下不齐」。这里按最宽样本测量一次后固定列宽；
+        文案超宽时仍靠 tooltip 给出完整值。
+        """
+        # 先抛光再测量：``RowMetrics`` 的 8pt 字号来自 QSS，未抛光时读到的是应用默认字号。
+        assert self.metrics_label is not None
+        self.metrics_label.ensurePolished()
+        font_metrics = QFontMetrics(self.metrics_label.font())
+        widest = max(font_metrics.horizontalAdvance(sample) for sample in self._metrics_samples)
+        return widest + 14
 
     # ------------------------------------------------------------------ #
     # 展开 / 收起
