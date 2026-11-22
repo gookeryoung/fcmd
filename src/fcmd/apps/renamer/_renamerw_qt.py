@@ -79,9 +79,9 @@ from fcmd.apps.renamer.renamerw import (
     save_settings,
 )
 from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.app import run_window
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import (
     Card,
     button,
     confirm,

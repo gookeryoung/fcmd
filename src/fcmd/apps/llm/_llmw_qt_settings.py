@@ -33,8 +33,8 @@ from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineDirAction, EngineOption
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
-from fcmd.gui.qt.page import AppPage
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.page import AppPage
+from fcmd.gui.widgets import (
     Card,
     HintLabel,
     PageScroll,

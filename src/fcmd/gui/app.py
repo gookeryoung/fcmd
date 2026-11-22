@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QApplication
 
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.ime import install_placeholder_ime_guard
+from fcmd.gui import style as _qt_theme
+from fcmd.gui.ime import install_placeholder_ime_guard
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

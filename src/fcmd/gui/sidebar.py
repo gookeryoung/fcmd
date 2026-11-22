@@ -9,7 +9,7 @@
 - ``Alt+1..9`` 直达、``Alt+↓ / Alt+↑`` 循环；
 - ``set_collapsed(True)`` 折叠为窄栏（页名首字 + 应用图标），再次调用展开；
   折叠 / 展开按钮固定在最底部，外观与页按钮一致（同款整行按钮、无文字），
-  顶部只留 LOGO / 标题，不再挤在同一行。按钮使用 :mod:`fcmd.gui.qt.icons` 的
+  顶部只留 LOGO / 标题，不再挤在同一行。按钮使用 :mod:`fcmd.gui.icons` 的
   ``chevron-left`` / ``chevron-right`` 线性图标，不再用 ``«`` / ``»`` 字形。
 
 页按钮用 ``QPushButton`` 而不是 ``QToolButton``：前者支持 QSS 的
@@ -17,7 +17,7 @@
 会按文本收缩成小方块，看起来「宽度显示不全」）。折叠状态经
 :attr:`SidebarNav.collapsedChanged` 交给窗口持久化。
 
-纯逻辑（key 解析、循环切换）复用 :mod:`fcmd.gui.pages` 的模块级函数，
+纯逻辑（key 解析、循环切换）复用 :mod:`fcmd.gui.nav` 的模块级函数，
 CI 无显示环境也能单测。
 """
 
@@ -38,8 +38,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.gui.pages import next_page, resolve_page_key
-from fcmd.gui.qt.icons import set_icon as _set_icon
+from fcmd.gui.icons import set_icon as _set_icon
+from fcmd.gui.nav import next_page, resolve_page_key
 
 __all__ = ["COLLAPSED_WIDTH", "EXPANDED_WIDTH", "SidebarNav", "next_page", "resolve_page_key"]
 
@@ -149,7 +149,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
     def add(self, key: str, label: str, *, hint: str = "", icon: str | None = None) -> None:
         """登记一页；``key`` 必须唯一，重复登记抛 ``KeyError``。
 
-        ``icon`` 传 :mod:`fcmd.gui.qt.icons` 的图标名；折叠态只显示图标、隐藏首字，
+        ``icon`` 传 :mod:`fcmd.gui.icons` 的图标名；折叠态只显示图标、隐藏首字，
         展开态图标在文字左侧。未传时保持纯文字（折叠显示首字）。
         """
         if key in self._buttons:

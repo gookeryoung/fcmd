@@ -15,7 +15,7 @@ from PySide6.QtCore import QEvent, QObject
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QPlainTextEdit
 
-    from fcmd.gui.qt.app import QApplication
+    from fcmd.gui.app import QApplication
 
 __all__ = ["PlaceholderImeGuard", "install_placeholder_ime_guard"]
 

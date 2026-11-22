@@ -151,7 +151,7 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
 
 
 def run_gui() -> None:
-    """创建并运行 Qt 主窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    """创建并运行 Qt 主窗口（高 DPI 与主题由 ``gui.app`` 统一处理）。"""
     try:
         from fcmd.tools.media._img2icow_qt import run_qt
     except ImportError as exc:  # pragma: no cover - 安装完整时不会触发

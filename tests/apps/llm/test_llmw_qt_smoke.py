@@ -27,8 +27,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 from fcmd.apps.llm import _llmw_qt_state as qt_state
 from fcmd.apps.llm._llmw_qt_window import LlmWindow, create_application
 from fcmd.apps.llm.llmbase import EngineInfo
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
 from tests.helpers import destroy_qt_top_levels, qt_top_levels
 
 
@@ -86,7 +86,7 @@ def drain_background_tasks(limit: int = 200) -> None:
     ``xdist`` 并行下固定次数的 ``processEvents`` 可能在线程完成前就退出，残留的
     扩散模型扫描回调会把测试注入的资产覆盖成空结果。
     """
-    from fcmd.gui.qt import workers
+    from fcmd.gui import workers
 
     for _ in range(limit):
         QApplication.processEvents()
@@ -229,7 +229,7 @@ def test_chat_config_dialog_starts_compact(window: Any) -> None:
     page.open_config()
     QApplication.processEvents()
     dialog = page.config_dialog
-    from fcmd.gui.qt.widgets import PageScroll
+    from fcmd.gui.widgets import PageScroll
 
     # 不再用滚动区：窗口高度直接跟随内容。
     assert dialog.findChild(PageScroll) is None
@@ -346,7 +346,7 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     for widget in (section.port, section.model_combo, section.auto_start, section.command_preview):
         assert widget.window() is window
     # 参数卡与对话 / 编程同构：加载方式方块 + 运行选项胶囊 + 只读命令预览。
-    from fcmd.gui.qt.widgets import ChoiceGroup, ToggleChip
+    from fcmd.gui.widgets import ChoiceGroup, ToggleChip
 
     assert isinstance(section.mode_choice, ChoiceGroup)
     for key in ("auto", "checkpoint", "diffusion"):
@@ -1230,7 +1230,7 @@ def test_convert_architectures_button_lists_supported(window: Any, monkeypatch: 
 
 def test_settings_engine_panel_is_compact(window: Any) -> None:
     """引擎独立成卡片且位于存储下方：导入按钮在目录行、刷新在右上角。"""
-    from fcmd.gui.qt.widgets import Card
+    from fcmd.gui.widgets import Card
 
     def card_of(widget: Any) -> Card:
         card = widget.parent()
@@ -2090,7 +2090,7 @@ def test_refresh_installed_requeues_after_inflight_scan(window: Any, monkeypatch
 
 def test_overview_scrolls_only_recommendation_list(window: Any) -> None:
     """概览不再整页滚动：页面高度不足时只由推荐列表内部滚动。"""
-    from fcmd.gui.qt.widgets import PageScroll
+    from fcmd.gui.widgets import PageScroll
 
     window.show_page("overview")
     overview = window.overview
@@ -2101,7 +2101,7 @@ def test_overview_scrolls_only_recommendation_list(window: Any) -> None:
 
 def test_pages_use_scroll_container(window: Any) -> None:
     """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
-    from fcmd.gui.qt.widgets import PageScroll
+    from fcmd.gui.widgets import PageScroll
 
     # 对话页是 splitter + 正文阅读区，不走整页滚动容器。
     for key in ("run", "settings"):
@@ -2570,7 +2570,7 @@ def test_engine_download_dialog_lists_versions_and_installs(window: Any, monkeyp
         assert "NVIDIA" in dialog.variant_hint.text()
         assert "NVIDIA" in str(dialog.variant_combo.itemData(0, Qt.ItemDataRole.ToolTipRole))
         # 高度贴合内容：不再写死 660×280，也没有滚动区。
-        from fcmd.gui.qt.widgets import PageScroll, fit_dialog_to_content  # noqa: F401
+        from fcmd.gui.widgets import PageScroll, fit_dialog_to_content  # noqa: F401
 
         assert dialog.findChild(PageScroll) is None
         assert abs(dialog.height() - dialog.sizeHint().height()) <= 4

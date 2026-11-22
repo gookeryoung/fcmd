@@ -71,8 +71,8 @@ from fcmd.apps.filescan._rules import (
     resolve_expression,
     save_ruleset,
 )
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import (
     Card,
     PageScroll,
     button,
@@ -81,7 +81,7 @@ from fcmd.gui.qt.widgets import (
     make_table,
     make_table_item,
 )
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -1231,6 +1231,6 @@ def _parse_optional_timestamp(text: str) -> datetime | None:
 
 def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
-    from fcmd.gui.qt.app import run_window
+    from fcmd.gui.app import run_window
 
     run_window(lambda: FilescanQtWindow(settings_path), app_name="敏感内容扫描")

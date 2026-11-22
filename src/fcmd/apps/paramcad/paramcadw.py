@@ -1,7 +1,7 @@
 """paramcadw - 参数化建模与几何预览（Qt）。
 
 界面只负责取数与绘制，几何采样全部来自 :mod:`fcmd.apps.paramcad._preview`，
-因此没有显示器时也能单测纯逻辑部分；窗口复用 ``gui.qt`` 的主题与设置持久化。
+因此没有显示器时也能单测纯逻辑部分；窗口复用 ``gui`` 的主题与设置持久化。
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ class CanvasMap:
 
 
 def run_gui(model: Path | None = None) -> None:
-    """启动 Qt 窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    """启动 Qt 窗口（高 DPI 与主题由 ``gui.app`` 统一处理）。"""
     try:
         from fcmd.apps.paramcad._paramcadw_qt import run_qt
     except ImportError as exc:  # pragma: no cover - 安装完整时不会触发

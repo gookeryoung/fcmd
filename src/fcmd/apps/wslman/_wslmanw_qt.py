@@ -5,8 +5,8 @@
 与 CLI 共用同一套口径；界面负责列表 / 详情 / 下载与下载配置，配置项集中在设置页；
 任务日志从「帮助 → 任务日志…」以非模态窗口打开（与 llmw 的服务日志同形态）。
 
-布局与 llmw 对齐：复用共享 :class:`fcmd.gui.qt.window.QtMainWindow` 的左侧
-:class:`~fcmd.gui.qt.sidebar.SidebarNav` 导航（折叠、``Alt+1..4`` 切换与窗口
+布局与 llmw 对齐：复用共享 :class:`fcmd.gui.window.QtMainWindow` 的左侧
+:class:`~fcmd.gui.sidebar.SidebarNav` 导航（折叠、``Alt+1..4`` 切换与窗口
 几何记忆都由基座提供），右侧按「实例 / 镜像 / 设置」分页，每页拿满整个
 内容区，不再把详情、下载与配置挤进同一个底部标签页；任务日志不占分页，从
 「帮助 → 任务日志…」打开。实例页用一个
@@ -15,7 +15,7 @@
 详情与下载地址通过行内「展开」就地显示，不再占用右侧面板；进页先回显磁盘缓存
 （`cache/wslman-available.json`）再后台刷新，「更新列表」可手动绕过 30 分钟缓存。
 后台任务一律走
-:func:`fcmd.gui.qt.workers.submit`，运行状态每 3 秒轮询一次（最小化时暂停），
+:func:`fcmd.gui.workers.submit`，运行状态每 3 秒轮询一次（最小化时暂停），
 关窗时取消进行中的任务。
 
 设置文件：``${FCMD_HOME:-~/.fcmd}/ui/wslmanw.json``（与旧设置文件同名字段互读）。
@@ -68,11 +68,11 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command, spawn_detached
 from fcmd.apps.wslman._transfer import sha256_file
+from fcmd.gui import icons as _qt_icons
 from fcmd.gui.geometry import format_geometry
-from fcmd.gui.qt import icons as _qt_icons
-from fcmd.gui.qt.logdialog import LogChannelMixin
-from fcmd.gui.qt.page import PageBody, PageSpec
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.logdialog import LogChannelMixin
+from fcmd.gui.page import PageBody, PageSpec
+from fcmd.gui.widgets import (
     Card,
     ElidedLabel,
     FormGrid,
@@ -92,8 +92,8 @@ from fcmd.gui.qt.widgets import (
     set_button_kind,
     set_button_text,
 )
-from fcmd.gui.qt.window import QtMainWindow, restore_geometry
-from fcmd.gui.qt.workers import EventBridge, ProgressBridge, periodic, submit, submit_daemon
+from fcmd.gui.window import QtMainWindow, restore_geometry
+from fcmd.gui.workers import EventBridge, ProgressBridge, periodic, submit, submit_daemon
 from fcmd.infras.download import SpeedMeter, format_speed
 
 if TYPE_CHECKING:
@@ -2923,6 +2923,6 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
 
 def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
-    from fcmd.gui.qt.app import run_window
+    from fcmd.gui.app import run_window
 
     run_window(lambda: WslmanQtWindow(settings_path), app_name="WSL 管理")

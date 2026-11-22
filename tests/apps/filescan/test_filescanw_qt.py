@@ -18,9 +18,9 @@ from fcmd.apps.filescan import filescanw
 from fcmd.apps.filescan._filescanw_qt import FilescanQtWindow
 from fcmd.apps.filescan._rules import Matcher, Rule, RuleSet, builtin_ruleset
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 
 
 @pytest.fixture()
@@ -104,7 +104,7 @@ def test_whitelist_delete_keeps_single_group(home: Path) -> None:
     window = _window()
     try:
         window._whitelist_table.setRowCount(1)
-        from fcmd.gui.qt.widgets import make_table_item
+        from fcmd.gui.widgets import make_table_item
 
         window._whitelist_table.setItem(0, 0, make_table_item("只有一组"))
         window._whitelist_table.setItem(0, 1, make_table_item(".txt"))

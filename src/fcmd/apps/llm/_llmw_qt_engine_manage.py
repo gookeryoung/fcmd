@@ -31,8 +31,8 @@ from PySide6.QtWidgets import (
 from fcmd.apps.llm import llmengine, llmenv
 from fcmd.apps.llm._llmw_qt_engine_card import EngineOption
 from fcmd.apps.llm.llmbase import EngineInfo
-from fcmd.gui.qt.widgets import Card, button, confirm, hint_label
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.widgets import Card, button, confirm, hint_label
+from fcmd.gui.workers import submit
 
 __all__ = ["EngineAdminConfig", "EngineManageDialog", "backup_default_path", "llama_engine_admin"]
 

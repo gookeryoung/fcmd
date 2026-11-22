@@ -26,10 +26,10 @@ from fcmd.apps.wslman._distro import Distro, DistroView
 from fcmd.apps.wslman._registry import RegistrySnapshot
 from fcmd.apps.wslman._runner import CommandResult
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
-from fcmd.gui.qt.icons import ICON_NAME_PROPERTY as _ICON_NAME_PROPERTY
+from fcmd.gui.app import create_application
+from fcmd.gui.icons import ICON_NAME_PROPERTY as _ICON_NAME_PROPERTY
 
 
 def _distro(name: str = "Ubuntu", state: str = "running", *, default: bool = True) -> Distro:
@@ -906,7 +906,7 @@ def test_images_page_has_no_bottom_action_bar(home: Path, monkeypatch: pytest.Mo
 # ---------------------------------------------------------------------- #
 def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """下载目录 / 下载源 / 校验移入设置页；镜像页不再承担配置表单。"""
-    from fcmd.gui.qt.widgets import PageScroll
+    from fcmd.gui.widgets import PageScroll
 
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     window = _wslmanw_qt.WslmanQtWindow()
@@ -938,7 +938,7 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
 
 def test_settings_work_dir_card_lists_subfolders(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """设置页「工作目录」卡片：根目录 + 下载 / 安装 / 备份三个用途子目录。"""
-    from fcmd.gui.qt.widgets import Card
+    from fcmd.gui.widgets import Card
 
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
@@ -1037,7 +1037,7 @@ def test_settings_page_restores_saved_download_dir(home: Path) -> None:
 
 def test_images_page_has_no_advanced_collapsible(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """镜像页保持精简：不再有「高级：下载目录 / 校验」折叠区。"""
-    from fcmd.gui.qt.widgets import Collapsible
+    from fcmd.gui.widgets import Collapsible
 
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)

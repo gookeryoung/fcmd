@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.page`` 的页面骨架测试：容器布局、页面 key 与状态通道。"""
+"""``fcmd.gui.page`` 的页面骨架测试：容器布局、页面 key 与状态通道。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QLabel
 
-from fcmd.gui.qt.page import AppPage, PageBody, PageSpec
+from fcmd.gui.page import AppPage, PageBody, PageSpec
 
 
 class _State:

@@ -14,8 +14,8 @@ from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QLabel, Q
 
 from fcmd.apps.llm.llmbase import human_size
 from fcmd.apps.llm.llmdown import LocalModel, ModelToolError, delete_local_model, scan_local_models
-from fcmd.gui.qt.widgets import Card, button, fit_dialog_to_content, hint_label, make_table, make_table_item
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.widgets import Card, button, fit_dialog_to_content, hint_label, make_table, make_table_item
+from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
     from collections.abc import Callable

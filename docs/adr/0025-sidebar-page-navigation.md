@@ -2,7 +2,7 @@
 
 - 状态：已落地（locllmw 等整窗分页；原环境窗口、引擎窗口与转换 / 量化窗口已并入 locllmw，见 0031）
 - 日期：2026-11-14
-- 关联：`src/fcmd/gui/qt/sidebar.py`、`src/fcmd/gui/pages.py`、`src/fcmd/gui/theme.py`、[ADR 0013](0013-gui-toolkit-feasibility.md)、[ADR 0016](0016-llmdown-model-browser.md)
+- 关联：`src/fcmd/gui/sidebar.py`、`src/fcmd/gui/nav.py`、`src/fcmd/gui/theme.py`、[ADR 0013](0013-gui-toolkit-feasibility.md)、[ADR 0016](0016-llmdown-model-browser.md)
 
 ## 背景
 
@@ -20,7 +20,7 @@ locllmw 原先与其他整窗工具一样，用顶部
 
 ## 决策
 
-### 1. `fcmd.gui.qt.sidebar.SidebarNav` 作为唯一分页容器
+### 1. `fcmd.gui.sidebar.SidebarNav` 作为唯一分页容器
 
 - 结构：左侧固定宽度导航栏（可选应用图标 + 标题 + 页按钮），右侧页面区；页面提示只作为按钮 tooltip 与窗口标题栏说明，不在侧边栏底部占一行。
 - 折叠：窄栏只显示页名首字与 tooltip，顶部标题区只留应用图标（无图标窗口留空）；
@@ -29,7 +29,7 @@ locllmw 原先与其他整窗工具一样，用顶部
   图标区分方向。页按钮同样左右不留边距（选中底色与左侧强调条贴到侧栏边缘），
   文字靠 12px 内边距对齐。这样箭头不会和 LOGO 抢顶部位置，60px 窄栏里也能一眼看到展开入口。
   没有传图标的窗口（如 `wslmanw`）同样使用底部按钮。图标来自
-  `fcmd.gui.qt.icons`，不再用 `«` / `»` 字形。
+  `fcmd.gui.icons`，不再用 `«` / `»` 字形。
 - 页面用**字符串 key** 标识：`add(key, label, hint=..., icon=...) -> 页面控件`；
   带图标时展开态「图标 + 文字」、折叠态只显示图标（见 ADR 0038 的 D7），
   `select(target)` 接受 key / 索引 / 页面控件，`step(delta)` 循环切换，
@@ -81,7 +81,7 @@ locllmw 原先与其他整窗工具一样，用顶部
 - `tests/gui/test_sidebar.py`：key / 索引解析、越界与非法类型、循环切换。
 - `tests/gui/test_theme.py`：5 个新样式在四套主题下存在；
   选中页前景与底色对比度、muted 与 surface 对比度均 ≥ 4.5。
-- 纯逻辑（key 解析、循环切换）在 :mod:`fcmd.gui.pages`，Qt 控件（`SidebarNav`）标注
+- 纯逻辑（key 解析、循环切换）在 :mod:`fcmd.gui.nav`，Qt 控件（`SidebarNav`）标注
   `pragma: no cover`（CI 无显示环境），离屏冒烟覆盖建窗、切页与快捷键绑定。
 
 ## 落地状态与交接

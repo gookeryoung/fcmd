@@ -39,7 +39,7 @@ from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineDirAction, EngineOption
 from fcmd.apps.llm.llmbase import ServeError, format_command, human_size
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.widgets import (
     ChoiceGroup,
     Collapsible,
     ElidedLabel,
@@ -49,7 +49,7 @@ from fcmd.gui.qt.widgets import (
     button,
     hint_label,
 )
-from fcmd.gui.qt.workers import submit, submit_daemon
+from fcmd.gui.workers import submit, submit_daemon
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

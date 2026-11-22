@@ -22,9 +22,9 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from fcmd.apps.cmder import app as core
 from fcmd.apps.cmder._cmder_qt import CmderQtWindow
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 
 
 @pytest.fixture()

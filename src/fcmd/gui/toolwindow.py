@@ -1,7 +1,7 @@
 """Qt 单页工具窗口骨架：菜单 / 状态栏 / 几何记忆 / 主题 / 日志。
 
 各单页工具窗口共用这一套骨架（菜单 / 状态栏 / 几何记忆 / 主题 / 日志）。分页窗口继续用
-:class:`fcmd.gui.qt.window.QtMainWindow`，单页工具继承本类：
+:class:`fcmd.gui.window.QtMainWindow`，单页工具继承本类：
 
     class DemoWindow(QtToolWindow):
         def __init__(self, settings_path=None):
@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
-from fcmd.gui.qt.shell import WindowShellMixin, WindowSpec
-from fcmd.gui.qt.widgets import LogView, PageScroll
-from fcmd.gui.qt.window import about_version_text
+from fcmd.gui.shell import WindowShellMixin, WindowSpec
+from fcmd.gui.widgets import LogView, PageScroll
+from fcmd.gui.window import about_version_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable

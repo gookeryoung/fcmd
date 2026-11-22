@@ -68,7 +68,7 @@ from fcmd.apps.llm._llmw_qt_settings import engine_rows_values
 from fcmd.apps.llm._llmw_recommend import Recommendation
 from fcmd.apps.llm.llmbase import EngineInfo, LaunchPlan, ModelEntry, Profile, ServeError, ServeState, Tuning
 from fcmd.apps.llm.llmdown import ModelInfo, ModelSummary
-from fcmd.gui.qt.widgets import ItemRow
+from fcmd.gui.widgets import ItemRow
 
 
 def _plan(*, model: Path = Path("model.gguf"), context: int = 65536, kv_type: str | None = None) -> LaunchPlan:

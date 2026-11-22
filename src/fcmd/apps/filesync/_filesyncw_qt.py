@@ -67,9 +67,9 @@ from fcmd.apps.filesync.filesyncw import (
     settings_from_mapping,
 )
 from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.app import run_window
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import (
     Card,
     PathField,
     button,
@@ -77,7 +77,7 @@ from fcmd.gui.qt.widgets import (
     make_splitter,
     make_table,
 )
-from fcmd.gui.qt.workers import EventBridge, submit
+from fcmd.gui.workers import EventBridge, submit
 
 __all__ = ["FilesyncWindow", "run_qt"]
 

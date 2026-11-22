@@ -21,10 +21,10 @@ from fcmd.apps.filesync._filesyncw_qt import (
     _work_sync,
 )
 from fcmd.apps.filesync.filesyncw import config_path
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
-from fcmd.gui.qt.workers import EventBridge
+from fcmd.gui.app import create_application
+from fcmd.gui.workers import EventBridge
 
 
 @pytest.fixture()

@@ -25,11 +25,11 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd import __version__
+from fcmd.gui.app import run_window
 from fcmd.gui.geometry import size_from_geometry
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, ProgressRow, button, hint_label
-from fcmd.gui.qt.workers import EventBridge, submit
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, ElidedLabel, FormGrid, ProgressRow, button, hint_label
+from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.pdf.img2pdf import collect_pdf_images, images_to_pdf, resolve_pdf_output
 from fcmd.tools.pdf.img2pdfw import (
     DEFAULT_DPI,

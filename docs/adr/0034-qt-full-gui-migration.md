@@ -44,20 +44,20 @@ cmderw（双面板旗舰）不纳入本轮逐应用迁移，见 B7。约束：
 | `apps/cmder/app.py` | 8735 | 双面板文件管理器 + 缩略图 + 队列 | B7（独立阶段，见 D1） |
 
 Tk 共享层（`fcmd/gui/window.py` / `sidebar.py` 与 `theme.py` 的 ttk 渲染部分）已删除；
-Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已落地），
-几何纯函数统一在 `fcmd/gui/geometry.py`，分页纯函数在 `fcmd/gui/pages.py`，
+Qt 侧复用 `fcmd/gui/{style,sidebar,window,workers}.py` 与 `fcmd/gui/widgets/` 包（0033 / 0038 已落地），
+几何纯函数统一在 `fcmd/gui/geometry.py`，分页纯函数在 `fcmd/gui/nav.py`，
 主题注册表（调色板 / 持久化）保留在 `fcmd/gui/theme.py`。
 
 ## 目标结构（B0 共享层）
 
 | 模块 | 职责 |
 |---|---|
-| `gui/qt/app.py` | `QApplication` 复用、高 DPI 舍入策略（PassThrough）、主题应用、`run_window(factory)` 统一入口 |
-| `gui/qt/toolwindow.py` | `QtToolWindow`：单页工具窗口骨架（文件 / 视图 / 帮助菜单、状态栏、几何记忆、关闭落盘、可选滚动容器） |
-| `gui/qt/theme_menu.py` | 主题子菜单 + 即时切换 + 持久化，供 `QtMainWindow` 与 `QtToolWindow` 共用 |
-| `gui/qt/layout.py` | 纯函数：中间省略、按比例分配列宽、分栏尺寸读写（可单测，不导入 Qt） |
-| `gui/qt/widgets.py` | 增补 `ElidedLabel`（长路径中间省略 + tooltip）、`make_splitter` / `splitter_sizes` / `apply_splitter_sizes`；`make_table` 支持 `stretch_last` |
-| `gui/qt/workers.py`、`theme.py` | 沿用 0033：线程池回投、`Palette → QSS` |
+| `gui/app.py` | `QApplication` 复用、高 DPI 舍入策略（PassThrough）、主题应用、`run_window(factory)` 统一入口 |
+| `gui/toolwindow.py` | `QtToolWindow`：单页工具窗口骨架（文件 / 视图 / 帮助菜单、状态栏、几何记忆、关闭落盘、可选滚动容器） |
+| `gui/theme_menu.py` | 主题子菜单 + 即时切换 + 持久化，供 `QtMainWindow` 与 `QtToolWindow` 共用 |
+| `gui/layout.py` | 纯函数：中间省略、按比例分配列宽、分栏尺寸读写（可单测，不导入 Qt） |
+| `gui/widgets/` | 增补 `ElidedLabel`（长路径中间省略 + tooltip）、`make_splitter` / `splitter_sizes` / `apply_splitter_sizes`；`make_table` 支持 `stretch_last`；包内按职责拆分（`text` / `tables` / `buttons` / `tabs` / `rows` / `cards` / `forms` / `metrics` / `log` / `splitter`） |
+| `gui/workers.py`、`style.py` | 沿用 0033：线程池回投、`Palette → QSS` |
 
 ## 布局与适配规范（随每个应用迁移落实）
 
@@ -70,7 +70,7 @@ Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已�
 | L5 | 主题：色值只从 `Palette` 取；深浅主题切换即时生效，不重开窗口；不硬编码颜色 |
 | L6 | 分栏与列宽记忆：`QSplitter` 尺寸、表头宽度写入各自 `ui/<name>.json`，越界回退默认 |
 | L7 | 键盘：`Ctrl+Q` 退出、主题菜单与「关于」位置一致；分页窗口沿用 `Alt+1..9` |
-| L8 | 控件高度：按钮、单行输入、下拉、数值框统一由 `gui/qt/theme.py` 的字体行高基准推导（`QFontMetrics` 逻辑像素 + `CONTROL_HEIGHT_EXTRA`），窗口内不单独写死高度 |
+| L8 | 控件高度：按钮、单行输入、下拉、数值框统一由 `gui/style.py` 的字体行高基准推导（`QFontMetrics` 逻辑像素 + `CONTROL_HEIGHT_EXTRA`），窗口内不单独写死高度 |
 | L9 | 字体：GUI 英文（拉丁 / 数字 / 符号）一律 `Cascadia Code`，中文按 `UI_FONT_CANDIDATES` 逐字回退；`apply_theme` 用 `QFont.setFamilies` 组字体链，等宽控件（日志 / 代码 / 十六进制）同样优先 `Cascadia Code` |
 
 ## 分批计划与验收
@@ -195,7 +195,7 @@ Qt 使用原生 `windows` 平台插件。每个窗口独立进程，冷启动口
 ## 交接
 
 - 新增窗口：继承 `QtToolWindow`（单页）或 `QtMainWindow`（分页），不要各自复制菜单 / 状态栏 / 几何逻辑。
-- 后台动作一律 `gui.qt.workers.submit(...)`；禁止在 GUI 线程做扫描 / 转换 / 网络。
+- 后台动作一律 `gui.workers.submit(...)`；禁止在 GUI 线程做扫描 / 转换 / 网络。
 - 设置文件沿用 `fcmd.gui.config`，字段与旧版保持同名同义，便于读取历史文件。
 - 迁移一个应用时同步更新其模块 docstring 与工具 `help` 文本中的「Tk」字样。
 - 提交 `eff8c36`（`feat(locllm): 新增引擎兼容性与启动错误诊断`）除 `llmbase.py` / `llmserve.py` /

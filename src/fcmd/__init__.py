@@ -28,7 +28,7 @@ from fcmd.core.hooks import register_discovery_hook
 if sys.version_info < (3, 11):  # pragma: no cover - 仅 Python 3.10 需要
     # 仅 3.10 需要 PySide6 → PySide2 映射；其它版本跳过该模块导入与安装，
     # 避免 CLI 冷启动付出 importlib.abc / importlib.util 的固定成本。
-    from fcmd.gui.qt.compat import install as _install_qt_compat
+    from fcmd.gui.compat import install as _install_qt_compat
 
     _install_qt_compat()
 

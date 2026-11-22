@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.layout`` 纯函数测试：中间省略、列宽分配、分栏尺寸解析。
+"""``fcmd.gui.layout`` 纯函数测试：中间省略、列宽分配、分栏尺寸解析。
 
 这些函数不导入 Qt，用固定字宽测量即可在无显示环境下验证边界条件。
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.gui.qt.layout import distribute_widths, elide_middle, parse_sizes, serialize_sizes
+from fcmd.gui.layout import distribute_widths, elide_middle, parse_sizes, serialize_sizes
 
 
 def _measure(text: str) -> int:

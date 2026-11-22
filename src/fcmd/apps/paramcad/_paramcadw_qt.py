@@ -48,9 +48,9 @@ from fcmd.apps.paramcad.paramcadw import (
     load_settings,
     save_settings,
 )
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.app import run_window
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import (
     LogView,
     apply_splitter_sizes,
     button,

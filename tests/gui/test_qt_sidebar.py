@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.sidebar`` 的离屏测试：宽度铺满、折叠 / 展开、快捷键与提示。
+"""``fcmd.gui.sidebar`` 的离屏测试：宽度铺满、折叠 / 展开、快捷键与提示。
 
 Qt 不可用时整体跳过（CI 只装 ``--extra test``，不含 PySide6）。
 """
@@ -18,7 +18,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
-from fcmd.gui.qt.sidebar import COLLAPSED_WIDTH, EXPANDED_WIDTH, SidebarNav
+from fcmd.gui.sidebar import COLLAPSED_WIDTH, EXPANDED_WIDTH, SidebarNav
 
 
 @pytest.fixture()
@@ -263,7 +263,7 @@ def _icon_color(button: Any) -> str:
 
 def test_page_icon_tone_follows_selection() -> None:
     """页图标与页名同色：选中页 accent，其余 muted。"""
-    from fcmd.gui.qt.theme import active_theme
+    from fcmd.gui.style import active_theme
 
     QApplication.instance() or QApplication([])
     nav = SidebarNav(title="LLM")

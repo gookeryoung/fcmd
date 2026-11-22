@@ -48,10 +48,10 @@ from fcmd.apps.peview.pevieww import (
     load_settings,
     save_settings,
 )
+from fcmd.gui.app import run_window
 from fcmd.gui.geometry import size_from_geometry
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import (
     ElidedLabel,
     apply_splitter_sizes,
     button,

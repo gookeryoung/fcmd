@@ -163,7 +163,7 @@ def generation_summary(result: Any) -> str:
 # 入口
 # ---------------------------------------------------------------------- #
 def run_gui() -> None:
-    """启动 Qt 窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    """启动 Qt 窗口（高 DPI 与主题由 ``gui.app`` 统一处理）。"""
     try:
         from fcmd.apps.dynacalc._dynacalcw_qt import run_qt
     except ImportError as exc:  # pragma: no cover - 安装完整时不会触发

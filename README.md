@@ -109,7 +109,7 @@ fcmd completion --shell fish | source         # fish
 
 ### GUI 主题
 
-所有 GUI 窗口共用同一份主题注册表（`fcmd.gui.theme` 保存调色板 / 字号 / 持久化，`fcmd.gui.qt.theme` 负责翻译成 QSS），内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，**立即生效**并写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`；也可手动编辑该文件（下次启动生效）：
+所有 GUI 窗口共用同一份主题注册表（`fcmd.gui.theme` 保存调色板 / 字号 / 持久化，`fcmd.gui.style` 负责翻译成 QSS），内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，**立即生效**并写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`；也可手动编辑该文件（下次启动生效）：
 
 ```json
 { "theme": "light" }
@@ -136,7 +136,7 @@ fcmd completion --shell fish | source         # fish
 
 高 DPI（125% / 150%）下 Qt 自动按逻辑像素缩放，按钮 / 输入框 / 下拉 / 数值框的高度统一由字体行高推导（主题的 `metrics.control_height_extra`），避免「字变大、控件不变」。
 
-窗口外壳（设置 / 几何 / 主题 / 关闭）由 `gui/qt/shell.py` 的 mixin 组合，分页窗口与单页窗口不再各存一份；应用页面继承 `gui/qt/page.py` 的 `AppPage`，页面状态按 `PAGE_KEY` 写到自己的状态栏分页，不会串页。
+窗口外壳（设置 / 几何 / 主题 / 关闭）由 `gui/shell.py` 的 mixin 组合，分页窗口与单页窗口不再各存一份；应用页面继承 `gui/page.py` 的 `AppPage`，页面状态按 `PAGE_KEY` 写到自己的状态栏分页，不会串页。共享控件统一放在 `gui/widgets/` 包（`text` / `tables` / `buttons` / `tabs` / `rows` / `cards` / `forms` / `metrics` / `log` / `splitter` 子模块），`from fcmd.gui.widgets import Card` 即可复用。
 
 窗口设置统一以原子方式写入（临时文件 + 替换），并在每次有效写入前保留一份同名 `.bak` 备份。主文件缺失、损坏或顶层不是对象时，读取会自动回退到 `.bak`。
 

@@ -29,11 +29,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.gui.compat import binding_version
 from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
-from fcmd.gui.qt.compat import binding_version
-from fcmd.gui.qt.page import PageSpec
-from fcmd.gui.qt.shell import WindowShellMixin, WindowSpec
-from fcmd.gui.qt.statusbar import DEFAULT_STATUS, WindowStatusBar
+from fcmd.gui.page import PageSpec
+from fcmd.gui.shell import WindowShellMixin, WindowSpec
+from fcmd.gui.statusbar import DEFAULT_STATUS, WindowStatusBar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -144,7 +144,7 @@ class QtMainWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 
         self._built: dict[str, QWidget] = {}
         self._current = ""
 
-        from fcmd.gui.qt.sidebar import SidebarNav
+        from fcmd.gui.sidebar import SidebarNav
 
         central = QWidget(self)
         layout = QHBoxLayout(central)
@@ -221,7 +221,7 @@ class QtMainWindow(WindowShellMixin, QMainWindow):  # pragma: no cover - 需要 
             self.show_page(key)
 
     def add_page_spec(self, spec: PageSpec, factory: Callable[[], QWidget]) -> None:
-        """按 :class:`~fcmd.gui.qt.page.PageSpec` 登记页面（``add_page`` 的配置化入口）。"""
+        """按 :class:`~fcmd.gui.page.PageSpec` 登记页面（``add_page`` 的配置化入口）。"""
         self.add_page(spec.key, spec.label, hint=spec.hint, icon=spec.icon, factory=factory)
 
     def add_pages(

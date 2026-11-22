@@ -1,6 +1,6 @@
 """分页导航纯函数：页面 key 解析与循环切换。
 
-Qt 侧边栏（:class:`fcmd.gui.qt.sidebar.SidebarNav`）复用这里的口径；
+Qt 侧边栏（:class:`fcmd.gui.sidebar.SidebarNav`）复用这里的口径；
 本模块不导入任何 GUI 库，CI 可直接单测。
 """
 

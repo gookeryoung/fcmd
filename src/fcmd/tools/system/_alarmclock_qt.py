@@ -31,8 +31,8 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd._compat import override
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button, hint_label
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, button, hint_label
 from fcmd.tools.system.alarmclock import (
     BLINK_BG_COLORS,
     BLINK_INTERVAL,
@@ -332,6 +332,6 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
 
 def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
-    from fcmd.gui.qt.app import run_window
+    from fcmd.gui.app import run_window
 
     run_window(lambda: AlarmClockQtWindow(settings_path), app_name="定时提醒")

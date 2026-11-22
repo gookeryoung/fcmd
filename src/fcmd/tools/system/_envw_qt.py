@@ -33,8 +33,8 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd import __version__
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button, hint_label, make_table, make_table_item, mono_font
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, button, hint_label, make_table, make_table_item, mono_font
 from fcmd.tools.system import envw
 from fcmd.tools.system.envw import (
     MIN_HEIGHT,
@@ -731,6 +731,6 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
 def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
-    from fcmd.gui.qt.app import run_window
+    from fcmd.gui.app import run_window
 
     run_window(lambda: EnvQtWindow(settings_path), app_name="环境变量编辑器")

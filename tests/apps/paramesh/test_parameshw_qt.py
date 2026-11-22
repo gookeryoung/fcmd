@@ -14,7 +14,7 @@ pytest.importorskip("PySide6")
 
 from fcmd.apps.paramesh._parameshw_qt import ParameshWindow
 from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 
 
 @pytest.fixture()

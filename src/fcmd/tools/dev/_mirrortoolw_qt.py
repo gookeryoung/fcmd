@@ -30,10 +30,10 @@ from PySide6.QtWidgets import (
 
 from fcmd import __version__
 from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, ProgressRow, button, make_table, make_table_item
-from fcmd.gui.qt.workers import EventBridge, submit
+from fcmd.gui.app import run_window
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, ElidedLabel, ProgressRow, button, make_table, make_table_item
+from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.dev.mirrortoolw import (
     DEFAULT_TIMEOUT,
     MAX_TIMEOUT,

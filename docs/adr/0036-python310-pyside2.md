@@ -20,7 +20,7 @@
 |---|---|---|
 | D1 | `requires-python = ">=3.10"`，分类器覆盖 3.10–3.14 | `pyproject.toml` |
 | D2 | 按解释器选择绑定：3.11+ 安装 `PySide6-Essentials>=6.9`，3.10 安装 `PySide2>=5.15.2.1` | `pyproject.toml` 的 `python_version` 标记 |
-| D3 | 业务代码继续导入 `PySide6`；3.10 上由轻量 meta path finder 映射到 PySide2，不预加载 Qt | `fcmd.gui.qt.compat.install()`，在 `fcmd/__init__.py` 注册 |
+| D3 | 业务代码继续导入 `PySide6`；3.10 上由轻量 meta path finder 映射到 PySide2，不预加载 Qt | `fcmd.gui.compat.install()`，在 `fcmd/__init__.py` 注册 |
 | D4 | Qt5/Qt6 差异在兼容层补齐：`QAction` 模块位置、`exec` / `QAction.menu()` 生命周期、`QTimer.singleShot` 调用形态、`QFontDatabase.families`、`QWheelEvent.position` | `compat` + 少量调用点改写成两版通用写法 |
 | D5 | 3.11/3.12 标准库 API 用项目内垫片或条件导入：`tomllib`→`tomli`、`StrEnum`→`str+Enum`、`datetime.UTC`→`timezone.utc`、`itertools.batched`、`typing.override`、`Path.is_junction` | `fcmd._compat`、`fcmd.infras._toml` |
 | D6 | 门禁目标版本同步到 3.10：ruff / pyrefly / tox | `ruff.toml`、`pyrefly.toml`、`tox.ini` |

@@ -6,7 +6,7 @@
 （``parse_int`` / ``memory_guard`` / ``plan_lines``），GUI 类只负责取值与展示，
 便于单测。
 
-后台动作（启动 / 停止）通过 :func:`fcmd.gui.qt.workers.submit` 执行，
+后台动作（启动 / 停止）通过 :func:`fcmd.gui.workers.submit` 执行，
 按钮状态由共享状态的 ``busyChanged`` 统一驱动，避免任务期间重复点击。
 """
 
@@ -76,9 +76,9 @@ from fcmd.apps.llm.llmbase import (
     http_base_url,
     human_size,
 )
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.page import AppPage
-from fcmd.gui.qt.widgets import (
+from fcmd.gui import style as _qt_theme
+from fcmd.gui.page import AppPage
+from fcmd.gui.widgets import (
     Card,
     ChoiceGroup,
     Collapsible,
@@ -88,7 +88,7 @@ from fcmd.gui.qt.widgets import (
     pill_tabs,
     set_button_text,
 )
-from fcmd.gui.qt.workers import submit, submit_daemon
+from fcmd.gui.workers import submit, submit_daemon
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -44,7 +44,7 @@ from fcmd.apps.llm._llmw_bench import (
     run_scenario,
 )
 from fcmd.apps.llm.llmbase import Endpoint, ServeError
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.widgets import (
     Card,
     FormGrid,
     PageScroll,
@@ -56,7 +56,7 @@ from fcmd.gui.qt.widgets import (
     make_table_item,
     section_header,
 )
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
     from fcmd.apps.llm._llmw_qt_state import LlmState

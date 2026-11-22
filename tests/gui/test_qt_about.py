@@ -5,7 +5,7 @@ from __future__ import annotations
 import platform
 
 from fcmd import __version__
-from fcmd.gui.qt.window import about_version_text
+from fcmd.gui.window import about_version_text
 
 
 def test_about_version_text_lists_runtime_versions() -> None:

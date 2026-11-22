@@ -25,9 +25,9 @@ from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _pptmakew_qt
 from fcmd.apps.pptmake._pptmakew_qt import PptmakeQtWindow, _paint_slide
 from fcmd.apps.pptmake.pptmakew import LAYOUT_OPTIONS
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 
 
 @pytest.fixture()

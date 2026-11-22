@@ -15,7 +15,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QPlainTextEdit
 
 from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 from fcmd.tools.text._regexvalidatew_qt import RegexValidateWindow
 
 

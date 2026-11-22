@@ -13,9 +13,9 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.logdialog import LogChannelMixin
+from fcmd.gui.logdialog import LogChannelMixin
 
 
 class _LogHost(LogChannelMixin, QObject):

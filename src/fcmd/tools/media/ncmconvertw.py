@@ -398,7 +398,7 @@ def decrypt_ncm(source: Path, output_dir: Path | None = None) -> Path:
 # GUI 入口
 # ---------------------------------------------------------------------- #
 def run_gui(settings_path: Path | None = None) -> None:
-    """启动 Qt 窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    """启动 Qt 窗口（高 DPI 与主题由 ``gui.app`` 统一处理）。"""
     try:
         from fcmd.tools.media._ncmconvertw_qt import run_qt
     except ImportError as exc:  # pragma: no cover - 安装完整时不会触发

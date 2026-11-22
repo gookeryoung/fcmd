@@ -68,10 +68,10 @@ from fcmd.apps.cmder._tabs import FilterDefinition
 from fcmd.apps.cmder._volumes import enumerate_volumes
 from fcmd.gui import geometry as _geometry
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.theme_menu import ThemeMenu
-from fcmd.gui.qt.widgets import button, confirm, hint_label, make_splitter
-from fcmd.gui.qt.window import restore_geometry
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.theme_menu import ThemeMenu
+from fcmd.gui.widgets import button, confirm, hint_label, make_splitter
+from fcmd.gui.window import restore_geometry
+from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -1569,7 +1569,7 @@ class CmderQtWindow(QMainWindow):
 
 def run_qt(settings_path: Path | None = None, launch: Any = None) -> None:
     """创建应用与主窗口并进入事件循环。"""
-    from fcmd.gui.qt.app import apply_theme, create_application
+    from fcmd.gui.app import apply_theme, create_application
 
     app = create_application("cmderw")
     apply_theme(app)

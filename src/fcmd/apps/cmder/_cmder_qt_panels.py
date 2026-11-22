@@ -8,7 +8,7 @@
 
 - 标签页保存完整的 :class:`PanelState`（路径 / 历史 / 排序 / 视图模式 / 选择），
   切换标签只切换状态并重扫，不重建控件；
-- 扫描走 :func:`fcmd.gui.qt.workers.submit`，世代号丢弃过期结果；
+- 扫描走 :func:`fcmd.gui.workers.submit`，世代号丢弃过期结果；
 - 缩略图用 ``QListWidget`` 图标模式，图片经 Pillow 后台解码，非图片显示类型徽标；
 - 长路径在路径栏中可编辑，卷下拉复用 ``_volumes`` 的枚举口径。
 """
@@ -59,8 +59,8 @@ from fcmd.apps.cmder._ops import (
 )
 from fcmd.apps.cmder._tabs import tab_bar_label
 from fcmd.apps.cmder._volumes import enumerate_volumes
-from fcmd.gui.qt.widgets import button, hint_label, mono_font
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.widgets import button, hint_label, mono_font
+from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

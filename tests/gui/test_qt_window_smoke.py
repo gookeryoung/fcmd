@@ -27,8 +27,8 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from fcmd.gui.qt.app import create_application
-from fcmd.gui.qt.toolwindow import QtToolWindow
+from fcmd.gui.app import create_application
+from fcmd.gui.toolwindow import QtToolWindow
 
 # (模块, 类名)；构造参数一律用默认值，等价于用户首次 / 常规启动。
 WINDOWS: tuple[tuple[str, str], ...] = (
@@ -103,7 +103,7 @@ def test_run_qt_entrypoints_match_shared_runner(monkeypatch: pytest.MonkeyPatch,
     """
     import importlib
 
-    from fcmd.gui.qt import app as qt_app
+    from fcmd.gui import app as qt_app
 
     calls: list[str] = []
 

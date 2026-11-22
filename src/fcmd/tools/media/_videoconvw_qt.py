@@ -35,10 +35,10 @@ from PySide6.QtWidgets import (
 
 from fcmd import __version__
 from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ProgressRow, StatusTag, button, confirm, hint_label
-from fcmd.gui.qt.workers import EventBridge, submit
+from fcmd.gui.app import run_window
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, ProgressRow, StatusTag, button, confirm, hint_label
+from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
     DEFAULT_AUDIO_CODEC,

@@ -1,7 +1,7 @@
 """llmw（Qt）模型中心：ModelScope 浏览器 / 量化两个子页。
 
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
-:func:`fcmd.gui.qt.workers.submit`：
+:func:`fcmd.gui.workers.submit`：
 
 - **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，行内提供下载 / 转换按钮，展开显示详情元数据，底部右侧显示下载或转换进度；
 - **量化**：GGUF 量化（输入文件、全量模型下拉、量化器环境、量化类型、输出目录、
@@ -85,8 +85,8 @@ from fcmd.apps.llm.llmdown import (
     search_models_multi,
     select_source,
 )
-from fcmd.gui.qt.page import AppPage
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.page import AppPage
+from fcmd.gui.widgets import (
     ItemRow,
     RowDetailMixin,
     RowListWidget,
@@ -98,7 +98,7 @@ from fcmd.gui.qt.widgets import (
     pill_tabs,
     set_button_text,
 )
-from fcmd.gui.qt.workers import ProgressBridge, submit
+from fcmd.gui.workers import ProgressBridge, submit
 from fcmd.infras.download import SpeedMeter, format_eta, format_speed
 
 if TYPE_CHECKING:

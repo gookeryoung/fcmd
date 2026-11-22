@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.widgets import (
     Card,
     ElidedLabel,
     RowListWidget,

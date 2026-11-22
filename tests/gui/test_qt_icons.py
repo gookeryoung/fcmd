@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.icons`` 的测试：SVG 生成、未知图标报错与 Qt 渲染。"""
+"""``fcmd.gui.icons`` 的测试：SVG 生成、未知图标报错与 Qt 渲染。"""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QPushButton
 
+from fcmd.gui import icons
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import icons
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import button
+from fcmd.gui.widgets import button
 
 
 def test_svg_uses_current_color_and_known_body() -> None:
@@ -116,7 +116,7 @@ def test_set_icon_recolors_when_theme_changes() -> None:
 
 def test_button_icons_follow_variant_tones() -> None:
     """图标与按钮文字同色：主按钮 on_accent、危险按钮 danger、次要按钮 muted。"""
-    from fcmd.gui.qt.theme import active_theme
+    from fcmd.gui.style import active_theme
 
     app = QApplication.instance() or QApplication([])
     _qt_theme.apply_theme(app, _guitheme.resolve_theme("dark-blue"))

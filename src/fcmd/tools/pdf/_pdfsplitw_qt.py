@@ -25,11 +25,11 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd import __version__
+from fcmd.gui.app import run_window
 from fcmd.gui.geometry import size_from_geometry
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, PathField, PathRow, ProgressRow, button, hint_label
-from fcmd.gui.qt.workers import EventBridge, submit
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, ElidedLabel, PathField, PathRow, ProgressRow, button, hint_label
+from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.pdf.pdfsplit import split_by_parts, split_by_range, split_by_size
 from fcmd.tools.pdf.pdfsplitw import (
     DEFAULT_GEOMETRY,

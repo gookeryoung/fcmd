@@ -22,9 +22,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 from fcmd.tools.system import _alarmclock_qt
 from fcmd.tools.system.alarmclock import (
     DIGITAL_FORMAT,

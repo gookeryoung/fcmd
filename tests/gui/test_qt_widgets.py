@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.widgets`` 的离屏测试：按钮尺寸统一与卡片标题结构。
+"""``fcmd.gui.widgets`` 的离屏测试：按钮尺寸统一与卡片标题结构。
 
 按钮的四种变体（默认 / 主操作 / 危险 / 次要）必须共用同一套内边距与最小高度，
 否则在同一行里（例如「刷新模型列表」旁边）高矮不一。卡片标题是普通 ``QLabel``，
@@ -30,9 +30,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.widgets import (
     Card,
     ChoiceGroup,
     Collapsible,
@@ -776,7 +776,7 @@ def test_fit_dialog_to_content_removes_bottom_blank() -> None:
     """对话框按内容高度贴合：不写死大尺寸，也不留下底部空白。"""
     from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 
-    from fcmd.gui.qt.widgets import fit_dialog_to_content
+    from fcmd.gui.widgets import fit_dialog_to_content
 
     dialog = QDialog()
     layout = QVBoxLayout(dialog)
@@ -793,7 +793,7 @@ def test_card_title_with_action_stays_one_line() -> None:
     """卡片标题带动作（如「刷新」）时标题不换行：长标题也在同一行。"""
     from PySide6.QtWidgets import QApplication
 
-    from fcmd.gui.qt.widgets import Card, button
+    from fcmd.gui.widgets import Card, button
 
     app = QApplication.instance() or QApplication([])
     card = Card("推理引擎（llama.cpp）")
@@ -834,7 +834,7 @@ class _CountingStyle:
 
 
 def _list_with(count: int) -> tuple[QListWidget, list[_Row]]:
-    from fcmd.gui.qt.widgets import RowListWidget
+    from fcmd.gui.widgets import RowListWidget
 
     view = RowListWidget()
     view.setVisible(False)

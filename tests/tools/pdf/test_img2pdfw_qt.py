@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 from fcmd.tools.pdf._img2pdfw_qt import Img2PdfWindow
 
 

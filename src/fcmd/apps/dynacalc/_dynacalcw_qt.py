@@ -43,9 +43,9 @@ from fcmd.apps.dynacalc.dynacalcw import (
     parse_codes,
     save_settings,
 )
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.app import run_window
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import (
     Card,
     FormGrid,
     LogView,
@@ -54,7 +54,7 @@ from fcmd.gui.qt.widgets import (
     make_table,
     make_table_item,
 )
-from fcmd.gui.qt.workers import EventBridge, submit
+from fcmd.gui.workers import EventBridge, submit
 
 __all__ = ["DynacalcWindow", "run_qt"]
 

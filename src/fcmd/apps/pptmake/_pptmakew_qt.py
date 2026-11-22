@@ -62,8 +62,8 @@ from fcmd.apps.pptmake.pptmakew import (
     save_settings,
     slide_label,
 )
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button, make_splitter
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, button, make_splitter
 
 __all__ = ["PptmakeQtWindow", "run_qt"]
 
@@ -1046,6 +1046,6 @@ class PptmakeQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
 def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
-    from fcmd.gui.qt.app import run_window
+    from fcmd.gui.app import run_window
 
     run_window(lambda: PptmakeQtWindow(settings_path), app_name="PPT 模板设计器")

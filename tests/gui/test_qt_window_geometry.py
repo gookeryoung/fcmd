@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.window`` 的几何纯函数测试（不创建 Qt 窗口）。
+"""``fcmd.gui.window`` 的几何纯函数测试（不创建 Qt 窗口）。
 
 几何字符串与 Tk 版共用 ``WxH+X+Y`` 格式，因此 Qt 窗口与 Tk 窗口可以互读
 同一个设置文件；这里覆盖解析、格式化与屏幕夹紧回退。
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.gui.qt.window import format_geometry, parse_geometry, resolve_geometry_text
+from fcmd.gui.window import format_geometry, parse_geometry, resolve_geometry_text
 
 
 @pytest.mark.parametrize(

@@ -27,8 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button, mono_font
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, button, mono_font
 from fcmd.tools.system.checksum import (
     ALGORITHMS,
     DEFAULT_ALGORITHM,
@@ -237,6 +237,6 @@ class ChecksumQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
 def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
-    from fcmd.gui.qt.app import run_window
+    from fcmd.gui.app import run_window
 
     run_window(lambda: ChecksumQtWindow(settings_path), app_name="校验和计算器")

@@ -24,9 +24,9 @@ from fcmd.apps.llm._llmw_icon import window_icon
 from fcmd.apps.llm._llmw_qt_overview import OverviewPage
 from fcmd.apps.llm._llmw_qt_run import RunPage
 from fcmd.apps.llm._llmw_qt_state import LlmState
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.page import PageSpec
-from fcmd.gui.qt.window import QtMainWindow
+from fcmd.gui import style as _qt_theme
+from fcmd.gui.page import PageSpec
+from fcmd.gui.window import QtMainWindow
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -50,7 +50,7 @@ PAGES: tuple[PageSpec, ...] = (
 
 def create_application(argv: Sequence[str] | None = None) -> QApplication:
     """创建（或复用）``QApplication``（委托共享工厂，保留本模块旧入口）。"""
-    from fcmd.gui.qt.app import create_application as shared_create_application
+    from fcmd.gui.app import create_application as shared_create_application
 
     return shared_create_application("llmw", argv)
 

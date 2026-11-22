@@ -1,7 +1,7 @@
 """Qt 窗口外壳 mixin：设置 / 几何 / 主题 / 关闭落盘。
 
-分页窗口 :class:`fcmd.gui.qt.window.QtMainWindow` 与单页窗口
-:class:`fcmd.gui.qt.toolwindow.QtToolWindow` 的「窗口外壳」完全一致：读设置、
+分页窗口 :class:`fcmd.gui.window.QtMainWindow` 与单页窗口
+:class:`fcmd.gui.toolwindow.QtToolWindow` 的「窗口外壳」完全一致：读设置、
 恢复几何、加载主题、切换主题、关闭前回调与落盘。历史上两份实现逐段复制，
 改一处（例如主题按窗口覆盖）就要改两遍。这里按职责拆成四个 mixin：
 
@@ -24,9 +24,9 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QMenu
 
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import style as _qt_theme
 from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.theme_menu import ThemeMenu
+from fcmd.gui.theme_menu import ThemeMenu
 
 if TYPE_CHECKING:
     from collections.abc import Callable

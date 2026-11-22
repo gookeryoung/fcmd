@@ -347,7 +347,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
 
 ### D10 GUI（`wslmanw`）
 
-- 复用 `fcmd.gui.qt.toolwindow` / `workers` / `widgets.LogView` 与
+- 复用 `fcmd.gui.toolwindow` / `workers` / `widgets.LogView` 与
   `fcmd.gui.theme`；设置持久化 `~/.fcmd/ui/wslmanw.json`（`fcmd.gui.config`）。
 - 布局：复用共享 `QtMainWindow` 的侧边栏分页（发行版 / 镜像 / 设置），
   每页只做一件事：发行版页管发行版，镜像页管清单与下载动作，配置项（下载目录 /

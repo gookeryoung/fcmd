@@ -609,7 +609,7 @@ def chat_page(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     """离屏对话页：只装配服务选择所需的共享状态，关闭时取消生成。"""
     from fcmd.apps.llm._llmw_qt_chat import ChatPage
     from fcmd.apps.llm._llmw_qt_state import LlmState
-    from fcmd.gui.qt.app import create_application
+    from fcmd.gui.app import create_application
 
     monkeypatch.setenv("FCMD_HOME", str(tmp_path))
     create_application("llmw-chat-test")
@@ -701,7 +701,7 @@ def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch, c
 def _history_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Path]:
     from fcmd.apps.llm._llmw_qt_chat import ChatPage
     from fcmd.apps.llm._llmw_qt_state import LlmState
-    from fcmd.gui.qt.app import create_application
+    from fcmd.gui.app import create_application
 
     monkeypatch.setenv("FCMD_HOME", str(tmp_path))
     create_application("llmw-chat-history")

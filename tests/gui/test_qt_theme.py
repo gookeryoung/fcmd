@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.theme`` 的纯逻辑测试：QSS 生成、字体挑选与模板变量。
+"""``fcmd.gui.style`` 的纯逻辑测试：QSS 生成、字体挑选与模板变量。
 
 这些函数不导入 ``PySide6``，CI（无 Qt 环境）也能跑；控件类与真实渲染
 留给离屏冒烟测试（``test_qt_window_smoke.py``）。
@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
 
 
 @pytest.mark.parametrize("name", list(_guitheme.THEMES))
@@ -425,7 +425,7 @@ def test_apply_theme_sets_cascadia_code_font_chain() -> None:
 
 def test_mono_font_uses_cascadia_code_when_available() -> None:
     """日志 / 代码类等宽控件同样优先 Cascadia Code。"""
-    from fcmd.gui.qt.widgets import mono_font
+    from fcmd.gui.widgets import mono_font
 
     families = _qt_theme.font_families()
     font = mono_font()

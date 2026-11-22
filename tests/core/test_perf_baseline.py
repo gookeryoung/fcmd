@@ -40,7 +40,7 @@ _GUI_BUILD_SCRIPT = (
     "import os\n"
     "import time\n"
     "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n"
-    "from fcmd.gui.qt.app import apply_theme, create_application\n"
+    "from fcmd.gui.app import apply_theme, create_application\n"
     "app=create_application('img2icow')\n"
     "apply_theme(app)\n"
     "t=time.perf_counter()\n"

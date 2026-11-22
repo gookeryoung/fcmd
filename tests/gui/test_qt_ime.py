@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.ime``：输入法组合期间不画占位文字（避免与组合串重影）。"""
+"""``fcmd.gui.ime``：输入法组合期间不画占位文字（避免与组合串重影）。"""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QInputMethodEvent
 from PySide6.QtWidgets import QApplication, QLineEdit, QPlainTextEdit
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.ime import PlaceholderImeGuard, install_placeholder_ime_guard
+from fcmd.gui.ime import PlaceholderImeGuard, install_placeholder_ime_guard
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -103,7 +103,7 @@ def test_composing_does_not_paint_placeholder() -> None:
 
 def test_create_application_installs_guard() -> None:
     """窗口入口统一装好过滤器，新增输入框不需要各自处理。"""
-    from fcmd.gui.qt.app import create_application
+    from fcmd.gui.app import create_application
 
     app = create_application("ime-test")
     guard = app.property("fcmdPlaceholderImeGuard")

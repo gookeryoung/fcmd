@@ -15,9 +15,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 from fcmd.tools.system._checksum_qt import ChecksumQtWindow
 from fcmd.tools.system.checksum import calculate_file_checksum, calculate_string_checksum
 

@@ -14,7 +14,7 @@
 - **右侧常驻**：``set_note`` 写「更新于 12:00」这类长期备注，``show_loading``
   控制加载条；两者都不挤占左侧文字（左侧文字始终可见，给用户看的是「这一页在做什么」）。
 
-组件不依赖 :class:`~fcmd.gui.qt.window.QtMainWindow`，可单独用在任何
+组件不依赖 :class:`~fcmd.gui.window.QtMainWindow`，可单独用在任何
 ``QMainWindow`` 上；``QtMainWindow`` 只是把它接进骨架并暴露便捷方法。
 """
 
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QSizePolicy, QStatusBar
 
-from fcmd.gui.qt.widgets import ElidedLabel, LoadingBar
+from fcmd.gui.widgets import ElidedLabel, LoadingBar
 
 if TYPE_CHECKING:
     from PySide6.QtWidgets import QWidget

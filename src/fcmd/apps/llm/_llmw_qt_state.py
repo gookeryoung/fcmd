@@ -12,7 +12,7 @@ Qt 窗口把「跨页共享的数据」放在这里，页面只订阅信号、�
   （模型列表的「需释放显存」标注随之刷新）；实时性能由概览页自己采样渲染。
 - :attr:`LlmState.recommendationApplied`：概览页把推荐配置送入运行页。
 
-后台扫描走 :func:`fcmd.gui.qt.workers.submit`，结果通过信号回到 GUI 线程，
+后台扫描走 :func:`fcmd.gui.workers.submit`，结果通过信号回到 GUI 线程，
 因此扫描期间窗口仍然可操作；同一时刻只跑一份扫描，重复请求直接忽略。
 """
 
@@ -50,8 +50,8 @@ from fcmd.apps.llm.llmbase import (
     ServeError,
     ServeState,
 )
-from fcmd.gui.qt.logdialog import LogChannelMixin
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.logdialog import LogChannelMixin
+from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -7,7 +7,7 @@
 
 ## 背景
 
-Qt 迁移后，`fcmd.gui.qt` 已沉淀主题、侧边栏、状态栏、行卡与各类控件；但窗口与页面
+Qt 迁移后，`fcmd.gui` 已沉淀主题、侧边栏、状态栏、行卡与各类控件；但窗口与页面
 这一层仍是「同构代码复制」：
 
 - `QtMainWindow` 与 `QtToolWindow` 各自实现设置读写、几何恢复、主题加载、关闭落盘，
@@ -16,7 +16,7 @@ Qt 迁移后，`fcmd.gui.qt` 已沉淀主题、侧边栏、状态栏、行卡与
   「建根布局 + 保存 state + 页面 key 字面量」；页面状态写入走 `state.status(text)`，
   只能落到「当前页」，后台回调在切页后会写到错误的页；
 - 主题只有四套整体调色板，圆角 / 控件高度补偿 / 按钮内边距写死在
-  `gui/qt/theme.py` 的模块常量里，窗口无法在不复制 QSS 的前提下做局部调整。
+  `gui/style.py` 的模块常量里，窗口无法在不复制 QSS 的前提下做局部调整。
 
 需求原句：**「基于 wslmanw、llmw 项目进一步整合已有通用 GUI 组件和主题，使用 mixin、
 继承等技术实现复用和高度可配置性」**。
@@ -25,14 +25,14 @@ Qt 迁移后，`fcmd.gui.qt` 已沉淀主题、侧边栏、状态栏、行卡与
 
 | 编号 | 决策 | 被否决的方案（原因） | 落点 |
 |---|---|---|---|
-| D1 | 窗口外壳拆成四个职责 mixin：设置 / 几何 / 主题 / 关闭，再由 `WindowShellMixin` 组合；两个窗口骨架只继承、不复制 | 继续在两个窗口各写一份（主题覆盖等横切能力每加一项都要改两处）；把外壳做成配置对象 + 一个超大类（职责仍混在一起，测试难按能力隔离） | `gui/qt/shell.py` |
-| D2 | 窗口元信息收进 `WindowSpec`（标题 / 配置名 / 导航标题 / 默认与最小尺寸 / 侧边栏状态 / 主题覆盖键 / 设置路径） | 继续用一长串关键字参数（新增一项就要改两个 `__init__` 与所有调用点） | `gui/qt/shell.py`、`window.py`、`toolwindow.py` |
-| D3 | 页面拆成两层：`PageBody`（根布局容器）+ `AppPage`（页面 key + state + 状态栏 / 卡片辅助）；llmw 五个页面与 wslmanw 三个页 builder 统一使用 | 让页面继续各自 `QVBoxLayout(self)`（布局与状态通道重复）；把业务逻辑也塞进基类（页面职责不再单一） | `gui/qt/page.py`、`apps/llm/_llmw_qt_*.py`、`apps/wslman/_wslmanw_qt.py` |
-| D4 | 页面状态统一走 `AppPage.status()` → `state.page_status(PAGE_KEY, text)`，按页隔离；`statusText` 只保留给「窗口级」提示 | 继续 `state.status(text)`（后台回调落到用户当前所在页，造成串页） | `gui/qt/page.py`、llmw 页面 |
-| D5 | 页面登记项收进 `PageSpec`（key / 标题 / 提示 / 图标），并给 `QtMainWindow.add_pages(specs, factories)`；`PageSpec` 保留四元组解包兼容 | 继续在窗口里手写四元组循环（新增页面要同时改元组与 builder 表，key 靠字面量对齐） | `gui/qt/page.py`、`window.py`、两个应用的 `PAGES` |
-| D6 | 主题新增 `Metrics`（圆角 / 控件高度补偿 / 主按钮加高 / 按钮与输入框内边距），QSS 模板只从 `theme.metrics` 取值 | 继续写死模块常量（换主题只能换色，改尺寸要改代码）；把度量塞进 `Palette`（调色板与尺寸是两类 token） | `gui/theme.py`、`gui/qt/theme.py` |
-| D7 | `ui/theme.json` 支持 `overrides`（全局）与 `apps.<config_name>`（按窗口）覆盖调色板 token / `font_*` / 度量；非法值逐项忽略 | 每个窗口再建一份主题文件（多份配色必然漂移）；只支持整体主题（窗口无法只调强调色或圆角） | `gui/theme.py`、`gui/qt/shell.py` |
-| D8 | `save_theme` 只更新 `theme` 字段，保留 `overrides` / `apps`；`apply_theme` 按完整 `Theme` 判等而不是只按 id | 切主题时整体重写文件（用户手写覆盖被冲掉）；只比 id（同 id 不同覆盖时样式不刷新） | `gui/theme.py`、`gui/qt/theme.py` |
+| D1 | 窗口外壳拆成四个职责 mixin：设置 / 几何 / 主题 / 关闭，再由 `WindowShellMixin` 组合；两个窗口骨架只继承、不复制 | 继续在两个窗口各写一份（主题覆盖等横切能力每加一项都要改两处）；把外壳做成配置对象 + 一个超大类（职责仍混在一起，测试难按能力隔离） | `gui/shell.py` |
+| D2 | 窗口元信息收进 `WindowSpec`（标题 / 配置名 / 导航标题 / 默认与最小尺寸 / 侧边栏状态 / 主题覆盖键 / 设置路径） | 继续用一长串关键字参数（新增一项就要改两个 `__init__` 与所有调用点） | `gui/shell.py`、`window.py`、`toolwindow.py` |
+| D3 | 页面拆成两层：`PageBody`（根布局容器）+ `AppPage`（页面 key + state + 状态栏 / 卡片辅助）；llmw 五个页面与 wslmanw 三个页 builder 统一使用 | 让页面继续各自 `QVBoxLayout(self)`（布局与状态通道重复）；把业务逻辑也塞进基类（页面职责不再单一） | `gui/page.py`、`apps/llm/_llmw_qt_*.py`、`apps/wslman/_wslmanw_qt.py` |
+| D4 | 页面状态统一走 `AppPage.status()` → `state.page_status(PAGE_KEY, text)`，按页隔离；`statusText` 只保留给「窗口级」提示 | 继续 `state.status(text)`（后台回调落到用户当前所在页，造成串页） | `gui/page.py`、llmw 页面 |
+| D5 | 页面登记项收进 `PageSpec`（key / 标题 / 提示 / 图标），并给 `QtMainWindow.add_pages(specs, factories)`；`PageSpec` 保留四元组解包兼容 | 继续在窗口里手写四元组循环（新增页面要同时改元组与 builder 表，key 靠字面量对齐） | `gui/page.py`、`window.py`、两个应用的 `PAGES` |
+| D6 | 主题新增 `Metrics`（圆角 / 控件高度补偿 / 主按钮加高 / 按钮与输入框内边距），QSS 模板只从 `theme.metrics` 取值 | 继续写死模块常量（换主题只能换色，改尺寸要改代码）；把度量塞进 `Palette`（调色板与尺寸是两类 token） | `gui/theme.py`、`gui/style.py` |
+| D7 | `ui/theme.json` 支持 `overrides`（全局）与 `apps.<config_name>`（按窗口）覆盖调色板 token / `font_*` / 度量；非法值逐项忽略 | 每个窗口再建一份主题文件（多份配色必然漂移）；只支持整体主题（窗口无法只调强调色或圆角） | `gui/theme.py`、`gui/shell.py` |
+| D8 | `save_theme` 只更新 `theme` 字段，保留 `overrides` / `apps`；`apply_theme` 按完整 `Theme` 判等而不是只按 id | 切主题时整体重写文件（用户手写覆盖被冲掉）；只比 id（同 id 不同覆盖时样式不刷新） | `gui/theme.py`、`gui/style.py` |
 
 ### D1 为什么用 mixin 而不是窗口基类
 
@@ -71,7 +71,7 @@ class ChatPage(AppPage):
 ### D6 / D7 主题如何做到「高度可配置」
 
 `Theme` 现在由四组数据组成：`palette`（语义色）、`fonts`（字号阶梯）、`spacing`
-（间距阶梯）、`metrics`（控件度量）。QSS 只从这些数据生成，`gui/qt/theme.py` 的
+（间距阶梯）、`metrics`（控件度量）。QSS 只从这些数据生成，`gui/style.py` 的
 `_RADIUS` / `CONTROL_HEIGHT_EXTRA` / `_CONTROL_PAD_X_*` 退化为默认值常量。
 
 `${FCMD_HOME:-~/.fcmd}/ui/theme.json` 可写：
@@ -115,6 +115,6 @@ class ChatPage(AppPage):
 - 新增页面登记：在应用模块里定义 `PAGES: tuple[PageSpec, ...]`，窗口用
   `add_pages(PAGES, factories)` 登记；`PageSpec` 仍可四元组解包，旧测试写法不受影响。
 - 新增主题可调项：先加到 `Palette` / `FontScale` / `Metrics`，再在
-  `gui/qt/theme.py` 的模板里引用；不要在窗口里写死颜色或像素。
+  `gui/style.py` 的模板里引用；不要在窗口里写死颜色或像素。
 - 窗口级主题覆盖的 key 必须等于该窗口的 `config_name`（llmw / wslmanw），
   否则只应用全局 `overrides`。

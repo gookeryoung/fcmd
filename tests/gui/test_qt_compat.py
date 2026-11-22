@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from fcmd.gui.qt import compat
+from fcmd.gui import compat
 
 
 def test_binding_version_reports_installed_binding() -> None:

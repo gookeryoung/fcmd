@@ -10,8 +10,8 @@
 
 | 编号 | 约束 | 落点 |
 |---|---|---|
-| C1 | 引入 Qt 依赖，locllmw 用 Qt 重写 | `pyproject.toml` 基础依赖 `PySide6-Essentials`；`src/fcmd/gui/qt/**`；`src/fcmd/apps/llm/_llmw_qt_*.py` |
-| C2 | 补齐 GUI 基础设计（窗口骨架 / 主题 / 导航 / 后台任务 / 常用控件） | `fcmd.gui.qt.window` / `theme` / `sidebar` / `workers` / `widgets` |
+| C1 | 引入 Qt 依赖，locllmw 用 Qt 重写 | `pyproject.toml` 基础依赖 `PySide6-Essentials`；`src/fcmd/gui/**`；`src/fcmd/apps/llm/_llmw_qt_*.py` |
+| C2 | 补齐 GUI 基础设计（窗口骨架 / 主题 / 导航 / 后台任务 / 常用控件） | `fcmd.gui.window` / `theme` / `sidebar` / `workers` / `widgets` |
 | C3 | locllmw 保持既有页面能力与配置兼容 | 页面模块；`_llmw_winsettings` 与 `llmw.json` 口径不变 |
 | C4 | 门禁不退化：lint / typecheck / test / 覆盖率照旧 | `pyrefly.toml` / `.coveragerc` 的可选依赖排除；离屏冒烟测试 |
 | C5 | 不因换工具包丢失能力 | 模型页在同一 Qt 页内补齐 ModelScope 浏览 / 下载、行内转换与量化；Tk 窗口已删除 |
@@ -20,27 +20,28 @@
 
 | 编号 | 决策 | 被否决的方案（原因） | 代码落点 |
 |---|---|---|---|
-| D1 | Python ≥3.11 使用 **PySide6**；Python 3.10 使用 **PySide2**（见 [0036](0036-python310-pyside2.md)） | 全部 Python 版本只装 PySide6：3.10 上也能跑，但无法满足「3.10 明确走 PySide2」的兼容要求 | `pyproject.toml` 按 `python_version` 标记依赖；`fcmd.gui.qt.compat` 做运行时映射 |
+| D1 | Python ≥3.11 使用 **PySide6**；Python 3.10 使用 **PySide2**（见 [0036](0036-python310-pyside2.md)） | 全部 Python 版本只装 PySide6：3.10 上也能跑，但无法满足「3.10 明确走 PySide2」的兼容要求 | `pyproject.toml` 按 `python_version` 标记依赖；`fcmd.gui.compat` 做运行时映射 |
 | D2 | Qt 依赖进入**基础依赖**（`pip install fcmd` 即可用 locllmw） | 作为可选 extra：默认入口会因缺依赖不可用，用户需额外记忆一个 extra；代价是安装体积增加约 200 MB，接受该代价 | `pyproject.toml` → `dependencies`（PySide6 / PySide2 择一） |
-| D3 | 主题注册表与调色板只在 `fcmd.gui.theme` 维护一份（四套主题、别名、`ui/theme.json`） | 另建 Qt 专用主题：两套配色/字号必然漂移 | `fcmd/gui/qt/theme.py` 只做 `Palette → QSS/QPalette` 翻译 |
-| D4 | 窗口设置统一为 `ui/llmw.json` + `WxH+X+Y` 几何 + `LocllmSettings` | 各写一份设置：模型目录 / 硬件快照 / 实测记录无法共享 | `_llmw_winsettings`；`fcmd.gui.qt.window` 复用 `fcmd.gui.config` / `fcmd.gui.geometry` |
-| D5 | 后台任务用线程池 + 信号，不用 `QThread` 子类 | 每任务一个 `QThread`：线程生命周期与窗口销毁耦合，易悬空 | `fcmd/gui/qt/workers.py`（`submit` / `periodic`） |
+| D3 | 主题注册表与调色板只在 `fcmd.gui.theme` 维护一份（四套主题、别名、`ui/theme.json`） | 另建 Qt 专用主题：两套配色/字号必然漂移 | `fcmd/gui/style.py` 只做 `Palette → QSS/QPalette` 翻译 |
+| D4 | 窗口设置统一为 `ui/llmw.json` + `WxH+X+Y` 几何 + `LocllmSettings` | 各写一份设置：模型目录 / 硬件快照 / 实测记录无法共享 | `_llmw_winsettings`；`fcmd.gui.window` 复用 `fcmd.gui.config` / `fcmd.gui.geometry` |
+| D5 | 后台任务用线程池 + 信号，不用 `QThread` 子类 | 每任务一个 `QThread`：线程生命周期与窗口销毁耦合，易悬空 | `fcmd/gui/workers.py`（`submit` / `periodic`） |
 | D6 | 页面**按需构建**（首次切页才实例化） | 建窗即构建全部页面：模型/设置页会立刻扫描目录与引擎，违背 0032 的冷启动目标 | `QtMainWindow.add_page(..., factory=)`；`LocllmWindow._factory` |
 | D7 | 纯逻辑继续放在 `_llmw_*` 模块，Qt 页面只做编排 | 在 Qt 里重写一套扫描/适配/推荐：两套口径漂移（如「硬件不足」判定） | `_llmw_ui` / `_llmw_monitor` / `_llmw_bench` / `_llmw_recommend` / `_llmw_settings` / `_llmw_models` / `_llmw_convert` |
 | D8 | Qt 模块从 **pyrefly / coverage 排除**，纯逻辑单独测试 | 在 CI 安装 PySide6：lint/test 两个 job 各多下载约 120–200 MB，违背门禁速度优先 | `pyrefly.toml` `project-excludes`；`.coveragerc` `omit`；`tests/apps/llm/test_llmw_qt_logic.py` |
 
 ## GUI 基础设计（C2）
 
-`src/fcmd/gui/qt/` 模块职责：
+`src/fcmd/gui/` 模块职责：
 
 | 模块 | 提供 |
 |---|---|
 | `app.py` | `QApplication` 复用、高 DPI 舍入（PassThrough）、主题应用、`run_window(factory)` |
-| `theme.py` | `Palette → QSS` / `QPalette`、字体挑选、主题持久化；纯函数可单测 |
+| `theme.py` | 主题注册表：调色板 / 字号 / 度量 / `ui/theme.json` 持久化，纯数据与纯函数 |
+| `style.py` | `Palette → QSS` / `QPalette`、字体挑选与 `apply_theme`；纯函数可单测 |
 | `sidebar.py` | 左侧导航（`SidebarNav`）：页登记、`Alt+1..9`、`Alt+↑/↓` 循环 |
 | `window.py` | `QtMainWindow`：导航 + `QStackedWidget` + 状态栏（左侧文字按页面隔离，切页恢复）+ 主题 / 关于菜单 + 几何记忆 |
 | `toolwindow.py` | `QtToolWindow`：单页工具窗口骨架（文件 / 视图 / 帮助菜单、状态栏、几何记忆、关闭落盘） |
-| `widgets.py` | `Card` / `PageScroll` / `Collapsible` / `FormGrid` / `MetricGrid` / `KeyValueGrid` / `PathRow` / `LogView` / `LoadingBar` / `ElidedLabel` / `make_table` / `QSplitter` 辅助 |
+| `widgets/` | 按职责拆包：`text` / `tables` / `buttons` / `tabs` / `rows` / `cards` / `forms` / `metrics` / `log` / `splitter`；`__init__` 汇总导出 `Card` / `PageScroll` / `Collapsible` / `FormGrid` / `MetricGrid` / `KeyValueGrid` / `PathRow` / `LogView` / `LoadingBar` / `ElidedLabel` / `make_table` / `QSplitter` 辅助 |
 | `layout.py` | 纯函数：中间省略、按比例分配列宽、分栏尺寸读写（不导入 Qt） |
 | `workers.py` | `submit(...)`（线程池 + 信号回投）、`periodic(...)` |
 
@@ -82,7 +83,7 @@
 - 断言 Tk 内部实现的用例已改写为 Qt 等价断言：对话页服务选择改为 `ChatPage`，
   概览页推荐动作改为 `OverviewPage`，量化勾选改为 `_QuantPanel`，
   `state_tag` 改为 `_llmw_ui.state_tag` 纯函数。
-- `pyrefly.toml` / `.coveragerc` 继续排除 `src/fcmd/gui/qt/**` 与
+- `pyrefly.toml` / `.coveragerc` 继续排除 `src/fcmd/gui/**` 与
   `src/fcmd/apps/llm/_llmw_qt_*.py`（CI 不装 PySide6，与 `mcp_adapter` 同处理）。
 
 ## 已知取舍
@@ -105,9 +106,9 @@
   模型但按默认量化找不到」导致启动报错。
 - 页面布局：内容放进 `PageScroll`（窗口变矮时滚动、变高时拉伸），需要常驻的操作
   放固定的 `QFrame#ActionBar`（如运行页的启停按钮），不要靠压缩列表高度换空间。
-- 新增后台动作：一律 `fcmd.gui.qt.workers.submit(...)`，禁止在 GUI 线程做阻塞 IO；
+- 新增后台动作：一律 `fcmd.gui.workers.submit(...)`，禁止在 GUI 线程做阻塞 IO；
   长任务的日志用 `state.log`（信号自动排队回主线程）。
-- 主题：新增控件样式改 `fcmd/gui/qt/theme.py` 的 QSS 模板，色值只从 `Palette` 取。
+- 主题：新增控件样式改 `fcmd/gui/style.py` 的 QSS 模板，色值只从 `Palette` 取。
   选中态不能只加粗边框：卡片 / 选项 / 筛选块的内部底色改用同色系
   `*_soft_strong`（32%），未选中仍用 `*_soft`（16%），保证深浅差异可见；
   模型列表选中行边框使用 `select_bg`（深蓝）而非普通 `border`。

@@ -130,7 +130,7 @@ def save_settings(settings: DocDiffSettings, path: Path | None = None) -> None:
 
 
 def run_gui() -> None:
-    """创建并运行 Qt 主窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    """创建并运行 Qt 主窗口（高 DPI 与主题由 ``gui.app`` 统一处理）。"""
     try:
         from fcmd.tools.office._docdiffw_qt import run_qt
     except ImportError as exc:  # pragma: no cover - 安装完整时不会触发

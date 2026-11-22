@@ -1,4 +1,4 @@
-"""Qt 主题：把 :mod:`fcmd.gui.theme` 的调色板翻译成 QSS 与 QPalette。
+"""GUI 样式：把 :mod:`fcmd.gui.theme` 的调色板翻译成 QSS 与 QPalette。
 
 与主题注册表共用同一份 :class:`fcmd.gui.theme.Theme`（四套内置主题、别名与
 ``${FCMD_HOME:-~/.fcmd}/ui/theme.json`` 持久化），因此各 GUI 窗口的
@@ -8,7 +8,7 @@
 
 - :func:`stylesheet` / :func:`pick_font_family` / :func:`template_tokens` 是纯函数，
   不导入 Qt，CI（无 ``PySide6``）可单测；
-- 只在 :func:`apply_theme` 内延迟导入 Qt，``import fcmd.gui.qt.theme`` 不会
+- 只在 :func:`apply_theme` 内延迟导入 Qt，``import fcmd.gui.style`` 不会
   在 CLI 快路径上加载图形库；
 - 样式表覆盖本项目实际用到的控件：卡片、按钮（主 / 危险）、输入、下拉、
   表格 / 树、标签页、进度条、滚动条、侧边栏按钮、日志区与提示文字。
@@ -180,7 +180,7 @@ QFrame#LoadBlock {
     border: 1px solid $border;
     border-radius: 6px;
 }
-/* 行卡胶囊：共享高度 / 圆角 / 内边距 / 字号（见 gui/qt/widgets.py 的 rowChip 属性），
+/* 行卡胶囊：共享高度 / 圆角 / 内边距 / 字号（见 gui/widgets/rows.py 的 rowChip 属性），
    对象名只负责颜色语义；边框用同色系浅描边，避免一排彩色粗框抢走标题的注意力。 */
 QFrame[itemRow="true"] QLabel[rowChip="true"] {
     min-height: 18px;
@@ -947,7 +947,7 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     _ACTIVE_THEMES[app] = theme
     # 公共图标是按调色板着色的位图：切主题后必须按新正文色重绘，否则深色图标
     # 落在深色背景上会看不清。
-    from fcmd.gui.qt.icons import refresh_icons
+    from fcmd.gui.icons import refresh_icons
 
     refresh_icons()
     font = QFont(family)

@@ -3,7 +3,7 @@
 本模块只保存**主题数据与纯函数**（四套内置主题、别名、`ui/theme.json` 读写、
 调色板 token 校验、字体挑选与相对亮度），不导入任何 GUI 工具包：
 
-- Qt 侧 :mod:`fcmd.gui.qt.theme` 把 :class:`Palette` / :class:`Metrics` 翻译成 QSS / QPalette；
+- Qt 侧 :mod:`fcmd.gui.style` 把 :class:`Palette` / :class:`Metrics` 翻译成 QSS / QPalette；
 - ``ui/theme.json`` 的 ``overrides`` / ``apps.<窗口名>`` 可按全局或窗口覆盖调色板、
   字号与度量，见 :func:`apply_theme_overrides` / :func:`merge_theme_overrides`；
 - CI（不装 PySide6）也能直接单测主题解析与持久化；

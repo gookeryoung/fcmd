@@ -11,14 +11,14 @@
 除侧边栏页面图标外，还内置 ``refresh`` / ``download`` / ``upload`` / ``save`` /
 ``folder`` / ``search`` / ``trash`` / ``send`` / ``convert`` / ``export`` / ``disc``
  等按钮动作图标；:func:`icon_for_text` 按按钮文案推断图标，
-``fcmd.gui.qt.widgets.button`` 默认调用它。
+``fcmd.gui.widgets.button`` 默认调用它。
 
 语义区分：``export`` 是「文件 + 向下箭头」（导出到文件）、``download`` 是「托盘 + 向下
 箭头」（从网上下载）、``disc`` 是磁盘／盘位（WSL 镜像这类磁盘映像），
 ``images`` 是相册（图片）。三者不要互相借用，否则按钮 / 页面图标会表意错位。
 
 配色跟随 ``QApplication`` 调色板的 ``WindowText``（:func:`default_color`），
-``fcmd.gui.qt.theme.apply_theme`` 已把语义色写进同一份调色板，因此深浅主题下
+``fcmd.gui.style.apply_theme`` 已把语义色写进同一份调色板，因此深浅主题下
 都能保持对比度；调用方也可以显式传 ``color`` 覆盖。
 
 模块本身不在导入时加载 Qt：:func:`svg` 是纯函数（CI 无 PySide6 可单测），
@@ -296,7 +296,7 @@ def tone_color(tone: str) -> str:
     主操作按钮用 ``on_accent``，危险按钮用 ``danger``，次要按钮用 ``muted``。
     """
     try:
-        from fcmd.gui.qt.theme import active_theme
+        from fcmd.gui.style import active_theme
 
         palette = active_theme().palette
     except Exception:  # pragma: no cover - 无 Qt / 主题未初始化

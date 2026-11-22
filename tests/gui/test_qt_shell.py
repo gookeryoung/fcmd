@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.shell`` 窗口外壳 mixin 测试：配置对象、主题按窗口覆盖、共享落盘。"""
+"""``fcmd.gui.shell`` 窗口外壳 mixin 测试：配置对象、主题按窗口覆盖、共享落盘。"""
 
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
-from fcmd.gui.qt.shell import (
+from fcmd.gui.app import create_application
+from fcmd.gui.shell import (
     WindowGeometryMixin,
     WindowLifecycleMixin,
     WindowSettingsMixin,
@@ -27,7 +27,7 @@ from fcmd.gui.qt.shell import (
     WindowSpec,
     WindowThemeMixin,
 )
-from fcmd.gui.qt.toolwindow import QtToolWindow
+from fcmd.gui.toolwindow import QtToolWindow
 
 
 @pytest.fixture()

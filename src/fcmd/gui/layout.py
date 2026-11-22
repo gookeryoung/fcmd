@@ -1,7 +1,7 @@
 """Qt 布局纯函数：中间省略、列宽分配、分栏尺寸读写。
 
 本模块不导入 ``PySide6``，CI（无显示环境）可直接单测；控件层
-:mod:`fcmd.gui.qt.widgets` 只负责把这里的计算结果套到 ``QLabel`` /
+:mod:`fcmd.gui.widgets` 只负责把这里的计算结果套到 ``QLabel`` /
 ``QSplitter`` / ``QHeaderView`` 上。
 
 设计口径：

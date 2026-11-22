@@ -67,8 +67,8 @@ from fcmd.apps.cmder._rename import (
     preview_to_plan,
 )
 from fcmd.apps.cmder._search import SearchFilters, parse_datetime, parse_size
-from fcmd.gui.qt.widgets import Card, button, hint_label, make_table, make_table_item
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.widgets import Card, button, hint_label, make_table, make_table_item
+from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
     from fcmd.apps.cmder._ops import QueueTask

@@ -1,6 +1,6 @@
 """Qt 主题菜单：一处实现「视图 → 主题」子菜单与即时切换。
 
-:class:`QtMainWindow`（分页窗口）与 :class:`fcmd.gui.qt.toolwindow.QtToolWindow`
+:class:`QtMainWindow`（分页窗口）与 :class:`fcmd.gui.toolwindow.QtToolWindow`
 （单页工具窗口）共用本控制器，避免每个窗口各复制一份主题动作与持久化逻辑。
 主题注册表仍是 :mod:`fcmd.gui.theme`，Qt 侧只负责翻译成 QSS / QPalette。
 """
@@ -13,8 +13,8 @@ from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMenu
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
 
 if TYPE_CHECKING:
     from fcmd.gui.theme import Theme

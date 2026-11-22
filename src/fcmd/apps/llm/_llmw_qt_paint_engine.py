@@ -18,8 +18,8 @@ from PySide6.QtWidgets import QComboBox, QDialog, QFileDialog, QHBoxLayout, QVBo
 
 from fcmd.apps.llm import _llmpaint_engine, llmengine
 from fcmd.apps.llm.llmbase import human_size
-from fcmd.gui.qt.widgets import Card, HintLabel, LoadingBar, ProgressRow, button, fit_dialog_to_content, hint_label
-from fcmd.gui.qt.workers import ProgressBridge, submit_daemon
+from fcmd.gui.widgets import Card, HintLabel, LoadingBar, ProgressRow, button, fit_dialog_to_content, hint_label
+from fcmd.gui.workers import ProgressBridge, submit_daemon
 from fcmd.infras.download import SpeedMeter, format_eta, format_speed
 
 __all__ = ["PaintEngineDialog", "variant_note"]

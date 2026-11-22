@@ -15,7 +15,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication
 
-from fcmd.gui.qt import workers
+from fcmd.gui import workers
 
 
 def _app() -> QApplication:

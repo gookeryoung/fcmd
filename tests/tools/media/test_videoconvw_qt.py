@@ -21,10 +21,10 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QMessageBox
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
-from fcmd.gui.qt.workers import EventBridge
+from fcmd.gui.app import create_application
+from fcmd.gui.workers import EventBridge
 from fcmd.tools.media import _videoconvw_qt
 from fcmd.tools.media._videoconvw_qt import (
     VideoConvWindow,

@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.statusbar`` 的测试：单行高度与按分页隔离文字。"""
+"""``fcmd.gui.statusbar`` 的测试：单行高度与按分页隔离文字。"""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QMainWindow
 
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.statusbar import DEFAULT_STATUS, WindowStatusBar
+from fcmd.gui.statusbar import DEFAULT_STATUS, WindowStatusBar
 
 
 def _window() -> tuple[QMainWindow, WindowStatusBar]:

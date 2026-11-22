@@ -26,10 +26,10 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd import __version__
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, FormGrid, PathField, button, hint_label
-from fcmd.gui.qt.workers import EventBridge, submit
+from fcmd.gui.app import run_window
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, FormGrid, PathField, button, hint_label
+from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.office.docdiff import (
     COMPARE_MODES,
     DEFAULT_TITLE,

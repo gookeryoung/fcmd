@@ -41,9 +41,9 @@ from fcmd.apps.llm._llmw_monitor import (
 )
 from fcmd.apps.llm._llmw_recommend import Recommendation, recommend
 from fcmd.apps.llm.llmbase import ServeError, ServeState, human_size
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.page import AppPage
-from fcmd.gui.qt.widgets import (
+from fcmd.gui import style as _qt_theme
+from fcmd.gui.page import AppPage
+from fcmd.gui.widgets import (
     Card,
     ElidedLabel,
     RowListWidget,
@@ -56,7 +56,7 @@ from fcmd.gui.qt.widgets import (
     section_header,
     segment_band,
 )
-from fcmd.gui.qt.workers import periodic, submit
+from fcmd.gui.workers import periodic, submit
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

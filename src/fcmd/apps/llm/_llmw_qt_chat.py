@@ -67,9 +67,9 @@ from fcmd.apps.llm.llmbase import (
 )
 from fcmd.apps.llm.llmchat import ChatMessage, ChatRole, ChatSession
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.icons import set_icon as _set_icon
-from fcmd.gui.qt.page import AppPage
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.icons import set_icon as _set_icon
+from fcmd.gui.page import AppPage
+from fcmd.gui.widgets import (
     Collapsible,
     ElidedLabel,
     FormGrid,
@@ -79,7 +79,7 @@ from fcmd.gui.qt.widgets import (
     icon_button,
     make_splitter,
 )
-from fcmd.gui.qt.workers import submit, submit_daemon
+from fcmd.gui.workers import submit, submit_daemon
 
 if TYPE_CHECKING:
     from fcmd.apps.llm._llmw_qt_state import LlmState

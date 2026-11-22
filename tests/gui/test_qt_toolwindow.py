@@ -1,4 +1,4 @@
-"""``fcmd.gui.qt.toolwindow`` / ``ElidedLabel`` 的离屏测试。
+"""``fcmd.gui.toolwindow`` / ``ElidedLabel`` 的离屏测试。
 
 覆盖单页窗口骨架（菜单 / 状态栏 / 几何记忆 / 关闭回调）与长路径省略行为；
 Qt 不可用或 CI 无显示环境时使用 ``offscreen`` 平台。
@@ -20,10 +20,10 @@ from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.app import create_application
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import ElidedLabel
-from fcmd.gui.qt.window import parse_geometry
+from fcmd.gui.app import create_application
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import ElidedLabel
+from fcmd.gui.window import parse_geometry
 
 _LONG_PATH = "C:/Users/demo/Projects/fcmd/src/fcmd/apps/llm/_llmw_qt_window.py"
 

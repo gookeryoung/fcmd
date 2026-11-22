@@ -22,7 +22,7 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from fcmd.gui.qt.widgets import Card
+    from fcmd.gui.widgets import Card
 
 __all__ = ["AppPage", "PageBody", "PageSpec"]
 
@@ -130,7 +130,7 @@ class AppPage(PageBody):
     # ------------------------------------------------------------------ #
     def card(self, title: str = "") -> Card:
         """新建一张卡片并追加到页面根布局，返回卡片供继续填内容。"""
-        from fcmd.gui.qt.widgets import Card
+        from fcmd.gui.widgets import Card
 
         widget = Card(title, self)
         self.body.addWidget(widget)

@@ -15,8 +15,8 @@ pytest.importorskip("PySide6")
 
 from fcmd.apps.dynacalc._dynacalcw_qt import DynacalcWindow, _work_generate
 from fcmd.apps.dynacalc.dynacalcw import config_path
-from fcmd.gui.qt.app import create_application
-from fcmd.gui.qt.workers import EventBridge
+from fcmd.gui.app import create_application
+from fcmd.gui.workers import EventBridge
 
 
 @pytest.fixture()

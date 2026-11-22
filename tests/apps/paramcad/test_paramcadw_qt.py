@@ -14,7 +14,7 @@ pytest.importorskip("PySide6")
 
 from fcmd.apps.paramcad._paramcadw_qt import ParamcadWindow
 from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 
 
 @pytest.fixture()

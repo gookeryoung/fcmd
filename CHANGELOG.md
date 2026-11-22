@@ -7,6 +7,11 @@
 
 ### 变更
 
+- GUI 共享层目录拉平：`fcmd/gui/qt/*` 全部上移到 `fcmd/gui/`，主题翻译模块改名为
+  `gui/style.py`（主题注册表仍为 `gui/theme.py`），分页纯函数改名为 `gui/nav.py`；
+  `gui/widgets.py` 拆成 `gui/widgets/` 包（`text` / `tables` / `buttons` / `tabs` /
+  `rows` / `cards` / `forms` / `metrics` / `log` / `splitter`），
+  `from fcmd.gui.widgets import Card` 等公开导入不变；工具清单 `_manifest_data` 同步重生成。
 - 移除 `devman` 与 `devmanw`：删除开发环境管理工具（node / python 多版本安装、切换、
   卸载与 PATH 集成，含其 Qt 窗口）、对应测试与入口注册，ADR 0024 同步删除；`fcmd`
   工具总数与 `_manifest_data` 清单重生成。
@@ -47,7 +52,7 @@
   获取 llama.cpp 源码）现在逐步回传状态行并用忙碌进度条表示进行中；解释器探测单次
   超时 60s，源码包改走与引擎下载相同的 GitHub 镜像候选（`FCMD_GITHUB_MIRROR` 可覆盖、
   直连兜底），镜像候选多时每源重试次数收敛，避免国内网络下首次转换长时间无反馈。
-- 内部整理：Qt 绑定兼容层 `gui/qt/_pyside_compat.py` 改名为 `gui/qt/compat.py`，导入路径与测试同步更新；行为不变。
+- 内部整理：Qt 绑定兼容层 `_pyside_compat.py` 改名为 `compat.py`（现位于 `gui/compat.py`），导入路径与测试同步更新；行为不变。
 - 修复 llmw 模型列表搜不到 Qwen 等官方仓库：默认「适合本机」此前按 ModelScope 的
   **整仓体积**过滤，而 GGUF 官方仓库（如 `Qwen/Qwen3-8B-GGUF`）的总大小是多份量化
   之和（约 32 GB），在 16–32 GB 机器上会被整体误杀。现在 GGUF 仓库按名字里的参数量
@@ -67,8 +72,8 @@
   Windows 侧当前目录（之前会落到 `/mnt/c/...` 这类映射路径）；CLI `wslman open`
   的 `--workdir` 口径不变。
 - GUI 共享层整合：`QtMainWindow` / `QtToolWindow` 的设置 / 几何 / 主题 / 关闭逻辑拆成
-  `gui/qt/shell.py` 的 mixin 并由 `WindowShellMixin` 组合，两个窗口骨架不再各存一份；
-  应用页面统一继承 `gui/qt/page.py` 的 `AppPage`（页面 key + 按页状态通道 + 卡片辅助），
+  `gui/shell.py` 的 mixin 并由 `WindowShellMixin` 组合，两个窗口骨架不再各存一份；
+  应用页面统一继承 `gui/page.py` 的 `AppPage`（页面 key + 按页状态通道 + 卡片辅助），
   页面登记改用 `PageSpec` / `QtMainWindow.add_pages`。llmw 五个页面与 wslmanw 三个页面
   已迁移；页面状态改为写入自己的分页，后台回调切页后不再串页。
 - 主题可配置性：`Theme` 新增 `Metrics`（圆角 / 控件高度补偿 / 按钮内边距），QSS 只从
@@ -107,7 +112,7 @@
   `ModelItemRow` / `ImageItemRow` / `DistroItemRow` 分别开 QSS 规则；副标题只留版本，
   磁盘占用（估算值带 `≈`）移到右侧数值位，与 llmw 模型行「左侧标题 / 副标题 + 右侧
   数值与动作」的结构对齐。
-- 可展开行卡的骨架抽成共享 `fcmd.gui.qt.widgets.ItemRow`（标题 + 副标题 / 状态胶囊 +
+- 可展开行卡的骨架抽成共享 `fcmd.gui.widgets.ItemRow`（标题 + 副标题 / 状态胶囊 +
   右侧数值与动作 + 行内展开区，提供 `add_tag` / `add_note_widget` / `set_metrics` /
   `add_action` 插槽）：llmw 模型浏览行、`wslmanw` 发行版行与镜像行都改为继承它，
   不再各写一份骨架（ADR 0038 D1 随之更新，原「不做行卡基类」的重新评估条件已触发）。
@@ -161,7 +166,7 @@
   改为与 `_runner` 同口径的 `CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW/SW_HIDE`
   （真机枚举顶层窗口验证：启动前后无新增可见窗口，实例仍 Running）。
 - 修复输入法组合时占位文字与组合串重影：`QPlainTextEdit`（llmw 对话输入框等）在 preedit
-  显示期间仍绘制 placeholder。新增应用级事件过滤器 `gui/qt/ime.py`
+  显示期间仍绘制 placeholder。新增应用级事件过滤器 `gui/ime.py`
   （`PlaceholderImeGuard`，`create_application` 里装一次）：组合期间临时清空占位文字，
   组合结束 / 失焦后还原；覆盖全部窗口与后续新增输入框，不需要各自处理。
 - 修复本地已有同名目录时看不到 ModelScope 官方模型（如磁盘上有 `Qwen3.8-27B`，官方
@@ -208,7 +213,7 @@
     目录树 / 搜索 / 比较同步 / 多重命名 / 用户命令 / 颜色规则 / 打包解压 / 分割合并 / 查重等），
     `app.py` 只保留纯逻辑；
   - 删除 Tk 共享层（`fcmd.gui.window` / `fcmd.gui.sidebar` 与 `theme.py` 的 ttk 渲染），
-    新增 `fcmd.gui.pages`，主题注册表保留为纯数据模块；
+    新增 `fcmd.gui.nav`，主题注册表保留为纯数据模块；
   - 断言 Tk 内部实现的测试改写为 Qt 等价断言，纯逻辑与设置测试保持原样。
 - 新增 `fcmd.gui.geometry` 纯函数模块，各窗口与设置统一复用 `WxH+X+Y` 解析、夹紧与居中算法。
 - `llmw` 设置页移除存储 / 下载 / 转换 / 引擎卡片下方的静态小字说明；目录来源与旧配置迁移提示保留，引擎操作反馈按需显示。

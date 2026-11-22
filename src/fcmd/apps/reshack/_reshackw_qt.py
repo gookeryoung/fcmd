@@ -72,9 +72,9 @@ from fcmd.apps.reshack.reshackw import (
     load_settings,
     save_settings,
 )
-from fcmd.gui.qt.logdialog import LogChannelMixin
-from fcmd.gui.qt.page import PageBody, PageSpec
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.logdialog import LogChannelMixin
+from fcmd.gui.page import PageBody, PageSpec
+from fcmd.gui.widgets import (
     Card,
     ItemRow,
     RowDetailMixin,
@@ -84,8 +84,8 @@ from fcmd.gui.qt.widgets import (
     confirm,
     mono_font,
 )
-from fcmd.gui.qt.window import QtMainWindow
-from fcmd.gui.qt.workers import EventBridge, submit
+from fcmd.gui.window import QtMainWindow
+from fcmd.gui.workers import EventBridge, submit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1084,6 +1084,6 @@ def _pil_to_pixmap(image: Any) -> QPixmap | None:
 
 def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
-    from fcmd.gui.qt.app import run_window
+    from fcmd.gui.app import run_window
 
     run_window(lambda: ReshackWindow(settings_path), app_name="reshackw")

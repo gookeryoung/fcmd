@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QVBoxLayout, QWid
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm import llmengine
 from fcmd.apps.llm.llmbase import EngineInfo, human_size
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.widgets import (
     Card,
     HintLabel,
     LoadingBar,
@@ -26,7 +26,7 @@ from fcmd.gui.qt.widgets import (
     fit_dialog_to_content,
     hint_label,
 )
-from fcmd.gui.qt.workers import ProgressBridge, submit_daemon
+from fcmd.gui.workers import ProgressBridge, submit_daemon
 
 __all__ = ["EngineDownloadDialog"]
 

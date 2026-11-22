@@ -24,9 +24,9 @@ from fcmd.apps.renamer import _examples
 from fcmd.apps.renamer._core import RenameRule
 from fcmd.apps.renamer._renamerw_qt import RenamerWindow
 from fcmd.apps.renamer.renamerw import RenamerSettings, load_settings, rules_to_text, save_settings
+from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.app import create_application
+from fcmd.gui.app import create_application
 from tests.helpers import destroy_qt_top_levels, qt_top_levels
 
 

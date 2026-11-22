@@ -97,7 +97,7 @@ def _cli_default_config() -> MeshConfig:
 
 
 def run_gui(model: Path | None = None, config: Path | None = None) -> None:
-    """启动 Qt 窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    """启动 Qt 窗口（高 DPI 与主题由 ``gui.app`` 统一处理）。"""
     try:
         from fcmd.apps.paramesh._parameshw_qt import run_qt
     except ImportError as exc:  # pragma: no cover - 安装完整时不会触发

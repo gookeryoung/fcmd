@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
-from fcmd.gui.qt.widgets import Card, LogView, hint_label
+from fcmd.gui.widgets import Card, LogView, hint_label
 
 if TYPE_CHECKING:
     from typing import Any

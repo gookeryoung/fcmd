@@ -27,10 +27,10 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd import __version__
+from fcmd.gui.app import run_window
 from fcmd.gui.geometry import size_from_geometry
-from fcmd.gui.qt.app import run_window
-from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import (
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import (
     Card,
     StatusTag,
     apply_splitter_sizes,

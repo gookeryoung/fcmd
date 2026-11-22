@@ -65,7 +65,7 @@ def overview(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     """离屏概览页：不探测硬件 / 不扫描磁盘，只验证推荐动作。"""
     from fcmd.apps.llm._llmw_qt_overview import OverviewPage
     from fcmd.apps.llm._llmw_qt_state import LlmState
-    from fcmd.gui.qt.app import create_application
+    from fcmd.gui.app import create_application
 
     monkeypatch.setenv("FCMD_HOME", str(tmp_path))
     create_application("llmw-overview-test")
@@ -246,8 +246,8 @@ def test_recommendation_row_shows_score_badge_with_band(overview: Any, tmp_path:
 
 def test_score_badge_band_colors_follow_theme() -> None:
     """评分框与推荐行的配色规则写进主题 QSS，切主题时一起生效。"""
+    from fcmd.gui import style as _qt_theme
     from fcmd.gui import theme as _guitheme
-    from fcmd.gui.qt import theme as _qt_theme
 
     qss = _qt_theme.stylesheet(_guitheme.resolve_theme(_guitheme.DEFAULT_THEME_NAME))
     for band in ("excellent", "good", "fair", "limited"):
