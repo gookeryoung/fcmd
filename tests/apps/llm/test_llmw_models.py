@@ -30,11 +30,13 @@ from fcmd.apps.llm._llmw_models import (
     format_models_updated,
     group_same_name,
     is_usable_item,
+    local_fit_size,
     local_row,
     matches_filter,
     merge_installed_items,
     model_item_lines,
     model_owner,
+    model_param_billions,
     model_published_text,
     model_row,
     model_score,
@@ -232,6 +234,37 @@ class TestBrowseHelpers:
         repos = [item.repo for item in filter_by_local_fit(items, 200)]
         assert repos == ["BAAI/embed", "Qwen/vl", "Qwen/unknown"]
         assert filter_by_local_fit(items, 0) == items
+
+    def test_model_param_billions_parses_names_and_moe(self) -> None:
+        assert model_param_billions("Qwen3-8B") == 8
+        assert model_param_billions("Qwen3-Coder-30B-A3B-Instruct-GGUF") == 30
+        assert model_param_billions("Mixtral-8x7B-Instruct") == 56
+        assert model_param_billions("Llama-3.1-8B-Instruct") == 8
+        assert model_param_billions("Qwen3.8-Flash-Next") is None
+
+    def test_local_fit_uses_single_quant_size_for_gguf_repos(self) -> None:
+        """官方 GGUF 仓库总大小是多精度之和，不能拿整仓体积判「不适合本机」。"""
+        gguf = ModelSummary(
+            repo="Qwen/Qwen3-8B-GGUF",
+            name="Qwen3-8B-GGUF",
+            tags=("gguf",),
+            storage_size=32 * 1024**3,
+        )
+        base = ModelSummary(repo="Qwen/Qwen3-8B", storage_size=10 * 1024**3)
+        huge = ModelSummary(
+            repo="Qwen/Qwen3-72B-GGUF",
+            name="Qwen3-72B-GGUF",
+            tags=("gguf",),
+            storage_size=100 * 1024**3,
+        )
+        assert local_fit_size(gguf) < 8 * 1024**3
+        assert local_fit_size(base) == base.storage_size
+        capacity = 12 * 1024**3
+        kept = [item.repo for item in filter_by_local_fit((gguf, base, huge), capacity)]
+        assert kept == [gguf.repo, base.repo]
+        # 同名仓库缺少可解析参数量时按未知保留，避免误杀官方新系列。
+        unknown = ModelSummary(repo="Qwen/Qwen3.8-Flash-Next-GGUF", tags=("gguf",), storage_size=99 * 1024**3)
+        assert filter_by_local_fit((unknown,), 1) == (unknown,)
 
     def test_model_score_is_bounded_and_rewards_popularity(self) -> None:
         low = ModelSummary(repo="Qwen/low", downloads=1, stars=0)

@@ -756,6 +756,32 @@ def test_all_and_local_keep_seen_category_items(window: Any) -> None:
     assert [item.repo for item in browse._result_items] == [paint.repo]
 
 
+def test_name_search_bypasses_local_fit(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """名称搜索是明确意图：停在「适合本机」也要显示官方大仓库的命中结果。"""
+    from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    official = ModelSummary(
+        repo="Qwen/Qwen2.5-72B-Instruct",
+        name="Qwen2.5-72B-Instruct",
+        tags=("text-generation",),
+        storage_size=135 * 1024**3,
+    )
+    browse._last_result = ModelSearch((official,), 1, 1, 30)
+    browse._source_filter = "online"
+    browse._filter_key = "local"
+    monkeypatch.setattr(browse, "_local_capacity", lambda: 1024**3)
+
+    browse._name_filter = ""
+    browse._render_results()
+    assert official.repo not in [item.repo for item in browse._result_items]
+
+    browse._name_filter = "Qwen"
+    browse._render_results()
+    assert [item.repo for item in browse._result_items] == [official.repo]
+
+
 def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """历史对话支持删除当前与清空全部；运行中禁止清理。"""
     from fcmd.apps.llm._llmw_qt_chat import _Conversation

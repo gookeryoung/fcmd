@@ -48,6 +48,7 @@ __all__ = [
     "merge_installed_items",
     "model_item_lines",
     "model_owner",
+    "model_param_billions",
     "model_row",
     "model_score",
     "open_path",
@@ -447,11 +448,59 @@ def filter_by_name(items: tuple[ModelSummary, ...], query: str) -> tuple[ModelSu
     )
 
 
+_PARAM_RE = re.compile(r"(?<![0-9A-Za-z])(\d+(?:\.\d+)?)\s*[bB](?![0-9A-Za-z])")
+_MOE_PARAM_RE = re.compile(r"(?<![0-9A-Za-z])(\d+)\s*[xX]\s*(\d+(?:\.\d+)?)\s*[bB](?![0-9A-Za-z])")
+"""模型名里的参数量：``8B`` / ``30B-A3B`` / ``8x7B``；用于估算单个 GGUF 的体积。"""
+
+GGUF_BYTES_PER_PARAM = 0.65
+"""GGUF 下载体积的保守估算（Q4 系）。仓库总大小是多精度之和，不能直接当单文件大小。"""
+
+
+def model_param_billions(name: str) -> float | None:
+    """从模型名 / 仓库名解析参数总量（十亿），解析不到返回 ``None``。
+
+    - ``Qwen3-8B`` → 8；``Qwen3-Coder-30B-A3B`` 取总参数 30（不是激活的 3）；
+    - ``Mixtral-8x7B`` → 56；``Llama-3.1-8B`` 取 8（不把版本号 3.1 当参数）。
+    """
+    text = name or ""
+    moe = [float(count) * float(per) for count, per in _MOE_PARAM_RE.findall(text)]
+    dense = [float(value) for value in _PARAM_RE.findall(text)]
+    values = [value for value in (*moe, *dense) if value > 0]
+    return max(values) if values else None
+
+
+def local_fit_size(item: ModelSummary) -> int:
+    """估算「适合本机」判定用的单模型体积（字节）。
+
+    GGUF 仓库的总大小是 Q2–Q8 多份量化的累加（例如 Qwen3-8B-GGUF 约 32 GB），
+    用它判断本机是否放得下会把几乎所有官方 GGUF 仓库误杀。这里按名字里的参数量
+    估算单份 Q4 GGUF；解析不到参数量时返回 0（未知，保留）。非 GGUF 仓库仍用
+    接口给出的整仓体积。
+    """
+    tags = {tag.casefold() for tag in item.tags}
+    is_gguf = "gguf" in tags or item.name.casefold().endswith("-gguf") or item.repo.casefold().endswith("-gguf")
+    if not is_gguf:
+        return item.storage_size
+    params = model_param_billions(item.name or item.repo.rsplit("/", 1)[-1])
+    if params is None:
+        return 0
+    return int(params * GGUF_BYTES_PER_PARAM * 1_000_000_000)
+
+
 def filter_by_local_fit(items: tuple[ModelSummary, ...], capacity_bytes: int) -> tuple[ModelSummary, ...]:
-    """筛选整仓体积不超过本机可承载容量的模型；未知容量或体积时保留。"""
+    """筛选单模型体积不超过本机可承载容量的模型；未知容量或体积时保留。
+
+    GGUF 仓库按单份量化估算（见 :func:`local_fit_size`），不会因为仓库里带齐
+    Q2–Q8 全部精度而被整仓体积误判为「不适合本机」。
+    """
     if capacity_bytes <= 0:
         return items
-    return tuple(item for item in items if item.storage_size <= 0 or item.storage_size <= capacity_bytes)
+    kept: list[ModelSummary] = []
+    for item in items:
+        size = local_fit_size(item)
+        if size <= 0 or size <= capacity_bytes:
+            kept.append(item)
+    return tuple(kept)
 
 
 def filter_models(items: tuple[ModelSummary, ...], task_label: str) -> tuple[ModelSummary, ...]:

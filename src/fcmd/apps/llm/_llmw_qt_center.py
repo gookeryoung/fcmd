@@ -1351,7 +1351,9 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
             base = [*result.items, *remembered] + [
                 summary for key, summary in self._installed_models.items() if key not in present
             ]
-        if self._filter_key == "local":
+        # 名称搜索是明确意图：即使停在「适合本机」也先展示全部命中，否则官方仓库
+        # 会因整仓体积（非 GGUF）被容量过滤掉，用户会以为「搜不到」。
+        if self._filter_key == "local" and not self._name_filter.strip():
             base = list(_llmw_models.filter_by_local_fit(tuple(base), self._local_capacity()))
         elif self._filter_key not in ("all", ""):
             base = [item for item in base if _llmw_models.matches_filter(item, self._filter_key)]
