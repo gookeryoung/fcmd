@@ -1,7 +1,7 @@
-"""llmw（Qt）运行页：对话 / 编程 / 画图三个用途页签的启动参数与服务启停。
+"""llmw（Qt）运行页：文本 / 图像 / 视频 / 音频四个能力域页签的启动参数与服务启停。
 
-对话 / 编程页签共用同一套 llama.cpp 启动参数表单（模型候选按能力标签区分），
-画图页签配置 sd.cpp 的扩散模型与启动参数；引擎安装 / 设为默认统一在设置页。
+文本页（对话 / 编程 / 推理合并）使用 llama.cpp 启动参数表单，图像页签配置
+sd.cpp 的扩散模型与启动参数；引擎安装 / 设为默认统一在设置页。
 参数校验、调优策略联动、显存余量检查与启动计划文本都放在模块级纯函数里
 （``parse_int`` / ``memory_guard`` / ``plan_lines``），GUI 类只负责取值与展示，
 便于单测。
@@ -108,10 +108,10 @@ __all__ = [
     "startup_args_tail",
 ]
 
-_PAINT_TAB = 2
-"""运行页页签顺序：对话 / 编程 / 画图 / 视频 / 音频。"""
-_USAGE_BY_TAB: dict[int, str] = {0: "chat", 1: "code", 3: "video", 4: "audio"}
-_USAGE_LABELS = {"chat": "对话", "code": "编程", "video": "视频", "audio": "音频"}
+_PAINT_TAB = 1
+"""运行页页签顺序：文本 / 图像 / 视频 / 音频（与模型页能力域一致）。"""
+_USAGE_BY_TAB: dict[int, str] = {0: "text", 2: "video", 3: "audio"}
+_USAGE_LABELS = {"text": "文本", "video": "视频", "audio": "音频"}
 
 
 # ---------------------------------------------------------------------- #
@@ -459,14 +459,14 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
     PAGE_KEY = "run"
 
     runningChanged = Signal(object)
-    """运行中模型的数量变化：``{"chat": 1, "paint": 1, ...}``（侧边栏徽标用）。"""
+    """运行中模型的数量变化：``{"text": 1, "paint": 1, ...}``（侧边栏徽标用）。"""
 
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(state, parent, spacing=6)
         self._syncing_tune = False
         self._active_param_key: str | None = None
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
-        self._usage = "chat"
+        self._usage = "text"
         self._running_counts: dict[str, int] = dict.fromkeys(_llmw_models.USAGE_KEYS, 0)
         self._paint_busy = False
         self._paint_probe: _llmpaint_server.PaintProbe | None = None
@@ -488,8 +488,8 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
     def _build(self) -> None:
         outer = self.body
 
-        # 运行页按用途分页：对话 / 编程共用同一套 llama.cpp 启动参数（模型候选按
-        # 能力标签区分），画图页签配 sd.cpp；引擎安装 / 默认引擎统一归设置页。
+        # 运行页按能力域分页：文本（对话 / 编程 / 推理）共用同一套 llama.cpp
+        # 启动参数，图像页签配 sd.cpp；引擎安装 / 默认引擎统一归设置页。
         # 药丸式页签（共享 tab_widget）：去掉 QTabBar 的整条基线（「多余横条」），
         # 透明底 + 圆角选中块，页签与内容同底色衔接；不参与等宽分配，靠左紧凑排列。
         self.tabs = tab_widget(self)
@@ -503,17 +503,12 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         service_layout.addWidget(self.scroll, 1)
         layout = self.scroll.body
 
-        self.chat_tab = QWidget(self.tabs)
-        self.chat_tab_layout = QVBoxLayout(self.chat_tab)
-        self.chat_tab_layout.setContentsMargins(0, 0, 0, 0)
-        self.chat_tab_layout.setSpacing(6)
-        self.code_tab = QWidget(self.tabs)
-        self.code_tab_layout = QVBoxLayout(self.code_tab)
-        self.code_tab_layout.setContentsMargins(0, 0, 0, 0)
-        self.code_tab_layout.setSpacing(6)
-        self.tabs.addTab(self.chat_tab, "对话")
-        self.tabs.addTab(self.code_tab, "编程")
-        self._service_layouts = {"chat": self.chat_tab_layout, "code": self.code_tab_layout}
+        self.text_tab = QWidget(self.tabs)
+        self.text_tab_layout = QVBoxLayout(self.text_tab)
+        self.text_tab_layout.setContentsMargins(0, 0, 0, 0)
+        self.text_tab_layout.setSpacing(6)
+        self.tabs.addTab(self.text_tab, "文本")
+        self._service_layouts = {"text": self.text_tab_layout}
 
         self.model_card = Card("选择模型")
         model_row = QHBoxLayout()
@@ -537,7 +532,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         layout.addWidget(self.model_card)
 
         self.params_card = Card("启动参数")
-        # 参数卡内容做成可替换的插槽：当前四个 LLM 用途装同一份 llama.cpp 启动
+        # 参数卡内容做成可替换的插槽：文本 / 视频 / 音频装同一份 llama.cpp 启动
         # 表单；视频 / 音频的本地推理后端落地后，只需在 _param_form_for 里返回
         # 各自的引擎表单，页签 / 卡片结构与下方持久化入口都不用动。
         self.param_host = QVBoxLayout()
@@ -554,11 +549,11 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         paint_layout = QVBoxLayout(paint_page)
         paint_layout.setContentsMargins(0, 0, 0, 0)
         paint_layout.setSpacing(6)
-        self.tabs.addTab(paint_page, "画图")
+        self.tabs.addTab(paint_page, "图像")
         self.paint_scroll = PageScroll(paint_page)
         paint_layout.addWidget(self.paint_scroll, 1)
         self._build_paint_tab(self.paint_scroll.body)
-        # 视频 / 音频与对话 / 编程共用同一套启动参数表单（两张卡的组织与画图页
+        # 视频 / 音频与文本共用同一套启动参数表单（两张卡的组织与图像页
         # 一致），只是模型候选按分类筛选；参数卡内容由 _param_form_for 决定，
         # 后端落地后换成独立引擎表单即可。
         for usage, label in (("video", "视频"), ("audio", "音频")):
@@ -570,10 +565,10 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
             setattr(self, f"{usage}_tab", page)
             self._service_layouts[usage] = tab_layout
         self.tabs.currentChanged.connect(self._on_tab_changed)
-        self._mount_service_page("chat")
+        self._mount_service_page("text")
 
     def _build_launch_form(self, parent: QWidget) -> QWidget:
-        """构建 llama.cpp 启动参数表单（四个 LLM 用途共用一份实例）。"""
+        """构建 llama.cpp 启动参数表单（文本 / 视频 / 音频共用一份实例）。"""
         form_root = QWidget(parent)
         form_layout = QVBoxLayout(form_root)
         form_layout.setContentsMargins(0, 0, 0, 0)
@@ -657,7 +652,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         return self.launch_form
 
     def _mount_service_page(self, usage: str) -> None:
-        """把启动参数页挂到当前用途的页签（对话 / 编程 / 视频 / 音频同一套表单）。"""
+        """把启动参数页挂到当前用途的页签（文本 / 视频 / 音频同一套表单）。"""
         self._usage = usage
         for target in self._service_layouts.values():
             target.removeWidget(self.service_page)
@@ -665,9 +660,9 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._install_param_form(self._param_form_for(usage))
 
     def _on_tab_changed(self, index: int) -> None:
-        """切换页签：对话 / 编程 / 视频 / 音频换模型候选并同步启动参数；画图只刷新状态。"""
+        """切换页签：文本 / 视频 / 音频换模型候选并同步启动参数；图像只刷新状态。"""
         if index == _PAINT_TAB:
-            # 进入画图页签就重扫一次扩散模型：下载 / 转换刚完成的模型不必等
+            # 进入图像页签就重扫一次扩散模型：下载 / 转换刚完成的模型不必等
             # 其它页面的信号（扩散权重不进 LLM 模型列表）。
             self.refresh_paint_assets()
             self.refresh_paint()
@@ -686,20 +681,18 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.status(f"已切到「{_USAGE_LABELS[usage]}」启动参数")
 
     def _usage_models(self) -> list[ModelEntry]:
-        """当前用途的模型候选：按能力标签或分类关键字筛选；空时回退全部。"""
-        if self._usage == "code":
-            rows = [entry for entry in self.state.models if "代码" in llmmodel.detect_model_tags(entry.path.name)]
-        elif self._usage in ("video", "audio"):
+        """当前用途的模型候选：视频 / 音频按分类筛选，文本页列出全部 LLM（含代码 / 推理）。"""
+        if self._usage in ("video", "audio"):
             rows = [entry for entry in self.state.models if _llmw_models.matches_category(entry.path.name, self._usage)]
         else:
-            rows = [entry for entry in self.state.models if "代码" not in llmmodel.detect_model_tags(entry.path.name)]
+            rows = list(self.state.models)
         return rows or list(self.state.models)
 
     def _build_paint_tab(self, layout: QVBoxLayout) -> None:
-        """画图页签：与对话 / 编程一致——顶部选模型 + 启停，下面只配启动参数。
+        """图像页签：与文本一致——顶部选模型 + 启停，下面只配启动参数。
 
         引擎安装 / 设为默认在设置页；这里决定「用哪个扩散模型、怎么加载、哪个端口」，
-        下方启动参数卡与「对话 / 编程」同构：加载方式方块、运行选项胶囊、高级参数
+        下方启动参数卡与文本页同构：加载方式方块、运行选项胶囊、高级参数
         折叠区、只读命令预览与自定义启动参数（保存 / 填入）。启停按钮的文案与配色
         对齐 LLM 服务的模型卡片。
         """
@@ -732,7 +725,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.paint_restart_button.clicked.connect(self._restart_paint_service)
         model_row.addWidget(self.paint_restart_button)
         self.paint_model_card.body.addLayout(model_row)
-        # 运行状态只看启停按钮文案 + 模型下拉的「✓ 已启动」标记（与对话 / 编程一致），
+        # 运行状态只看启停按钮文案 + 模型下拉的「✓ 已启动」标记（与文本页一致），
         # 不再在模型行右侧放状态胶囊，也不在下方占一行说明；明细在概览页。
         self.paint_engine_section.assetsLoaded.connect(self._report_paint_hint)
         self.paint_engine_section.assetsLoaded.connect(self._refresh_paint_marker)
@@ -798,7 +791,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.sync_running_badges()
 
     def _refresh_paint_marker(self) -> None:
-        """把「运行中的扩散模型」标记到画图下拉（与对话 / 编程的「✓ 已启动」一致）。"""
+        """把「运行中的扩散模型」标记到画图下拉（与文本页的「✓ 已启动」一致）。"""
         section = getattr(self, "paint_engine_section", None)
         if section is None:
             return
@@ -850,7 +843,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         return parse_paint_settings(settings)
 
     def refresh_paint_assets(self) -> None:
-        """模型目录变化后重扫扩散模型（画图页签里的下拉）并刷新提示。"""
+        """模型目录变化后重扫扩散模型（图像页签里的下拉）并刷新提示。"""
         self.paint_engine_section.refresh_assets()
         self._report_paint_hint()
 
@@ -865,7 +858,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.state.persist()
 
     def _save_paint_params(self) -> None:
-        """画图页签「保存参数」：把当前启动参数立即写进 llmw.json（全局只一份）。"""
+        """图像页签「保存参数」：把当前启动参数立即写进 llmw.json（全局只一份）。"""
         self.state.settings.paint = self.paint_settings()
         self.state.persist()
         self.status("画图启动参数已保存")
@@ -1723,7 +1716,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         return bool(self._paint_probe is not None and self._paint_probe.alive)
 
     def running_counts(self) -> dict[str, int]:
-        """按用途统计运行中的模型：对话 / 编程 / 画图 / 视频 / 音频。"""
+        """按用途统计运行中的模型：文本 / 图像 / 视频 / 音频。"""
         models = [state.model for state in self.state.alive_states]
         return _llmw_models.running_usage_counts(models, paint_alive=self.paint_alive())
 

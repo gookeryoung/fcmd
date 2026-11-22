@@ -27,7 +27,6 @@ from fcmd.apps.llm.llmdown import (
     model_series,
     series_rank,
 )
-from fcmd.apps.llm.llmmodel import detect_model_tags
 
 __all__ = [
     "DEFAULT_MODEL_FILTER",
@@ -571,22 +570,20 @@ def matches_category(name: str, filter_key: str) -> bool:
     return _keyword_match(lowered, _FILTER_KEYWORDS.get(filter_key, ()))
 
 
-USAGE_KEYS: tuple[str, ...] = ("chat", "code", "paint", "video", "audio")
+USAGE_KEYS: tuple[str, ...] = ("text", "paint", "video", "audio")
 """运行页页签的用途 key（与运行中模型的数量徽标同一顺序）。"""
 
 
 def running_usage(model_name: str) -> str:
     """运行中的模型名 → 用途 key（与运行页各页签的模型候选口径一致）。
 
-    视频 / 音频先按分类关键字判定（更具体），再按能力标签判「代码」，其余算「对话」；
-    画图是 sd.cpp 的独立服务，不经过这里（由调用方按画图服务存活情况单独计数）。
+    视频 / 音频先按分类关键字判定（更具体），其余（对话 / 编程 / 推理）统一算「文本」；
+    图像是 sd.cpp 的独立服务，不经过这里（由调用方按画图服务存活情况单独计数）。
     """
     for usage in ("video", "audio"):
         if matches_category(model_name, usage):
             return usage
-    if "代码" in detect_model_tags(model_name):
-        return "code"
-    return "chat"
+    return "text"
 
 
 def running_usage_counts(models: Sequence[str], *, paint_alive: bool = False) -> dict[str, int]:

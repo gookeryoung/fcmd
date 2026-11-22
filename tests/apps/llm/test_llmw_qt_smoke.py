@@ -274,15 +274,15 @@ def test_running_models_show_count_badges(window: Any) -> None:
     ]
     window.state.servicesChanged.emit(window.state.alive_states)
     bar = window.run_page.tabs.tabBar()
-    assert bar.badge(0) == 1  # 对话
-    assert bar.badge(1) == 1  # 编程
-    assert bar.badge(2) == 0
+    assert bar.badge(0) == 2  # 文本（对话 / 编程 / 推理合并）
+    assert bar.badge(1) == 0  # 图像
+    assert bar.badge(2) == 0  # 视频
     assert window.nav.badge("run") == 2
 
-    # 画图（sd.cpp）是独立后端：单独计数并落到「画图」页签
+    # 图像（sd.cpp）是独立后端：单独计数并落到「图像」页签
     window.run_page._paint_probe = _llmpaint_server.PaintProbe(None, True, True, True)
     window.run_page.sync_running_badges()
-    assert bar.badge(2) == 1
+    assert bar.badge(1) == 1
     assert window.nav.badge("run") == 3
 
     # 全部停止：页签与侧边栏徽标一起收起
@@ -291,7 +291,7 @@ def test_running_models_show_count_badges(window: Any) -> None:
     window.state.servicesChanged.emit([])
     window.run_page._paint_probe = None
     window.run_page.sync_running_badges()
-    assert [bar.badge(index) for index in range(bar.count())] == [0, 0, 0, 0, 0]
+    assert [bar.badge(index) for index in range(bar.count())] == [0, 0, 0, 0]
     assert window.nav.badge("run") == 0
 
 
@@ -326,7 +326,7 @@ def test_sidebar_badge_restores_paint_only_after_restart(
         restarted.overview.stop()
         QApplication.processEvents()
         assert restarted.run_page.running_counts()["paint"] == 1
-        assert restarted.run_page.tabs.tabBar().badge(2) == 1
+        assert restarted.run_page.tabs.tabBar().badge(1) == 1
         assert restarted.nav.badge("run") == 1
     finally:
         restarted.overview.stop()
@@ -369,13 +369,12 @@ def test_flow_page_builds_with_builtin_templates(window: Any) -> None:
 
 
 def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
-    """运行页分「对话 / 编程 / 画图 / 视频 / 音频」：前四项共用参数，画图只配启动参数与启停。"""
+    """运行页分「文本 / 图像 / 视频 / 音频」：文本共用参数，图像只配启动参数与启停。"""
     window.show_page("run")
     run = window.run_page
     assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == [
-        "对话",
-        "编程",
-        "画图",
+        "文本",
+        "图像",
         "视频",
         "音频",
     ]
@@ -385,14 +384,11 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     assert bar.objectName() == "PillTabBar"
     assert bar.drawBase() is False
     assert bar.expanding() is False
-    # 对话 / 编程共用同一套启动参数表单，切页签时整页搬家。
-    assert run.service_page.parent() is run.chat_tab
-    run.tabs.setCurrentIndex(1)
-    QApplication.processEvents()
-    assert run.service_page.parent() is run.code_tab
-    # 视频 / 音频与画图同构：仍是「选择模型 + 启动参数」两张卡；参数表单先复用
+    # 文本页独占一套启动参数表单；视频 / 音频切页签时整页搬家。
+    assert run.service_page.parent() is run.text_tab
+    # 视频 / 音频与图像同构：仍是「选择模型 + 启动参数」两张卡；参数表单先复用
     # 同一份 llama.cpp 表单，后端落地后由 _param_form_for 换成引擎表单。
-    for index, usage in ((3, "video"), (4, "audio")):
+    for index, usage in ((2, "video"), (3, "audio")):
         run.tabs.setCurrentIndex(index)
         QApplication.processEvents()
         tab = getattr(run, f"{usage}_tab")
@@ -403,7 +399,7 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
         assert run.params_card.title() == "启动参数"
     run.tabs.setCurrentIndex(0)
     QApplication.processEvents()
-    assert run.service_page.parent() is run.chat_tab
+    assert run.service_page.parent() is run.text_tab
 
     # 画图页签：选模型 + 启停按钮，配置在下面的「启动参数」卡片。
     assert run.paint_model_card.title() == "选择模型"
@@ -528,7 +524,7 @@ def test_paint_status_controls_buttons_only(window: Any) -> None:
 
     window.show_page("run")
     run = window.run_page
-    run.tabs.setCurrentIndex(2)
+    run.tabs.setCurrentIndex(1)
     probe = _llmpaint_server.PaintProbe(
         state=None,
         alive=False,
@@ -581,7 +577,7 @@ def test_paint_fill_params_matches_command_preview(window: Any, tmp_path: Path) 
     asset = _llmpaint.PaintAsset(main, "diffusion", "z-image", 16)
     window.show_page("run")
     run = window.run_page
-    run.tabs.setCurrentIndex(2)
+    run.tabs.setCurrentIndex(1)
     section = run.paint_engine_section
     drain_background_tasks()  # 切页签会重扫扩散模型：等它落地再注入测试资产
     section._settings["model_dir"] = str(tmp_path)
@@ -616,11 +612,11 @@ def test_paint_tab_entry_rescans_diffusion_models(window: Any, monkeypatch: pyte
     """切到画图页签会重扫扩散模型，刚下载完的模型不必等其它页面的信号。"""
     window.show_page("run")
     run = window.run_page
-    run.tabs.setCurrentIndex(1)
+    run.tabs.setCurrentIndex(0)
     QApplication.processEvents()
     calls: list[str] = []
     monkeypatch.setattr(run, "refresh_paint_assets", lambda: calls.append("paint"))
-    run.tabs.setCurrentIndex(2)
+    run.tabs.setCurrentIndex(1)
     QApplication.processEvents()
     assert calls == ["paint"]
 
@@ -636,7 +632,7 @@ def test_paint_missing_component_offers_download(window: Any, tmp_path: Path) ->
     run = window.run_page
     for _ in range(5):
         QApplication.processEvents()
-    run.tabs.setCurrentIndex(2)
+    run.tabs.setCurrentIndex(1)
     section = run.paint_engine_section
     section._settings["model_dir"] = str(tmp_path)
     section._apply_assets(_llmpaint.PaintAssets((asset,), (tmp_path,)))
@@ -659,7 +655,7 @@ def test_paint_missing_model_hint_points_to_incomplete_download(window: Any, tmp
     run = window.run_page
     for _ in range(5):
         QApplication.processEvents()
-    run.tabs.setCurrentIndex(2)
+    run.tabs.setCurrentIndex(1)
     QApplication.processEvents()
     section = run.paint_engine_section
     section._settings["model_dir"] = str(tmp_path)
