@@ -19,7 +19,6 @@ Qt 窗口把「跨页共享的数据」放在这里，页面只订阅信号、�
 from __future__ import annotations
 
 import contextlib
-from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +50,7 @@ from fcmd.apps.llm.llmbase import (
     ServeError,
     ServeState,
 )
+from fcmd.gui.qt.logdialog import LogChannelMixin
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -117,7 +117,7 @@ def service_snapshot() -> tuple[list[ServeState], list[ServeState]]:
     return states, [state for state in states if llmserve.process_alive(state.pid, state.create_time)]
 
 
-class LlmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
+class LlmState(LogChannelMixin, QObject):  # pragma: no cover - 依赖 Qt 事件循环
     """跨页共享状态：模型 / 硬件 / 服务 / 选中项，以及状态栏与日志通道。"""
 
     modelsChanged = Signal(object)
@@ -156,7 +156,7 @@ class LlmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
         self.alive_states: list[ServeState] = []
         self.busy = False
         self.closing = False
-        self.log_buffer: deque[str] = deque(maxlen=1000)
+        self._init_log_channel()
         self.page_statuses: dict[str, str] = {}
         self._loading_tasks: dict[str, str] = {}
         self.scanning = False
@@ -165,19 +165,6 @@ class LlmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     # ------------------------------------------------------------------ #
     # 通道
     # ------------------------------------------------------------------ #
-    def log(self, message: str) -> None:
-        """写服务日志：缓冲一份供「帮助 → 服务日志…」回放，同时广播给已打开的窗口。"""
-        self.log_buffer.append(message)
-        self.logLine.emit(message)
-
-    def log_text(self) -> str:
-        """当前缓冲的服务日志（换行拼接，供日志窗口首次打开时回放）。"""
-        return "\n".join(self.log_buffer)
-
-    def clear_log(self) -> None:
-        """清空服务日志缓冲（日志窗口点「清空」时同步）。"""
-        self.log_buffer.clear()
-
     def status(self, text: str) -> None:
         """更新状态栏（落在当前页面）。"""
         self.statusText.emit(text)

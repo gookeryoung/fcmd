@@ -43,6 +43,8 @@ from fcmd.gui.qt.widgets import (
     PathRow,
     PillTabBar,
     ProgressRow,
+    RowDetailMixin,
+    RowListWidget,
     SegmentBar,
     SelectionRow,
     StatusTag,
@@ -569,6 +571,52 @@ def test_item_row_builds_slots_and_expands() -> None:
         assert row.metrics_label.text() == "3.0 GB"
     finally:
         row.deleteLater()
+
+
+class _DetailHost(RowDetailMixin):
+    """最小宿主：只验证 mixin 自身的展开态管理。"""
+
+
+def test_row_detail_mixin_expands_one_row_at_a_time() -> None:
+    """同一 slot 只保留一个展开行；切换行时详情控件搬到新行，收起后回到隐藏。"""
+    host = _DetailHost()
+    rows = RowListWidget()
+    detail = QWidget()
+    first = ItemRow("A")
+    second = ItemRow("B")
+    try:
+        for row in (first, second):
+            item = QListWidgetItem()
+            rows.addItem(item)
+            rows.setItemWidget(item, row)
+        host.bind_row_detail("main", rows, detail)
+        assert host.expanded_row("main") is None
+
+        host.toggle_row("main", first)
+        assert host.expanded_row("main") is first
+        assert first.is_expanded() and not second.is_expanded()
+        assert first.detail_layout.indexOf(detail) >= 0
+        assert rows.currentRow() == 0
+
+        host.toggle_row("main", second)
+        assert host.expanded_row("main") is second
+        assert not first.is_expanded() and second.is_expanded()
+        assert first.detail_layout.indexOf(detail) == -1
+        assert rows.currentRow() == 1
+
+        host.toggle_row("main", second)
+        assert host.expanded_row("main") is None
+        assert not second.is_expanded()
+        assert detail.isHidden()
+
+        host.expand_row("main", first)
+        host.detach_row_detail("main")
+        assert host.expanded_row("main") is None
+        assert first.is_expanded() is False
+        assert detail.isHidden()
+    finally:
+        rows.deleteLater()
+        detail.deleteLater()
 
 
 def test_item_row_groups_tags_and_actions() -> None:

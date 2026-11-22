@@ -78,7 +78,6 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._chat_page: Any = None
         self._models_page: Any = None
         self._settings_page: Any = None
-        self._log_dialog: Any = None
         self._bench_dialog: Any = None
 
         self.add_pages(PAGES, {spec.key: self._factory(spec.key) for spec in PAGES})
@@ -129,20 +128,11 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def show_service_log(self) -> None:
         """打开（或聚焦）服务日志窗口；历史来自 ``LlmState`` 缓冲。"""
-        if self._log_dialog is None:
-            from fcmd.gui.qt.logdialog import LogDialog
-
-            self._log_dialog = LogDialog(
-                "服务日志",
-                text=self.state.log_text(),
-                append=self.state.logLine,
-                on_clear=self.state.clear_log,
-                hint="汇总服务启动 / 停止、模型扫描与下载等操作；复制、清空、导出见日志工具条。",
-                parent=self,
-            )
-        self._log_dialog.show()
-        self._log_dialog.raise_()
-        self._log_dialog.activateWindow()
+        self.state.show_log_dialog(
+            "服务日志",
+            "汇总服务启动 / 停止、模型扫描与下载等操作；复制、清空、导出见日志工具条。",
+            parent=self,
+        )
 
     def show_bench(self) -> None:
         """打开（或聚焦）性能测试窗口；被测服务来自共享状态。"""
@@ -256,8 +246,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return False
         if self._chat_page is not None:
             self._chat_page.close()
-        if self._log_dialog is not None:
-            self._log_dialog.close()
+        self.state.close_log_dialog()
         if self._bench_dialog is not None:
             self._bench_dialog.stop()
             self._bench_dialog.close()

@@ -1694,7 +1694,7 @@ def test_service_log_moves_to_help_menu(window: Any) -> None:
     window.state.log("启动前日志")
     window.service_log_action.trigger()
     QApplication.processEvents()
-    dialog = window._log_dialog
+    dialog = window.state._log_dialog
     assert dialog is not None
     assert dialog.isVisible()
     assert "启动前日志" in dialog.log_view.text()

@@ -405,7 +405,7 @@ HELP: dict[str, str] = {
 }
 
 # 固化帮助的生成环境：解释器版本 / 平台 / 渲染宽度（不一致时回退真实渲染）
-PY_VERSION = (3, 14)
+PY_VERSION = (3, 13)
 PLATFORM = "win32"
 HELP_WIDTH = 80
 

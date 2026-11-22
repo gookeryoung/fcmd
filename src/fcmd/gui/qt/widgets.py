@@ -87,6 +87,7 @@ __all__ = [
     "PathRow",
     "PillTabBar",
     "ProgressRow",
+    "RowDetailMixin",
     "RowListWidget",
     "SegmentBar",
     "SelectionRow",
@@ -960,6 +961,101 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         _qt_icons.set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down", tone="muted")
         self.expand_button.setToolTip(self._collapse_hint if expanded else self._expand_hint)
         self.expand_button.setAccessibleName(self._collapse_hint if expanded else self._expand_hint)
+
+
+class RowDetailMixin:
+    """可展开行卡列表的展开态 mixin：同一时间只展开一行，详情控件在行内复用。
+
+    页面把「列表 + 一个复用的详情控件」注册到 ``slot`` 下（同一窗口有多份列表时
+    各用一个 slot 区分），展开 / 收起、把详情挂进 ``row.detail_layout``、重算行高
+    都由这里处理。详情内容由页面覆盖 :meth:`render_row_detail` 在展开时刷新。
+
+    行卡骨架来自 :class:`ItemRow`；本 mixin 只碰 ``is_expanded`` / ``set_expanded``
+    / ``detail_layout`` 与列表的 ``itemWidget`` / ``item`` / ``sync_row_widths``，
+    不假设行内的业务控件。
+    """
+
+    _row_details: dict[str, tuple[RowListWidget, QWidget]]
+    _expanded_rows: dict[str, ItemRow | None]
+
+    def bind_row_detail(self, slot: str, rows: RowListWidget, detail: QWidget) -> None:
+        """注册一组「行列表 + 复用详情控件」；同一 slot 可重复注册（列表重建后）。"""
+        if not hasattr(self, "_row_details"):
+            self._row_details = {}
+            self._expanded_rows = {}
+        self._row_details[slot] = (rows, detail)
+        self._expanded_rows.setdefault(slot, None)
+
+    def expanded_row(self, slot: str) -> ItemRow | None:
+        """当前展开的行；没有展开行时返回 ``None``。"""
+        return self._expanded_rows.get(slot)
+
+    def render_row_detail(self, row: ItemRow) -> None:
+        """展开时刷新详情内容；默认无操作，页面按需覆盖。"""
+
+    def toggle_row(self, slot: str, row: ItemRow) -> None:
+        """展开 / 收起一行，并把该行设为当前行。"""
+        self.focus_row(slot, row)
+        if row.is_expanded():
+            row.set_expanded(False)
+            self._row_details[slot][1].setVisible(False)
+            self._expanded_rows[slot] = None
+            self.update_row_height(slot, row)
+            return
+        self.expand_row(slot, row)
+
+    def expand_row(self, slot: str, row: ItemRow) -> None:
+        """展开指定行：先收起上一行，再挂详情并重算行高。"""
+        detail = self._row_details[slot][1]
+        current = self._expanded_rows.get(slot)
+        if current is not None and current is not row:
+            current.set_expanded(False)
+            self.update_row_height(slot, current)
+        row.detail_layout.addWidget(detail)
+        detail.setVisible(True)
+        row.set_expanded(True)
+        self._expanded_rows[slot] = row
+        self.render_row_detail(row)
+        self.update_row_height(slot, row)
+
+    def focus_row(self, slot: str, row: ItemRow) -> None:
+        """把行设为列表当前行（用于双击 / 行内动作前的聚焦）。"""
+        rows, _detail = self._row_details[slot]
+        for index in range(rows.count()):
+            if rows.itemWidget(rows.item(index)) is row:
+                rows.setCurrentRow(index)
+                return
+
+    def detach_row_detail(self, slot: str) -> None:
+        """列表重建前把复用的详情控件从旧行摘下来，避免随旧行一起销毁。"""
+        _rows, detail = self._row_details[slot]
+        detail.setParent(None)
+        detail.setVisible(False)
+        current = self._expanded_rows.get(slot)
+        if current is not None:
+            current.set_expanded(False)
+        self._expanded_rows[slot] = None
+
+    def refresh_expanded_height(self, slot: str) -> None:
+        """详情内容变化后重算当前展开行的高度。"""
+        row = self._expanded_rows.get(slot)
+        if row is not None:
+            self.update_row_height(slot, row)
+
+    def update_row_height(self, slot: str, row: ItemRow | None) -> None:
+        """按行卡当前 sizeHint 更新对应列表项的尺寸提示。"""
+        if row is None:
+            return
+        rows, _detail = self._row_details[slot]
+        layout = row.layout()
+        if layout is not None:
+            layout.activate()
+        for index in range(rows.count()):
+            item = rows.item(index)
+            if rows.itemWidget(item) is row:
+                item.setSizeHint(QSize(0, row.sizeHint().height()))
+                rows.sync_row_widths()
+                return
 
 
 class Card(QFrame):  # pragma: no cover - Qt 控件

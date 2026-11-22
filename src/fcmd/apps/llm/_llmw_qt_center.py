@@ -88,6 +88,7 @@ from fcmd.apps.llm.llmdown import (
 from fcmd.gui.qt.page import AppPage
 from fcmd.gui.qt.widgets import (
     ItemRow,
+    RowDetailMixin,
     RowListWidget,
     StatusTag,
     button,
@@ -714,7 +715,7 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self._download_files(repo, pending)
 
 
-class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
+class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
     """浏览页：筛选条、自定义结果行与行内展开的详情元数据。"""
 
     PAGE_KEY = "models"
@@ -727,7 +728,6 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self.current_info: ModelInfo | None = None
         self._last_result: ModelSearch | None = None
         self._result_items: tuple[ModelSummary, ...] = ()
-        self._expanded_row: _ModelItemRow | None = None
         self._page = 1
         view = state.settings.model_view or {}
         filter_key = view.get("filter")
@@ -904,6 +904,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         )
         self.detail_view.heightChanged.connect(self._on_detail_height_changed)
         self.detail_view.setVisible(False)
+        self.bind_row_detail("models", self.models, self.detail_view)
 
         self.refresh_installed()
         self.filter_buttons[self._filter_key].setChecked(True)
@@ -1498,7 +1499,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
             items[0].repo if items else None,
         )
         self._result_items = items
-        self._detach_detail()
+        self.detach_row_detail("models")
         self._detail_generation += 1
         self.current_repo = None
         self.current_info = None
@@ -1614,63 +1615,25 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
 
     def _on_detail_height_changed(self) -> None:
         """详情页签内容变化（切页签 / 文件清单加载完）后重算展开行高度。"""
-        if self._expanded_row is not None:
-            self._update_row_height(self._expanded_row)
+        self.refresh_expanded_height("models")
 
     def _on_row_toggle(self, row: _ModelItemRow) -> None:
         """展开一行并在行下方挂详情；同一时间只展开一行。"""
-        self._focus_row(row)
-        if row.is_expanded():
-            row.set_expanded(False)
-            self.detail_view.setVisible(False)
-            self._expanded_row = None
-            self._update_row_height(row)
-            return
-        if self._expanded_row is not None and self._expanded_row is not row:
-            self._expanded_row.set_expanded(False)
-            self._update_row_height(self._expanded_row)
-        row.detail_layout.addWidget(self.detail_view)
-        self.detail_view.setVisible(True)
-        row.set_expanded(True)
-        self._expanded_row = row
-        self._update_row_height(row)
-        if self.current_repo != row.repo:
+        self.toggle_row("models", row)
+
+    def render_row_detail(self, row: ItemRow) -> None:
+        """展开时按需拉取该仓库的详情（仅本地模型跳过网络请求）。"""
+        if isinstance(row, _ModelItemRow) and self.current_repo != row.repo:
             self.load_repo(row.repo, online=row.downloadable)
 
     def _expand_repo(self, repo: str) -> None:
         for index in range(self.models.count()):
             row = self.models.itemWidget(self.models.item(index))
             if isinstance(row, _ModelItemRow) and row.repo == repo:
-                self.models.setCurrentRow(index)
-                if not row.is_expanded():
-                    self._on_row_toggle(row)
-                return
-
-    def _focus_row(self, row: _ModelItemRow) -> None:
-        for index in range(self.models.count()):
-            if self.models.itemWidget(self.models.item(index)) is row:
-                self.models.setCurrentRow(index)
-                return
-
-    def _detach_detail(self) -> None:
-        """列表重建前把复用的详情控件从旧行摘下来，避免随旧行一起销毁。"""
-        self.detail_view.setParent(None)
-        self.detail_view.setVisible(False)
-        if self._expanded_row is not None:
-            self._expanded_row.set_expanded(False)
-            self._expanded_row = None
-
-    def _update_row_height(self, row: _ModelItemRow | None) -> None:
-        if row is None:
-            return
-        layout = row.layout()
-        if layout is not None:
-            layout.activate()
-        for index in range(self.models.count()):
-            item = self.models.item(index)
-            if self.models.itemWidget(item) is row:
-                item.setSizeHint(QSize(0, row.sizeHint().height()))
-                self.models.sync_row_widths()
+                if row.is_expanded():
+                    self.focus_row("models", row)
+                else:
+                    self.toggle_row("models", row)
                 return
 
     def load_repo(self, repo: str, online: bool = True) -> None:
@@ -1683,7 +1646,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self.current_repo = repo
         self.current_info = None
         self.detail_view.reset(repo, online=online)
-        self._update_row_height(self._expanded_row)
+        self.refresh_expanded_height("models")
         if not online:
             self._log(f"{repo} 是仅本地模型，跳过在线详情与文件清单")
             return
@@ -1702,7 +1665,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         if generation != self._detail_generation:
             return
         self.detail_view.set_error(f"详情加载失败：{message}")
-        self._update_row_height(self._expanded_row)
+        self.refresh_expanded_height("models")
         self._log(f"详情加载失败 {repo}: {message}")
 
     def _render_detail(self, generation: int, info: ModelInfo) -> None:
@@ -1710,7 +1673,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
             return
         self.current_info = info
         self.detail_view.render(info)
-        self._update_row_height(self._expanded_row)
+        self.refresh_expanded_height("models")
         self._log(f"已加载模型详情: {info.summary.repo}")
 
     def _log(self, message: str) -> None:

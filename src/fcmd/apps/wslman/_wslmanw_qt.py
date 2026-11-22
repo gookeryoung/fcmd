@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -67,6 +67,7 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command, spawn_detached
 from fcmd.apps.wslman._transfer import sha256_file
+from fcmd.gui.qt.logdialog import LogChannelMixin
 from fcmd.gui.qt.page import PageBody, PageSpec
 from fcmd.gui.qt.widgets import (
     Card,
@@ -75,6 +76,7 @@ from fcmd.gui.qt.widgets import (
     ItemRow,
     PageScroll,
     PathRow,
+    RowDetailMixin,
     RowListWidget,
     StatusTag,
     button,
@@ -87,7 +89,7 @@ from fcmd.gui.qt.widgets import (
     set_button_text,
 )
 from fcmd.gui.qt.window import QtMainWindow
-from fcmd.gui.qt.workers import periodic, submit, submit_daemon
+from fcmd.gui.qt.workers import EventBridge, ProgressBridge, periodic, submit, submit_daemon
 from fcmd.infras.download import SpeedMeter, format_speed
 
 if TYPE_CHECKING:
@@ -143,24 +145,6 @@ def _images_note_text(catalog: Any) -> str:
     if catalog.from_cache:
         return f"本地缓存 · 更新于 {stamp}"
     return f"{sources} · 更新于 {stamp}"
-
-
-class _LogBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台任务的日志行信号（跨线程排队到主线程）。"""
-
-    message = Signal(str)
-
-
-class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """下载进度信号：``(累计字节, 总量 / None)``，跨线程排队到主线程刷新状态栏。"""
-
-    changed = Signal(int, object)
-
-
-class _ExportProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """导出进度信号：``(发行版, 累计字节, 总量 / None)``。"""
-
-    changed = Signal(str, int, object)
 
 
 def _state_tone(state: str) -> str:
@@ -439,7 +423,7 @@ class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.url.setPlainText(values.get("下载地址", "—"))
 
 
-class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+class WslmanQtWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """WSL 实例管理：侧边栏分页（实例 / 镜像 / 设置）+ 后台任务。
 
     任务日志不占分页：顶部「帮助 → 任务日志…」打开非模态日志窗口，历史来自
@@ -471,13 +455,10 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._active_entry = ""
         self._task_page = ""
         self._closing = False
-        self._log_lines: list[str] = []
-        self._log_dialog: Any = None
-        self._bridge: _LogBridge | None = None
+        self._init_log_channel(limit=_LOG_LINES_MAX)
+        self._bridge: EventBridge | None = None
         self._download_meter = SpeedMeter()
         self._export_meter = SpeedMeter()
-        self._progress_bridge: _ProgressBridge | None = None
-        self._export_bridge: _ExportProgressBridge | None = None
         self._poll: QTimer | None = None
         self._filter_timer: QTimer | None = None
         self._buttons: list[QPushButton] = []
@@ -494,10 +475,10 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             settings_path=settings_path,
             theme_app="wslmanw",
         )
-        self._progress_bridge = _ProgressBridge(self)
-        self._progress_bridge.changed.connect(self._on_download_progress)
-        self._export_bridge = _ExportProgressBridge(self)
-        self._export_bridge.changed.connect(self._on_export_progress)
+        self._progress_bridge = ProgressBridge(self)
+        self._export_bridge = EventBridge(self)
+        self._progress_bridge.progress.connect(self._on_download_event)
+        self._export_bridge.event.connect(self._on_export_event)
         # 四页都很轻（表格 + 表单），建窗即构造：镜像页 / 设置页的控件是设置持久化
         # 与下载动作的读取来源，延迟构建会让「没切到该页就关窗」时缺控件。
         # 但提前构造的页在未插入页面栈前是主窗口的子控件，默认可见并落在 (0,0)，
@@ -533,24 +514,11 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def show_log(self) -> None:
         """打开（或聚焦）任务日志窗口；历史来自 ``_log_lines`` 缓冲。"""
-        if self._log_dialog is None:
-            from fcmd.gui.qt.logdialog import LogDialog
-
-            self._log_dialog = LogDialog(
-                "任务日志",
-                text="\n".join(self._log_lines),
-                append=self.logLine,
-                on_clear=self._clear_log,
-                hint="汇总启动 / 停止、导出、安装与下载操作；复制、清空、导出见日志工具条。",
-                parent=self,
-            )
-        self._log_dialog.show()
-        self._log_dialog.raise_()
-        self._log_dialog.activateWindow()
-
-    def _clear_log(self) -> None:
-        """日志窗口「清空」同时清掉缓冲，再次打开不会回放已清掉的行。"""
-        self._log_lines.clear()
+        self.show_log_dialog(
+            "任务日志",
+            "汇总启动 / 停止、导出、安装与下载操作；复制、清空、导出见日志工具条。",
+            parent=self,
+        )
 
     def show_page(self, key: str) -> None:
         """切页：进入镜像页时先回显本地缓存，再后台刷新在线清单。
@@ -611,7 +579,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.distro_list.itemDoubleClicked.connect(self._on_distro_double_clicked)
         self.distro_detail_view = _DistroDetailView(page)
         self.distro_detail_view.setVisible(False)
-        self._expanded_distro_row: _DistroItemRow | None = None
+        self.bind_row_detail("distros", self.distro_list, self.distro_detail_view)
         body.addWidget(self.distro_list, 1)
         return page
 
@@ -738,7 +706,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.image_list.itemDoubleClicked.connect(self._on_image_double_clicked)
         self.image_detail_view = _ImageDetailView(page)
         self.image_detail_view.setVisible(False)
-        self._expanded_row: _ImageItemRow | None = None
+        self.bind_row_detail("images", self.image_list, self.image_detail_view)
         body.addWidget(self.image_list, 1)
 
         self._filter_timer = QTimer(self)
@@ -899,8 +867,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         # 完成提示不应写到日志页的状态栏上。
         self._task_page = self.current_page()
         self._cancel = threading.Event()
-        self._bridge = _LogBridge(self)
-        self._bridge.message.connect(self._log)
+        self._bridge = EventBridge(self)
+        self._bridge.event.connect(self._on_log_event)
         self._set_task_status(f"{label}…")
         self._set_buttons(False)
         # 任务进行中在状态栏右侧显示加载条；可预估总量的下载会切成确定进度。
@@ -984,6 +952,21 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _set_task_status(self, text: str) -> None:
         """把任务状态写到发起任务的那一页（没有记录时退回当前页）。"""
         self.set_page_status(self._task_page or self.current_page(), text)
+
+    def _on_log_event(self, message: Any) -> None:
+        """共享事件桥 → 任务日志（桥只对 ``str`` 载荷生效）。"""
+        if isinstance(message, str):
+            self._log(message)
+
+    def _on_download_event(self, payload: Any) -> None:
+        """共享进度桥的 ``(累计字节, 总量 / None)`` → 状态栏 / 进度条。"""
+        done, total = payload
+        self._on_download_progress(done, total)
+
+    def _on_export_event(self, payload: Any) -> None:
+        """共享事件桥的 ``(发行版, 累计字节, 总量 / None)`` → 导出进度。"""
+        name, done, total = payload
+        self._on_export_progress(name, done, total)
 
     def _on_download_progress(self, done: int, total: object) -> None:
         """下载进度：状态栏写「百分比 · 已下载 / 总量 · 速度 · 剩余」，右侧进度条同步。
@@ -1118,8 +1101,9 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         """按当前视图重建行卡：保留选中行与展开行（只在名单变化时调用）。"""
         view = self.view
         selected = self._selected()
-        expanded = self._expanded_distro_row.distro.name if self._expanded_distro_row is not None else ""
-        self._detach_distro_detail()
+        expanded = self.expanded_row("distros")
+        expanded_name = expanded.distro.name if isinstance(expanded, _DistroItemRow) else ""
+        self.detach_row_detail("distros")
         self.distro_list.clear()
         distros = tuple(view.distros) if view is not None else ()
         for distro in distros:
@@ -1142,11 +1126,11 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 target = found
         if target >= 0:
             self.distro_list.setCurrentRow(target)
-        if expanded:
+        if expanded_name:
             for index in range(self.distro_list.count()):
                 row = self.distro_list.itemWidget(self.distro_list.item(index))
-                if isinstance(row, _DistroItemRow) and row.distro.name == expanded:
-                    self._expand_distro_row(row)
+                if isinstance(row, _DistroItemRow) and row.distro.name == expanded_name:
+                    self.expand_row("distros", row)
                     break
         self._show_details()
 
@@ -1175,53 +1159,15 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _on_distro_toggle(self, row: _DistroItemRow) -> None:
         """展开一行并在行下方挂详情；同一时间只展开一行（与镜像行一致）。"""
-        self._focus_distro_row(row)
-        if row.is_expanded():
-            row.set_expanded(False)
-            self.distro_detail_view.setVisible(False)
-            self._expanded_distro_row = None
-            self._update_distro_row_height(row)
-            return
-        self._expand_distro_row(row)
+        self.toggle_row("distros", row)
 
-    def _expand_distro_row(self, row: _DistroItemRow) -> None:
-        if self._expanded_distro_row is not None and self._expanded_distro_row is not row:
-            self._expanded_distro_row.set_expanded(False)
-            self._update_distro_row_height(self._expanded_distro_row)
-        size, estimated = self.sizes.get(row.distro.name, (None, False))
-        self.distro_detail_view.render(row.distro, size, estimated)
-        row.detail_layout.addWidget(self.distro_detail_view)
-        self.distro_detail_view.setVisible(True)
-        row.set_expanded(True)
-        self._expanded_distro_row = row
-        self._update_distro_row_height(row)
-
-    def _focus_distro_row(self, row: _DistroItemRow) -> None:
-        for index in range(self.distro_list.count()):
-            if self.distro_list.itemWidget(self.distro_list.item(index)) is row:
-                self.distro_list.setCurrentRow(index)
-                return
-
-    def _update_distro_row_height(self, row: _DistroItemRow | None) -> None:
-        if row is None:
-            return
-        layout = row.layout()
-        if layout is not None:
-            layout.activate()
-        for index in range(self.distro_list.count()):
-            item = self.distro_list.item(index)
-            if self.distro_list.itemWidget(item) is row:
-                item.setSizeHint(QSize(0, row.sizeHint().height()))
-                self.distro_list.sync_row_widths()
-                return
-
-    def _detach_distro_detail(self) -> None:
-        """列表重建前把复用的详情控件从旧行摘下来，避免随旧行一起销毁。"""
-        self.distro_detail_view.setParent(None)
-        self.distro_detail_view.setVisible(False)
-        if self._expanded_distro_row is not None:
-            self._expanded_distro_row.set_expanded(False)
-            self._expanded_distro_row = None
+    def render_row_detail(self, row: ItemRow) -> None:
+        """展开时刷新详情内容（实例与镜像各自一套标题 / 指标）。"""
+        if isinstance(row, _DistroItemRow):
+            size, estimated = self.sizes.get(row.distro.name, (None, False))
+            self.distro_detail_view.render(row.distro, size, estimated)
+        elif isinstance(row, _ImageItemRow):
+            self.image_detail_view.render(row.entry)
 
     def _show_details(self) -> None:
         """选中行变化时只更新状态栏摘要与工具栏启停按钮（详情在行内）。
@@ -1252,7 +1198,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         row = self._row_for_distro(name)
         if row is None:
             return
-        self._focus_distro_row(row)
+        self.focus_row("distros", row)
         if row.distro.state == "running":
             self._terminate_selected()
         else:
@@ -1271,7 +1217,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         row = self._row_for_distro(name)
         if row is None or self._busy:
             return
-        self._focus_distro_row(row)
+        self.focus_row("distros", row)
         dialog = _DistroConfigDialog(self, row.distro, w.terminal_cwd(self.settings, row.distro.name))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1295,11 +1241,12 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._persist_settings(self.geometry_text())
 
     def _log(self, text: str) -> None:
-        """追加一行任务日志：写缓冲（限量）并发信号给已打开的日志窗口。"""
-        line = f"[{time.strftime('%H:%M:%S')}] {text}"
-        self._log_lines.append(line)
-        del self._log_lines[:-_LOG_LINES_MAX]
-        self.logLine.emit(line)
+        """追加一行任务日志（时间戳由 :meth:`format_log_line` 统一加）。"""
+        self.log(text)
+
+    def format_log_line(self, message: str) -> str:
+        """任务日志前缀：``[HH:MM:SS]``。"""
+        return f"[{time.strftime('%H:%M:%S')}] {message}"
 
     # ------------------------------------------------------------------ #
     # 操作
@@ -1415,11 +1362,9 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             if not check.ok:
                 raise runtime_error(f"目标卷空间不足：{check.detail}", hint="换一个位置或清理磁盘")
             parts = cli._export_parts(path, "none")
-            bridge = self._export_bridge
 
             def report(done: int, total: int | None) -> None:
-                if bridge is not None:
-                    bridge.changed.emit(current.name, done, total)
+                self._export_bridge.event.emit((current.name, done, total))
 
             try:
                 size, digest = cli._export_stream(
@@ -1489,7 +1434,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                     step for step, flag in (("停止", running), ("备份", backup is not None), ("注销", True)) if flag
                 ]
                 if self._bridge is not None:
-                    self._bridge.message.emit(f"[安装] 替换 {existing.name}：" + " → ".join(steps) + " → 重新导入")
+                    self._bridge.event.emit(f"[安装] 替换 {existing.name}：" + " → ".join(steps) + " → 重新导入")
                 cli._guard_replace(
                     env, existing=existing, yes=True, backup=backup, terminate_first=running, command=command
                 )
@@ -1519,7 +1464,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                     hint=f"换一个可写的本地目录（{exc}）",
                 ) from exc
             if self._bridge is not None:
-                self._bridge.message.emit(f"[安装] 导入 {archive.name} → {target}")
+                self._bridge.event.emit(f"[安装] 导入 {archive.name} → {target}")
             cli._run_step(
                 env,
                 ["--import", name, str(target), str(archive), "--version", "2"],
@@ -1597,7 +1542,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 ),
                 expected_sha256=expected or download.sha256,
                 cancelled=cancel.is_set,
-                progress=self._progress_bridge.changed.emit,
+                progress=lambda done, total: self._progress_bridge.progress.emit((done, total)),
             )
             return (
                 f"已下载 {target}（{format_bytes(result_data.size)}，"
@@ -1798,7 +1743,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             w.filter_images(self.image_entries, query=query, filter_key=filter_key, source=source or "all"),
             sort_key if isinstance(sort_key, str) else w.DEFAULT_IMAGE_SORT,
         )
-        self._detach_image_detail()
+        self.detach_row_detail("images")
         self.image_list.clear()
         for entry in rows:
             item = QListWidgetItem(self.image_list)
@@ -1862,49 +1807,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _on_image_toggle(self, row: _ImageItemRow) -> None:
         """展开一行并在行下方挂详情；同一时间只展开一行。"""
-        self._focus_image_row(row)
-        if row.is_expanded():
-            row.set_expanded(False)
-            self.image_detail_view.setVisible(False)
-            self._expanded_row = None
-            self._update_image_row_height(row)
-            return
-        if self._expanded_row is not None and self._expanded_row is not row:
-            self._expanded_row.set_expanded(False)
-            self._update_image_row_height(self._expanded_row)
-        self.image_detail_view.render(row.entry)
-        row.detail_layout.addWidget(self.image_detail_view)
-        self.image_detail_view.setVisible(True)
-        row.set_expanded(True)
-        self._expanded_row = row
-        self._update_image_row_height(row)
-
-    def _focus_image_row(self, row: _ImageItemRow) -> None:
-        for index in range(self.image_list.count()):
-            if self.image_list.itemWidget(self.image_list.item(index)) is row:
-                self.image_list.setCurrentRow(index)
-                return
-
-    def _update_image_row_height(self, row: _ImageItemRow | None) -> None:
-        if row is None:
-            return
-        layout = row.layout()
-        if layout is not None:
-            layout.activate()
-        for index in range(self.image_list.count()):
-            item = self.image_list.item(index)
-            if self.image_list.itemWidget(item) is row:
-                item.setSizeHint(QSize(0, row.sizeHint().height()))
-                self.image_list.sync_row_widths()
-                return
-
-    def _detach_image_detail(self) -> None:
-        """列表重建前把复用的详情控件从旧行摘下来，避免随旧行一起销毁。"""
-        self.image_detail_view.setParent(None)
-        self.image_detail_view.setVisible(False)
-        if self._expanded_row is not None:
-            self._expanded_row.set_expanded(False)
-            self._expanded_row = None
+        self.toggle_row("images", row)
 
     def _selected_image(self) -> ImageEntry | None:
         item = self.image_list.currentItem()
