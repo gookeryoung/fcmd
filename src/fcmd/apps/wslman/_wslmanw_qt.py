@@ -2038,22 +2038,14 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             self.status_tags[task.key] = tag
         checks_col.addStretch(1)
 
-        # 状态值单行显示（不换行才不撑高），完整内容放 tooltip；
-        # 两对一行排布，7 项压到 4 行。
+        # 状态值单行显示（不换行才不撑高），完整内容放 tooltip；每项独占一行，
+        # 避免两对一行时 URL 之类长值被压到 1/4 卡片宽而大量截断。
         self.status_grid = FormGrid(self)
         self._status_values: dict[str, QLabel] = {}
-        rows = _initenv.status_rows(_initenv.EnvStatus())
-        for index in range(0, len(rows), 2):
-            left_label = rows[index][0]
-            left_value = self._make_status_value()
-            self._status_values[left_label] = left_value
-            if index + 1 < len(rows):
-                right_label = rows[index + 1][0]
-                right_value = self._make_status_value()
-                self._status_values[right_label] = right_value
-                self.status_grid.add_pair(left_label, left_value, right_label, right_value)
-            else:
-                self.status_grid.add_row(left_label, left_value)
+        for label, _value, _ready in _initenv.status_rows(_initenv.EnvStatus()):
+            value = self._make_status_value()
+            self._status_values[label] = value
+            self.status_grid.add_row(label, value)
         status_col.addWidget(self.status_grid)
         status_col.addStretch(1)
 
@@ -2408,8 +2400,11 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         fit_dialog_to_content(self, min_width=680)
 
     def showEvent(self, event: Any) -> None:
-        """首次显示时自动检测环境：打开对话框就能看到各项配置情况。"""
+        """首次显示时自动检测环境；高度按当前内容重新收口，几何恢复只留位置与宽度。"""
         super().showEvent(event)
+        # 上次展开态关窗会把「展开后的高度」存进几何；本次卡片默认收起，
+        # 原样恢复会多出大块底部空白，所以每次显示都按内容收口一次。
+        fit_dialog_to_content(self, min_width=680)
         if not self._detected:
             self._detected = True
             self.init_env.refresh_status()
