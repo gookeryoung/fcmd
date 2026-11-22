@@ -13,7 +13,7 @@ import ntpath
 import platform
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _geometry
 
 __all__ = [
+    "DEFAULT_TERMINAL_CWD",
     "MIN_HEIGHT",
     "MIN_WIDTH",
     "SETTINGS_NAME",
@@ -56,10 +57,14 @@ __all__ = [
     "shutdown_confirm_enabled",
     "sort_images",
     "summary_text",
+    "terminal_cwd",
     "unregister_confirm_enabled",
+    "with_terminal_cwd",
 ]
 
 SETTINGS_NAME = "wslmanw"
+DEFAULT_TERMINAL_CWD = "~"
+"""「打开终端」的默认工作目录：Linux 用户主目录（对应 ``wsl --cd ~``）。"""
 DEFAULT_GEOMETRY = "1160x760"
 MIN_WIDTH = 900
 MIN_HEIGHT = 600
@@ -190,22 +195,27 @@ def action_states(state: str | None) -> tuple[bool, bool]:
 class WslmanwSettings:
     geometry: str | None = None
     download_dir: str = ""
+    backup_dir: str = ""
     mirror: str = "auto"
     sidebar_collapsed: bool = False
     image_filter: str = DEFAULT_IMAGE_FILTER
     image_sort: str = DEFAULT_IMAGE_SORT
     image_source: str = DEFAULT_IMAGE_SOURCE
+    distro_terminal_dirs: Mapping[str, str] = field(default_factory=dict)
+    """按实例名保存的终端默认目录；缺省 / ``~`` 时由 :data:`DEFAULT_TERMINAL_CWD` 接管。"""
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
     return {
         "geometry": settings.geometry,
         "download_dir": settings.download_dir,
+        "backup_dir": settings.backup_dir,
         "mirror": settings.mirror,
         "sidebar_collapsed": settings.sidebar_collapsed,
         "image_filter": settings.image_filter,
         "image_sort": settings.image_sort,
         "image_source": settings.image_source,
+        "distro_terminal_dirs": dict(settings.distro_terminal_dirs),
     }
 
 
@@ -216,11 +226,13 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
     return WslmanwSettings(
         geometry=_guiconfig.valid_geometry(_str(raw, "geometry")),
         download_dir=_str(raw, "download_dir"),
+        backup_dir=_str(raw, "backup_dir"),
         mirror=mirror if mirror in _mirrors.identifiers() else "auto",
         sidebar_collapsed=collapsed is True,
         image_filter=_choice(raw, "image_filter", IMAGE_FILTERS, DEFAULT_IMAGE_FILTER),
         image_sort=_choice(raw, "image_sort", IMAGE_SORTS, DEFAULT_IMAGE_SORT),
         image_source=_choice(raw, "image_source", IMAGE_SOURCES, DEFAULT_IMAGE_SOURCE),
+        distro_terminal_dirs=_terminal_dirs(raw.get("distro_terminal_dirs")),
     )
 
 
@@ -233,6 +245,36 @@ def _choice(raw: Mapping[str, Any], key: str, options: Sequence[tuple[str, str]]
 def _str(raw: Mapping[str, Any], key: str) -> str:
     value = raw.get(key)
     return value if isinstance(value, str) else ""
+
+
+def _terminal_dirs(value: Any) -> dict[str, str]:
+    """解析实例 → 终端目录映射；忽略空名称 / 空目录与非字符串项。"""
+    if not isinstance(value, Mapping):
+        return {}
+    dirs: dict[str, str] = {}
+    for name, cwd in value.items():
+        if isinstance(name, str) and name.strip() and isinstance(cwd, str) and cwd.strip():
+            dirs[name.strip()] = cwd.strip()
+    return dirs
+
+
+def terminal_cwd(settings: WslmanwSettings, name: str) -> str:
+    """返回实例的终端默认目录；未配置时回到 ``~``（大小写不敏感）。"""
+    key = name.strip().casefold()
+    for saved, cwd in settings.distro_terminal_dirs.items():
+        if saved.strip().casefold() == key:
+            return cwd.strip() or DEFAULT_TERMINAL_CWD
+    return DEFAULT_TERMINAL_CWD
+
+
+def with_terminal_cwd(settings: WslmanwSettings, name: str, cwd: str) -> WslmanwSettings:
+    """返回写入实例终端目录后的设置；目录为 ``~`` 时删掉该项，保持设置文件干净。"""
+    key = name.strip().casefold()
+    target = cwd.strip() or DEFAULT_TERMINAL_CWD
+    dirs = {saved: value for saved, value in settings.distro_terminal_dirs.items() if saved.strip().casefold() != key}
+    if target != DEFAULT_TERMINAL_CWD:
+        dirs[name.strip()] = target
+    return replace(settings, distro_terminal_dirs=dirs)
 
 
 def config_path() -> Path:

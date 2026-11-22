@@ -48,6 +48,7 @@ def test_save_and_load_roundtrip(tmp_path: Path) -> None:
     settings = wslmanw.WslmanwSettings(
         geometry="1100x720+20+30",
         download_dir=r"D:\WSL\downloads",
+        backup_dir=r"D:/WSL/backups",
     )
     wslmanw.save_settings(settings, path)
     assert wslmanw.load_settings(path) == settings
@@ -94,6 +95,7 @@ def test_old_settings_file_without_new_fields_still_loads(tmp_path: Path) -> Non
     settings = wslmanw.load_settings(path)
     assert settings.geometry == "1024x700+10+10"
     assert settings.download_dir == ""
+    assert settings.backup_dir == ""
 
 
 def test_settings_mapping_is_json_friendly() -> None:
@@ -101,12 +103,37 @@ def test_settings_mapping_is_json_friendly() -> None:
     assert wslmanw.settings_to_mapping(settings) == {
         "geometry": "900x600",
         "download_dir": r"D:\WSL",
+        "backup_dir": "",
         "mirror": "auto",
         "sidebar_collapsed": False,
         "image_filter": "all",
         "image_sort": "name",
         "image_source": "all",
+        "distro_terminal_dirs": {},
     }
+
+
+def test_terminal_cwd_roundtrip_and_default(tmp_path: Path) -> None:
+    """实例终端目录默认 ~，可覆盖并随设置文件持久化；回落 ~ 时删除该键。"""
+    assert wslmanw.terminal_cwd(wslmanw.WslmanwSettings(), "Ubuntu") == "~"
+    settings = wslmanw.with_terminal_cwd(wslmanw.WslmanwSettings(), "Ubuntu", "/home/me/project")
+    assert wslmanw.terminal_cwd(settings, "ubuntu") == "/home/me/project"
+
+    path = tmp_path / "settings.json"
+    wslmanw.save_settings(settings, path)
+    assert wslmanw.load_settings(path) == settings
+
+    reset = wslmanw.with_terminal_cwd(settings, "UBUNTU", "~")
+    assert wslmanw.terminal_cwd(reset, "Ubuntu") == "~"
+    assert reset.distro_terminal_dirs == {}
+
+
+def test_terminal_dirs_tolerate_bad_values() -> None:
+    settings = wslmanw.settings_from_mapping(
+        {"distro_terminal_dirs": {"Ubuntu": "/srv/app", "": "/x", "Debian": 42, "Alpine": "~"}}
+    )
+    assert settings.distro_terminal_dirs == {"Ubuntu": "/srv/app", "Alpine": "~"}
+    assert wslmanw.settings_from_mapping({"distro_terminal_dirs": "bogus"}).distro_terminal_dirs == {}
 
 
 def test_image_view_options_fall_back_on_bad_values() -> None:

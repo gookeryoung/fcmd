@@ -17,7 +17,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from fcmd.apps.wslman import _wslmanw_qt, wslmanw
 from fcmd.apps.wslman import wslman as cli
@@ -906,8 +906,8 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
         assert settings_page is not None
         # 页面用滚动容器：窗口变矮时滚动，而不是压扁控件
         assert settings_page.findChild(PageScroll) is not None
-        # 三项配置都在设置页里
-        for widget in (window.download_dir, window.mirror, window.expected_sha):
+        # 配置项都在设置页里（含新增的备份目录）
+        for widget in (window.download_dir, window.backup_dir, window.mirror, window.expected_sha):
             assert settings_page.isAncestorOf(widget)
         assert "64" in window.expected_sha.placeholderText()
 
@@ -916,6 +916,7 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
         images_page = window.page("images")
         assert images_page is not None
         assert not images_page.isAncestorOf(window.download_dir)
+        assert not images_page.isAncestorOf(window.backup_dir)
         assert not images_page.isAncestorOf(window.mirror)
         assert window.image_filter_buttons  # 筛选胶囊仍在列表页
         assert window.images_refresh.objectName() != ""
@@ -945,16 +946,18 @@ def test_settings_work_dir_card_lists_subfolders(home: Path, monkeypatch: pytest
         assert str(root / "download") in values
         assert str(root / "install") in values
         assert str(root / "backup") in values
-        # 下载目录默认值也指向工作目录的 download
+        # 下载 / 备份目录默认值分别指向工作目录的 download / backup
         assert window.download_dir.value() == ""
+        assert window.backup_dir.value() == ""
         assert window._local_start_dir() == str(root / "download")
+        assert window._backup_dir_path() == root / "backup"
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
 
 def test_install_dialog_defaults_into_work_dir(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """「安装本地镜像」默认把发行版装到工作目录的 install/<名称>。"""
+    """「安装镜像」默认把发行版装到工作目录的 install/<名称>。"""
     from fcmd.apps.wslman import _config
 
     archive = tmp_path / "download" / "Ubuntu-24.04.wsl"
@@ -988,6 +991,8 @@ def test_settings_page_persists_download_dir_and_mirror(home: Path, monkeypatch:
         window.show_page("settings")
         window.download_dir.set_value(r"D:\WSL\mirrors")
         window.download_dir.committed.emit(r"D:\WSL\mirrors")
+        window.backup_dir.set_value(r"D:/WSL/backups")
+        window.backup_dir.committed.emit(r"D:/WSL/backups")
         window.mirror.setCurrentIndex(window.mirror_ids.index("ustc"))
     finally:
         window._poll.stop()  # type: ignore[union-attr]
@@ -995,6 +1000,7 @@ def test_settings_page_persists_download_dir_and_mirror(home: Path, monkeypatch:
 
     raw = json.loads(_guiconfig.config_path(wslmanw.SETTINGS_NAME).read_text(encoding="utf-8"))
     assert raw["download_dir"] == r"D:\WSL\mirrors"
+    assert raw["backup_dir"] == r"D:/WSL/backups"
     assert raw["mirror"] == "ustc"
 
 
@@ -1003,13 +1009,15 @@ def test_settings_page_restores_saved_download_dir(home: Path) -> None:
     from fcmd.apps.wslman import wslmanw
 
     wslmanw.save_settings(
-        wslmanw.WslmanwSettings(download_dir=r"E:\WSL", mirror="ustc"),
+        wslmanw.WslmanwSettings(download_dir=r"E:\WSL", backup_dir=r"E:\Backups", mirror="ustc"),
         _guiconfig.config_path(wslmanw.SETTINGS_NAME),
     )
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
         assert window.download_dir.value() == r"E:\WSL"
+        assert window.backup_dir.value() == r"E:\Backups"
+        assert window._backup_dir_path() == Path(r"E:\Backups")
         assert window.mirror_ids[window.mirror.currentIndex()] == "ustc"
     finally:
         window._poll.stop()  # type: ignore[union-attr]
@@ -1398,7 +1406,7 @@ def test_install_archive_reports_unwritable_target(home: Path, monkeypatch: pyte
 def test_install_entry_opens_dialog_with_preset_archive(
     home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """行内「安装」把已下载的归档预选进「安装本地镜像」对话框。"""
+    """行内「安装」把已下载的归档预选进「安装镜像」对话框。"""
     archive = tmp_path / "ubuntu.wsl"
     archive.write_bytes(b"x")
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
@@ -1427,6 +1435,98 @@ def test_install_entry_opens_dialog_with_preset_archive(
         monkeypatch.setattr(_wslmanw_qt, "_InstallLocalDialog", _FakeDialog)
         window._install_entry("Ubuntu")
         assert seen == [archive]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_distro_config_button_dialog_and_persisted_cwd(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """行内启停右侧有「配置」：设为默认 + 终端默认目录，保存后写进窗口设置。"""
+    view = _view(_distro("Ubuntu", "stopped"), _distro("Debian", "stopped", default=False))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        row = _distro_row(window, 0)
+        assert row.config_button.text() == "配置"
+        row.set_busy(True)
+        assert row.config_button.isEnabled() is False
+        row.set_busy(False)
+        assert row.config_button.isEnabled() is True
+
+        dialog = _wslmanw_qt._DistroConfigDialog(window, row.distro, "~")
+        try:
+            assert dialog.cwd.text() == "~"
+            assert dialog.make_default.isEnabled() is False
+            dialog.cwd.setText("/srv/app")
+            assert dialog.payload() == (False, "/srv/app")
+        finally:
+            dialog.deleteLater()
+
+        other = _distro_row(window, 1)
+        dialog = _wslmanw_qt._DistroConfigDialog(window, other.distro, "~")
+        try:
+            dialog.make_default.setChecked(True)
+            dialog.cwd.setText("/srv/debian")
+            assert dialog.payload() == (True, "/srv/debian")
+        finally:
+            dialog.deleteLater()
+
+        window._save_terminal_cwd("Debian", "/srv/debian")
+        assert wslmanw.terminal_cwd(cast(wslmanw.WslmanwSettings, window.settings), "debian") == "/srv/debian"
+        assert wslmanw.load_settings().distro_terminal_dirs == {"Debian": "/srv/debian"}
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_image_manager_exports_deletes_and_cleans_cache(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """管理镜像：列出完整包 / 未完成 .part，支持导出、删除与清理缓存。"""
+    from fcmd.apps.wslman import _images
+
+    download = tmp_path / "download"
+    download.mkdir()
+    archive = download / "ubuntu.wsl"
+    archive.write_bytes(b"image")
+    partial = download / "debian.wsl.part"
+    partial.write_bytes(b"part")
+    cache = _images.cache_path()
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(tmp_path / "exported"))
+    (tmp_path / "exported").mkdir()
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        dialog = _wslmanw_qt._ImageManagerDialog(window, download, ())
+        try:
+            rows = {item[0].name: index for index, item in enumerate(dialog._items)}
+            assert rows == {"debian.wsl.part": 0, "ubuntu.wsl": 1}
+            assert dialog._items[0][3] is False
+            assert dialog._items[1][3] is True
+
+            dialog.table.selectRow(rows["ubuntu.wsl"])
+            dialog._export_selected()
+            assert (tmp_path / "exported" / "ubuntu.wsl").read_bytes() == b"image"
+
+            dialog._delete_selected()
+            assert archive.exists() is False
+            assert dialog.changed is True
+
+            dialog._clean_cache()
+            assert partial.exists() is False
+            assert cache.exists() is False
+            assert dialog.cache_cleared is True
+        finally:
+            dialog.deleteLater()
+        assert window.image_install_local.text() == "安装镜像…"
+        assert window.image_manage.text() == "管理镜像…"
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

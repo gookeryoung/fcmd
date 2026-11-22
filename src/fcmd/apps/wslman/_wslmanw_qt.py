@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -60,7 +62,7 @@ from fcmd.apps.wslman._config import (
     load_config,
     work_root,
 )
-from fcmd.apps.wslman._disk import distro_disk_bytes, distro_export_bytes, format_bytes, recommended_backup_dir
+from fcmd.apps.wslman._disk import distro_disk_bytes, distro_export_bytes, format_bytes
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command, spawn_detached
@@ -110,13 +112,6 @@ _LOG_LINES_MAX = 1000
 
 TITLE = "WSL · 实例管理"
 NAV_TITLE = "WSL"
-
-HOME_CWD = "~"
-"""「打开终端」进入的目录：Linux 用户主目录（``wsl --cd ~``）。
-
-不传 ``--cd`` 时 ``wsl.exe`` 会把 Windows 侧当前目录映射成 ``/mnt/...``，
-用户看到的是项目 / 系统目录而不是自己的家目录；这里固定进 ``~``。
-"""
 
 PAGES: tuple[PageSpec, ...] = (
     PageSpec("distros", "实例", "列表、详情、启动停止、导出与注销", "distros"),
@@ -183,6 +178,7 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
     """
 
     startStopRequested = Signal(str)
+    configRequested = Signal(str)
 
     def __init__(
         self,
@@ -212,6 +208,11 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.start_stop_button = button("启动", kind="primary")
         self.start_stop_button.clicked.connect(lambda: self.startStopRequested.emit(distro.name))
         self.add_action(self.start_stop_button)
+        # 配置放在启停右侧：设为默认、终端默认目录等实例级设置不强制用户先选中再跑工具栏。
+        self.config_button = button("配置", kind="ghost")
+        self.config_button.setToolTip(f"配置 {distro.name}：设为默认发行版、终端默认目录")
+        self.config_button.clicked.connect(lambda: self.configRequested.emit(distro.name))
+        self.add_action(self.config_button)
         self._busy = False
 
         self.update_distro(distro, size, estimated)
@@ -262,9 +263,10 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         set_button_text(self.start_stop_button, text, tone=tone)
         self.start_stop_button.setEnabled(enabled)
         self.start_stop_button.setToolTip(f"{text} {self.distro.name}")
+        self.config_button.setEnabled(not self._busy)
 
     def set_busy(self, busy: bool) -> None:
-        """任务进行中禁用行内启停按钮；结束后按当前状态重新计算。"""
+        """任务进行中禁用行内启停 / 配置按钮；结束后按当前状态重新计算。"""
         self._busy = busy
         self._apply_action_state()
 
@@ -672,12 +674,18 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             filters.addWidget(chip)
             self.image_filter_buttons[key] = chip
         filters.addStretch(1)
-        self.image_install_local = button("安装本地镜像…", kind="ghost")
+        self.image_install_local = button("安装镜像…", kind="ghost")
         self.image_install_local.setToolTip(f"安装磁盘上已有的镜像包；{w._DOWNLOAD_HINT}")
         self.image_install_local.clicked.connect(self._install_local)
         filters.addWidget(self.image_install_local)
         self._buttons.append(self.image_install_local)
-        self._button_by_text["安装本地镜像…"] = self.image_install_local
+        self._button_by_text["安装镜像…"] = self.image_install_local
+        self.image_manage = button("管理镜像…", kind="ghost")
+        self.image_manage.setToolTip("管理下载目录里的镜像包：导出、删除、清理缓存与未完成下载")
+        self.image_manage.clicked.connect(self._open_image_manager)
+        filters.addWidget(self.image_manage)
+        self._buttons.append(self.image_manage)
+        self._button_by_text["管理镜像…"] = self.image_manage
         # 手动更新（对齐 llmw「更新模型」）：绕过 30 分钟缓存重新拉两个在线源。
         self.images_refresh = button("更新列表", kind="ghost")
         self.images_refresh.setToolTip("重新获取 wsl --list --online 与官方镜像清单（绕过 30 分钟缓存）")
@@ -772,6 +780,23 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.download_dir.reset.setVisible(bool(self.settings.download_dir))
         form.add_row("下载目录", self.download_dir)
 
+        self.backup_dir = PathRow(
+            value=self.settings.backup_dir,
+            placeholder=f"留空 = {default_backups_dir()}",
+            directory=True,
+            show_reset=True,
+            browse_text="更改",
+            parent=download,
+        )
+        self.backup_dir.setToolTip(
+            "导出 / 替换前备份的 .tar 保存目录；留空时回退到 wslman.json 的 backups.dir，再回退到工作目录的 backup"
+        )
+        self.backup_dir.committed.connect(self._on_backup_dir_committed)
+        self.backup_dir.reset.clicked.connect(lambda: self.backup_dir.set_value(""))
+        self.backup_dir.changed.connect(lambda text: self.backup_dir.reset.setVisible(bool(text.strip())))
+        self.backup_dir.reset.setVisible(bool(self.settings.backup_dir))
+        form.add_row("备份目录", self.backup_dir)
+
         self.mirror_ids = _mirrors.identifiers()
         self.mirror = QComboBox(download)
         self.mirror.addItems([_mirrors.label(ident) for ident in self.mirror_ids])
@@ -789,7 +814,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         download.body.addWidget(
             hint_label(
                 f"默认工作目录 {work_root()}：下载 / 安装 / 备份各自一个子目录（见下方「工作目录」卡片）；"
-                f"下载目录留空时回退到 wslman.json 的 download_dir，再回退到 {default_download_dir()}。"
+                f"下载 / 备份目录留空时分别回退到 wslman.json 的 download_dir / backups.dir，"
+                f"再回退到 {default_download_dir()} / {default_backups_dir()}。"
                 f"{w._DOWNLOAD_HINT}"
             )
         )
@@ -834,7 +860,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         grid = FormGrid(card)
         for label, path, tip in (
             ("下载", default_download_dir(), "镜像归档（.wsl / .tar）默认保存位置"),
-            ("安装", default_install_root(), "安装本地镜像时的默认目录根，每个实例一个子目录"),
+            ("安装", default_install_root(), "安装镜像时的默认目录根，每个实例一个子目录"),
             ("备份", default_backups_dir(), "导出 / 备份的 .tar 默认保存位置"),
         ):
             value = ElidedLabel(str(path), mode=Qt.TextElideMode.ElideMiddle, parent=card)
@@ -844,7 +870,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         card.body.addWidget(grid)
         card.body.addWidget(
             hint_label(
-                "下载 / 安装 / 备份默认都写在这里；下载目录可在上方「下载」卡片覆盖，备份目录可用 wslman.json 的 backups.dir 覆盖。"
+                "下载 / 安装 / 备份默认都写在这里；下载 / 备份目录可在上方「下载」卡片覆盖，"
+                "留空时回退到 wslman.json 的对应配置。"
             )
         )
         return card
@@ -1093,6 +1120,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             row = _DistroItemRow(distro, size, estimated, self.distro_list)
             row.toggleRequested.connect(self._on_distro_toggle)
             row.startStopRequested.connect(self._toggle_distro_state)
+            row.configRequested.connect(self._configure_distro)
             row.set_busy(self._busy)
             entry, known = self._distro_image(distro)
             row.update_image(entry, known=known)
@@ -1230,6 +1258,34 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 return row
         return None
 
+    def _configure_distro(self, name: str) -> None:
+        """行内「配置」：保存终端默认目录，按需把实例设为默认发行版。"""
+        row = self._row_for_distro(name)
+        if row is None or self._busy:
+            return
+        self._focus_distro_row(row)
+        dialog = _DistroConfigDialog(self, row.distro, w.terminal_cwd(self.settings, row.distro.name))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        make_default, cwd = dialog.payload()
+        self._save_terminal_cwd(row.distro.name, cwd)
+        if not make_default:
+            self.set_page_status("distros", f"已保存 {row.distro.name} 的配置")
+            return
+
+        def work(_cancel: threading.Event) -> str:
+            env = cli._build_environment()
+            target = cli._require_target(env, row.distro.name)
+            cli._run_step(env, ["--set-default", target.name], action=f"设为默认 {target.name}")
+            return f"已把 {target.name} 设为默认发行版"
+
+        self._start("设为默认", work)
+
+    def _save_terminal_cwd(self, name: str, cwd: str) -> None:
+        """把实例的终端默认目录写进窗口设置（``~`` 等同于未配置）。"""
+        self.settings = w.with_terminal_cwd(self.settings, name, cwd)
+        self._persist_settings(self.geometry_text())
+
     def _log(self, text: str) -> None:
         """追加一行任务日志：写缓冲（限量）并发信号给已打开的日志窗口。"""
         line = f"[{time.strftime('%H:%M:%S')}] {text}"
@@ -1249,7 +1305,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             command = build_command(
                 wsl_path=cli._require_wsl(env),
                 distro=distro.name,
-                cwd=HOME_CWD,
+                cwd=w.terminal_cwd(self.settings, distro.name),
                 user=None,
                 program=env.config.terminal_program,
                 extra_args=env.config.terminal_extra_args,
@@ -1316,7 +1372,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         target, _ = QFileDialog.getSaveFileName(
             self,
             f"导出实例 {distro.name}",
-            f"{distro.name}.tar",
+            str(self._backup_dir_path() / f"{distro.name}.tar"),
             "tar 归档 (*.tar)",
         )
         if not target:
@@ -1374,6 +1430,23 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return f"已导出 {path}（{format_bytes(size)}，sha256 {digest}）"
 
         self._start("导出", work)
+
+    def _open_image_manager(self) -> None:
+        """「管理镜像」：导出 / 删除本地镜像包，并清理清单缓存与未完成下载。"""
+        if self._busy:
+            QMessageBox.information(self, "请稍候", "已有任务在执行")
+            return
+        dialog = _ImageManagerDialog(self, self._download_dir_path(), self._catalog_entries())
+        try:
+            dialog.exec()
+        finally:
+            changed = dialog.changed
+            cleared = dialog.cache_cleared
+            dialog.deleteLater()
+        if changed:
+            self._refresh_image_states()
+        if cleared:
+            self.set_page_status("images", "镜像清单缓存已清理；点「更新列表」可重新获取")
 
     def _install_local(self) -> None:
         """安装磁盘上已有的镜像包：扫描下载目录或手动选包，确认信息后走 ``wsl --import``。"""
@@ -1528,7 +1601,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._start("下载", work)
 
     def _install_entry(self, name: str) -> None:
-        """行内「安装」：已下载的归档 → 复用「安装本地镜像」对话框；无归档 → wsl --install。"""
+        """行内「安装」：已下载的归档 → 复用「安装镜像」对话框；无归档 → wsl --install。"""
         entry = self._entry_by_name(name)
         if entry is None:
             return
@@ -1562,8 +1635,17 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return None
 
     def _download_dir_path(self) -> Path:
-        """下载目录（与「安装本地镜像」扫描目录同一口径）。"""
+        """下载目录（与「安装镜像」扫描目录同一口径）。"""
         return Path(self._local_start_dir())
+
+    def _backup_dir_path(self) -> Path:
+        """备份目录：设置页 > wslmanw.json > wslman.json > 工作目录的 backup。"""
+        widget = getattr(self, "backup_dir", None)
+        configured = (widget.value() if widget is not None else "") or self.settings.backup_dir
+        if configured:
+            return Path(configured)
+        fallback = load_config().backups_dir.strip()
+        return Path(fallback) if fallback else default_backups_dir()
 
     # ------------------------------------------------------------------ #
     # 镜像列表
@@ -1578,6 +1660,11 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         """下载目录变更（回车 / 选目录）立即落盘，下次启动回填。"""
         self._persist_image_view()
         self.set_page_status("settings", "下载目录已保存" if self.download_dir.value() else "下载目录已恢复默认")
+
+    def _on_backup_dir_committed(self, _text: str) -> None:
+        """备份目录变更（回车 / 选目录）立即落盘，下次启动回填。"""
+        self._persist_image_view()
+        self.set_page_status("settings", "备份目录已保存" if self.backup_dir.value() else "备份目录已恢复默认")
 
     def _restore_images_cache(self) -> Any:
         """把上次落盘的镜像清单直接铺到列表上（不等网络），返回命中的缓存。"""
@@ -1870,6 +1957,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 image_filter=self._image_filter_key,
                 image_sort=self.image_sort.currentData() or w.DEFAULT_IMAGE_SORT,
                 image_source=self.image_source.currentData() or w.DEFAULT_IMAGE_SOURCE,
+                backup_dir=self.backup_dir.value(),
+                distro_terminal_dirs=self.settings.distro_terminal_dirs,
             ),
             self._own_settings_path,
         )
@@ -1887,6 +1976,61 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return True
 
 
+class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
+    """实例配置：设为默认发行版、打开终端时的默认目录。"""
+
+    def __init__(self, owner: WslmanQtWindow, distro: Distro, cwd: str) -> None:
+        super().__init__(owner)
+        self.setWindowTitle(f"配置 {distro.name}")
+        self.setMinimumWidth(520)
+        self._distro = distro
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(8)
+        outer.addWidget(hint_label(f"实例：{distro.name}"))
+
+        self.make_default = QCheckBox("设为默认发行版", self)
+        self.make_default.setChecked(distro.default)
+        if distro.default:
+            self.make_default.setEnabled(False)
+            self.make_default.setToolTip("该实例已是默认发行版；设置为其它实例后才会取消")
+        outer.addWidget(self.make_default)
+
+        form = QGridLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(8)
+        form.setVerticalSpacing(6)
+        form.setColumnStretch(1, 1)
+        form.addWidget(QLabel("终端默认目录", self), 0, 0)
+        self.cwd = QLineEdit(cwd or w.DEFAULT_TERMINAL_CWD, self)
+        self.cwd.setPlaceholderText(w.DEFAULT_TERMINAL_CWD)
+        form.addWidget(self.cwd, 0, 1)
+        reset = button("默认 ~")
+        reset.clicked.connect(lambda: self.cwd.setText(w.DEFAULT_TERMINAL_CWD))
+        form.addWidget(reset, 0, 2)
+        outer.addLayout(form)
+        outer.addWidget(
+            hint_label("打开终端时作为 wsl --cd 的目录；可填 ~（用户主目录）或 /home/me/project 这类 Linux 路径。")
+        )
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.addStretch(1)
+        cancel = button("取消")
+        cancel.clicked.connect(self.reject)
+        actions.addWidget(cancel)
+        save = button("保存", kind="primary")
+        save.clicked.connect(self.accept)
+        actions.addWidget(save)
+        outer.addLayout(actions)
+        fit_dialog_to_content(self, min_width=520)
+
+    def payload(self) -> tuple[bool, str]:
+        """返回 ``(是否设为默认, 终端默认目录)``；目录为空时回落 ``~``。"""
+        make_default = self.make_default.isChecked() and not self._distro.default
+        return make_default, self.cwd.text().strip() or w.DEFAULT_TERMINAL_CWD
+
+
 class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
     """注销确认：手输实例名、可选先停止、可选先备份。"""
 
@@ -1894,6 +2038,7 @@ class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
         super().__init__(owner)
         self.setWindowTitle(f"注销 {distro.name}")
         self.setMinimumWidth(560)
+        self._owner = owner
         self._distro = distro
         estimate, estimated = size
 
@@ -1916,7 +2061,7 @@ class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
         backup_row = QHBoxLayout()
         backup_row.setContentsMargins(0, 0, 0, 0)
         backup_row.setSpacing(6)
-        self.backup = QLineEdit(str(recommended_backup_dir() / f"{distro.name}.tar"), self)
+        self.backup = QLineEdit(str(owner._backup_dir_path() / f"{distro.name}.tar"), self)
         backup_row.addWidget(self.backup, 1)
         choose = button("选择…")
         choose.clicked.connect(self._choose_backup)
@@ -1946,7 +2091,7 @@ class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
         chosen, _ = QFileDialog.getSaveFileName(
             self,
             "选择备份文件",
-            str(recommended_backup_dir() / f"{self._distro.name}.tar"),
+            str(self._owner._backup_dir_path() / f"{self._distro.name}.tar"),
             "tar 归档 (*.tar)",
         )
         if chosen:
@@ -1987,8 +2132,198 @@ class _ShutdownDialog(QDialog):  # pragma: no cover - 模态对话框
         self.confirm.setEnabled(w.shutdown_confirm_enabled(self.checked.isChecked()))
 
 
+class _ImageManagerDialog(QDialog):  # pragma: no cover - 模态对话框
+    """管理下载目录里的镜像包：导出、删除、清理清单缓存与未完成下载。"""
+
+    def __init__(
+        self,
+        owner: WslmanQtWindow,
+        directory: Path,
+        entries: tuple[ImageEntry, ...],
+    ) -> None:
+        super().__init__(owner)
+        self.setWindowTitle("管理镜像")
+        self.setMinimumWidth(820)
+        self.directory = directory
+        self._entries = entries
+        self._items: list[tuple[Path, int, str, bool]] = []
+        self.changed = False
+        self.cache_cleared = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(8)
+        outer.addWidget(hint_label(f"下载目录：{directory}"))
+
+        self.table = make_table(
+            ("镜像包", "大小", "识别为", "状态"),
+            widths=(430, 100, 160, 90),
+            stretch_columns=(0,),
+            parent=self,
+        )
+        self.table.setMinimumHeight(240)
+        self.table.itemSelectionChanged.connect(self._on_select)
+        outer.addWidget(self.table, 1)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
+        self.export_button = button("导出…")
+        self.export_button.clicked.connect(self._export_selected)
+        actions.addWidget(self.export_button)
+        self.delete_button = button("删除", kind="danger")
+        self.delete_button.clicked.connect(self._delete_selected)
+        actions.addWidget(self.delete_button)
+        clean = button("清理缓存")
+        clean.setToolTip("删除镜像清单缓存与下载目录里的未完成 .part 文件")
+        clean.clicked.connect(self._clean_cache)
+        actions.addWidget(clean)
+        open_dir = button("打开目录")
+        open_dir.clicked.connect(self._open_folder)
+        actions.addWidget(open_dir)
+        refresh = button("刷新")
+        refresh.clicked.connect(self._reload)
+        actions.addWidget(refresh)
+        actions.addStretch(1)
+        close = button("关闭", kind="primary")
+        close.clicked.connect(self.accept)
+        actions.addWidget(close)
+        outer.addLayout(actions)
+
+        self.status = hint_label("选择一个镜像包后可导出或删除；.part 是未完成的下载")
+        outer.addWidget(self.status)
+        self._reload()
+        fit_dialog_to_content(self, min_width=820)
+
+    def _reload(self) -> None:
+        """重扫下载目录：完整镜像包与 ``.part`` 未完成下载都列出来。"""
+        self.table.setRowCount(0)
+        self._items.clear()
+        if not self.directory.is_dir():
+            self.status.setText(f"下载目录不存在：{self.directory}")
+            self._sync_actions()
+            return
+        try:
+            paths = sorted(self.directory.iterdir(), key=lambda path: path.name.casefold())
+        except OSError as exc:
+            self.status.setText(f"无法读取下载目录：{exc}")
+            self._sync_actions()
+            return
+        for path in paths:
+            if not path.is_file():
+                continue
+            name = path.name.casefold()
+            incomplete = name.endswith(".part")
+            if not incomplete and not name.endswith(w._ARCHIVE_SUFFIXES):
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if incomplete:
+                distro, complete = "—", False
+            else:
+                info = w.inspect_archive(path, self._entries)
+                distro, complete = info.distro, True
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, make_table_item(str(path)))
+            self.table.setItem(row, 1, make_table_item(format_bytes(size)))
+            self.table.setItem(row, 2, make_table_item(distro))
+            self.table.setItem(row, 3, make_table_item("完整" if complete else "未完成"))
+            self._items.append((path, size, distro, complete))
+        if self.table.rowCount():
+            self.table.selectRow(0)
+            self.status.setText("选择一个镜像包后可导出或删除；.part 是未完成的下载")
+        else:
+            self.status.setText("下载目录里没有可管理的镜像包")
+        self._sync_actions()
+
+    def _current(self) -> tuple[Path, int, str, bool] | None:
+        row = self.table.currentRow()
+        return self._items[row] if 0 <= row < len(self._items) else None
+
+    def _on_select(self) -> None:
+        self._sync_actions()
+
+    def _sync_actions(self) -> None:
+        current = self._current()
+        self.export_button.setEnabled(current is not None and current[3])
+        self.delete_button.setEnabled(current is not None)
+
+    def _export_selected(self) -> None:
+        archive = self._current()
+        if archive is None or not archive[3]:
+            self.status.setText("未完成的 .part 不能导出；请先下载完成")
+            return
+        chosen = QFileDialog.getExistingDirectory(self, "导出镜像包到目录", str(self.directory))
+        if not chosen:
+            return
+        target = Path(chosen) / archive[0].name
+        if target.resolve() == archive[0].resolve():
+            self.status.setText("导出目录就是当前下载目录")
+            return
+        if target.exists() and not confirm(self, "覆盖镜像包", f"目标已存在，覆盖？\n{target}"):
+            return
+        try:
+            shutil.copy2(archive[0], target)
+        except OSError as exc:
+            QMessageBox.critical(self, "导出失败", f"无法复制镜像包：\n{exc}")
+            return
+        self.status.setText(f"已导出到 {target}")
+
+    def _delete_selected(self) -> None:
+        archive = self._current()
+        if archive is None:
+            return
+        if not confirm(self, "删除镜像包", f"永久删除？\n{archive[0]}\n大小：{format_bytes(archive[1])}"):
+            return
+        try:
+            archive[0].unlink()
+        except OSError as exc:
+            QMessageBox.critical(self, "删除失败", f"无法删除镜像包：\n{exc}")
+            return
+        self.changed = True
+        self.status.setText(f"已删除 {archive[0].name}")
+        self._reload()
+
+    def _clean_cache(self) -> None:
+        targets: list[Path] = []
+        cache = _images.cache_path()
+        if cache.is_file():
+            targets.append(cache)
+        if self.directory.is_dir():
+            with contextlib.suppress(OSError):
+                targets.extend(sorted(self.directory.glob("*.part")))
+        if not targets:
+            self.status.setText("没有可清理的缓存或未完成下载")
+            return
+        if not confirm(self, "清理缓存", f"删除镜像清单缓存与 {len(targets)} 个缓存 / 未完成文件？"):
+            return
+        removed = 0
+        for path in targets:
+            try:
+                path.unlink()
+                removed += 1
+                if path == cache:
+                    self.cache_cleared = True
+            except OSError:
+                continue
+        self.changed = self.changed or removed > 0
+        self.status.setText(f"已清理 {removed} 个缓存 / 未完成文件")
+        self._reload()
+
+    def _open_folder(self) -> None:
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "打开失败", f"无法创建下载目录：\n{exc}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.directory)))
+
+
 class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
-    """安装本地镜像：扫描目录 / 选文件、查看识别结果、填名称与安装目录、可选替换。"""
+    """安装镜像：扫描目录 / 选文件、查看识别结果、填名称与安装目录、可选替换。"""
 
     def __init__(
         self,
@@ -1998,8 +2333,9 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         preset: Path | None = None,
     ) -> None:
         super().__init__(owner)
-        self.setWindowTitle("安装本地镜像")
+        self.setWindowTitle("安装镜像")
         self.setMinimumWidth(820)
+        self._owner = owner
         self._entries = entries
         self._preset = preset
         self._archives: dict[int, Any] = {}
@@ -2154,15 +2490,15 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
     def _start(self) -> None:
         archive = self._current()
         if archive is None:
-            QMessageBox.critical(self, "安装本地镜像", "请先选择一个镜像包")
+            QMessageBox.critical(self, "安装镜像", "请先选择一个镜像包")
             return
         name = self.name.text().strip()
         target_text = self.target.text().strip()
         if not name:
-            QMessageBox.critical(self, "安装本地镜像", "请填写实例名称")
+            QMessageBox.critical(self, "安装镜像", "请填写实例名称")
             return
         if not target_text:
-            QMessageBox.critical(self, "安装本地镜像", "请选择安装目录")
+            QMessageBox.critical(self, "安装镜像", "请选择安装目录")
             return
         replace = self.replace.isChecked()
         if replace and not confirm(self, "替换实例", f"替换 {name} 会先注销现有实例（运行中会先停止），继续？"):
@@ -2172,7 +2508,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
             chosen, _ = QFileDialog.getSaveFileName(
                 self,
                 "替换前先备份到",
-                str(recommended_backup_dir() / f"{name}.tar"),
+                str(self._owner._backup_dir_path() / f"{name}.tar"),
                 "tar 归档 (*.tar)",
             )
             if not chosen:
