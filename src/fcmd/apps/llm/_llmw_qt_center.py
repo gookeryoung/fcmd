@@ -1019,7 +1019,7 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
         from fcmd.apps.llm._llmw_qt_model_manager import ModelManagerDialog
 
         dialog = ModelManagerDialog(
-            _llmconfig.models_dir(),
+            _llmconfig.models_dirs(),
             on_changed=self._model_manager_changed,
             on_clear_cache=self._cleanup_list_cache,
             parent=self,

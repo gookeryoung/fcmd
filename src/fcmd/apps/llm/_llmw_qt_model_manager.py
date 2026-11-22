@@ -7,11 +7,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QLabel, QMessageBox, QVBoxLayout, QWidget
 
+from fcmd.apps.llm import _llmconfig
 from fcmd.apps.llm.llmbase import human_size
 from fcmd.apps.llm.llmdown import LocalModel, ModelToolError, delete_local_model, scan_local_models
 from fcmd.gui.widgets import Card, button, fit_dialog_to_content, hint_label, make_table, make_table_item
@@ -20,9 +23,63 @@ from fcmd.gui.workers import submit
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__ = ["ModelManagerDialog"]
+__all__ = ["ManagedModel", "ModelManagerDialog", "scan_managed_models"]
 
 _COLUMNS = ("仓库", "大小", "文件", "状态", "路径")
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedModel:
+    """带来源根目录的本地模型：多模型目录下删除 / 清理必须落到正确的根。"""
+
+    root: Path
+    model: LocalModel
+
+    @property
+    def repo(self) -> str:
+        return self.model.repo
+
+    @property
+    def size(self) -> int:
+        return self.model.size
+
+    @property
+    def files(self) -> int:
+        return self.model.files
+
+    @property
+    def partial(self) -> int:
+        return self.model.partial
+
+    @property
+    def complete(self) -> bool:
+        return self.model.complete
+
+    @property
+    def path(self) -> Path:
+        return self.model.path
+
+
+def scan_managed_models(roots: Sequence[Path]) -> list[ManagedModel]:
+    """扫描全部模型目录，按仓库名去重（与模型页「已安装」口径一致）。
+
+    空目录 / 不存在目录由 :func:`scan_local_models` 返回空列表；同一仓库出现在
+    多个根目录时只展示首个，避免模型管理里出现重复条目。
+    """
+    found: list[ManagedModel] = []
+    seen: set[str] = set()
+    for root in roots:
+        try:
+            models = scan_local_models(root)
+        except OSError:
+            continue
+        for model in models:
+            key = model.repo.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(ManagedModel(root, model))
+    return sorted(found, key=lambda item: (item.complete, item.repo.casefold()))
 
 
 class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
@@ -30,17 +87,20 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
 
     def __init__(
         self,
-        models_root: Path,
+        models_roots: Path | Sequence[Path],
         *,
         on_changed: Callable[[], None] | None = None,
         on_clear_cache: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.models_root = models_root
+        roots = (models_roots,) if isinstance(models_roots, Path) else tuple(models_roots)
+        self.models_roots = roots
+        # 兼容旧调用方：主目录仍暴露为 models_root。
+        self.models_root = roots[0] if roots else _llmconfig.models_dir()
         self._on_changed = on_changed
         self._on_clear_cache = on_clear_cache
-        self._models: tuple[LocalModel, ...] = ()
+        self._models: tuple[ManagedModel, ...] = ()
         self._scanning = False
 
         self.setWindowTitle("模型管理")
@@ -110,7 +170,7 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
             return
         self._scanning = True
         self._summary.setText("正在扫描模型目录…")
-        submit(scan_local_models, self.models_root, on_done=self._render, on_error=self._scan_failed)
+        submit(scan_managed_models, self.models_roots, on_done=self._render, on_error=self._scan_failed)
 
     def _scan_failed(self, message: str) -> None:
         self._scanning = False
@@ -118,9 +178,10 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
         self._models = ()
         self._table.setRowCount(0)
 
-    def _render(self, models: list[LocalModel]) -> None:
+    def _render(self, models: Sequence[ManagedModel | LocalModel]) -> None:
         self._scanning = False
-        self._models = tuple(sorted(models, key=lambda model: (model.complete, model.repo.casefold())))
+        managed = [item if isinstance(item, ManagedModel) else ManagedModel(self.models_root, item) for item in models]
+        self._models = tuple(sorted(managed, key=lambda model: (model.complete, model.repo.casefold())))
         self._table.setRowCount(len(self._models))
         for row, model in enumerate(self._models):
             status = "完整" if model.complete else f"未完成（{model.partial} 个 .part）"
@@ -129,7 +190,7 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
                 human_size(model.size),
                 str(model.files),
                 status,
-                str(self.models_root.joinpath(*model.repo.split("/"))),
+                str(model.path),
             )
             for column, text in enumerate(values):
                 self._table.setItem(row, column, make_table_item(text))
@@ -143,7 +204,7 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
         self._remove_button.setEnabled(bool(self._models))
         self._partial_button.setEnabled(incomplete > 0 or bool(self._models))
 
-    def _selected_models(self) -> list[LocalModel]:
+    def _selected_models(self) -> list[ManagedModel]:
         rows = sorted({index.row() for index in self._table.selectionModel().selectedRows()})
         return [self._models[row] for row in rows if 0 <= row < len(self._models)]
 
@@ -166,7 +227,7 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
         failures: list[str] = []
         for model in selected:
             try:
-                delete_local_model(self.models_root, model.repo)
+                delete_local_model(model.root, model.repo)
             except ModelToolError as exc:
                 failures.append(f"{model.repo}: {exc}")
         self._changed()
@@ -208,20 +269,21 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
         self.refresh()
 
     def _cleanup_empty_dirs(self) -> None:
-        if not self.models_root.is_dir():
-            return
         removed = 0
-        dirs = sorted(
-            (path for path in self.models_root.rglob("*") if path.is_dir()),
-            key=lambda path: len(path.parts),
-            reverse=True,
-        )
-        for path in dirs:
-            try:
-                path.rmdir()
-                removed += 1
-            except OSError:
+        for root in self.models_roots:
+            if not root.is_dir():
                 continue
+            dirs = sorted(
+                (path for path in root.rglob("*") if path.is_dir()),
+                key=lambda path: len(path.parts),
+                reverse=True,
+            )
+            for path in dirs:
+                try:
+                    path.rmdir()
+                    removed += 1
+                except OSError:
+                    continue
         self._summary.setText(f"已清理 {removed} 个空目录")
         self._changed()
         self.refresh()
