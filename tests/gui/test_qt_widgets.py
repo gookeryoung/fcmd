@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -407,6 +407,9 @@ def test_item_row_builds_slots_and_expands() -> None:
     try:
         # 共享外观契约：所有应用的行卡同为 ItemRow + itemRow 属性 + ItemRowName 标题。
         assert row.objectName() == "ItemRow"
+        # 行内文字不拦鼠标：可选中文本会让点击落在标签上、列表选不中这一行。
+        for label in (row.title_label, row.sub_label):
+            assert label.textInteractionFlags() == Qt.TextInteractionFlag.NoTextInteraction
         assert row.property("itemRow") == "true"
         assert row.title_label.objectName() == "ItemRowName"
         assert row.title_label.text() == "Ubuntu"
@@ -417,6 +420,8 @@ def test_item_row_builds_slots_and_expands() -> None:
 
         tag = StatusTag("运行中", tone="success")
         row.add_tag(tag)
+        # 胶囊（StatusTag 也是 QLabel）同样不能抢走点击
+        assert tag.textInteractionFlags() == Qt.TextInteractionFlag.NoTextInteraction
         note_widget = QPushButton("小字")
         row.add_note_widget(note_widget)
         action = QPushButton("启动")

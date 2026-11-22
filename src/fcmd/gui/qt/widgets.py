@@ -476,6 +476,17 @@ class SelectionRow:
         self.style().polish(self)
 
 
+def _click_through(widget: QWidget) -> None:
+    """让行卡里的文字标签不拦鼠标：点击落到列表上，才能选中整行。
+
+    ``ElidedLabel`` 与 ``StatusTag`` 默认是 ``TextSelectableByMouse``，落在标题 /
+    状态胶囊上的点击会被标签吃掉（连 ``QListWidget`` 都收不到），用户就会觉得
+    「点这一行没反应」。
+    """
+    if isinstance(widget, QLabel):
+        widget.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+
+
 class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     """可展开行卡骨架：标题 + 副标题 / 标签行 + 右侧数值与动作 + 行内展开区。
 
@@ -496,6 +507,10 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     ``itemRow="true"``（主题里所有行卡规则都用它选），标题标签统一
     ``QLabel#ItemRowName``。应用想加自己的样式再另外设 objectName，不会丢掉
     共享行卡外观。
+
+    行卡内的文字一律不抢鼠标（``NoTextInteraction``）：``ElidedLabel`` / ``StatusTag``
+    默认允许拖选文本，会把落在标题 / 胶囊上的点击吃掉，列表就选不中这一行，
+    表现为「点名字没反应、得再点旁边」。
     """
 
     toggleRequested = Signal(object)
@@ -540,6 +555,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.title_label = ElidedLabel(title, mode=elide, parent=self.header)
         self.title_label.setObjectName("ItemRowName")
         self.title_label.setToolTip(title)
+        _click_through(self.title_label)
         self.title_row.addWidget(self.title_label, 1)
         self.left.addLayout(self.title_row)
 
@@ -552,6 +568,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.sub_label.setMinimumWidth(0)
         self.sub_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.sub_label.setToolTip(subtitle)
+        _click_through(self.sub_label)
         self.note_row.addWidget(self.sub_label, 0)
         self.note_row.addStretch(1)
         self.left.addLayout(self.note_row)
@@ -587,6 +604,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
 
     def add_title_widget(self, widget: QWidget) -> None:
         """标题右侧的小标记（如发布方）。"""
+        _click_through(widget)
         self.title_row.addWidget(widget, 0)
 
     def add_note_widget(self, widget: QWidget, *, stretch: int = 0) -> None:
@@ -596,6 +614,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         拉伸空位让给它，后面的状态胶囊仍贴着行尾。
         """
         # 顺序恒为「副标题 → 小字 → 拉伸空位 → 状态胶囊」，与调用先后无关。
+        _click_through(widget)
         index = 1 + self._note_extras
         self.note_row.insertWidget(index, widget, stretch)
         self._note_extras += 1
@@ -604,6 +623,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
 
     def add_tag(self, widget: QWidget) -> None:
         """副标题行右端的状态胶囊 / 进度小字，调用顺序即显示顺序。"""
+        _click_through(widget)
         self.note_row.addWidget(widget, 0)
 
     def add_action(self, widget: QWidget) -> None:
@@ -615,6 +635,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         """右侧数值 / 摘要（模型大小、镜像来源等），位于动作按钮左侧。"""
         if self.metrics_label is None:
             self.metrics_label = QLabel(text, self.header)
+            _click_through(self.metrics_label)
             self.metrics_label.setObjectName("Hint")
             self.metrics_label.setWordWrap(False)
             self.metrics_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

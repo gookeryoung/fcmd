@@ -69,6 +69,11 @@
   `~/.fcmd/wsl/install/<名称>`，此前父目录不存在时直接跑 `wsl --import`（它只建最后
   一级目录）；现在与 CLI 同口径，导入前 `mkdir(parents=True, exist_ok=True)`，
   建目录失败时给出「无法创建安装目录」的可读提示而不是 wsl 的原始报错。
+- 修复行卡列表「点名字没反应、要再点旁边」：共享 `ItemRow` 里的标题 / 副标题 / 状态胶囊
+  原本是 `TextSelectableByMouse`（`ElidedLabel` / `StatusTag` 的默认值），落在文字上的
+  点击被标签吃掉，`QListWidget` 收不到、选不中这一行。现在行内文字统一
+  `NoTextInteraction`（标题、副标题、数值、胶囊、备注小字），点标题即可选中整行，
+  wslmanw 发行版 / 镜像列表与 llmw 模型列表同时生效。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

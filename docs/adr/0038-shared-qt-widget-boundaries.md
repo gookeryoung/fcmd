@@ -45,6 +45,9 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
   `add_action`（右侧动作，始终在展开箭头之前）；
 - 展开态：`is_expanded` / `set_expanded` 只管详情区显隐与箭头图标，`detail_layout` 由页面
   把复用的详情视图挂进来，「同一时间只展开一行」仍由页面保证；
+- 命中区：行卡内的文字一律不参与文本选择（`NoTextInteraction`），否则
+  `ElidedLabel` / `StatusTag` 会把落在标题 / 胶囊上的点击吃掉，列表选不中这一行；
+  需要复制的长文本放进行内详情或 tooltip。
 - 外观：只有一份共享契约，不按应用 / 子类分别开对象名——行卡挂动态属性
   `itemRow="true"`（主题里所有行卡规则都用它选），标题统一 `QLabel#ItemRowName`；
   `elide` / `expand_hint` 这类纯展示差异仍由调用方给出。应用要额外样式可再设

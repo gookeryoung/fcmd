@@ -15,6 +15,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from fcmd.apps.wslman import _wslmanw_qt, wslmanw
@@ -127,6 +129,33 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
         assert window.stop_button.isEnabled() is False
     finally:
         window._log_lines.clear()
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_distro_row_selects_when_clicking_title_and_tags(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """点标题文字 / 状态胶囊也要能选中整行（行内文字不抢鼠标）。"""
+    view = _view(_distro("Ubuntu", "running"), _distro("Debian", "stopped", default=False))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        row = _distro_row(window, 1)
+        window.distro_list.setCurrentRow(0)
+        QApplication.processEvents()
+        assert window.distro_list.currentRow() == 0
+        # 点到行的标题文字上（行卡里面积最大的位置）
+        QTest.mouseClick(row.title_label, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(6, 6))
+        QApplication.processEvents()
+        assert window.distro_list.currentRow() == 1
+        # 点到状态胶囊上
+        window.distro_list.setCurrentRow(0)
+        QApplication.processEvents()
+        QTest.mouseClick(row.state_tag, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(4, 4))
+        QApplication.processEvents()
+        assert window.distro_list.currentRow() == 1
+    finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
@@ -353,6 +382,27 @@ def test_image_rows_pin_installed_and_downloaded(home: Path, monkeypatch: pytest
         assert [_image_row(window, index).entry.name for index in range(3)] == ["Ubuntu", "Kali", "Debian"]
         window.image_sort.setCurrentIndex(window.image_sort.findData("name"))
         assert [_image_row(window, index).entry.name for index in range(3)] == ["Ubuntu", "Kali", "Debian"]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_image_row_selects_when_clicking_title(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像行同理：点标题文字即可选中整行（行内文字不抢鼠标）。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        first = wslmanw._images.ImageEntry(name="Debian", friendly_name="Debian", sources=("manifest",))
+        second = wslmanw._images.ImageEntry(name="Ubuntu", friendly_name="Ubuntu", sources=("cli",))
+        window.image_entries = (first, second)
+        window._render_images()
+        row = _image_row(window, 1)
+        window.image_list.setCurrentRow(0)
+        QApplication.processEvents()
+        QTest.mouseClick(row.title_label, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(6, 6))
+        QApplication.processEvents()
+        assert window.image_list.currentRow() == 1
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
