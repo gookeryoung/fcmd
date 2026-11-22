@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
-from fcmd.gui.qt._pyside_compat import binding_version
+from fcmd.gui.qt.compat import binding_version
 from fcmd.gui.qt.page import PageSpec
 from fcmd.gui.qt.shell import WindowShellMixin, WindowSpec
 from fcmd.gui.qt.statusbar import DEFAULT_STATUS, WindowStatusBar

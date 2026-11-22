@@ -20,7 +20,7 @@
 
 | 编号 | 决策 | 被否决的方案（原因） | 代码落点 |
 |---|---|---|---|
-| D1 | Python ≥3.11 使用 **PySide6**；Python 3.10 使用 **PySide2**（见 [0036](0036-python310-pyside2.md)） | 全部 Python 版本只装 PySide6：3.10 上也能跑，但无法满足「3.10 明确走 PySide2」的兼容要求 | `pyproject.toml` 按 `python_version` 标记依赖；`fcmd.gui.qt._pyside_compat` 做运行时映射 |
+| D1 | Python ≥3.11 使用 **PySide6**；Python 3.10 使用 **PySide2**（见 [0036](0036-python310-pyside2.md)） | 全部 Python 版本只装 PySide6：3.10 上也能跑，但无法满足「3.10 明确走 PySide2」的兼容要求 | `pyproject.toml` 按 `python_version` 标记依赖；`fcmd.gui.qt.compat` 做运行时映射 |
 | D2 | Qt 依赖进入**基础依赖**（`pip install fcmd` 即可用 locllmw） | 作为可选 extra：默认入口会因缺依赖不可用，用户需额外记忆一个 extra；代价是安装体积增加约 200 MB，接受该代价 | `pyproject.toml` → `dependencies`（PySide6 / PySide2 择一） |
 | D3 | 主题注册表与调色板只在 `fcmd.gui.theme` 维护一份（四套主题、别名、`ui/theme.json`） | 另建 Qt 专用主题：两套配色/字号必然漂移 | `fcmd/gui/qt/theme.py` 只做 `Palette → QSS/QPalette` 翻译 |
 | D4 | 窗口设置统一为 `ui/llmw.json` + `WxH+X+Y` 几何 + `LocllmSettings` | 各写一份设置：模型目录 / 硬件快照 / 实测记录无法共享 | `_llmw_winsettings`；`fcmd.gui.qt.window` 复用 `fcmd.gui.config` / `fcmd.gui.geometry` |

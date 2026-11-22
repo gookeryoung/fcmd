@@ -7,6 +7,7 @@
 
 ### 变更
 
+- 内部整理：Qt 绑定兼容层 `gui/qt/_pyside_compat.py` 改名为 `gui/qt/compat.py`，导入路径与测试同步更新；行为不变。
 - 修复 llmw 模型列表搜不到 Qwen 等官方仓库：默认「适合本机」此前按 ModelScope 的
   **整仓体积**过滤，而 GGUF 官方仓库（如 `Qwen/Qwen3-8B-GGUF`）的总大小是多份量化
   之和（约 32 GB），在 16–32 GB 机器上会被整体误杀。现在 GGUF 仓库按名字里的参数量

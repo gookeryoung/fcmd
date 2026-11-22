@@ -6,7 +6,7 @@ project-includes = ["**/*.ipynb", "**/*.py*"]
 python-version   = "3.10"
 search-path      = ["src", "."]
 # PySide6 仅在 Python ≥3.11 安装，3.10（本地/CI 类型检查所用版本）只有 PySide2；
-# 业务代码与测试统一写 PySide6（运行时由 gui.qt._pyside_compat 映射），
+# 业务代码与测试统一写 PySide6（运行时由 gui.qt.compat 映射），
 # 类型检查无法解析时按 Any 处理，Qt 源码模块已在上方整体排除。
 replace-imports-with-any = ["winreg", "PySide6.*"]
 

@@ -20,8 +20,8 @@
 |---|---|---|
 | D1 | `requires-python = ">=3.10"`，分类器覆盖 3.10–3.14 | `pyproject.toml` |
 | D2 | 按解释器选择绑定：3.11+ 安装 `PySide6-Essentials>=6.9`，3.10 安装 `PySide2>=5.15.2.1` | `pyproject.toml` 的 `python_version` 标记 |
-| D3 | 业务代码继续导入 `PySide6`；3.10 上由轻量 meta path finder 映射到 PySide2，不预加载 Qt | `fcmd.gui.qt._pyside_compat.install()`，在 `fcmd/__init__.py` 注册 |
-| D4 | Qt5/Qt6 差异在兼容层补齐：`QAction` 模块位置、`exec` / `QAction.menu()` 生命周期、`QTimer.singleShot` 调用形态、`QFontDatabase.families`、`QWheelEvent.position` | `_pyside_compat` + 少量调用点改写成两版通用写法 |
+| D3 | 业务代码继续导入 `PySide6`；3.10 上由轻量 meta path finder 映射到 PySide2，不预加载 Qt | `fcmd.gui.qt.compat.install()`，在 `fcmd/__init__.py` 注册 |
+| D4 | Qt5/Qt6 差异在兼容层补齐：`QAction` 模块位置、`exec` / `QAction.menu()` 生命周期、`QTimer.singleShot` 调用形态、`QFontDatabase.families`、`QWheelEvent.position` | `compat` + 少量调用点改写成两版通用写法 |
 | D5 | 3.11/3.12 标准库 API 用项目内垫片或条件导入：`tomllib`→`tomli`、`StrEnum`→`str+Enum`、`datetime.UTC`→`timezone.utc`、`itertools.batched`、`typing.override`、`Path.is_junction` | `fcmd._compat`、`fcmd.infras._toml` |
 | D6 | 门禁目标版本同步到 3.10：ruff / pyrefly / tox | `ruff.toml`、`pyrefly.toml`、`tox.ini` |
 | D7 | CI 测试矩阵为 3.10 / 3.13 / 3.14；3.10 job 实际安装 PySide2 | `.github/workflows/ci.yml` |
@@ -45,5 +45,5 @@
 
 - PySide2 已停止维护，Qt5 与 Qt6 的长期行为会继续分化；应锁定 `5.15.2.1` 并保持
   Qt 兼容层集中，不在业务代码里写版本分支。
-- Python 3.10 于 2026-10 结束维护；到期后删除 PySide2 依赖与 `_pyside_compat` 映射，
+- Python 3.10 于 2026-10 结束维护；到期后删除 PySide2 依赖与 `compat` 映射，
   `requires-python` 回到 ≥3.11，并同步移除 3.10 CI / tox 环境。
