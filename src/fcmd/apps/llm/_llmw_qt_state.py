@@ -57,11 +57,15 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = [
+    "SERVICE_WATCH_MS",
     "LlmState",
     "gpu_usage",
     "scan_models",
     "service_snapshot",
 ]
+
+SERVICE_WATCH_MS = 3000
+"""服务看护间隔（毫秒）：外部启停 / 进程意外退出后各页最迟这么久刷新一次。"""
 
 
 def gpu_usage(runner: llmbase.Runner = llmbase.run_command) -> tuple[int, int] | None:
@@ -168,6 +172,7 @@ class LlmState(LogChannelMixin, QObject):  # pragma: no cover - 依赖 Qt 事件
         self.running_paths: set[str] = set()
         self.states: list[ServeState] = []
         self.alive_states: list[ServeState] = []
+        self._services_signature_cached: tuple[Any, ...] | None = None
         self.busy = False
         self.closing = False
         self._init_log_channel()
@@ -254,10 +259,46 @@ class LlmState(LogChannelMixin, QObject):  # pragma: no cover - 依赖 Qt 事件
     # ------------------------------------------------------------------ #
     def refresh_services(self) -> list[ServeState]:
         """读取服务状态文件并刷新运行中服务列表（同步，毫秒级）。"""
-        self.states, self.alive_states = service_snapshot()
-        self.running_paths = {llmenv.path_key(Path(state.model)) for state in self.alive_states}
-        self.servicesChanged.emit(self.alive_states)
+        states, alive = service_snapshot()
+        self._apply_services(states, alive, force=True)
         return self.alive_states
+
+    def watch_services(self) -> None:
+        """周期性核对服务快照：外部启停 / 进程退出后各页及时更新。
+
+        只有快照与上次不同（服务集合、pid、端口 / 模型路径发生变化，或有进程
+        悄无声息地退出）才发 :attr:`servicesChanged`：否则每秒采样都会重建
+        「运行中的模型」行 / 重填运行页下拉。采样不跟模型推理抢网络，只读几十字节
+        的状态文件 + 一次进程存活检查，开销可忽略。
+        """
+        if self.closing:
+            return
+        states, alive = service_snapshot()
+        self._apply_services(states, alive)
+
+    def _apply_services(
+        self,
+        states: list[ServeState],
+        alive: list[ServeState],
+        *,
+        force: bool = False,
+    ) -> None:
+        """写回服务快照，快照变化（或显式刷新）时通知各页。"""
+        signature = self._services_signature(states, alive)
+        self.states = states
+        self.alive_states = alive
+        self.running_paths = {llmenv.path_key(Path(state.model)) for state in alive}
+        if force or signature != self._services_signature_cached:
+            self._services_signature_cached = signature
+            self.servicesChanged.emit(self.alive_states)
+
+    @staticmethod
+    def _services_signature(states: list[ServeState], alive: list[ServeState]) -> tuple[Any, ...]:
+        """服务快照指纹：登记项元数据 + 存活项名称，任一变化都算列表变了。"""
+        return (
+            tuple((state.name, state.pid, state.create_time, state.host, state.port, state.model) for state in states),
+            tuple(state.name for state in alive),
+        )
 
     def select_model(self, path: Path, *, update_name: bool = True) -> None:
         """记录选中的模型并通知各页（运行页可据 ``update_name`` 回填服务名）。"""

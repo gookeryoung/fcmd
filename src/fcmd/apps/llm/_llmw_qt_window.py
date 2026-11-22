@@ -23,10 +23,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 from fcmd.apps.llm._llmw_icon import window_icon
 from fcmd.apps.llm._llmw_qt_overview import OverviewPage
 from fcmd.apps.llm._llmw_qt_run import RunPage
-from fcmd.apps.llm._llmw_qt_state import LlmState
+from fcmd.apps.llm._llmw_qt_state import SERVICE_WATCH_MS, LlmState
 from fcmd.gui import style as _qt_theme
 from fcmd.gui.page import PageSpec
 from fcmd.gui.window import QtMainWindow
+from fcmd.gui.workers import periodic
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -108,6 +109,9 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
         self.set_status("正在读取服务与模型目录…")
         self.state.refresh_services()
+        # 服务看护：外部（CLI / 其他终端）启停或进程意外退出时，概览「运行中的模型」、
+        # 运行页下拉的「✓ 已启动」、模型页「已启动」按钮都要自己跟上，不能等用户操作。
+        self._services_watch = periodic(self.state, SERVICE_WATCH_MS, self.state.watch_services)
         self.state.refresh_models()
         if self.state.hardware is None:
             self.state.detect_hardware()

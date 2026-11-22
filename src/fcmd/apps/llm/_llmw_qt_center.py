@@ -1141,7 +1141,13 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
                 blocked[key] = "diffusers 多组件模型（model_index.json），当前仅支持单目录 HF transformers safetensors"
             full: list[Path] = []
             tags: list[str] = []
-            for gguf in sorted(model.path.glob("*.gguf")):
+            # 仓库自身的 GGUF +（已转换时）converted/<名称>/ 里的转换产物：转换后的
+            # f16 GGUF 与它的量化变体都落在这个目录，不扫就会「已转换但无法启动 / 量化」。
+            folders = [model.path]
+            convert_info = convertible.get(key)
+            if convert_info is not None and convert_info[1].parent.is_dir():
+                folders.append(convert_info[1].parent)
+            for gguf in sorted(path for folder in folders for path in folder.glob("*.gguf")):
                 precision = detect_precision(gguf, tensors=False)
                 if precision.quantized is True:
                     label = precision.filename_label or precision.label.removesuffix(" 量化")
@@ -1572,6 +1578,10 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
             serve_path = next((path for label, path in quantized if label == default_quant), None)
             if serve_path is None and quantized:
                 serve_path = quantized[0][1]
+            # 已转换但还没量化时，转换产物（f16 GGUF）本身就能被 llama-server 加载。
+            converted_gguf = convert_info[1] if convert_info is not None and convert_info[2] else None
+            if serve_path is None:
+                serve_path = converted_gguf
             repo_parts = item.repo.split("/")
             downloadable = len(repo_parts) == 2 and all(repo_parts)
             row = _ModelItemRow(
@@ -1584,7 +1594,7 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
                 quant_tags=self._quant_tags.get(key, ()),
                 quantizable=quantizable,
                 quant_blocked=installed and not quantizable,
-                startable=bool(quantized) or paint_path is not None,
+                startable=bool(quantized) or paint_path is not None or converted_gguf is not None,
                 paint_startable=paint_path is not None,
                 default_quant=default_quant,
                 serve_path=serve_path,
@@ -2108,6 +2118,10 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
             return
         files = self._quantized_files.get(key, ())
         if not files:
+            # 已转换但还没量化：直接启动转换产物（f16 GGUF 可由 llama-server 加载）。
+            convert_info = self._convertible.get(key)
+            if convert_info is not None and convert_info[2]:
+                self._request_serve(convert_info[1], key)
             return
         if len(files) == 1:
             self._request_serve(files[0][1], key)

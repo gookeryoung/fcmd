@@ -1246,6 +1246,127 @@ def test_models_page_delete_and_cleanup(window: Any, monkeypatch: pytest.MonkeyP
     assert not second.exists()
 
 
+def _write_gguf_header(path: Path, file_type: int) -> None:
+    """写一个最小 GGUF 头（只带 general.architecture / general.file_type），供精度快路径识别。"""
+    import struct
+
+    def key_value(key: str, type_id: int, payload: bytes) -> bytes:
+        encoded = key.encode()
+        return struct.pack("<Q", len(encoded)) + encoded + struct.pack("<I", type_id) + payload
+
+    def text_value(value: str) -> bytes:
+        encoded = value.encode()
+        return struct.pack("<Q", len(encoded)) + encoded
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    buffer = bytearray(b"GGUF") + struct.pack("<I", 3) + struct.pack("<Q", 0) + struct.pack("<Q", 2)
+    buffer += key_value("general.architecture", 8, text_value("qwen2"))
+    buffer += key_value("general.file_type", 4, struct.pack("<I", file_type))
+    path.write_bytes(bytes(buffer))
+
+
+def test_scan_installed_reads_converted_products(window: Any, tmp_path: Path) -> None:
+    """转换产物落在 converted/<名称>/ 下：f16 可量化、量化变体可在下拉里启动。"""
+    window.show_page("models")
+    browse = window.page("models").browse
+    models_root = tmp_path / "models"
+    source = models_root / "Qwen" / "Qwen2.5-0.5B-Instruct"
+    source.mkdir(parents=True)
+    (source / "config.json").write_text("{}", encoding="utf-8")
+    (source / "model.safetensors").write_bytes(b"x" * 16)
+    products = models_root / "converted" / source.name
+    f16 = products / f"{source.name}.gguf"
+    _write_gguf_header(f16, 1)
+    quantized = products / f"{source.name}-Q4_K_M.gguf"
+    _write_gguf_header(quantized, 15)
+
+    snapshot = browse._scan_installed()
+
+    key = "qwen/qwen2.5-0.5b-instruct"
+    assert snapshot.convertible[key] == (source, f16, True)
+    assert snapshot.quant_candidates[key] == (f16,)
+    assert snapshot.quantized[key] == (("Q4_K_M", quantized),)
+    assert key in snapshot.usable
+
+
+def test_converted_model_row_offers_serve_button(window: Any, tmp_path: Path) -> None:
+    """已转换但未量化的模型也要有「启动服务」，点它启动转换产物（f16 GGUF）。"""
+    from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    key = "qwen/qwen2.5-0.5b-instruct"
+    source = tmp_path / "Qwen2.5-0.5B-Instruct"
+    source.mkdir()
+    output = tmp_path / "converted" / source.name / f"{source.name}.gguf"
+    output.parent.mkdir(parents=True)
+    _write_gguf_header(output, 1)
+    summary = ModelSummary(repo="Qwen/Qwen2.5-0.5B-Instruct", storage_size=1024**3)
+    browse._installed_models = {key: summary}
+    browse._installed_repos = {key}
+    browse._usable_repos = {key}
+    browse._convertible = {key: (source, output, True)}
+    browse._last_result = ModelSearch(items=(summary,), total=1)
+    browse._source_filter = "installed"
+    browse._filter_key = "all"
+    browse._name_filter = ""
+    browse._render_results()
+
+    row = browse.models.itemWidget(browse.models.item(0))
+    assert row.start_button is not None
+    assert row.serve_path == output
+    assert "已转换" in {tag.text() for tag in row.findChildren(QLabel, "StatusTag")}
+
+    served: list[tuple[Path, str]] = []
+    browse._request_serve = lambda path, repo_key="": served.append((path, repo_key))  # type: ignore[method-assign]
+    row.start_button.click()
+    assert served == [(output, key)]
+
+
+def test_service_watch_only_notifies_when_services_change(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """服务看护：外部启停 / 进程退出后自动刷新，但快照没变时不反复通知各页。"""
+    from fcmd.apps.llm import _llmw_qt_state as qt_state
+    from fcmd.apps.llm.llmbase import ServeState
+
+    state = window.state
+    state.refresh_services()
+    seen: list[object] = []
+    state.servicesChanged.connect(seen.append)
+
+    def serve_state(name: str, pid: int) -> ServeState:
+        return ServeState(
+            name=name,
+            pid=pid,
+            create_time=1.0,
+            host="127.0.0.1",
+            port=8080,
+            model="D:/models/demo.gguf",
+            profile="balanced",
+            context=4096,
+            engine="",
+            alias=name,
+            api_key="",
+            log="",
+            started_at="",
+        )
+
+    running = serve_state("demo", 4242)
+    monkeypatch.setattr(qt_state, "service_snapshot", lambda: ([running], [running]))
+    state.watch_services()
+    assert len(seen) == 1
+    assert state.is_running(Path("D:/models/demo.gguf"))
+
+    # 快照没变：不重复发信号（否则每秒采样都会重建列表 / 重填下拉）。
+    state.watch_services()
+    assert len(seen) == 1
+
+    # 进程退出（登记项还在，存活列表为空）：立刻反映成「未运行」。
+    monkeypatch.setattr(qt_state, "service_snapshot", lambda: ([running], []))
+    state.watch_services()
+    assert len(seen) == 2
+    assert not state.is_running(Path("D:/models/demo.gguf"))
+
+
 def test_settings_engine_directory_and_archive_actions(
     window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
