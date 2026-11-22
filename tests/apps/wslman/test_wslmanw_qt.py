@@ -29,6 +29,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.app import create_application
+from fcmd.gui.qt.icons import ICON_NAME_PROPERTY as _ICON_NAME_PROPERTY
 
 
 def _distro(name: str = "Ubuntu", state: str = "running", *, default: bool = True) -> Distro:
@@ -86,6 +87,11 @@ def _image_row(window: _wslmanw_qt.WslmanQtWindow, index: int) -> _wslmanw_qt._I
     widget = window.image_list.itemWidget(item)
     assert isinstance(widget, _wslmanw_qt._ImageItemRow)
     return widget
+
+
+def _icon_name(widget: Any) -> Any:
+    """控件当前挂的图标名（``set_icon`` 写入的属性）。"""
+    return widget.property(_ICON_NAME_PROPERTY)
 
 
 def _wait_idle(window: _wslmanw_qt.WslmanQtWindow, timeout: float = 5.0) -> None:
@@ -1501,7 +1507,8 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert section.collapsed is True
         assert section.details.isHidden() is True
         assert section.collapsed_hint.isHidden() is False
-        assert section.toggle_button.text() == "展开"
+        assert _icon_name(section.toggle_button) == "chevron-down"
+        assert section.toggle_button.toolTip() == "展开详情"
         assert all(tag.isHidden() for tag in section._collapsed_tags.values())
         # 三个动作不随详情收起：收起态下也能检测环境 / 复制 SSH / 开始初始化。
         assert section.detect_button.isHidden() is False
@@ -1513,13 +1520,15 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         section.toggle_collapsed()
         assert section.collapsed is False
         assert section.details.isHidden() is False
-        assert section.toggle_button.text() == "收起"
+        assert _icon_name(section.toggle_button) == "chevron-up"
+        assert section.toggle_button.toolTip() == "收起详情"
         assert section.collapsed_hint.isHidden() is True
         # 收起按钮的 clicked 会带 checked 参数：点第二下必须真的收起。
         section.toggle_button.click()
         assert section.collapsed is True
         assert section.details.isHidden() is True
-        assert section.toggle_button.text() == "展开"
+        assert _icon_name(section.toggle_button) == "chevron-down"
+        assert section.toggle_button.toolTip() == "展开详情"
 
         section._apply_status(
             _initenv.EnvStatus(
@@ -1681,7 +1690,7 @@ def test_distro_config_embeds_init_env_section(home: Path, monkeypatch: pytest.M
         assert isinstance(dialog.init_env, _wslmanw_qt._InitEnvSection)
         assert dialog.init_env.parent() is dialog
         assert dialog.init_env.details.isHidden() is True
-        assert dialog.init_env.toggle_button.text() == "展开"
+        assert _icon_name(dialog.init_env.toggle_button) == "chevron-down"
         for name in ("detect_button", "run_button", "copy_key"):
             assert dialog.isAncestorOf(getattr(dialog.init_env, name))
 
@@ -1700,6 +1709,30 @@ def test_distro_config_embeds_init_env_section(home: Path, monkeypatch: pytest.M
         monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
         dialog.reject()
         assert dialog.init_env._closing is True
+    finally:
+        dialog.deleteLater()
+        owner.deleteLater()
+
+
+def test_distro_config_collapses_back_to_initial_height(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """展开再收起后对话框高度要回到初始值（延误一拍 adjustSize 才能避开旧 minimumSizeHint）。"""
+    app = QApplication.instance()
+    assert app is not None
+    owner = QWidget()
+    dialog = _wslmanw_qt._DistroConfigDialog(owner, _distro("Ubuntu"), "~")  # type: ignore[arg-type]
+    monkeypatch.setattr(dialog.init_env, "refresh_status", lambda: None)
+    try:
+        dialog.show()
+        app.processEvents()
+        initial = dialog.height()
+        dialog.init_env.toggle_collapsed(False)
+        app.processEvents()
+        expanded = dialog.height()
+        assert expanded > initial
+        dialog.init_env.toggle_collapsed(True)
+        app.processEvents()
+        assert dialog.init_env.details.isHidden() is True
+        assert dialog.height() == initial
     finally:
         dialog.deleteLater()
         owner.deleteLater()

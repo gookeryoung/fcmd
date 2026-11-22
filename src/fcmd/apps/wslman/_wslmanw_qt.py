@@ -68,6 +68,7 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command, spawn_detached
 from fcmd.apps.wslman._transfer import sha256_file
+from fcmd.gui.qt import icons as _qt_icons
 from fcmd.gui.qt.logdialog import LogChannelMixin
 from fcmd.gui.qt.page import PageBody, PageSpec
 from fcmd.gui.qt.widgets import (
@@ -84,6 +85,7 @@ from fcmd.gui.qt.widgets import (
     confirm,
     fit_dialog_to_content,
     hint_label,
+    icon_button,
     make_table,
     make_table_item,
     set_button_kind,
@@ -1934,7 +1936,10 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             header.addWidget(tag)
             self._collapsed_tags[task.key] = tag
         header.addStretch(1)
-        self.toggle_button = button("展开", kind="ghost")
+        self.toggle_button = icon_button("", tooltip="展开详情")
+        self.toggle_button.setIconSize(QSize(16, 16))
+        _qt_icons.set_icon(self.toggle_button, "chevron-down", tone="muted")
+        self.toggle_button.setAccessibleName("展开详情")
         # ``clicked`` 会带一个 checked(bool) 参数；直接连 ``toggle_collapsed`` 会把
         # 它当成 ``collapsed=False``，展开后再也收不起来。
         self.toggle_button.clicked.connect(self._on_toggle_clicked)
@@ -2040,7 +2045,9 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self._sync_collapsed_view()
         window = self.window()
         if window is not self and isinstance(window, QDialog):
-            window.adjustSize()
+            # 行内控件显示 / 隐藏后，窗口的 minimumSizeHint 要等事件循环重算；
+            # 立即 adjustSize 会读到展开时的旧值，收起后高度就回不去。
+            QTimer.singleShot(0, window, window.adjustSize)
 
     def _sync_collapsed_view(self) -> None:
         """收起：只显示已初始化情况；展开：额外显示勾选、状态与日志（动作行始终显示）。"""
@@ -2055,7 +2062,9 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             tag.setVisible(self._collapsed and key in self._done)
         self.collapsed_hint.setVisible(self._collapsed)
         self.details.setVisible(not self._collapsed)
-        self.toggle_button.setText("展开" if self._collapsed else "收起")
+        _qt_icons.set_icon(self.toggle_button, "chevron-up" if not self._collapsed else "chevron-down", tone="muted")
+        self.toggle_button.setToolTip("收起详情" if not self._collapsed else "展开详情")
+        self.toggle_button.setAccessibleName(self.toggle_button.toolTip())
 
     @property
     def busy(self) -> bool:
