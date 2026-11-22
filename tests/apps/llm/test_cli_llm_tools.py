@@ -526,9 +526,9 @@ def _convert_plan(quant: str | None = None) -> llmconvert.ConvertPlan:
 
 
 def test_convert_cmd(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(llmconvert, "find_convert_python", lambda: "python")
+    monkeypatch.setattr(llmconvert, "find_convert_python", lambda **kwargs: "python")
     monkeypatch.setattr(llmconvert, "plan_convert", lambda *args, **kwargs: _convert_plan())
-    monkeypatch.setattr(llmconvert, "convert_model", lambda plan: [Path("out.gguf")])
+    monkeypatch.setattr(llmconvert, "convert_model", lambda plan, **kwargs: [Path("out.gguf")])
     llmconvert.convert_cmd(Path("src"))
     out = capsys.readouterr().out
     assert "转换计划" in out
@@ -538,13 +538,13 @@ def test_convert_cmd(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixt
 def test_convert_cmd_with_quant_and_python(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
 
-    def _find() -> str:
+    def _find(**_kwargs: object) -> str:
         calls.append("find")
         return "auto"
 
     monkeypatch.setattr(llmconvert, "find_convert_python", _find)
     monkeypatch.setattr(llmconvert, "plan_convert", lambda *args, **kwargs: _convert_plan("Q4_K_M"))
-    monkeypatch.setattr(llmconvert, "convert_model", lambda plan: [Path("out.gguf")])
+    monkeypatch.setattr(llmconvert, "convert_model", lambda plan, **kwargs: [Path("out.gguf")])
     llmconvert.convert_cmd(Path("src"), python="custom")
     out = capsys.readouterr().out
     assert calls == []

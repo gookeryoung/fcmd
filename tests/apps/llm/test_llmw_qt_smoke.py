@@ -756,6 +756,20 @@ def test_all_and_local_keep_seen_category_items(window: Any) -> None:
     assert [item.repo for item in browse._result_items] == [paint.repo]
 
 
+def test_convert_preparation_shows_busy_status(window: Any) -> None:
+    """转换准备阶段用忙碌条 + 状态行反馈（探测解释器 / 下载源码 / clone），不再是静止的 0%。"""
+    window.show_page("models")
+    browse = window.page("models").browse
+    browse._convert_active_repo = "Qwen/WeMM"
+    browse.download_bar.setRange(0, 0)
+    browse._on_convert_progress("正在下载 llama.cpp 源码包（1/5）…")
+    assert "llama.cpp 源码包" in browse.download_text.text()
+    browse._on_convert_progress(42)
+    assert browse.download_bar.minimum() == 0
+    assert browse.download_bar.maximum() == 100
+    assert browse.download_bar.value() == 42
+
+
 def test_name_search_bypasses_local_fit(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """名称搜索是明确意图：停在「适合本机」也要显示官方大仓库的命中结果。"""
     from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary

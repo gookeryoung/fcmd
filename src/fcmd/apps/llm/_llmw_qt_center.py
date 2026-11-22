@@ -1858,7 +1858,8 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self._converting = True
         self._convert_active_repo = repo
         self.download_status.setVisible(True)
-        self.download_bar.setValue(0)
+        # 准备阶段（探测解释器 / 获取源码 / 检查架构）没有百分比：用忙碌条表示在动。
+        self.download_bar.setRange(0, 0)
         self.download_text.setText(f"准备转换 {repo}…")
         self.stop_download_button.setVisible(False)
         self._sync_download_buttons()
@@ -1883,7 +1884,14 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
 
     def _convert_work(self, form: _llmw_convert._ConvertForm) -> list[str]:
         source = Path(form.source).expanduser()
-        python = form.python or llmconvert.find_convert_python()
+
+        def report(text: str) -> None:
+            """准备阶段进度：写日志并更新底部状态，避免长时间看起来「卡死」。"""
+            self._log(text)
+            if self._bridge is not None:
+                self._bridge.progress.emit(text)
+
+        python = form.python or llmconvert.find_convert_python(on_status=report)
         plan = llmconvert.plan_convert(
             source,
             output=Path(form.output),
@@ -1891,6 +1899,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
             script=Path(form.script).expanduser() if form.script else None,
             python=python,
             tag=form.tag or None,
+            on_status=report,
         )
         last = -1
 
@@ -1903,14 +1912,20 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
                 last = percent
                 self._bridge.progress.emit(percent) if self._bridge is not None else None
 
-        return [str(path) for path in llmconvert.convert_model(plan, on_output=relay)]
+        return [str(path) for path in llmconvert.convert_model(plan, on_output=relay, on_status=report)]
 
     def _on_convert_progress(self, value: object) -> None:
         if isinstance(value, int):
+            if self.download_bar.maximum() == 0:
+                self.download_bar.setRange(0, 100)
             self.download_bar.setValue(value)
             self.download_text.setText(f"转换 {self._convert_active_repo or '-'} · {value}%")
+        elif isinstance(value, str) and value:
+            # 准备阶段的状态行：解释器探测 / 下载源码 / clone / 启动脚本。
+            self.download_text.setText(value)
 
     def _convert_done(self, repo: str, produced: list[str]) -> None:
+        self.download_bar.setRange(0, 100)
         self.download_bar.setValue(100)
         self.download_text.setText(f"转换完成：{repo}")
         self._log(f"转换完成 {repo}: {'、'.join(produced)}")
@@ -1918,6 +1933,7 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         self._render_results()
 
     def _convert_error(self, repo: str, message: str) -> None:
+        self.download_bar.setRange(0, 100)
         self.download_text.setText(f"转换失败：{repo} · {message}")
         self._log(f"转换失败 {repo}: {message}")
 

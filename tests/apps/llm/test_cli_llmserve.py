@@ -656,9 +656,12 @@ class TestConvert:
             )
 
     def test_source_archive_urls(self) -> None:
+        """源码包地址：GitHub 镜像优先，官方 codeload / archive 直连兜底。"""
         tag_urls = llmconvert._source_archive_urls("b12212")
-        assert tag_urls[0] == "https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/b12212"
-        assert tag_urls[1] == "https://github.com/ggml-org/llama.cpp/archive/refs/tags/b12212.zip"
+        codeload = "https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/b12212"
+        archive = "https://github.com/ggml-org/llama.cpp/archive/refs/tags/b12212.zip"
+        assert tag_urls[0].endswith(archive)
+        assert codeload in tag_urls and archive in tag_urls
         master_urls = llmconvert._source_archive_urls("lmstudio-2.71")
         assert all("refs/heads/master" in url for url in master_urls)
 
@@ -913,6 +916,18 @@ class TestConvert:
             return CommandResult(0)
 
         assert llmconvert.find_convert_python(_run) == calls[0][0]
+
+    def test_find_convert_python_reports_progress(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """探测每个解释器时回调状态，避免 GUI 准备阶段长时间没有反馈。"""
+        seen: list[str] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            return CommandResult(0 if cmd[0].endswith("second") else 1, "", "")
+
+        monkeypatch.setattr(llmconvert, "_python_candidates", lambda: ["first", "second"])
+        assert llmconvert.find_convert_python(_run, on_status=seen.append) == "second"
+        assert any("first" in item and "正在检测" in item for item in seen)
+        assert any("second" in item for item in seen)
 
     def test_find_convert_python_missing(self) -> None:
         with pytest.raises(ServeError, match="--python"):

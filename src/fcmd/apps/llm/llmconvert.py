@@ -57,6 +57,8 @@ QUANTIZE_TIMEOUT = 2 * 3600.0
 CLONE_TIMEOUT = 900.0
 _SOURCE_ATTEMPTS = 5
 _SOURCE_TIMEOUT = 30.0
+_PYTHON_PROBE_TIMEOUT = 60.0
+"""逐个解释器探测 torch 的超时：坏掉的解释器（Windows Store 别名等）不能无限挂住。"""
 _SOURCE_RETRY_DELAY = 1.0
 _BUILD_TAG_RE = re.compile(r"^b\d+$")
 _ACCESS_VIOLATION = 0xC0000005
@@ -208,16 +210,19 @@ def convert_source_root(tag: str, home: Path | None = None) -> Path:
 
 
 def _source_archive_urls(ref: str) -> list[str]:
-    """llama.cpp 源码包地址：官方 codeload 优先，GitHub archive 兜底。
+    """llama.cpp 源码包地址：国内 GitHub 镜像优先，官方 codeload / archive 兜底。
 
     单流 zip 比 ``git clone`` 更耐受网络抖动，且官方 release 引擎包只带二进制，
-    转换脚本必须另行获取源码。
+    转换脚本必须另行获取源码。镜像规则与引擎下载共用
+    :func:`fcmd.apps.llm.llmengine.mirror_candidates`（``FCMD_GITHUB_MIRROR``
+    可覆盖，设为 ``direct`` 时只走直连）。
     """
     path = f"refs/tags/{ref}" if _BUILD_TAG_RE.fullmatch(ref) else "refs/heads/master"
-    return [
-        f"https://codeload.github.com/ggml-org/llama.cpp/zip/{path}",
-        f"https://github.com/ggml-org/llama.cpp/archive/{path}.zip",
-    ]
+    # github.com 地址能套 gh-proxy 镜像；codeload.github.com 不在镜像主机表里，
+    # 所以先排镜像 archive，再排 codeload 直连。
+    archive = f"https://github.com/ggml-org/llama.cpp/archive/{path}.zip"
+    codeload = f"https://codeload.github.com/ggml-org/llama.cpp/zip/{path}"
+    return [*llmengine.mirror_candidates(archive), codeload]
 
 
 def _local_source_archives(ref: str, repo: Path) -> list[Path]:
@@ -266,7 +271,13 @@ def _extract_source_archive(archive: Path, repo: Path) -> bool:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _download_resumable(url: str, dest: Path, opener: Opener | None = None) -> int:
+def _download_resumable(
+    url: str,
+    dest: Path,
+    opener: Opener | None = None,
+    *,
+    attempts: int | None = None,
+) -> int:
     """带 Range 续传与重试的下载，专用于体积较大的源码包。
 
     GitHub 在部分网络下会在传输中重置连接；这里把未完成数据留在 ``.part``，
@@ -278,7 +289,8 @@ def _download_resumable(url: str, dest: Path, opener: Opener | None = None) -> i
     part.parent.mkdir(parents=True, exist_ok=True)
     open_fn = opener or (lambda request, timeout: urlopen(request, timeout=timeout))
     last_error: OSError | None = None
-    for attempt in range(_SOURCE_ATTEMPTS):
+    limit = _SOURCE_ATTEMPTS if attempts is None else max(1, attempts)
+    for attempt in range(limit):
         start = part.stat().st_size if part.is_file() else 0
         headers = {"User-Agent": "fcmd-llm/0.3.10"}
         if start:
@@ -307,15 +319,26 @@ def _download_resumable(url: str, dest: Path, opener: Opener | None = None) -> i
         part.replace(dest)
         return size
     part.unlink(missing_ok=True)
-    raise ServeError(f"下载失败: {url}（重试 {_SOURCE_ATTEMPTS} 次；{last_error or '未知错误'}）")
+    raise ServeError(f"下载失败: {url}（重试 {limit} 次；{last_error or '未知错误'}）")
 
 
-def _download_convert_source(ref: str, repo: Path, opener: Opener | None) -> bool:
+def _download_convert_source(
+    ref: str,
+    repo: Path,
+    opener: Opener | None,
+    *,
+    on_status: Callable[[str], None] | None = None,
+) -> bool:
     """下载并解压源码包；地址不可用时逐个尝试，全部失败返回 ``False``。"""
     archive = repo.parent / f"{repo.name}-{ref}.zip"
-    for url in _source_archive_urls(ref):
+    urls = _source_archive_urls(ref)
+    # 镜像候选可能有 6–8 条：每条都重试 5 次会让「准备阶段」看起来卡死。
+    attempts = _SOURCE_ATTEMPTS if len(urls) <= 2 else 2
+    for index, url in enumerate(urls, start=1):
+        if on_status is not None:
+            on_status(f"正在下载 llama.cpp 源码包（{index}/{len(urls)}）…")
         try:
-            _download_resumable(url, archive, opener)
+            _download_resumable(url, archive, opener, attempts=attempts)
         except ServeError:
             archive.unlink(missing_ok=True)
             continue
@@ -326,12 +349,13 @@ def _download_convert_source(ref: str, repo: Path, opener: Opener | None) -> boo
     return False
 
 
-def ensure_convert_script(
+def ensure_convert_script(  # noqa: PLR0913, PLR0917 - 兼容旧调用方，参数保持扁平
     tag: str | None = None,
     script: Path | None = None,
     home: Path | None = None,
     runner: Runner = run_command,
     opener: Opener | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> Path:
     """定位转换脚本：显式 ``--script``（脚本或本地源码 zip）→ ``FCMD_CONVERT_SCRIPT``
     → 本地源码 → 引擎目录已有 ``llama.cpp*.zip`` → 源码包下载 → 浅克隆。
@@ -364,16 +388,20 @@ def ensure_convert_script(
     if cached.is_file():
         return cached
 
+    if on_status is not None:
+        on_status("未找到本地 llama.cpp 源码，首次转换需要获取（下载源码包或 clone）…")
     ref = resolved if _BUILD_TAG_RE.fullmatch(resolved) else "master"
     repo = cached.parent
     repo.parent.mkdir(parents=True, exist_ok=True)
     for archive in _local_source_archives(ref, repo):
         if _source_archive_ready(archive) and _extract_source_archive(archive, repo):
             return cached
-    if _download_convert_source(ref, repo, opener):
+    if _download_convert_source(ref, repo, opener, on_status=on_status):
         return cached
 
     shutil.rmtree(repo, ignore_errors=True)
+    if on_status is not None:
+        on_status("源码包不可用，正在 git clone llama.cpp 源码（较慢，请稍候）…")
     result = runner(
         ["git", "clone", "--depth", "1", "--branch", ref, CONVERT_REPO_URL, str(repo)],
         timeout=CLONE_TIMEOUT,
@@ -397,6 +425,7 @@ def plan_convert(  # noqa: PLR0913, PLR0917
     models_root: Path | None = None,
     tag: str | None = None,
     home: Path | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> ConvertPlan:
     """构造转换计划。
 
@@ -414,6 +443,8 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         if script is not None and script.suffix.lower() == ".py"
         else convert_source_root(resolved_tag, home)
     )
+    if on_status is not None:
+        on_status("正在检查模型目录、令牌器与引擎架构支持…")
     check_convert_source(src, repo, tag=resolved_tag)
 
     if output is None:
@@ -444,7 +475,7 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         source=src.resolve(),
         output=target.resolve(),
         outtype=outtype,
-        script=ensure_convert_script(tag=tag, script=script, home=home),
+        script=ensure_convert_script(tag=tag, script=script, home=home, on_status=on_status),
         python=python or os.environ.get("FCMD_CONVERT_PYTHON") or sys.executable,
         quant=quant,
         quantize_exe=quant_exe,
@@ -476,10 +507,20 @@ def _python_candidates() -> list[str]:
     return candidates
 
 
-def find_convert_python(runner: Runner = run_command) -> str:
-    """找到一个已安装 ``torch`` / ``safetensors`` / ``numpy`` 的 Python 解释器。"""
+def find_convert_python(
+    runner: Runner = run_command,
+    *,
+    on_status: Callable[[str], None] | None = None,
+) -> str:
+    """找到一个已安装 ``torch`` / ``safetensors`` / ``numpy`` 的 Python 解释器。
+
+    每次探测都带超时（坏掉的解释器 / Store 别名不会挂住整个准备阶段），
+    探测进度通过 ``on_status`` 回传给窗口。
+    """
     for candidate in _python_candidates():
-        result = runner([candidate, "-c", "import torch, safetensors, numpy"], timeout=120.0)
+        if on_status is not None:
+            on_status(f"正在检测转换解释器：{candidate}")
+        result = runner([candidate, "-c", "import torch, safetensors, numpy"], timeout=_PYTHON_PROBE_TIMEOUT)
         if result.returncode == 0:
             return candidate
     raise ServeError("未找到已安装 torch / safetensors / numpy 的 Python；请用 --python 指定")
@@ -555,6 +596,8 @@ def convert_model(
     plan: ConvertPlan,
     runner: Runner = run_command,
     on_output: Callable[[str], None] | None = None,
+    *,
+    on_status: Callable[[str], None] | None = None,
 ) -> list[Path]:
     """执行转换（可选再量化），返回最终产出的 GGUF 列表。
 
@@ -562,6 +605,8 @@ def convert_model(
     可实时回调日志；否则沿用一次性捕获的 ``runner``。
     """
     plan.output.parent.mkdir(parents=True, exist_ok=True)
+    if on_status is not None:
+        on_status(f"正在启动转换脚本：{plan.python}")
     if on_output is None:
         result = runner(plan.convert_argv(), timeout=CONVERT_TIMEOUT)
     else:
@@ -630,15 +675,21 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
     tag:
         按指定引擎 tag 匹配 llama.cpp 源码版本；默认用 current 引擎。
     """
+    console = get_console()
+
+    def report(text: str) -> None:
+        console.print(text)
+
     plan = plan_convert(
         source,
         output=output,
         outtype=outtype,
         quant=quant,
         script=script,
-        python=python or find_convert_python(),
+        python=python or find_convert_python(on_status=report),
         models_root=models_root,
         tag=tag,
+        on_status=report,
     )
     table = Table(title="转换计划", box="ascii")
     table.add_column("项", style="cyan", no_wrap=True)
@@ -651,10 +702,10 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
     table.add_row("量化", plan.quant or "-")
     table.add_row("脚本", str(plan.script))
     table.add_row("解释器", plan.python)
-    get_console().print(table)
+    console.print(table)
 
-    for path in convert_model(plan):
-        get_console().print(f"已生成: {path}")
+    for path in convert_model(plan, on_status=report):
+        console.print(f"已生成: {path}")
 
 
 @fcmd.main("llmconvert")
