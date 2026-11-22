@@ -183,8 +183,14 @@ def test_image_rows_and_details() -> None:
     assert wslmanw.image_source_text(wslmanw._images.ImageEntry(name="X", friendly_name="", sources=())) == "未知"
 
 
-def _image(
-    name: str, *, friendly: str = "", download: bool = True, installed: bool = False
+def _image(  # noqa: PLR0913 - 测试夹具，状态位按需组合
+    name: str,
+    *,
+    friendly: str = "",
+    download: bool = True,
+    installed: bool = False,
+    downloaded: bool = False,
+    backed_up: bool = False,
 ) -> wslmanw._images.ImageEntry:
     downloads = (wslmanw._images.ImageDownload("x86_64", f"https://e/{name}.wsl"),) if download else ()
     return wslmanw._images.ImageEntry(
@@ -193,6 +199,8 @@ def _image(
         sources=("cli", "manifest") if download else ("store",),
         downloads=downloads,
         installed=installed,
+        downloaded=downloaded,
+        backed_up=backed_up,
     )
 
 
@@ -211,17 +219,55 @@ def test_filter_images_by_query_status_and_source() -> None:
     assert wslmanw.filter_images(entries, filter_key="backed_up") == ()
 
 
+def test_image_pin_rank_puts_local_first() -> None:
+    """置顶档位：已安装 0 / 已下载 1 / 仅在线或仅备份 2。"""
+    assert wslmanw.image_pin_rank(_image("A", installed=True)) == 0
+    assert wslmanw.image_pin_rank(_image("A", installed=True, downloaded=True)) == 0
+    assert wslmanw.image_pin_rank(_image("A", downloaded=True)) == 1
+    assert wslmanw.image_pin_rank(_image("A", backed_up=True)) == 2
+    assert wslmanw.image_pin_rank(_image("A")) == 2
+
+
 def test_sort_images_and_counts() -> None:
-    # 友好名与名称排序结果相反，才能区分两种排序真的生效。
+    # 已安装 / 已下载永远置顶，排序口径只在同档位内生效。
     entries = (
         _image("ubuntu", friendly="Alpha"),
         _image("Debian", friendly="Zulu", installed=True),
+        _image("Kali", friendly="Beta", downloaded=True),
+        _image("Zbackup", friendly="Delta", backed_up=True),
+        _image("Alpine", friendly="Gamma"),
     )
-    assert [entry.name for entry in wslmanw.sort_images(entries)] == ["Debian", "ubuntu"]
-    assert [entry.name for entry in wslmanw.sort_images(entries, "friendly")] == ["ubuntu", "Debian"]
-    assert [entry.name for entry in wslmanw.sort_images(entries, "status")] == ["Debian", "ubuntu"]
+    # 置顶档位：已安装 → 已下载 → 其它；``name`` / ``friendly`` 只重排同档位。
+    assert [entry.name for entry in wslmanw.sort_images(entries)] == [
+        "Debian",
+        "Kali",
+        "Alpine",
+        "ubuntu",
+        "Zbackup",
+    ]
+    assert [entry.name for entry in wslmanw.sort_images(entries, "friendly")] == [
+        "Debian",
+        "Kali",
+        "ubuntu",
+        "Zbackup",
+        "Alpine",
+    ]
+    # ``status`` 在同档位内先排已备份。
+    assert [entry.name for entry in wslmanw.sort_images(entries, "status")] == [
+        "Debian",
+        "Kali",
+        "Zbackup",
+        "Alpine",
+        "ubuntu",
+    ]
     # 未知排序值回落按名称，不让旧设置文件把列表弄乱。
-    assert [entry.name for entry in wslmanw.sort_images(entries, "legacy")] == ["Debian", "ubuntu"]
+    assert [entry.name for entry in wslmanw.sort_images(entries, "legacy")] == [
+        "Debian",
+        "Kali",
+        "Alpine",
+        "ubuntu",
+        "Zbackup",
+    ]
 
     entries = (
         _image("ubuntu", friendly="Alpha"),

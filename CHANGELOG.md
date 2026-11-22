@@ -7,10 +7,6 @@
 
 ### 变更
 
-- 行卡列表切换选中不再卡顿：`SelectionRow.set_selected` 状态未变时空操作，
-  `RowListWidget.sync_selection()` 只重抛光「旧 / 新」两行，wslmanw 发行版 / 镜像与
-  llmw 模型 / 推荐 / 引擎列表都改用它（200 行单次切换由 ~11ms 降到 ~2.6ms，
-  其中 ~0.2ms 是抛光，其余为 Qt 重绘）。
 - `wslman` 默认工作目录统一为 `${FCMD_HOME:-~/.fcmd}/wsl`，按用途细分 `download/`
   （镜像归档）、`install/`（安装目录根，每个发行版一个子目录）、`backup/`（导出备份）：
   wslmanw 下载 / 安装 / 备份默认落在对应子目录（设置页新增「工作目录」卡片展示这些路径），
@@ -57,6 +53,9 @@
   （CLI 不传不受影响），`LoadingBar.set_progress` / `WindowStatusBar.show_progress` /
   `QtMainWindow.show_progress` 支持确定进度（内部按 0..1000 折算，避免几十 GB
   文件撑爆 QProgressBar 的 int 范围）。
+- `wslmanw` 镜像列表把「已下载 / 已安装」的镜像固定置顶（档位：已安装 → 已下载 →
+  其它），按名称 / 按友好名 / 已备份优先只在同档位内排序；原「已安装优先」排序项
+  随之改为「已备份优先」（已安装置顶已成为固定规则，不再需要单独选项）。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

@@ -41,6 +41,7 @@ __all__ = [
     "image_filename",
     "image_item_lines",
     "image_marks",
+    "image_pin_rank",
     "image_sort_key",
     "image_source_text",
     "image_status_text",
@@ -88,9 +89,13 @@ DEFAULT_IMAGE_FILTER = "all"
 IMAGE_SORTS: tuple[tuple[str, str], ...] = (
     ("name", "按名称"),
     ("friendly", "按友好名"),
-    ("status", "已安装优先"),
+    ("status", "已备份优先"),
 )
-"""镜像页排序选项；默认按名称，与 llmw 模型列表的「排序下拉」同构。"""
+"""镜像页排序选项；默认按名称，与 llmw 模型列表的「排序下拉」同构。
+
+「已安装 / 已下载」在任何排序下都置顶（见 :func:`image_pin_rank`），所以
+``status`` 只额外决定同档位内「已备份」排前面。
+"""
 
 DEFAULT_IMAGE_SORT = "name"
 
@@ -334,13 +339,30 @@ def filter_images(
     return tuple(selected)
 
 
+def image_pin_rank(entry: _images.ImageEntry) -> int:
+    """置顶档位：已安装 ``0`` / 已下载 ``1`` / 其它 ``2``。
+
+    本地已有的镜像永远排在最前面：在线清单动辄上百条，已安装 / 已下载的条目
+    被排到中间就找不到（与 llmw 模型列表「已安装置顶」同一口径）。
+    """
+    if entry.installed:
+        return 0
+    if entry.downloaded:
+        return 1
+    return 2
+
+
 def image_sort_key(key: str) -> Callable[[_images.ImageEntry], Any]:
-    """排序键函数：未知 key 回落到按名称，避免设置文件里的旧值让列表失序。"""
+    """排序键函数：先按置顶档位，再按所选口径；未知 key 回落按名称。
+
+    置顶与排序口径无关：切换「按名称 / 按友好名 / 已备份优先」都不会把已安装 /
+    已下载的镜像挤到列表中间；同档位内才比较名称 / 友好名 / 备份状态。
+    """
     if key == "friendly":
-        return lambda entry: (entry.friendly_name or entry.name).casefold()
+        return lambda entry: (image_pin_rank(entry), (entry.friendly_name or entry.name).casefold())
     if key == "status":
-        return lambda entry: (not entry.installed, not entry.backed_up, entry.name.casefold())
-    return lambda entry: entry.name.casefold()
+        return lambda entry: (image_pin_rank(entry), not entry.backed_up, entry.name.casefold())
+    return lambda entry: (image_pin_rank(entry), entry.name.casefold())
 
 
 def sort_images(entries: Sequence[_images.ImageEntry], key: str = DEFAULT_IMAGE_SORT) -> tuple[_images.ImageEntry, ...]:

@@ -299,8 +299,9 @@ def test_image_rows_and_filter(home: Path, monkeypatch: pytest.MonkeyPatch) -> N
         window.image_entries = (entry, other)
         window._render_images()
         assert window.image_list.count() == 2
-        assert _image_row(window, 0).entry.name == "Debian"
-        assert _image_row(window, 1).entry.name == "Ubuntu"
+        # 已安装的 Ubuntu 置顶，即使默认按名称排序（Debian < Ubuntu）。
+        assert _image_row(window, 0).entry.name == "Ubuntu"
+        assert _image_row(window, 1).entry.name == "Debian"
         # 行卡骨架来自共享 ItemRow（与 llmw 模型行同源）。
         assert isinstance(_image_row(window, 0), _wslmanw_qt.ItemRow)
         assert window.image_list.currentRow() == 0
@@ -325,8 +326,33 @@ def test_image_rows_and_filter(home: Path, monkeypatch: pytest.MonkeyPatch) -> N
         assert _image_row(window, 0).entry.name == "Debian"
         window.image_source.setCurrentIndex(window.image_source.findData("all"))
         window.image_sort.setCurrentIndex(window.image_sort.findData("friendly"))
-        assert _image_row(window, 0).entry.name == "Debian"
+        # 已安装的 Ubuntu 在任何排序下都置顶，friendly 只影响未安装的同档位条目。
+        assert _image_row(window, 0).entry.name == "Ubuntu"
+        assert _image_row(window, 1).entry.name == "Debian"
         assert "共 2 个镜像" in window.images_status.fullText()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_image_rows_pin_installed_and_downloaded(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像列表把已安装 / 已下载固定置顶，切换排序口径不影响置顶顺序。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        installed = wslmanw._images.ImageEntry(name="Ubuntu", friendly_name="Zulu", sources=("cli",), installed=True)
+        downloaded = wslmanw._images.ImageEntry(name="Kali", friendly_name="Beta", sources=("cli",), downloaded=True)
+        online = wslmanw._images.ImageEntry(name="Debian", friendly_name="Alpha", sources=("manifest",))
+        window.image_entries = (online, downloaded, installed)
+        window._render_images()
+        assert [_image_row(window, index).entry.name for index in range(3)] == ["Ubuntu", "Kali", "Debian"]
+
+        # 按友好名排序（Alpha / Beta / Zulu）：置顶档位不变，只在同档位内比较。
+        window.image_sort.setCurrentIndex(window.image_sort.findData("friendly"))
+        assert [_image_row(window, index).entry.name for index in range(3)] == ["Ubuntu", "Kali", "Debian"]
+        window.image_sort.setCurrentIndex(window.image_sort.findData("name"))
+        assert [_image_row(window, index).entry.name for index in range(3)] == ["Ubuntu", "Kali", "Debian"]
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
