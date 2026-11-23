@@ -127,8 +127,11 @@ class ImagesDownloadMixin:
             if force
             else "正在获取镜像清单…（已显示本地缓存，稍后自动更新）"
             if self.image_entries
-            else "正在获取镜像清单…（wsl --list --online 首次较慢）"
+            else "正在获取镜像清单…（wsl --list --online 首次较慢，最多等 12 秒）"
         )
+        # 镜像源（WSLUI）只影响行卡上的「镜像源 N 个」与下载候选，不进首屏：
+        # 它自身还要走两个外部接口，慢 / 不可达时不能拖住整份清单。
+        self._load_wslui_catalog(force)
         # 拉清单要跑 ``wsl --list --online`` 再下载官方 JSON，网络不好时会长时间阻塞；
         # 放进 ``QThreadPool`` 会让进程在关窗后仍等任务结束（窗口关了进程却退不出），
         # 因此走守护线程：结果回来前关窗，进程可以直接退出。
@@ -139,22 +142,36 @@ class ImagesDownloadMixin:
             on_finished=lambda: self._set_images_busy(False),
         )
 
-    def _images_worker(self, force: bool = False) -> tuple[Any, tuple[ImageEntry, ...], Any]:
+    def _load_wslui_catalog(self, force: bool) -> None:
+        """后台加载 WSLUI 镜像源；到货后再重绘一次行卡（不阻塞镜像清单）。"""
+        _owner.submit_daemon(
+            lambda: _owner._wslui.load_catalog(force=force),
+            on_done=self._apply_wslui_catalog,
+            on_error=lambda message: self._log(f"[镜像源] {message}"),
+        )
+
+    def _apply_wslui_catalog(self, catalog: Any) -> None:
+        """镜像源清单回来：更新缓存对象，必要时补一次重绘与日志。"""
+        if self._closing or catalog is None:
+            return
+        changed = self._wslui_catalog != catalog
+        self._wslui_catalog = catalog
+        for warning in getattr(catalog, "warnings", ()):
+            self._log(f"[镜像源] {warning}")
+        if changed and self.image_entries:
+            self._render_images()
+
+    def _images_worker(self, force: bool = False) -> tuple[Any, tuple[ImageEntry, ...]]:
         env = _owner.cli._build_environment()
-        # 官方清单与 WSLUI 镜像源互不依赖：并发拉，刷新时间只取较慢的那个。
-        # 本地状态（wsl -l -v / 目录扫描）也放进来，总耗时 ≈ 最慢的一次网络请求。
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="images-page") as pool:
-            wslui_future = pool.submit(lambda: _owner._wslui.load_catalog(force=force))
-            catalog = _owner._images.collect_images(
-                fetch_cli=lambda: _owner.cli._online_rows(env),
-                fetch_manifest=_owner.cli._manifest_images,
-                force=force,
-            )
-            local_future = pool.submit(lambda: self._mark_local(catalog.entries, env))
-            # WSLUI 镜像源是附加信息：失败不能拖垮官方清单，只记 warning。
-            wslui = wslui_future.result()
-            entries = local_future.result()
-        return catalog, entries, wslui
+        # 官方清单与本地状态（wsl -l -v / 目录扫描）各自独立：本地状态要等清单才能标注，
+        # 先拉清单再标注即可，总耗时 ≈ 清单抓取 + 本地扫描。WSLUI 镜像源不在此链路里，
+        # 它由 :meth:`_load_wslui_catalog` 单独加载。
+        catalog = _owner._images.collect_images(
+            fetch_cli=lambda: _owner.cli._online_rows(env),
+            fetch_manifest=_owner.cli._manifest_images,
+            force=force,
+        )
+        return catalog, self._mark_local(catalog.entries, env)
 
     def _mark_local(self, entries: Any, env: Any) -> tuple[ImageEntry, ...]:
         """标注本地状态：已安装 / 已备份（``wsl`` 侧）+ 已下载（下载目录里的归档）。
@@ -180,14 +197,16 @@ class ImagesDownloadMixin:
         self._log(f"[镜像列表] {message}")
 
     def _apply_images(self, payload: tuple[Any, ...]) -> None:
-        # 兼容测试 / 旧调用只传 (官方清单, 条目)；运行时多带一份 WSLUI 镜像源。
+        # 兼容测试 / 旧调用传入的 (官方清单, 条目, WSLUI 镜像源) 三元组：
+        # 第三个元素仍然接受，只是运行时已改由 ``_apply_wslui_catalog`` 单独投递。
         if len(payload) >= 3:
             catalog, entries, wslui = payload[0], payload[1], payload[2]
         else:
             catalog, entries = payload[0], payload[1]
             wslui = None
         self.image_entries = entries
-        self._wslui_catalog = wslui
+        if wslui is not None:
+            self._wslui_catalog = wslui
         self._images_from_cache = catalog.from_cache
         self._images_note = _owner._images_note_text(catalog)
         for warning in catalog.warnings:

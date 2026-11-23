@@ -2050,11 +2050,11 @@ def available(json_output: bool = False) -> None:
 def _online_rows(env: Environment) -> tuple[OnlineRow, ...]:
     """运行 ``wsl --list --online`` 并解析两列表格。
 
-    超时按默认 30 s 掐断：这条命令要由 wsl.exe 自己联网下载 DistributionInfo.json，
-    本机实测冷启动 15–38 s、失败时「操作超时」；掐断后由官方清单或缓存兜底，
-    避免 GUI 长时间停在「正在获取镜像清单…」。
+    超时按 :data:`fcmd.apps.wslman._images.ONLINE_LIST_TIMEOUT_S`（12 s）掐断：这条命令
+    要由 wsl.exe 自己联网下载 DistributionInfo.json，本机实测冷启动 15–38 s、失败时
+    「操作超时」；掐断后由官方清单或缓存兜底，避免 GUI 长时间停在「正在获取镜像清单…」。
     """
-    result = _run_wsl(env, ["--list", "--online"])
+    result = _run_wsl(env, ["--list", "--online"], timeout=_images.ONLINE_LIST_TIMEOUT_S)
     text = decode_console(result.stdout or result.stderr)
     if result.returncode != 0:
         if is_not_enabled_message(text):
@@ -2072,10 +2072,11 @@ def _is_not_enabled_error(exc: Exception) -> bool:
 
 
 def _manifest_images() -> tuple[_images.ImageEntry, ...]:
-    """拉取并解析微软官方 DistributionInfo.json。"""
+    """拉取并解析微软官方 DistributionInfo.json（超时按 :data:`_images.MANIFEST_TIMEOUT_S`）。"""
     from fcmd.apps.wslman._source import fetch_manifest
 
-    return _images.parse_distribution_info(fetch_manifest(_images.MANIFEST_URL))
+    payload = fetch_manifest(_images.MANIFEST_URL, timeout=_images.MANIFEST_TIMEOUT_S)
+    return _images.parse_distribution_info(payload)
 
 
 def _installed_names(env: Environment) -> tuple[str, ...]:

@@ -7,6 +7,12 @@
 
 ### 变更
 
+- `wslmanw` 镜像页首屏提速：WSLUI 镜像源不再与官方清单同链等待，改由
+  `_load_wslui_catalog` 后台单独加载、到货后补一次重绘；超时收紧为
+  `wsl --list --online` 12 秒、官方清单 10 秒（WSLUI 侧 5 / 4 / 8 秒），
+  慢或不可达都不再拖住列表。测速候选改为前 1 MiB / 1.5 秒、12 路并发，
+  下载速度看门狗宽限期 8 秒 → 5 秒、窗口 2 秒 → 1.5 秒，换源更快。
+  名称匹配结果按「清单 + 条目」做 `lru_cache`，镜像页重绘不再重复比对。
 - `wslmanw`「初始化环境」新增「安装显示依赖库」与「安装中文字体」两个独立项目：
   用 APT 补装 WSLg 下跑 Qt / GTK 窗口所需的 EGL / GL / XCB / Wayland / fontconfig
   系统库；中文字体默认改走轻量的 `fonts-wqy-microhei`（下载约 1.8 MB，原 Noto CJK
@@ -27,13 +33,19 @@
   cmder 包门面改惰性加载并在发现前别名 ``__main__``，修复 cmderw / llmenv /
   llmmodel / llmserve 的重复注册。新增全窗口菜单归属、入口守卫与 runpy
   子进程回归测试。
-- 修复自动下载选到「测速快、下载慢」的源：测速窗口改为最多 2.5 秒且超时前
-  已读字节仍计入吞吐；下载中持续 8 秒均速低于 512 KB/s 且还有后备源时自动
+- 修复自动下载选到「测速快、下载慢」的源：测速窗口改为最多 1.5 秒 / 1 MiB，
+  12 路并发（此前 3 MiB / 2.5 秒、6 路，正式下载前先拉十几份 3 MiB）；超时前
+  已读字节仍计入吞吐。下载中持续 5 秒均速低于 512 KB/s 且还有后备源时自动
   换源（丢掉该源 `.part`），不再出现 RLCPlus-9 这类条目整份文件按 KB/s 拉完。
-- `wslmanw` 镜像列表刷新提速：官方清单（`wsl --list --online` + `DistributionInfo.json`）、
-  WSLUI 镜像源、本地状态三路并发，耗时从「三者相加」（冷启动时 `wsl --list --online`
-  单次可达 15 s）降到只取最慢的一个（实测 0.5～1.0 s）；WSLUI 清单改为一次请求直取
-  `online-distros`（与 WSL Dashboard 一致），失败才回到 install helper 要地址。
+- `wslmanw` 镜像列表首次获取提速：官方清单（`wsl --list --online` +
+  `DistributionInfo.json`）与本地状态串成两段，WSLUI 镜像源不再进这条链路（它只影响
+  行卡上的源数量与下载候选，改为单独后台加载、到货后补一次重绘）；超时同时收紧：
+  `wsl --list --online` 30 → 12 秒（该命令冷启动实测 15–38 s，超时后清单 / 缓存照样
+  出列表）、官方清单 30 → 10 秒（文件只有约 19 KB）、WSLUI 直取 / helper / 清单
+  改为 5 / 4 / 8 秒。断网或 GitHub 不可达时首屏从「等满 30 s 以上」降到 12 秒以内；
+  WSLUI 清单仍是一次请求直取 `online-distros`（与 WSL Dashboard 一致），失败才回到
+  install helper 要地址。行卡重绘时 WSLUI 匹配结果按 `(清单, 条目)` 缓存，不再每次
+  重绘都对每个条目全量比对。
 - 新增可用镜像源：Arch Linux 的 WSL 镜像（`fastly.mirror.pkgbuild.com/wsl`）在中科大 /
   南京大学有字节一致副本（实测 431 KiB/s vs 官方 170 KiB/s）；GitHub Releases 上的发行版
   镜像（openSUSE / SUSE / AlmaLinux / RLC+）在部分网络直连不可用，改用 ghfast.top /

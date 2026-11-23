@@ -23,6 +23,7 @@ import urllib.request
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -58,11 +59,24 @@ CACHE_TTL_SECONDS = 6 * 60 * 60
 """镜像源清单有效期：6 小时；失败时优先复用过期缓存并标注。"""
 
 _CACHE_SCHEMA = "wslman/wslui-mirrors/1"
-_PROBE_BYTES = 3 * 1024 * 1024
-_PROBE_SECONDS = 2.5
-"""测速窗口：到点就停，不要求一定拉满 3 MiB。慢源也能算出真实吞吐，
-不会因为「6 秒内没拉完」被当成 0 而退化成按延迟排序。"""
-_PROBE_TIMEOUT_S = 4.0
+_PROBE_BYTES = 1024 * 1024
+_PROBE_SECONDS = 1.5
+"""测速窗口：到点就停，不要求一定拉满 1 MiB。慢源也能算出真实吞吐，
+不会因为「几秒内没拉完」被当成 0 而退化成按延迟排序。
+
+窗口只用来「排序候选」，取前 1 MiB / 1.5 秒已经能拉开快慢；旧值 3 MiB / 2.5 秒会
+在正式下载前先拉十几份 3 MiB，不仅推迟首字节，也会把带宽花在不会用的源上。
+"""
+_PROBE_TIMEOUT_S = 3.0
+_PROBE_WORKERS = 12
+"""测速并发：候选常有 10～17 个（WSLUI 一个发行版就十几条源），
+12 路能一波测完；按 6 路排两三轮会多花一个窗口的时间。"""
+_LIST_TIMEOUT_S = 8.0
+"""镜像源清单地址本身的超时（真实清单约几十 KB）。"""
+_DIRECT_TIMEOUT_S = 5.0
+"""直取 ``online-distros`` 的超时：这是首选路径，失败仍可回退 install helper。"""
+_HELPER_TIMEOUT_S = 4.0
+"""install helper 只返回一个地址，4 秒足够。"""
 _USER_AGENT = "fcmd-wslman/0.1"
 
 _HOST_LABELS: dict[str, str] = {
@@ -189,7 +203,7 @@ def _http_json(url: str, *, timeout: float = 12.0) -> Any:
 
 def _mirror_list_url() -> str:
     try:
-        payload = _http_json(INSTALL_INFO_URL, timeout=6.0)
+        payload = _http_json(INSTALL_INFO_URL, timeout=_HELPER_TIMEOUT_S)
         data = payload.get("data") if isinstance(payload, dict) else None
         online = data.get("online_distros") if isinstance(data, dict) else None
         url = online.get("url") if isinstance(online, dict) else None
@@ -262,12 +276,12 @@ def _fetch_catalog() -> tuple[WsluiDistro, ...]:
     把常用的那条放前面，刷新清单就从 2 个串行请求降到 1 个。
     """
     try:
-        distros = parse_catalog(_http_json(MIRROR_FALLBACK_URL, timeout=8.0))
+        distros = parse_catalog(_http_json(MIRROR_FALLBACK_URL, timeout=_DIRECT_TIMEOUT_S))
         if distros:
             return distros
     except (OSError, ValueError, json.JSONDecodeError):
         pass
-    return parse_catalog(_http_json(_mirror_list_url(), timeout=15.0))
+    return parse_catalog(_http_json(_mirror_list_url(), timeout=_LIST_TIMEOUT_S))
 
 
 def load_catalog(*, force: bool = False) -> WsluiCatalog:
@@ -292,9 +306,20 @@ def load_catalog(*, force: bool = False) -> WsluiCatalog:
 
 
 def match_sources(catalog: WsluiCatalog | None, entry: ImageEntry) -> tuple[WsluiSource, ...]:
-    """给官方镜像条目匹配 WSLUI 源：优先同名 + 版本，其次下载文件名一致。"""
+    """给官方镜像条目匹配 WSLUI 源：优先同名 + 版本，其次下载文件名一致。
+
+    只是拿清单做名字 / 文件名比对，没有副作用；镜像页每次重绘都要对每个条目算一遍
+    （列表、行卡、展开区共用），所以按 ``(清单, 条目)`` 缓存——两者都是 frozen
+    dataclass，内容相同即命中，每次刷新清单自然换一轮 key。
+    """
     if catalog is None or not catalog.distros:
         return ()
+    return _match_sources(catalog, entry)
+
+
+@lru_cache(maxsize=1024)
+def _match_sources(catalog: WsluiCatalog, entry: ImageEntry) -> tuple[WsluiSource, ...]:
+    """匹配主体（纯函数，比对逻辑与原 :func:`match_sources` 完全一致）。"""
     official_names = {Path(urllib.parse.urlsplit(download.url).path).name.casefold() for download in entry.downloads}
     entry_keys = {_norm(entry.name), _norm(entry.friendly_name)} - {""}
     best: tuple[int, tuple[WsluiSource, ...]] = (0, ())
@@ -427,12 +452,12 @@ def rank_items(
         return tuple(items)
     probe = probe or probe_throughput
     latency = latency or probe_tcp_latency
-    with ThreadPoolExecutor(max_workers=min(6, len(items)), thread_name_prefix="wslui-probe") as pool:
+    with ThreadPoolExecutor(max_workers=min(_PROBE_WORKERS, len(items)), thread_name_prefix="wslui-probe") as pool:
         measured = list(pool.map(lambda item: (item, probe(item.url)), items))
     if any(speed > 0 for _item, speed in measured):
         measured.sort(key=lambda pair: pair[1], reverse=True)
         return tuple(item for item, _speed in measured)
-    with ThreadPoolExecutor(max_workers=min(6, len(items)), thread_name_prefix="wslui-latency") as pool:
+    with ThreadPoolExecutor(max_workers=min(_PROBE_WORKERS, len(items)), thread_name_prefix="wslui-latency") as pool:
         timed = list(pool.map(lambda item: (item, latency(item.url)), items))
     timed.sort(key=lambda pair: pair[1])
     return tuple(item for item, _latency in timed)

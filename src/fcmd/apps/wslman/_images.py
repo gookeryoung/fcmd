@@ -30,7 +30,9 @@ from fcmd.infras.system import fcmd_home
 
 __all__ = [
     "CACHE_TTL_SECONDS",
+    "MANIFEST_TIMEOUT_S",
     "MANIFEST_URL",
+    "ONLINE_LIST_TIMEOUT_S",
     "ImageCache",
     "ImageCatalog",
     "ImageDownload",
@@ -54,6 +56,17 @@ CACHE_TTL_SECONDS = 30 * 60
 连续跑、GUI 重开下载页）直接命中缓存，省掉一次 ``wsl.exe``（约 0.9–1.4 s）加一次
 约 19 KB 的 JSON 下载，同时把「过期」控制在半小时以内。
 """
+
+ONLINE_LIST_TIMEOUT_S = 12.0
+"""``wsl --list --online`` 的超时上限。
+
+这条命令由 ``wsl.exe`` 自己联网下载 DistributionInfo.json，冷启动实测 15–38 s、
+失败时只回一个「操作超时」。清单本身（``DistributionInfo.json``）已经能给出完整
+条目，CLI 只补顺序与展示名，不值得让首屏陪跑 30 s：超时后照常由清单 / 缓存出列表。
+"""
+
+MANIFEST_TIMEOUT_S = 10.0
+"""官方清单下载超时：文件只有约 19 KB，10 秒足够；不可达时不必陪跑到 30 秒。"""
 
 CACHE_SCHEMA = "wslman/available-cache/1"
 

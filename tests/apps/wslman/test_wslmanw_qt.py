@@ -570,6 +570,75 @@ def test_image_row_shows_wslui_mirror_sources(home: Path, monkeypatch: pytest.Mo
         window.deleteLater()
 
 
+def test_images_worker_does_not_wait_for_wslui_catalog(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像清单首屏不依赖 WSLUI 镜像源：源清单慢 / 挂掉都不能拖住列表。"""
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        entry = _image_entry("Ubuntu")
+        monkeypatch.setattr(_wslmanw_qt._images, "collect_images", lambda **_kwargs: _catalog((entry,)))
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_mark_local", lambda self, entries, env: entries)
+        monkeypatch.setattr(
+            _wslmanw_qt._wslui,
+            "load_catalog",
+            lambda **_kwargs: pytest.fail("镜像清单链路不应再等 WSLUI 镜像源"),
+        )
+        payload = window._images_worker(force=True)
+        assert len(payload) == 2
+        assert payload[1] == (entry,)
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_wslui_catalog_lands_after_image_list(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像源清单晚到：写入缓存对象并补一次重绘，行卡的源数量随之更新。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entry = _image_entry("Ubuntu-24.04")
+        window._apply_images((_catalog((entry,)), (entry,)))
+        assert _image_row(window, 0).mirror_label.fullText() == "镜像源：1 个"
+
+        rendered: list[int] = []
+        original = window._render_images
+
+        def counting_render() -> None:
+            rendered.append(1)
+            original()
+
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_render_images", lambda self: counting_render())
+        catalog = _wslmanw_qt._wslui.WsluiCatalog(
+            (
+                _wslmanw_qt._wslui.WsluiDistro(
+                    "Ubuntu",
+                    "24.04",
+                    (
+                        _wslmanw_qt._wslui.WsluiSource(
+                            "https://mirrors.ustc.edu.cn/ubuntu/rootfs.tar.xz", "ustc", "tar.xz"
+                        ),
+                    ),
+                ),
+            ),
+            warnings=("镜像源清单暂不可用（已离线）",),
+        )
+        window._apply_wslui_catalog(catalog)
+        assert window._wslui_catalog is catalog
+        assert rendered  # 到货后补一次重绘
+        assert _image_row(window, 0).mirror_label.fullText() == "镜像源：2 个"
+        assert any("镜像源清单暂不可用" in line for line in window._log_lines)
+
+        # 同一份清单重复投递（含失败后重试拿到同样的空清单）不再重绘。
+        rendered.clear()
+        window._apply_wslui_catalog(catalog)
+        assert rendered == []
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_auto_download_uses_fastest_wslui_source(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """自动策略先对全部候选测速，WSLUI 最快的排前面，官方源仍作为兜底。"""
     from types import SimpleNamespace
