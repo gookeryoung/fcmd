@@ -71,7 +71,10 @@ __all__ = [
     "init_task_keys",
     "legacy_dir_note",
     "load_settings",
+    "local_arch",
     "main",
+    "mirror_lines",
+    "mirror_sources",
     "opener_paths_for",
     "openers_for",
     "package_mirror_for",
@@ -209,7 +212,7 @@ _IMAGE_DETAIL_FIELDS: tuple[str, ...] = (
     "友好名",
     "可用架构",
     "下载来源",
-    "国内镜像",
+    "镜像源",
     "校验和",
     "已安装",
     "已备份",
@@ -1217,20 +1220,83 @@ def _progress_text(prefix: str, name: str, done: int, total: int | None, speed: 
     return " · ".join(parts)
 
 
-def mirror_choices(entry: _images.ImageEntry) -> str:
-    """该条目可用的国内镜像（按优先顺序去重）；没有 sha256 时只列官方源。"""
-    if not entry.has_sha256:
-        return "无（缺 sha256，仅官方源）"
-    labels: list[str] = []
-    for download in entry.downloads:
+def local_arch() -> str:
+    """本机架构口径（与官方清单的 ``arch`` 字段一致）：``aarch64`` / ``x86_64``。"""
+    return "aarch64" if "arm" in platform.machine().casefold() else "x86_64"
+
+
+_ARM_TOKENS = ("aarch64", "arm64", "armhf", "armv7", "armv8")
+_X86_TOKENS = ("amd64", "x86_64", "x86-64", "i386", "i686")
+
+
+def _arch_in_url(url: str) -> str | None:
+    """从 URL 认出制品架构；看不出来返回 ``None``（不猜就不过滤）。"""
+    text = url.casefold()
+    if any(token in text for token in _ARM_TOKENS):
+        return "aarch64"
+    if any(token in text for token in _X86_TOKENS):
+        return "x86_64"
+    return None
+
+
+def mirror_sources(entry: _images.ImageEntry, sources: Sequence[Any] = ()) -> tuple[tuple[str, str], ...]:
+    """该条目在本机架构下能用的下载源 ``(名称, URL)``，顺序即自动下载的尝试顺序。
+
+    ``sources`` 是 WSLUI 清单匹配到的源（``_wslui.match_sources`` 的结果，带
+    ``label`` / ``url``），没有 WSLUI 数据时只靠官方清单：
+
+    1. WSLUI 多源（清华 / 腾讯 / 南大 / 北外等，与 WSL Dashboard 同一套接口）；
+    2. 有官方 sha256 可校验的国内镜像（中科大 / 阿里云 / 华为云）；
+    3. 官方源兜底。
+
+    **按本机架构过滤**：官方清单的 ``arch`` 字段直接比对；WSLUI 源只有 URL 能看出
+    架构（``/amd64/``、``*-arm64.wsl``），认得出且不匹配就丢掉（ARM 机器上 WSLUI 的
+    ``amd64`` lxc rootfs 装了也跑不了），认不出就保留。全部官方下载都不是本机架构
+    时不清空列表（宁可展示不可用的源，也不把镜像页变成 0 个源）。
+
+    同名同 URL 只保留一条，避免折叠行数量虚高。
+    """
+    arch = local_arch()
+    official = [download for download in entry.downloads if download.arch == arch]
+    if not official:
+        official = list(entry.downloads)
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(label: str, url: str) -> None:
+        key = (label, url)
+        if key not in seen:
+            seen.add(key)
+            pairs.append(key)
+
+    for source in sources:
+        source_arch = _arch_in_url(source.url)
+        if source_arch is not None and source_arch != arch:
+            continue
+        add(source.label, source.url)
+    for download in official:
+        if not download.sha256:
+            # 没有摘要就不认镜像：未校验的第三方字节不能当成官方候选。
+            continue
         for candidate in _mirrors.candidates(download.url, policy=_mirrors.AUTO, verifiable=True):
-            if candidate.ident != _mirrors.OFFICIAL and candidate.label not in labels:
-                labels.append(candidate.label)
-    return "、".join(labels) or "无（官方源）"
+            if candidate.ident != _mirrors.OFFICIAL:
+                add(candidate.label, candidate.url)
+    for download in official:
+        add(_mirrors.label(_mirrors.OFFICIAL), download.url)
+    return tuple(pairs)
+
+
+def mirror_lines(pairs: Sequence[tuple[str, str]]) -> str:
+    """展开区 / tooltip 的镜像源明细：每个源一行「名称 · URL」。"""
+    return "\n".join(f"{label} · {url}" for label, url in pairs)
 
 
 def image_details(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
-    """下载页的「字段 → 值」：来源、架构、校验和与每个架构的下载地址。"""
+    """下载页的「字段 → 值」：来源、架构、校验和与每个架构的下载地址。
+
+    「镜像源」由 :class:`_ImageDetailView` 展开时按行回填（需要 WSLUI 清单），
+    这里只给与清单无关的字段。
+    """
     sources = "、".join(_SOURCE_LABELS.get(source, source) for source in entry.sources) or "未知"
     downloads = [
         f"{download.arch}: {download.url}" + ("（有 sha256）" if download.sha256 else "（无 sha256）")
@@ -1241,7 +1307,6 @@ def image_details(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
         ("友好名", entry.friendly_name or "未知"),
         ("可用架构", "/".join(entry.arches) or "任意（由 WSL 选择）"),
         ("下载来源", sources),
-        ("国内镜像", mirror_choices(entry)),
         ("校验和", "有 sha256" if entry.has_sha256 else "无 sha256（不标 verified）"),
         ("已安装", "是" if entry.installed else "否"),
         ("已备份", "是" if entry.backed_up else "否"),
@@ -1251,7 +1316,7 @@ def image_details(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
 
 def pick_download(entry: _images.ImageEntry) -> _images.ImageDownload:
     """按本机架构挑下载项：ARM 优先 aarch64，其余优先 x86_64，都没有时取第一个。"""
-    preferred = "aarch64" if "arm" in platform.machine().casefold() else "x86_64"
+    preferred = local_arch()
     for download in entry.downloads:
         if download.arch == preferred:
             return download

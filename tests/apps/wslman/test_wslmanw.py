@@ -274,6 +274,87 @@ def test_poll_interval_is_fixed_three_seconds() -> None:
     assert not hasattr(wslmanw.WslmanwSettings(), "poll_interval_ms")
 
 
+def test_mirror_sources_order_wslui_then_verified_then_official() -> None:
+    """展开区的镜像源：WSLUI 多源 → 可校验国内镜像 → 官方源，顺序即可尝试顺序。"""
+    from fcmd.apps.wslman._wslui import WsluiSource
+
+    url = "https://releases.ubuntu.com/24.04/ubuntu-24.04-wsl-amd64.wsl"
+    entry = wslmanw._images.ImageEntry(
+        "Ubuntu",
+        "Ubuntu 24.04 LTS",
+        ("manifest",),
+        (wslmanw._images.ImageDownload("x86_64", url, "a" * 64),),
+    )
+    wslui = (WsluiSource("https://mirrors.nju.edu.cn/rootfs.tar.xz", "nju", "tar.xz"),)
+
+    pairs = wslmanw.mirror_sources(entry, wslui)
+
+    assert [label for label, _url in pairs] == ["南京大学", "中科大 USTC", "阿里云", "华为云", "官方源"]
+    lines = wslmanw.mirror_lines(pairs).splitlines()
+    assert lines[0] == "南京大学 · https://mirrors.nju.edu.cn/rootfs.tar.xz"
+    assert lines[-1] == f"官方源 · {url}"
+
+
+def test_mirror_sources_skip_verified_mirrors_without_sha256() -> None:
+    """没有官方 sha256 就不认镜像：列表里只剩官方源，不把未校验的镜像算进数量。"""
+    from fcmd.apps.wslman._wslui import WsluiSource
+
+    url = "https://releases.ubuntu.com/24.04/ubuntu-24.04-wsl-amd64.wsl"
+    entry = wslmanw._images.ImageEntry(
+        "Ubuntu", "Ubuntu 24.04 LTS", ("manifest",), (wslmanw._images.ImageDownload("x86_64", url),)
+    )
+    wslui = (WsluiSource("https://mirrors.nju.edu.cn/rootfs.tar.xz", "nju", "tar.xz"),)
+
+    # WSLUI 源自带未校验口径，仍然列出且不会和官方源混在一起去重。
+    assert wslmanw.mirror_sources(entry, wslui) == (("南京大学", wslui[0].url), ("官方源", url))
+    assert wslmanw.mirror_sources(entry, ()) == (("官方源", url),)
+
+
+def test_mirror_sources_drop_other_arch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """本机装不了的架构不充数：官方按 arch 字段过滤，WSLUI 按 URL 里的架构过滤。"""
+    from fcmd.apps.wslman._wslui import WsluiSource
+
+    amd = "https://e/ubuntu-amd64.wsl"
+    arm = "https://e/ubuntu-arm64.wsl"
+    entry = wslmanw._images.ImageEntry(
+        "Ubuntu",
+        "Ubuntu 24.04 LTS",
+        ("manifest",),
+        (
+            wslmanw._images.ImageDownload("x86_64", amd, "a" * 64),
+            wslmanw._images.ImageDownload("aarch64", arm, "b" * 64),
+        ),
+    )
+    wslui = (
+        WsluiSource("https://mirrors.nju.edu.cn/lxc-images/amd64/rootfs.tar.xz", "nju", "tar.xz"),
+        WsluiSource("https://mirrors.nju.edu.cn/lxc-images/arm64/rootfs.tar.xz", "nju", "tar.xz"),
+        WsluiSource("https://mirrors.nju.edu.cn/no-arch/rootfs.tar.xz", "nju", "tar.xz"),
+    )
+
+    monkeypatch.setattr(wslmanw.platform, "machine", lambda: "AMD64")
+    assert [url for _label, url in wslmanw.mirror_sources(entry, wslui)] == [
+        "https://mirrors.nju.edu.cn/lxc-images/amd64/rootfs.tar.xz",
+        "https://mirrors.nju.edu.cn/no-arch/rootfs.tar.xz",
+        amd,
+    ]
+
+    # ARM 机器上反过来：WSLUI 的 amd64 rootfs 装了也跑不了，官方只留 aarch64。
+    monkeypatch.setattr(wslmanw.platform, "machine", lambda: "ARM64")
+    assert [url for _label, url in wslmanw.mirror_sources(entry, wslui)] == [
+        "https://mirrors.nju.edu.cn/lxc-images/arm64/rootfs.tar.xz",
+        "https://mirrors.nju.edu.cn/no-arch/rootfs.tar.xz",
+        arm,
+    ]
+
+
+def test_mirror_sources_keep_official_when_arch_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """官方条目只有别的架构时不清空列表（宁可展示不可用的源，也不变成 0 个）。"""
+    monkeypatch.setattr(wslmanw.platform, "machine", lambda: "AMD64")
+    arm = "https://e/ubuntu-arm64.wsl"
+    entry = wslmanw._images.ImageEntry("Ubuntu", "", ("manifest",), (wslmanw._images.ImageDownload("aarch64", arm),))
+    assert wslmanw.mirror_sources(entry) == (("官方源", arm),)
+
+
 def test_image_rows_and_details() -> None:
     entry = wslmanw._images.ImageEntry(
         name="Ubuntu",

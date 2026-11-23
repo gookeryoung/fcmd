@@ -44,8 +44,6 @@ __all__ = [
     "download_filename",
     "load_catalog",
     "match_sources",
-    "mirror_labels",
-    "mirror_tooltip",
     "parse_catalog",
     "probe_tcp_latency",
     "probe_throughput",
@@ -331,20 +329,6 @@ def wslui_candidates(entry: ImageEntry, catalog: WsluiCatalog | None, *, arch: s
         )
         for source in sources
     )
-
-
-def mirror_labels(sources: Sequence[WsluiSource]) -> tuple[str, ...]:
-    """去重后的源名称（保持清单顺序）。"""
-    labels: list[str] = []
-    for source in sources:
-        if source.label not in labels:
-            labels.append(source.label)
-    return tuple(labels)
-
-
-def mirror_tooltip(sources: Sequence[WsluiSource]) -> str:
-    """行内 tooltip：每个源一行「名称 · URL」。"""
-    return "\n".join(f"{source.label} · {source.url}" for source in sources)
 
 
 def download_filename(entry: ImageEntry, source: WsluiSource, arch: str = "x86_64") -> str:

@@ -190,31 +190,24 @@ class ImagesDownloadMixin:
         self._render_images()
         self._refresh_distro_images()
 
-    def _mirror_note(self, entry: ImageEntry) -> tuple[str, str]:
-        """镜像行副标题后的「可用镜像源」文本与 tooltip。
+    def _mirror_sources(self, entry: ImageEntry) -> tuple[tuple[str, str], ...]:
+        """该条目的全部下载源 ``(名称, URL)``：WSLUI 多源 → 可校验国内镜像 → 官方源。
 
-        列出该镜像的全部候选：WSLUI 清单里的多个源、可用官方 sha256 校验的国内镜像，
-        以及官方源兜底；自动下载时会对这些候选测速择优。
+        与 ``_wslui.wslui_candidates`` 同口径，但不构造下载候选：这里只用于展示，
+        折叠行给数量，展开区与 tooltip 给明细。
         """
-        sources = _owner._wslui.match_sources(self._wslui_catalog, entry)
-        labels: list[str] = list(_owner._wslui.mirror_labels(sources)) if sources else []
-        lines: list[str] = []
-        if sources:
-            lines.extend(_owner._wslui.mirror_tooltip(sources).splitlines())
-        for download in entry.downloads:
-            if not download.sha256:
-                continue
-            for candidate in _owner._mirrors.candidates(download.url, policy=_owner._mirrors.AUTO, verifiable=True):
-                if candidate.ident == _owner._mirrors.OFFICIAL:
-                    continue
-                if candidate.label not in labels:
-                    labels.append(candidate.label)
-                    lines.append(f"{candidate.label} · {candidate.url}")
-        if entry.downloads:
-            labels.append(_owner._mirrors.label(_owner._mirrors.OFFICIAL))
-            lines.append(f"{_owner._mirrors.label(_owner._mirrors.OFFICIAL)} · {entry.downloads[0].url}")
-            return f"镜像源：{' / '.join(labels)}", "\n".join(lines)
-        return "镜像源：wsl --install（无直链）", "该条目只有系统安装来源，没有可直接下载的镜像源"
+        return _owner.w.mirror_sources(entry, _owner._wslui.match_sources(self._wslui_catalog, entry))
+
+    def _mirror_note(self, entry: ImageEntry) -> tuple[str, str]:
+        """镜像行副标题后的「镜像源」文案与 tooltip。
+
+        列表未展开时只显示源数量（WSLUI 清单常给同一个镜像十几条源，全铺出来会把
+        行卡挤满）；具体哪些源、各自的 URL 在展开区的「镜像源」字段与 tooltip 里。
+        """
+        if not entry.downloads:
+            return "镜像源：wsl --install（无直链）", "该条目只有系统安装来源，没有可直接下载的镜像源"
+        pairs = self._mirror_sources(entry)
+        return f"镜像源：{len(pairs)} 个", _owner.w.mirror_lines(pairs)
 
     def _render_images(self) -> None:
         filter_key = self._image_filter_key

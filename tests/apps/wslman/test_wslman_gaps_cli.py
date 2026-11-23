@@ -934,14 +934,6 @@ def test_download_preview_with_dir_uses_current_arch(
 # ---------------------------------------------------------------------- #
 
 
-def test_mirror_choices_lists_mirrors_for_verified_ubuntu() -> None:
-    entry = _image_entry(
-        _images.ImageDownload("x86_64", "https://releases.ubuntu.com/24.04/ubuntu-24.04-wsl-amd64.wsl", "a" * 64)
-    )
-
-    assert wslmanw.mirror_choices(entry) == "中科大 USTC、阿里云、华为云"
-
-
 def test_local_archives_degrades_on_scan_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(self: Path, *args: object, **kwargs: object) -> Any:
         raise OSError("denied")

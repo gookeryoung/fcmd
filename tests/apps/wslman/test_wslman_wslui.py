@@ -64,14 +64,12 @@ def test_match_sources_by_name_version_and_official_filename() -> None:
     assert _wslui.match_sources(None, _entry()) == ()
 
 
-def test_download_filename_and_tooltip() -> None:
+def test_download_filename() -> None:
     catalog = _wslui.WsluiCatalog(_wslui.parse_catalog(SAMPLE))
     sources = _wslui.match_sources(catalog, _entry())
     assert _wslui.download_filename(_entry(), sources[0]) == "Ubuntu-24.04-x86_64.wsl"
     xz = _wslui.WsluiSource("https://mirrors.ustc.edu.cn/a/rootfs.tar.xz", "ustc", "tar.xz")
     assert _wslui.download_filename(_entry(), xz) == "Ubuntu-24.04-x86_64.tar.xz"
-    assert "清华 TUNA" in _wslui.mirror_tooltip(sources)
-    assert _wslui.mirror_labels(sources) == ("清华 TUNA", "中科大 USTC")
 
 
 def test_rank_sources_prefers_throughput_then_latency_fallback() -> None:

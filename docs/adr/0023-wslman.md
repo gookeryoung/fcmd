@@ -523,9 +523,13 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   叠到下一行控件上）。
 - 镜像源参考 WSL Dashboard（owu/wsl-dashboard）的公开接口：拉取
   `api2.wslui.com/co-creation/api/online-distros`（地址由 `api1.wslui.com` 的
-  install helper 给出），缓存到 `cache/wslman-wslui-mirrors.json`（6 小时）。每个
-  镜像行显示该条目的全部候选：匹配到的 WSLUI 源（清华 / 中科大 / 阿里 / 北外 /
+  install helper 给出），缓存到 `cache/wslman-wslui-mirrors.json`（6 小时）。镜像行
+  折叠时只显示源数量（`镜像源：N 个`），展开后的「镜像源」字段（与 tooltip 同一份
+  名单）列出该条目的全部候选：匹配到的 WSLUI 源（清华 / 中科大 / 阿里 / 北外 /
   火山等）、有官方 sha256 可校验的国内镜像（中科大 / 阿里云 / 华为云）与官方源兜底；
+  折叠行只报数量是因为 Ubuntu / Kali 这类条目在清单里有 4～13 条源，全铺到行卡会把
+  副标题挤没。实测 TUNA / 北外在部分出口 IP 上整站 403（含根路径），所以这两家的源
+  只能当候选，自动下载会先测速再依次回退。
   名称匹配在「同名 + 版本」之外补充「无数字版本的同一发行版」降级（`Debian` /
   `kali-linux` / `archlinux`），带版本号的条目不会被指向别的版本。`自动` 下载时
   先对所有候选并发拉前 3 MiB 测吞吐，全部失败再回退 TCP 延迟，按快慢依次尝试。

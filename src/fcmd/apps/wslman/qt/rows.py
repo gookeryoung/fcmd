@@ -382,9 +382,15 @@ class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.url.setLineWrapMode(_owner.QPlainTextEdit.LineWrapMode.WidgetWidth)
         layout.addWidget(self.url)
 
-    def render(self, entry: ImageEntry) -> None:
-        """回填选中条目的详情；未知字段统一显示 ``—``。"""
+    def render(self, entry: ImageEntry, sources: tuple[tuple[str, str], ...] = ()) -> None:
+        """回填选中条目的详情；未知字段统一显示 ``—``。
+
+        ``sources`` 是该条目的全部下载源 ``(名称, URL)``（WSLUI 多源 + 国内镜像 +
+        官方源），只有展开时才回填到「镜像源」字段：折叠行只写数量，避免把十几个源
+        铺到行卡里。
+        """
         values = dict(_owner.w.image_details(entry))
+        values["镜像源"] = _owner.w.mirror_lines(sources) or "—"
         for label, widget in self.values.items():
             widget.setText(values.get(label, "—"))
         self.url.setPlainText(values.get("下载地址", "—"))

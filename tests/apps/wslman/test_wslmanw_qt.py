@@ -546,14 +546,25 @@ def test_image_row_shows_wslui_mirror_sources(home: Path, monkeypatch: pytest.Mo
         window._render_images()
         row = _image_row(window, 0)
         assert row.mirror_label.isHidden() is False
-        assert "中科大 USTC" in row.mirror_label.fullText()
+        # 折叠行只报数量（WSLUI 源 + 官方源）；名单与 URL 收进 tooltip / 展开区。
+        assert row.mirror_label.fullText() == "镜像源：2 个"
+        assert "中科大 USTC" in row.mirror_label.toolTip()
         assert "mirrors.ustc.edu.cn" in row.mirror_label.toolTip()
 
-        # 没有匹配项时明确写官方源，而不是留空。
+        # 匹配不到 WSLUI 源时只剩官方源，数量仍然是算出来的而不是写死的。
         other = _image_entry("Custom")
         window._apply_images((_catalog((other,)), (other,), catalog))
         window._render_images()
-        assert _image_row(window, 0).mirror_label.fullText() == "镜像源：官方源"
+        assert _image_row(window, 0).mirror_label.fullText() == "镜像源：1 个"
+
+        # 展开后才给明细：详情区「镜像源」字段与 tooltip 同一份名单。
+        window._apply_images((_catalog((entry,)), (entry,), catalog))
+        window._render_images()
+        window._on_image_toggle(_image_row(window, 0))
+        assert window.image_detail_view.values["镜像源"].text().splitlines() == [
+            "中科大 USTC · https://mirrors.ustc.edu.cn/ubuntu/rootfs.tar.xz",
+            f"官方源 · {entry.downloads[0].url}",
+        ]
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

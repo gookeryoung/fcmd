@@ -442,7 +442,7 @@ class DistrosMixin:
             size, estimated = self.sizes.get(row.distro.name, (None, False))
             self.distro_detail_view.render(row.distro, size, estimated)
         elif isinstance(row, _owner._ImageItemRow):
-            self.image_detail_view.render(row.entry)
+            self.image_detail_view.render(row.entry, self._mirror_sources(row.entry))
 
     def _show_details(self) -> None:
         """选中行变化时只更新状态栏摘要与工具栏启停按钮（详情在行内）。
