@@ -19,6 +19,12 @@
 - 修复 `wslmanw`「初始化环境」把 Kali 等自带 python3 的实例误判为未初始化：`uv` / `Bun`
   拆成独立初始化项目，每个项目只看自己那个工具（Python 只看 `python3`，`uv` 看 `uv`，
   `Bun` 看 `bun`，Node.js 看 `node` + nvm）；Bun 项自带 nvm 引导，只勾 Bun 也能装成。
+- wslman 测试改为**默认离线**：`tests/apps/wslman/conftest.py` 的 autouse 替身把宿主机
+  探测全换成本地假数据（`shutil.which` 恒为 `None`、`LOCALAPPDATA` / `APPDATA` /
+  `ProgramFiles` 指向临时目录、`_build_environment` 返回假 runner + 空注册表、
+  `FCMD_HOME` 指向临时目录），并拦截 `subprocess.run` / `Popen` / `os.startfile` /
+  `QDesktopServices.openUrl`，跑测试不再碰真实 WSL、终端或 IDE；新增
+  `tests/apps/wslman/test_wslman_hermetic.py` 自测这套替身。
 - 推进 ADR 0046 P4：llmw 模型页 `_BrowsePanel` 方法拆到 `apps/llm/qt/models_*.py`，
   `_llmw_qt_center.py` 约 2.3k → 499 行；P4 续拆 `RunPage` 到 `apps/llm/qt/run_*.py`，
   `_llmw_qt_run.py` 约 2.2k → 771 行；清理已失效的行数白名单项。

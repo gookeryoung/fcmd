@@ -655,9 +655,17 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
 - 导出成功前不覆盖旧备份（`.part` + 原子改名）。
 - 导入失败不自动删除实例；清理命令以文本给出。
 - 所有外部副作用出现在 JSON `commands[]` 里，不含隐式调用。
-- 单元测试不执行 `wsl.exe`；`tests/apps/wslman/conftest.py` 还加了兜底守卫：任何未注入
-  假 runner 的真实 `wsl.exe` 调用直接失败，避免跑测试时启动 / 停止本机实例；真实环境
-  用例标 `slow`，不进主门禁。
+- 测试默认**离线**：`tests/apps/wslman/conftest.py` 的 autouse 替身把「问宿主机」的
+  入口全换成本地假数据——`shutil.which` 一律 `None`（`find_wsl` / `find_wt` / IDE 打开
+  方式解析都据此判「没装」）、`LOCALAPPDATA` / `APPDATA` / `USERPROFILE` / `ProgramFiles`
+  指向临时目录（`_open.windows_candidates` 扫不到本机 IDE）、`cli._build_environment`
+  返回假 runner + 空注册表（不读真实 `Lxss`）、`FCMD_HOME` 指向临时目录（设置文件不落
+  真实用户目录）。进程级兜底守卫：`subprocess.run` / `Popen`、`os.startfile`、
+  `QDesktopServices.openUrl` 在测试里直接失败，用例必须注入假执行器 / 假启动器；只放行
+  「本进程解释器」（`SubprocessLauncher` 自测）和「压根解析不到的程序」（真 `Popen` 只会
+  报 `FileNotFoundError`，用于断言缺失程序提示）。`tests/apps/wslman/test_wslman_hermetic.py`
+  自测这套替身本身，防止同伴用例悄悄依赖开发机装了什么 IDE / 发行版。真实环境用例仍标
+  `slow`，不进主门禁。
 - 下载源可配置，且未校验时不得标记 `verified`。
 
 ### D14 落地阶段（每阶段独立可提交、可回退）

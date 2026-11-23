@@ -8,10 +8,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from fcmd.apps.wslman import wslman as _wslman_module
 from fcmd.apps.wslman._registry import RegistryDistro, RegistrySnapshot
 from fcmd.apps.wslman._runner import Capabilities, CommandResult
 
 WSL = r"C:\Windows\System32\wsl.exe"
+
+REAL_BUILD_ENVIRONMENT = _wslman_module._build_environment
+"""真实的环境构造（conftest 默认替换成离线版本）；只想验证它本身时用它。"""
 
 
 def utf16(text: str) -> bytes:

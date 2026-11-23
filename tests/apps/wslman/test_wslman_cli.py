@@ -102,6 +102,7 @@ def test_build_environment_on_non_windows(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr(wslman_module, "probe", lambda runner, wsl_path=None: _fakes.capabilities())
     monkeypatch.setattr(wslman_module, "is_windows", lambda: False)
     monkeypatch.setattr(wslman_module, "load_config", lambda path=None: WslmanConfig(path=tmp_path / "c.json"))
+    monkeypatch.setattr(wslman_module, "_build_environment", _fakes.REAL_BUILD_ENVIRONMENT)
     environment = wslman_module._build_environment()
     assert environment.platform_ok is False
     assert environment.registry.available is False
@@ -118,6 +119,7 @@ def test_build_environment_on_windows(monkeypatch: pytest.MonkeyPatch, tmp_path:
             return _fakes.snapshot(available=True)
 
     monkeypatch.setattr(wslman_module, "WindowsRegistryReader", Reader)
+    monkeypatch.setattr(wslman_module, "_build_environment", _fakes.REAL_BUILD_ENVIRONMENT)
     environment = wslman_module._build_environment()
     assert environment.platform_ok is True
     assert environment.registry.available is True
