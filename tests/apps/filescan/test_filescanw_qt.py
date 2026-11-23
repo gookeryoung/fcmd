@@ -227,3 +227,39 @@ def test_old_settings_without_sidebar_field_load_unexpanded(home: Path) -> None:
         assert window.nav.is_collapsed() is False
     finally:
         window.deleteLater()
+
+
+def test_scan_dirs_reuse_shared_storage_card(home: Path, tmp_path: Path) -> None:
+    """扫描目录走与 wslmanw「工作目录」/ llmw「存储」同一套 StorageCard。"""
+    from fcmd.gui.widgets import DiskTile
+
+    first, second = tmp_path / "scan-a", tmp_path / "scan-b"
+    path = _guiconfig.config_path(filescanw.SETTINGS_NAME)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    filescanw.save_settings(filescanw.FilescanSettings(paths=(str(first), str(second))), path)
+    window = _window()
+    try:
+        card = window._dirs_card
+        assert card.title() == "扫描目录"
+        assert card.roots() == [first, second]
+        tiles = card.grid.findChildren(DiskTile)
+        assert [tile.location.display_text for tile in tiles] == [str(first), str(second)]
+        # 扫描没有「主目录」概念：卡片上不显示主目录胶囊，也不出「设为主目录」按钮。
+        from PySide6.QtWidgets import QPushButton
+
+        from fcmd.gui.widgets import StatusTag
+
+        assert card.findChildren(StatusTag) == []
+        buttons = [child.text() for child in card.findChildren(QPushButton)]
+        assert "设为主目录" not in buttons
+        assert buttons.count("移除") == 2
+
+        window._on_dirs_changed([Path(str(first))])
+        assert window._paths == [str(first)]
+        assert "目录 1 个" in window.page_status("scan")
+
+        window._clear_directories()
+        assert window._paths == []
+        assert card.roots() == []
+    finally:
+        window.deleteLater()

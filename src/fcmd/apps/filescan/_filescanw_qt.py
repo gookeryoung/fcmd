@@ -39,7 +39,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QMessageBox,
     QSpinBox,
     QTreeWidget,
@@ -86,6 +85,7 @@ from fcmd.gui.widgets import (
     Card,
     PageScroll,
     ProgressBar,
+    StorageCard,
     button,
     confirm,
     hint_label,
@@ -386,7 +386,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             },
         )
         self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
-        self._refresh_dirs()
+        # 目录卡片在 _build_scan_page 里已按设置建好，不再重复 set_roots。
         self._load_whitelist()
         self._refresh_rules()
         if self.settings.filter_rule:
@@ -402,30 +402,28 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         page = _FilescanPage(self, "scan", scroll=True, margins=(0, 0, 4, 8))
         body = page.content
 
-        dirs_card = Card("扫描目录")
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
-        self._dirs_list = QListWidget(dirs_card)
-        self._dirs_list.setMinimumHeight(96)
-        self._dirs_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        dirs_card.body.addWidget(self._dirs_list)
-        buttons = QGridLayout()
-        buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setVerticalSpacing(4)
-        for row_index, (text, handler) in enumerate(
-            (
-                ("添加目录…", self._add_directory),
-                ("移除选中", self._remove_directory),
-                ("清空", self._clear_directories),
-            )
-        ):
-            widget = button(text)
-            widget.clicked.connect(handler)
-            buttons.addWidget(widget, row_index, 0)
-        row.addLayout(buttons)
-        dirs_card.body.addLayout(row)
-        body.addWidget(dirs_card)
+        # 扫描目录复用与 wslmanw「工作目录」/ llmw「存储」同一套 StorageCard
+        # （Steam 式磁盘卡网格 + 添加 / 移除 / 打开）。扫描没有「主目录」概念，
+        # 所以 show_primary=False：不显示主目录胶囊，也不出「设为主目录」按钮；
+        # min_count=0 允许清空（未配置目录时点扫描会提示先添加）。
+        self._dirs_card = StorageCard(
+            [Path(item) for item in self._paths],
+            title="扫描目录",
+            hint="要递归扫描的目录；可添加多个，卡片里可打开 / 移除",
+            add_text="添加目录",
+            dialog_title="添加扫描目录",
+            remove_title="移除扫描目录",
+            min_count=0,
+            show_primary=False,
+            parent=page,
+        )
+        self._dirs_card.changed.connect(self._on_dirs_changed)
+        self._dirs_card.message.connect(lambda text: self.set_page_status("scan", text))
+        clear_button = button("清空", kind="ghost")
+        clear_button.setToolTip("移除全部扫描目录（不会删除磁盘文件）")
+        clear_button.clicked.connect(self._clear_directories)
+        self._dirs_card.add_title_action(clear_button)
+        body.addWidget(self._dirs_card)
 
         options = Card("扫描选项")
         checks = QHBoxLayout()
@@ -649,8 +647,8 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
     # 数据刷新
     # ------------------------------------------------------------------ #
     def _refresh_dirs(self) -> None:
-        self._dirs_list.clear()
-        self._dirs_list.addItems(self._paths)
+        """按 ``_paths`` 重画目录卡片（``set_roots`` 不触发 ``changed``）。"""
+        self._dirs_card.set_roots([Path(item) for item in self._paths])
 
     def _refresh_rules(self) -> None:
         self._rules_table.setRowCount(0)
@@ -710,25 +708,13 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
     # ------------------------------------------------------------------ #
     # 目录
     # ------------------------------------------------------------------ #
-    def _add_directory(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "选择要扫描的目录")
-        if not chosen or chosen in self._paths:
-            return
-        self._paths.append(chosen)
-        self._refresh_dirs()
-        self.set_page_status("scan", self._summary_text())
-
-    def _remove_directory(self) -> None:
-        rows = sorted((index.row() for index in self._dirs_list.selectedIndexes()), reverse=True)
-        if not rows:
-            return
-        for row in rows:
-            if 0 <= row < len(self._paths):
-                self._paths.pop(row)
-        self._refresh_dirs()
+    def _on_dirs_changed(self, roots: object) -> None:
+        """共享目录卡片增删后同步 ``_paths``（落盘仍走关窗 / 导入导出同一入口）。"""
+        self._paths = [str(item) for item in roots] if isinstance(roots, list) else []
         self.set_page_status("scan", self._summary_text())
 
     def _clear_directories(self) -> None:
+        """清空扫描目录列表：只清列表，不碰磁盘文件。"""
         self._paths.clear()
         self._refresh_dirs()
         self.set_page_status("scan", self._summary_text())
