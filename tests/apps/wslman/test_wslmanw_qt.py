@@ -1042,8 +1042,8 @@ def test_settings_page_has_no_config_file_card(home: Path, monkeypatch: pytest.M
         window.deleteLater()
 
 
-def test_settings_work_dir_uses_bare_multi_disk_card(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """工作目录直接铺多磁盘卡（不套 Card 外框），可添加并指定默认目录。"""
+def test_settings_work_dir_is_first_card_wrapping_multi_disk_grid(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """工作目录是设置页第一张卡：外层与其他设置项一致，里面仍是多磁盘卡。"""
     from fcmd.gui.widgets import Card, DiskGrid
 
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
@@ -1055,9 +1055,9 @@ def test_settings_work_dir_uses_bare_multi_disk_card(home: Path, monkeypatch: py
         page = window.page("settings")
         assert page is not None
         cards = page.findChildren(Card)
-        assert "工作目录" not in [card.title() for card in cards]
-        # 磁盘卡外面不再有设置卡外框。
-        assert all(card.findChild(DiskGrid) is None for card in cards)
+        # 设置页第一张卡就是「工作目录」，后面才是下载 / 打开方式。
+        assert cards[0].title() == "工作目录"
+        assert cards[0].findChild(DiskGrid) is window.work_grid
         assert page.findChildren(DiskGrid) == [window.work_grid]
         buttons = window.work_grid.findChildren(_wslmanw_qt.QPushButton)
         texts = [item.text() for item in buttons]

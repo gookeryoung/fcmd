@@ -1743,20 +1743,23 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         openers = tuple(item for item in w.openers_for(self.settings, kind) if item.key != current.key)
         self._store_openers(kind, openers, "")
 
-    def _build_work_card(self) -> QWidget:
-        """工作目录：llmw 同款多磁盘卡，可添加 / 移除多个目录并指定默认。
+    def _build_work_card(self) -> Card:
+        """「工作目录」卡片：llmw 同款多磁盘卡，可添加 / 移除多个目录并指定默认。
 
         默认目录排在第一张卡上：新下载、新安装落到它的 ``download`` / ``install``
-        子目录；备份仍然按默认目录推演。磁盘卡不套设置卡外框，页面直接铺开。
+        子目录；备份仍然按默认目录推演。外层与其他设置项一样套设置卡（标题 + 边框），
+        里面的磁盘卡、卡上的「更改 / 打开」与多目录操作保持原样。
         """
-        grid = DiskGrid(self, add_text="添加目录", max_columns=2, min_count=1)
+        card = Card("工作目录")
+        grid = DiskGrid(card, add_text="添加目录", max_columns=2, min_count=1)
         grid.addRequested.connect(self._add_work_dir)
         grid.removeRequested.connect(self._remove_work_dir)
         grid.primaryRequested.connect(self._set_default_work_dir)
         grid.openRequested.connect(self._open_work_root)
         self.work_grid = grid
+        card.body.addWidget(grid)
         self._refresh_work_card()
-        return grid
+        return card
 
     def _refresh_work_card(self) -> None:
         """按当前设置重画磁盘卡：默认目录在第一张，其余按设置顺序排。"""
