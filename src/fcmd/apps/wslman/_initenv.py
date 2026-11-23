@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -29,7 +30,9 @@ __all__ = [
     "probe_script",
     "short_label",
     "ssh_key_short",
+    "status_from_mapping",
     "status_rows",
+    "status_to_mapping",
     "steps_for",
     "summary_text",
     "tail_lines",
@@ -358,6 +361,36 @@ def parse_status(text: str) -> EnvStatus:
         pip_index=values.get("PIP_INDEX", ""),
         npm_registry=values.get("NPM_REGISTRY", ""),
     )
+
+
+_STATUS_FIELDS: tuple[str, ...] = (
+    "user",
+    "home",
+    "os_name",
+    "mirror",
+    "ssh_public_key",
+    "python",
+    "node",
+    "rust",
+    "pip_index",
+    "npm_registry",
+)
+"""``EnvStatus`` 可持久化字段；与设置文件里的缓存保持同一口径。"""
+
+
+def status_to_mapping(status: EnvStatus) -> dict[str, str]:
+    """把环境探测结果序列化成 JSON 友好的字符串映射（用于持久化上次结果）。"""
+    return {name: str(getattr(status, name) or "") for name in _STATUS_FIELDS}
+
+
+def status_from_mapping(raw: object) -> EnvStatus | None:
+    """从设置文件里的缓存恢复环境结果；完全为空时返回 ``None``。"""
+    if not isinstance(raw, Mapping):
+        return None
+    values = {name: raw.get(name) for name in _STATUS_FIELDS}
+    if not any(isinstance(value, str) and value.strip() for value in values.values()):
+        return None
+    return EnvStatus(**{name: value.strip() if isinstance(value, str) else "" for name, value in values.items()})
 
 
 def present(key: str, status: EnvStatus) -> bool:

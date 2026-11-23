@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.wslman import _open, wslmanw
+from fcmd.apps.wslman import _initenv, _open, wslmanw
 from fcmd.apps.wslman._distro import Distro, DistroView
 from fcmd.apps.wslman._errors import not_found
 from fcmd.apps.wslman._registry import RegistrySnapshot
@@ -116,6 +116,8 @@ def test_settings_mapping_is_json_friendly() -> None:
         "distro_terminal_dirs": {},
         "dialog_geometry": {},
         "distro_init_tasks": {},
+        "distro_env_status": {},
+        "distro_opener_paths": {},
         "openers": {
             "ide": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_IDE)],
             "agent": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_AGENT)],
@@ -123,6 +125,31 @@ def test_settings_mapping_is_json_friendly() -> None:
             "hidden": {},
         },
     }
+
+
+def test_env_status_and_opener_paths_cache_roundtrip() -> None:
+    """探测结果与 WSL 内工具路径要能持久化，实例停止时直接回显。"""
+    status = _initenv.EnvStatus(
+        user="me",
+        home="/home/me",
+        os_name="Ubuntu 24.04",
+        mirror="mirrors.aliyun.com",
+        ssh_public_key="ssh-ed25519 AAAA",
+        python="3.12.3",
+        node="v22.0.0",
+        rust="1.80.0",
+        pip_index="https://pypi.tuna.tsinghua.edu.cn/simple",
+        npm_registry="https://registry.npmmirror.com",
+    )
+    settings = wslmanw.with_env_status(wslmanw.WslmanwSettings(), "Ubuntu", status)
+    settings = wslmanw.with_opener_paths(settings, "Ubuntu", {"opencode": "/usr/bin/opencode"})
+    restored = wslmanw.settings_from_mapping(wslmanw.settings_to_mapping(settings))
+    assert wslmanw.env_status_for(restored, "Ubuntu") == status
+    assert wslmanw.opener_paths_for(restored, "Ubuntu") == {"opencode": "/usr/bin/opencode"}
+
+    cleared = wslmanw.with_opener_paths(restored, "Ubuntu", {})
+    assert wslmanw.opener_paths_for(cleared, "Ubuntu") == {}
+    assert wslmanw.env_status_for(cleared, "Missing") is None
 
 
 def test_terminal_cwd_roundtrip_and_default(tmp_path: Path) -> None:

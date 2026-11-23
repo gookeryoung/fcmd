@@ -2201,6 +2201,113 @@ def test_init_env_section_detect_parses_probe_output(home: Path, monkeypatch: py
         owner.deleteLater()
 
 
+def test_init_env_section_shows_cached_status_without_running(home: Path) -> None:
+    """带缓存打开配置：直接回显上次结果，不执行 wsl -d 启动实例。"""
+    cached = _initenv.EnvStatus(user="me", home="/home/me", python="3.12.3")
+    owner = QWidget()
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu", "stopped"), status=cached)
+    try:
+        assert section._status == cached
+        assert section.checks["python"].isChecked() is True
+        assert section.checks["python"].isEnabled() is False
+        assert "Python 3.12.3" in section.summary.fullText()
+        assert "上次检测结果" in section.log.toPlainText()
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_init_env_detect_prompts_before_starting_stopped_instance(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """手动检测前先确认：实例停止时 wsl -d 会启动它。"""
+    owner = QWidget()
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu", "stopped"))
+    submitted: list[Any] = []
+    monkeypatch.setattr(_wslmanw_qt, "submit_daemon", lambda *args, **kwargs: submitted.append(args))
+    monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: False)
+    try:
+        section.refresh_status()
+        assert submitted == []
+        assert "已取消检测" in section.summary.fullText()
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_init_env_detection_done_persists_cache(home: Path) -> None:
+    """检测完成后通过回调把结果交给窗口持久化，下次打开直接回显。"""
+    owner = QWidget()
+    seen: list[_initenv.EnvStatus] = []
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"), on_detected=seen.append)
+    try:
+        status = _initenv.EnvStatus(user="me", python="3.12.3")
+        section._detection_done(status)
+        assert seen == [status]
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_smart_detect_manual_force_prompts_before_starting_stopped_instance(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """实例停止时手动点智能检测也不能绕过确认：取消后不提交后台任务。"""
+    view = _view(_distro("Ubuntu", "stopped"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    submitted: list[Any] = []
+    try:
+        _wait_idle(window)
+        monkeypatch.setattr(_wslmanw_qt, "submit", lambda *args, **kwargs: submitted.append(args))
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: False)
+        window._detect_openers(force=True)
+        assert submitted == []
+        assert window._detecting is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_smart_detect_reuses_cached_paths_without_starting_stopped_instance(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """实例未运行时智能检测只读缓存，不执行任何 wsl 命令。"""
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        cast(Any, window).settings = wslmanw.with_opener_paths(
+            cast(wslmanw.WslmanwSettings, window.settings),
+            "Ubuntu",
+            {"opencode": "/usr/bin/opencode"},
+        )
+        monkeypatch.setattr(cli, "_build_environment", lambda: pytest.fail("不应启动 WSL"))
+        monkeypatch.setattr(_open, "detect_host", lambda key: _open.Detection(key, _open.HOST_WINDOWS))
+        _host, wsl, warning, fresh = window._detect_worker("Ubuntu", include_wsl=False)
+        assert wsl["opencode"].path == "/usr/bin/opencode"
+        assert wsl["opencode"].found is True
+        assert fresh is None
+        assert "复用上次检测结果" in warning
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_ssh_scan_prompts_before_starting_stopped_instance(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SSH 迁移扫描同样不能在实例停止时静默启动。"""
+    owner = QWidget()
+    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu", "stopped"))
+    submitted: list[Any] = []
+    monkeypatch.setattr(_wslmanw_qt, "submit_daemon", lambda *args, **kwargs: submitted.append(args))
+    monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: False)
+    try:
+        section.refresh()
+        assert submitted == []
+        assert "已取消扫描" in section.file_hint.fullText()
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
 def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """开始初始化只跑「未就绪且勾选」的项目，已就绪的不重复执行。"""
     owner = QWidget()
@@ -2231,7 +2338,7 @@ def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.
 
 
 def test_distro_config_embeds_init_env_section(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """配置对话框直接内嵌初始化环境卡片：一层可见、首次显示自动检测、忙时确认关闭。"""
+    """配置对话框内嵌初始化环境：一层可见、打开不自动检测、忙时确认关闭。"""
     owner = QWidget()
     dialog = _wslmanw_qt._DistroConfigDialog(owner, _distro("Ubuntu"), "~")  # type: ignore[arg-type]
     try:
@@ -2245,10 +2352,10 @@ def test_distro_config_embeds_init_env_section(home: Path, monkeypatch: pytest.M
         calls: list[str] = []
         monkeypatch.setattr(dialog.init_env, "refresh_status", lambda: calls.append("detect"))
         dialog.show()
-        assert calls == ["detect"]
+        assert calls == []  # 打开配置不启动实例，也不自动检测
         dialog.hide()
         dialog.show()
-        assert calls == ["detect"]  # 只自动检测一次
+        assert calls == []
 
         monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: False)
         dialog.init_env._busy = True

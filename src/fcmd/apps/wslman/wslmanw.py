@@ -47,6 +47,7 @@ __all__ = [
     "download_metrics_text",
     "download_progress_text",
     "download_queue_text",
+    "env_status_for",
     "export_progress_text",
     "filter_images",
     "has_distro_files",
@@ -64,6 +65,7 @@ __all__ = [
     "legacy_dir_note",
     "load_settings",
     "main",
+    "opener_paths_for",
     "openers_for",
     "pick_download",
     "reconcile_distros",
@@ -80,8 +82,10 @@ __all__ = [
     "terminal_cwd",
     "unregister_confirm_enabled",
     "with_dialog_geometry",
+    "with_env_status",
     "with_init_task_keys",
     "with_max_downloads",
+    "with_opener_paths",
     "with_terminal_cwd",
     "with_work_dir",
     "with_work_dirs",
@@ -269,6 +273,10 @@ class WslmanwSettings:
     """当前选用的 AI Agent 条目 key。"""
     hidden_openers: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     """用户显式删除的内置打开方式 key（按 IDE / Agent 分类），防止新版本迁移时又加回来。"""
+    distro_env_status: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    """按实例名持久化的「初始化环境」上次探测结果；打开配置时先回显，避免重复启动。"""
+    distro_opener_paths: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    """按实例名持久化的 WSL 内可执行文件路径（``command -v`` 原样结果）。"""
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -287,6 +295,8 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "distro_terminal_dirs": dict(settings.distro_terminal_dirs),
         "dialog_geometry": dict(settings.dialog_geometry),
         "distro_init_tasks": {name: list(keys) for name, keys in settings.distro_init_tasks.items()},
+        "distro_env_status": {name: dict(values) for name, values in settings.distro_env_status.items()},
+        "distro_opener_paths": {name: dict(values) for name, values in settings.distro_opener_paths.items()},
         "openers": {
             "ide": [_open.to_mapping(item) for item in settings.ide_openers],
             "agent": [_open.to_mapping(item) for item in settings.agent_openers],
@@ -323,6 +333,8 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         distro_terminal_dirs=_terminal_dirs(raw.get("distro_terminal_dirs")),
         dialog_geometry=_dialog_geometries(raw.get("dialog_geometry")),
         distro_init_tasks=_init_tasks(raw.get("distro_init_tasks")),
+        distro_env_status=_status_cache(raw.get("distro_env_status")),
+        distro_opener_paths=_opener_path_cache(raw.get("distro_opener_paths")),
         ide_openers=ide_openers,
         agent_openers=agent_openers,
         ide_opener=_selected_key(selected_map.get("ide"), ide_openers, kind=_open.KIND_IDE),
@@ -420,6 +432,64 @@ def with_openers(
     if kind == _open.KIND_IDE:
         return replace(settings, ide_openers=items, ide_opener=key, hidden_openers=hidden_map)
     return replace(settings, agent_openers=items, agent_opener=key, hidden_openers=hidden_map)
+
+
+def env_status_for(settings: WslmanwSettings, name: str) -> _initenv.EnvStatus | None:
+    """回显上次持久化的环境探测结果；没有缓存时返回 ``None``。"""
+    return _initenv.status_from_mapping(settings.distro_env_status.get(name))
+
+
+def with_env_status(settings: WslmanwSettings, name: str, status: _initenv.EnvStatus) -> WslmanwSettings:
+    """写入实例环境探测缓存（按实例名覆盖）。"""
+    cached = dict(settings.distro_env_status)
+    cached[name] = _initenv.status_to_mapping(status)
+    return replace(settings, distro_env_status=cached)
+
+
+def opener_paths_for(settings: WslmanwSettings, name: str) -> Mapping[str, str]:
+    """WSL 内智能检测上次找到的可执行文件路径；实例未运行时直接复用。"""
+    return settings.distro_opener_paths.get(name, {})
+
+
+def with_opener_paths(settings: WslmanwSettings, name: str, found: Mapping[str, str]) -> WslmanwSettings:
+    """写入实例内 ``command -v`` 检测缓存。"""
+    cached = dict(settings.distro_opener_paths)
+    values = {key: value for key, value in found.items() if key and value}
+    if values:
+        cached[name] = values
+    else:
+        cached.pop(name, None)
+    return replace(settings, distro_opener_paths=cached)
+
+
+def _status_cache(raw: Any) -> dict[str, dict[str, str]]:
+    """解析实例 → EnvStatus 映射；坏行跳过。"""
+    if not isinstance(raw, Mapping):
+        return {}
+    cached: dict[str, dict[str, str]] = {}
+    for name, values in raw.items():
+        status = _initenv.status_from_mapping(values)
+        if isinstance(name, str) and name.strip() and status is not None:
+            cached[name.strip()] = _initenv.status_to_mapping(status)
+    return cached
+
+
+def _opener_path_cache(raw: Any) -> dict[str, dict[str, str]]:
+    """解析实例 → 可执行文件路径映射；只保留非空字符串。"""
+    if not isinstance(raw, Mapping):
+        return {}
+    cached: dict[str, dict[str, str]] = {}
+    for name, values in raw.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(values, Mapping):
+            continue
+        paths = {
+            key: value.strip()
+            for key, value in values.items()
+            if isinstance(key, str) and key.strip() and isinstance(value, str) and value.strip()
+        }
+        if paths:
+            cached[name.strip()] = paths
+    return cached
 
 
 def _choice(raw: Mapping[str, Any], key: str, options: Sequence[tuple[str, str]], default: str) -> str:

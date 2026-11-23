@@ -94,7 +94,7 @@ from fcmd.gui.workers import EventBridge, ProgressBridge, periodic, submit, subm
 from fcmd.infras.download import SpeedMeter, format_speed
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from typing import Any
 
     from fcmd.apps.wslman._images import ImageEntry
@@ -1641,57 +1641,92 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         if cached is not None and not force:
             self._apply_detections(cached, log=False)
             return
+        current = self.view.find(name) if self.view is not None and name else None
+        # 未知状态按“未运行”处理：宁可用缓存，也不隐式启动实例。
+        stopped = current is None or current.state != "running"
+        include_wsl = bool(name) and not stopped
+        if stopped and force:
+            if not confirm(
+                self,
+                "智能检测",
+                f"检测 {name} 实例内的 IDE / AI Agent 会执行 wsl -d 命令并启动实例。继续？",
+            ):
+                return
+            include_wsl = True
         self._detecting = True
         self._detect_token += 1
         token = self._detect_token
         self.opener_detect_button.setEnabled(False)
         set_button_text(self.opener_detect_button, "检测中…")
-        self.opener_detect_hint.setText(f"正在检查宿主机与 {name or '当前环境'}…")
+        suffix = "" if include_wsl else "（实例未运行，复用上次结果）"
+        self.opener_detect_hint.setText(f"正在检查宿主机与 {name or '当前环境'}{suffix}…")
         for kind in _open.KINDS:
             self._reload_opener_combo(kind)
         submit(
-            lambda: self._detect_worker(name),
+            lambda: self._detect_worker(name, include_wsl=include_wsl),
             on_done=lambda result: self._detect_done(token, name, result),
             on_error=self._detect_error,
             on_finished=self._detect_finished,
         )
 
-    def _detect_worker(self, name: str) -> tuple[dict[str, _open.Detection], dict[str, _open.Detection], str]:
-        """后台探测：宿主机 PATH / 常见安装目录 + 当前实例 ``command -v``。"""
+    def _detect_worker(  # noqa: PLR0912 - 宿主 / WSL / 缓存三条路径合并
+        self,
+        name: str,
+        *,
+        include_wsl: bool = True,
+    ) -> tuple[dict[str, _open.Detection], dict[str, _open.Detection], str, dict[str, str] | None]:
+        """后台探测：宿主机 PATH / 常见安装目录 + 当前实例 ``command -v``。
+
+        ``include_wsl=False``（实例未运行）时只读上次持久化的路径，绝不执行
+        ``wsl -d``；只有显式检测并确认后才会启动实例。
+        """
         host: dict[str, _open.Detection] = {}
         for kind in _open.KINDS:
             for opener in _open.default_openers(kind):
                 host.setdefault(opener.key, _open.detect_host(opener.key))
         wsl: dict[str, _open.Detection] = {}
         warning = ""
+        fresh: dict[str, str] | None = None
         if name:
-            try:
-                env = cli._build_environment()
-                wsl_exe = cli._require_wsl(env)
-                result = env.runner.run(
-                    [wsl_exe, "-d", name, "--exec", "bash", "-lc", _open.detect_script()],
-                    timeout=120.0,
-                )
-            except WslmanError as exc:
-                warning = str(exc)
-            else:
-                found = _open.parse_detect(decode_console(result.stdout)) if result.returncode == 0 else {}
-                if result.returncode != 0 and not found:
-                    warning = f"实例 {name} 内检测失败（退出码 {result.returncode}）"
-                for kind in _open.KINDS:
-                    for opener in _open.default_openers(kind):
-                        wsl.setdefault(opener.key, _open.detect_wsl(opener.key, found))
-        return host, wsl, warning
+            found: dict[str, str] = {}
+            if include_wsl:
+                try:
+                    env = cli._build_environment()
+                    wsl_exe = cli._require_wsl(env)
+                    result = env.runner.run(
+                        [wsl_exe, "-d", name, "--exec", "bash", "-lc", _open.detect_script()],
+                        timeout=120.0,
+                    )
+                except WslmanError as exc:
+                    warning = str(exc)
+                else:
+                    if result.returncode == 0:
+                        found = _open.parse_detect(decode_console(result.stdout))
+                        fresh = found
+                    else:
+                        warning = f"实例 {name} 内检测失败（退出码 {result.returncode}）"
+            if not found:
+                found = dict(w.opener_paths_for(self.settings, name))
+                if found and not warning:
+                    warning = f"实例 {name} 未运行，复用上次检测结果"
+                elif not found and not warning:
+                    warning = f"实例 {name} 未运行；启动后可重新检测"
+            for kind in _open.KINDS:
+                for opener in _open.default_openers(kind):
+                    wsl.setdefault(opener.key, _open.detect_wsl(opener.key, found))
+        return host, wsl, warning, fresh
 
     def _detect_done(
         self,
         token: int,
         name: str,
-        result: tuple[dict[str, _open.Detection], dict[str, _open.Detection], str],
+        result: tuple[dict[str, _open.Detection], dict[str, _open.Detection], str, dict[str, str] | None],
     ) -> None:
         if self._closing or token != self._detect_token:
             return
-        host, wsl, warning = result
+        host, wsl, warning, fresh = result
+        if fresh is not None and name:
+            self._save_opener_paths(name, fresh)
         self._opener_detections[name] = (host, wsl)
         self._apply_detections((host, wsl), log=True)
         installed: list[str] = []
@@ -2554,6 +2589,16 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
     def _save_init_tasks(self, name: str, keys: Sequence[str]) -> None:
         """保存实例的初始化勾选，下次打开配置窗口沿用。"""
         self.settings = w.with_init_task_keys(self.settings, name, keys)
+
+    def _save_env_status(self, name: str, status: _initenv.EnvStatus) -> None:
+        """持久化环境探测结果：下次打开配置先回显，不再为看状态重启实例。"""
+        self.settings = w.with_env_status(self.settings, name, status)
+        self._persist_settings(self.geometry_text())
+
+    def _save_opener_paths(self, name: str, found: Mapping[str, str]) -> None:
+        """持久化实例内 ``command -v`` 结果：实例停止时智能检测直接复用。"""
+        self.settings = w.with_opener_paths(self.settings, name, found)
+        self._persist_settings(self.geometry_text())
 
     def _restore_dialog_geometry(self, key: str, dialog: QDialog) -> None:
         """对话框打开前恢复上次的位置与尺寸；未记录时保持按内容居中。"""
@@ -3534,11 +3579,20 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
     不做成独立对话框：配置对话框一层里就能看到各项状态并操作，避免多层弹窗。
     """
 
-    def __init__(self, parent: QWidget, distro: Distro, selected: Sequence[str] | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget,
+        distro: Distro,
+        selected: Sequence[str] | None = None,
+        *,
+        status: _initenv.EnvStatus | None = None,
+        on_detected: Any = None,
+    ) -> None:
         super().__init__("初始化环境", parent)
         self._distro = distro
         self._selected = None if selected is None else {key for key in selected if key in _initenv.task_keys()}
         """上次保存的勾选（``None`` 表示未保存过，按默认勾选）。"""
+        self._on_detected = on_detected
         self.setToolTip(_INIT_ENV_HINT)
         self._status: _initenv.EnvStatus | None = None
         self._done: set[str] = set()
@@ -3669,6 +3723,9 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self.body.addLayout(actions)
 
         self._sync_collapsed_view()
+        if status is not None:
+            self._apply_status(status)
+            self._append_log("显示上次检测结果（打开配置不会启动实例）")
 
     @property
     def collapsed(self) -> bool:
@@ -3816,8 +3873,15 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self.copy_key.setEnabled(not busy and self._status is not None and self._status.ssh_ready)
 
     def refresh_status(self) -> None:
-        """后台探测实例环境；探测失败只写日志，不打断用户操作。"""
+        """后台探测实例环境；实例未运行时先确认，因为它会被 WSL 启动。"""
         if self._busy:
+            return
+        if self._distro.state != "running" and not confirm(
+            self,
+            "检测环境",
+            f"检测 {self._distro.name} 需要在实例内执行命令，WSL 会启动/唤醒该实例。继续？",
+        ):
+            self.summary.setText("已取消检测（实例未运行）")
             return
         self._set_busy(True)
         self.summary.setText("正在检测环境…")
@@ -3849,6 +3913,8 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             return
         self._apply_status(status)
         self._append_log("环境检测完成")
+        if callable(self._on_detected):
+            self._on_detected(status)
 
     def _detection_error(self, message: str) -> None:
         if self._closing:
@@ -4095,7 +4161,10 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         self._collapsed = (not self._collapsed) if collapsed is None else bool(collapsed)
         self._sync_collapsed_view()
         if was_collapsed and not self._collapsed and self._target is None and not self._busy:
-            self.refresh()
+            if self._distro.state == "running":
+                self.refresh()
+            else:
+                self.file_hint.setText("实例未运行；点「扫描」会先确认再启动实例并检测。")
         window = self.window()
         if window is not self and isinstance(window, QDialog):
             QTimer.singleShot(0, lambda w=window: w.adjustSize())
@@ -4171,6 +4240,15 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
     def refresh(self) -> None:
         """后台扫描来源（Windows 目录或实例 ~/.ssh）并探测当前实例。"""
         if self._busy:
+            return
+        may_start = self._distro.state != "running" or self.source_kind.currentData() == _sshfiles.SOURCE_WSL
+        if may_start and not confirm(
+            self,
+            "扫描 SSH",
+            f"扫描需要在 {'来源实例与 ' if self.source_kind.currentData() == _sshfiles.SOURCE_WSL else ''}"
+            f"{self._distro.name} 内执行命令，WSL 会启动/唤醒未运行的实例。继续？",
+        ):
+            self.file_hint.setText("已取消扫描（实例未运行）")
             return
         self._set_busy(True)
         self.file_hint.setText("正在扫描…")
@@ -4470,7 +4548,6 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         self.setWindowTitle(f"配置 {distro.name}")
         self.setToolTip(f"实例：{distro.name}")
         self._distro = distro
-        self._detected = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(8)
@@ -4500,7 +4577,16 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         )
 
         # 初始化环境就地铺在配置对话框里：状态、勾选与三个动作都在同一层，不再开二级对话框。
-        self.init_env = _InitEnvSection(self, distro, selected)
+        # 打开配置只回显上次检测结果，不自动进入实例（``wsl -d`` 会把停止的实例拉起来）。
+        settings = getattr(owner, "settings", None)
+        cached_status = w.env_status_for(settings, distro.name) if settings is not None else None
+        self.init_env = _InitEnvSection(
+            self,
+            distro,
+            selected,
+            status=cached_status,
+            on_detected=lambda status: getattr(owner, "_save_env_status", lambda *_: None)(distro.name, status),
+        )
         outer.addWidget(self.init_env)
 
         # SSH 迁移单独一张卡：要选来源目录、看冲突，比塞进「初始化环境」的勾选项更清楚。
@@ -4520,14 +4606,11 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         fit_dialog_to_content(self, min_width=680)
 
     def showEvent(self, event: Any) -> None:
-        """首次显示时自动检测环境；高度按当前内容重新收口，几何恢复只留位置与宽度。"""
+        """显示时按内容收口；不自动检测，避免打开配置就把停止的实例启动。"""
         super().showEvent(event)
         # 上次展开态关窗会把「展开后的高度」存进几何；本次卡片默认收起，
         # 原样恢复会多出大块底部空白，所以每次显示都按内容收口一次。
         fit_dialog_to_content(self, min_width=680)
-        if not self._detected:
-            self._detected = True
-            self.init_env.refresh_status()
 
     def _close_allowed(self) -> bool:
         """初始化 / 迁移在后台进行时允许关闭，但先说明任务不会中止。"""
