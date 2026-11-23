@@ -16,9 +16,11 @@
 - 结构优化 P2：MCP 从 `cli` 迁出为 `fcmd/mcp/{server,security,whitelist}.py`，
   `cli/mcp_adapter.py` / `agent_*.py` 保留模块别名 shim；新增 `fcmd mcp serve`
   内建命令（缺 `mcp` 依赖时给出安装提示）。
-- 结构优化 P3：`infras/net`、`infras/text`、`infras/data`、`infras/fs` 按主题拆为
-  子包，`__init__.py` re-export 旧 API；`infras/media.py` 暂保持单文件（PIL/resvg
-  可变状态与图标构建耦合，单独排期）。
+- 结构优化 P3：`infras/net`、`infras/text`、`infras/data`、`infras/fs`、`infras/media` 按主题拆为
+  子包，`__init__.py` re-export 旧 API；`media/{deps,icon,image}` 用 deps 集中
+  PIL/resvg 可变状态，`ensure_pil()` 注入后对 icon/image 同时可见。
+- 修复 `tests/cli/bench_startup.py` 在 Windows 非 UTF-8 终端下读取子进程输出
+  抛 `UnicodeDecodeError` 的问题（显式 UTF-8 + replace），启动基准重新可用。
 - 结构优化 P4（试点）：新增 `gui.settings.SettingsStore`，`dynacalcw` 的设置读写
   改用统一存储（原子写入 + `.bak` 回退）；其余应用后续按同一接口迁移。
 - `@fx.tool` 新增三个编排原语（ADR 0045）：

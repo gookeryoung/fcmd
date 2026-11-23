@@ -325,7 +325,7 @@ class TestImagetoolCommands:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Pillow 未安装时打印提示。"""
-        monkeypatch.setattr("fcmd.infras.media.HAS_PIL", False)
+        monkeypatch.setattr("fcmd.infras.media.deps.HAS_PIL", False)
         out = tmp_path / "out.png"
         code = run_tool("imagetool", ["r", str(sample_image), str(out), "10"])
         assert code == 0
@@ -362,7 +362,7 @@ class TestNoDepsGuards:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Pillow 未安装时各子命令打印提示。"""
-        monkeypatch.setattr("fcmd.infras.media.HAS_PIL", False)
+        monkeypatch.setattr("fcmd.infras.media.deps.HAS_PIL", False)
         code = run_tool("imagetool", [subcommand, *args])
         assert code == 0
         assert "未安装 Pillow" in capsys.readouterr().out

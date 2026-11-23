@@ -520,17 +520,17 @@ class TestDependencyAndProbeBranches:
     """依赖缺失与文件探测的边界分支。"""
 
     def test_ensure_pil_requires_pillow(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(media, "HAS_PIL", False)
+        monkeypatch.setattr(media.deps, "HAS_PIL", False)
         with pytest.raises(ImportError, match="Pillow"):
             media.ensure_pil()
 
     def test_ensure_resvg_requires_resvg(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(media, "HAS_RESVG", False)
+        monkeypatch.setattr(media.deps, "HAS_RESVG", False)
         with pytest.raises(ImportError, match="resvg-py"):
             media.ensure_resvg()
 
     def test_ensure_deps_reports_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(media, "HAS_RESVG", False)
+        monkeypatch.setattr(media.deps, "HAS_RESVG", False)
         with pytest.raises(RuntimeError, match="缺少依赖"):
             media.ensure_deps()
 
@@ -583,7 +583,7 @@ class TestDependencyAndProbeBranches:
                 raise ValueError("boom")
             return real_build(input_path, output_path, **kwargs)
 
-        monkeypatch.setattr(media, "icon_build", _build)
+        monkeypatch.setattr(media.icon, "icon_build", _build)
         canonical, outputs, skipped = media.icon_build_batch(source_dir, tmp_path / "out")
 
         assert canonical == "windows"
