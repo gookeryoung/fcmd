@@ -67,18 +67,28 @@ def set_button_text(widget: QAbstractButton, text: str, *, tone: str | None = No
     widget.setProperty(ICON_NAME_PROPERTY, None)
 
 
-def set_button_icon(widget: QAbstractButton, name: str, *, tone: str = "text") -> None:
-    """只换按钮图标、不改文字；图标名 / 色调未变时直接返回。
+def set_button_icon(
+    widget: QAbstractButton,
+    name: str,
+    *,
+    tone: str = "text",
+    size: int | None = None,
+) -> None:
+    """只换按钮图标、不改文字；图标名 / 色调 / 尺寸都未变时直接返回。
 
     纯图标按钮（实例行内的启动 / 停止）不能再走 :func:`set_button_text`：
-    空文案会让它清空图标。
+    空文案会让它清空图标。``size`` 省略时沿用 ``set_icon`` 的默认尺寸。
     """
-    from fcmd.gui.icons import ICON_NAME_PROPERTY, ICON_TONE_PROPERTY, set_icon
+    from fcmd.gui.icons import ICON_NAME_PROPERTY, ICON_SIZE_PROPERTY, ICON_TONE_PROPERTY, set_icon
 
     mapped = tone or "text"
-    if widget.property(ICON_NAME_PROPERTY) == name and widget.property(ICON_TONE_PROPERTY) == mapped:
+    same = widget.property(ICON_NAME_PROPERTY) == name and widget.property(ICON_TONE_PROPERTY) == mapped
+    if same and (size is None or widget.property(ICON_SIZE_PROPERTY) == int(size)):
         return
-    set_icon(widget, name, tone=mapped)
+    if size is None:
+        set_icon(widget, name, tone=mapped)
+    else:
+        set_icon(widget, name, size=size, tone=mapped)
 
 
 def set_button_style_name(widget: QAbstractButton, name: str) -> None:
@@ -116,9 +126,15 @@ class ButtonStateMixin:
         """改写文案并按新文案更新图标（``tone`` 省略时保留原色调）。"""
         set_button_text(self, text, tone=tone)
 
-    def set_icon_name(self: QAbstractButton, name: str, *, tone: str = "text") -> None:
-        """只换图标、不改文案；名称 / 色调未变时直接返回。"""
-        set_button_icon(self, name, tone=tone)
+    def set_icon_name(
+        self: QAbstractButton,
+        name: str,
+        *,
+        tone: str = "text",
+        size: int | None = None,
+    ) -> None:
+        """只换图标、不改文案；名称 / 色调 / 尺寸未变时直接返回。"""
+        set_button_icon(self, name, tone=tone, size=size)
 
     def set_kind(self: QAbstractButton, kind: str) -> None:
         """切换标准变体（``primary`` / ``danger`` / ``ghost`` / 空）。"""

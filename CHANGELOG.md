@@ -7,6 +7,8 @@
 
 ### 变更
 
+- 按钮图标的 `set_icon_name()` 支持 `size`，并把尺寸纳入幂等判断；行卡展开 / 复制 /
+  `DiskAddTile` / `SidebarActionButton` 改走 mixin 方法，不再直接调 `icons.set_icon`。
 - `filescanw` 改成侧边栏分页（与 `wslmanw` / `llmw` 同构）：扫描 / 结果 / 规则三页
   由共享 `QtMainWindow` + `SidebarNav` 承载，支持折叠、`Ctrl+Tab` 切页与几何记忆；
   每页是 `AppPage` 子类，状态栏按页隔离（扫描进度 / 结果筛选 / 规则操作各归各页），

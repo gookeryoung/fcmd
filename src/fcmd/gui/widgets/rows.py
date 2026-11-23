@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.gui import icons as _qt_icons
 from fcmd.gui.widgets.buttons import icon_button
 from fcmd.gui.widgets.text import ElidedLabel
 
@@ -240,7 +239,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
 
         self.expand_button = icon_button("", tooltip=expand_hint)
         self.expand_button.setIconSize(QSize(16, 16))
-        _qt_icons.set_icon(self.expand_button, "chevron-down", tone="muted")
+        self.expand_button.set_icon_name("chevron-down", tone="muted")
         self.expand_button.setAccessibleName(expand_hint)
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
         self.header_row.addWidget(self.expand_button, 0)
@@ -330,7 +329,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             button.setProperty("rowCopy", "true")
             button.setFixedSize(QSize(22, 22))
             button.setIconSize(QSize(14, 14))
-            _qt_icons.set_icon(button, "copy", tone="muted")
+            button.set_icon_name("copy", tone="muted")
             button.clicked.connect(self._copy_to_clipboard)
             self.title_row.addWidget(button, 0)
             self._copy_button = button
@@ -351,7 +350,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         button = self._copy_button
         if button is None:
             return
-        _qt_icons.set_icon(button, "check", tone="success")
+        button.set_icon_name("check", tone="success")
         button.setToolTip("已复制")
         if self._copy_timer is None:
             self._copy_timer = QTimer(self)
@@ -362,7 +361,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     def _reset_copy_button(self) -> None:
         if self._copy_button is None or not self._copy_text:
             return
-        _qt_icons.set_icon(self._copy_button, "copy", tone="muted")
+        self._copy_button.set_icon_name("copy", tone="muted")
         self._copy_button.setToolTip(f"复制 {self._copy_text}")
 
     def add_title_widget(self, widget: QWidget) -> None:
@@ -464,7 +463,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
         self._expanded = expanded
         self.detail_host.setVisible(expanded)
-        _qt_icons.set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down", tone="muted")
+        self.expand_button.set_icon_name("chevron-up" if expanded else "chevron-down", tone="muted")
         self.expand_button.setToolTip(self._collapse_hint if expanded else self._expand_hint)
         self.expand_button.setAccessibleName(self._collapse_hint if expanded else self._expand_hint)
 

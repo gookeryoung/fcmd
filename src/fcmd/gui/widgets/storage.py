@@ -195,7 +195,7 @@ class DiskAddTile(ButtonStateMixin, QPushButton):  # pragma: no cover - Qt 控�
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(150)
-        _icons.set_icon(self, "plus", size=18, tone="muted")
+        self.set_icon_name("plus", size=18, tone="muted")
 
 
 class DiskGrid(QWidget):  # pragma: no cover - Qt 控件

@@ -194,9 +194,7 @@ class SidebarActionButton(ButtonStateMixin, QPushButton):  # pragma: no cover - 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(self.HEIGHT)
         if icon:
-            from fcmd.gui.icons import set_icon
-
-            set_icon(self, icon, size=16, tone="text")
+            self.set_icon_name(icon, size=16, tone="text")
 
 
 class SidebarList(QListWidget):  # pragma: no cover - Qt 控件

@@ -1024,6 +1024,8 @@ def test_button_state_mixin_methods_delegate() -> None:
         widget.set_icon_name("run", tone="muted")
         assert widget.property("fcmdIconName") == "run"
         assert widget.property("fcmdIconTone") == "muted"
+        widget.set_icon_name("run", tone="muted", size=18)
+        assert widget.property("fcmdIconSize") == 18
         widget.set_style_name("RunPrimary")
         assert widget.objectName() == "RunPrimary"
         # 同名重复设置不再重抛光。
