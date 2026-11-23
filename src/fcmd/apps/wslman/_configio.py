@@ -11,14 +11,20 @@ import base64
 import binascii
 import posixpath
 import shlex
+import time
 from typing import TYPE_CHECKING
 
+from fcmd.apps.wslman import _sshfiles
 from fcmd.apps.wslman._configfiles import (
     _DEFAULT_DIR_MODE,
     _DIR_PATHS,
     _MANAGED_PATHS,
     _PROBE_PREFIX,
+    CONFIG_BACKUP_PREFIX,
+    GROUP_SSH,
     WRITE_PREFIX,
+    ConfigGroup,
+    ConfigSource,
     ConfigTarget,
     RemoteFile,
     RestoreRecord,
@@ -32,6 +38,7 @@ if TYPE_CHECKING:
 __all__ = [
     "BACKUP_PREFIX",
     "INIT_PREFIX",
+    "backup_root",
     "initialize_script",
     "parse_backup_path",
     "parse_init_result",
@@ -41,6 +48,8 @@ __all__ = [
     "probe_script",
     "remote_read_argv",
     "restore_script",
+    "source_file_path",
+    "target_dir_mode",
     "write_script",
 ]
 
@@ -249,6 +258,28 @@ def parse_backup_path(text: str) -> str:
         if line.startswith(BACKUP_PREFIX):
             return _decode(line[len(BACKUP_PREFIX) :])
     return ""
+
+
+def source_file_path(source: ConfigSource, path: str) -> str:
+    """来源实例里的绝对路径（``$HOME`` + 相对路径）。"""
+    if not source.directory:
+        raise runtime_error(
+            f"实例 {source.distro} 没有可读取的家目录",
+            hint="重新扫描来源实例后再迁移",
+        )
+    return posixpath.join(source.directory, path)
+
+
+def backup_root(group: str, stamp: float) -> str:
+    """备份目录（相对 ``$HOME``）：SSH 仍落在 ``~/.ssh/fcmd-ssh-backup-…``。"""
+    if group == GROUP_SSH:
+        return f".ssh/{_sshfiles.backup_name(stamp)}"
+    return CONFIG_BACKUP_PREFIX + time.strftime("%Y%m%d-%H%M%S", time.localtime(stamp))
+
+
+def target_dir_mode(group: ConfigGroup) -> int:
+    """写入时直接父目录应有的权限：SSH 目录 700，其余 755。"""
+    return group.dir_mode if group.ssh else _DEFAULT_DIR_MODE
 
 
 def initialize_script(entries: Sequence[tuple[str, str]]) -> str:

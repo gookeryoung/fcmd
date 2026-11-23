@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import json
 import posixpath
 import time
 from collections.abc import Mapping
@@ -26,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fcmd.apps.wslman import _configadapt, _sshfiles
+from fcmd.apps.wslman._configrestore import RestoreEntry, RestoreRecord
 from fcmd.apps.wslman._errors import not_found, runtime_error
 
 if TYPE_CHECKING:
@@ -273,80 +273,6 @@ class ConfigSource:
 
 
 @dataclass(frozen=True, slots=True)
-class RestoreEntry:
-    """一次迁移对单个目标文件做过的操作，供「还原上次迁移」使用。"""
-
-    path: str
-    backup: str = ""
-    """覆盖前的备份路径（相对 ``$HOME``）；空串表示迁移前目标不存在。"""
-    size: int = 0
-    """迁移写入后的字节数，用于删除新增文件前确认它没被改过。"""
-
-    @property
-    def existed(self) -> bool:
-        return bool(self.backup)
-
-
-@dataclass(frozen=True, slots=True)
-class RestoreRecord:
-    """最近一次迁移的还原记录（按实例持久化）。"""
-
-    stamp: str
-    source: str = ""
-    entries: tuple[RestoreEntry, ...] = ()
-
-    @property
-    def created(self) -> int:
-        return sum(1 for item in self.entries if not item.existed)
-
-    @property
-    def overwritten(self) -> int:
-        return sum(1 for item in self.entries if item.existed)
-
-    @property
-    def summary(self) -> str:
-        action = self.source or "操作"
-        return f"{self.stamp} {action}的 {len(self.entries)} 个文件（新增 {self.created} · 备份 {self.overwritten}）"
-
-    def to_mapping(self) -> dict[str, str]:
-        rows = [[item.path, item.backup, str(item.size)] for item in self.entries]
-        return {
-            "stamp": self.stamp,
-            "source": self.source,
-            "entries": json.dumps(rows, ensure_ascii=False),
-        }
-
-    @classmethod
-    def from_mapping(cls, raw: object) -> RestoreRecord | None:
-        if not isinstance(raw, Mapping):
-            return None
-        stamp = str(raw.get("stamp") or "").strip()
-        if not stamp:
-            return None
-        try:
-            rows = json.loads(str(raw.get("entries") or "[]"))
-        except (TypeError, ValueError):
-            return None
-        if not isinstance(rows, list):
-            return None
-        entries: list[RestoreEntry] = []
-        for row in rows:
-            if not isinstance(row, list) or not row:
-                continue
-            path = str(row[0] or "").strip()
-            backup = str(row[1] or "").strip() if len(row) > 1 else ""
-            try:
-                size = int(str(row[2])) if len(row) > 2 else 0
-            except (TypeError, ValueError):
-                size = 0
-            if path and group_for_path(path) is not None:
-                entries.append(RestoreEntry(path, backup, max(size, 0)))
-        if not entries:
-            return None
-        return cls(stamp, str(raw.get("source") or "").strip(), tuple(entries))
-
-
-@dataclass(frozen=True, slots=True)
 class GroupProgress:
     """单个迁移项目的进度：来源有效文件数 / 已在实例内一致的文件数。"""
 
@@ -569,16 +495,6 @@ def read_source(path: Path) -> bytes:
         raise runtime_error(f"无法读取源文件：{path}", hint=str(exc)) from exc
 
 
-def source_file_path(source: ConfigSource, path: str) -> str:
-    """来源实例里的绝对路径（``$HOME`` + 相对路径）。"""
-    if not source.directory:
-        raise runtime_error(
-            f"实例 {source.distro} 没有可读取的家目录",
-            hint="重新扫描来源实例后再迁移",
-        )
-    return posixpath.join(source.directory, path)
-
-
 def conflicts(paths: Sequence[str], target: ConfigTarget) -> tuple[str, ...]:
     present = set(target.paths())
     return tuple(path for path in paths if path in present)
@@ -621,13 +537,6 @@ def target_summary(target: ConfigTarget) -> str:
         detail = "、".join(f"{item.path}（{item.mode}）" for item in loose)
         parts.append(f"注意：{detail}权限过宽，迁移同名文件后会改为 600")
     return "；".join(parts)
-
-
-def backup_root(group: str, stamp: float) -> str:
-    """备份目录（相对 ``$HOME``）：SSH 仍落在 ``~/.ssh/fcmd-ssh-backup-…``。"""
-    if group == GROUP_SSH:
-        return f".ssh/{_sshfiles.backup_name(stamp)}"
-    return CONFIG_BACKUP_PREFIX + time.strftime("%Y%m%d-%H%M%S", time.localtime(stamp))
 
 
 def _content_matches(item: ConfigFile, target: ConfigTarget) -> bool:
@@ -840,17 +749,15 @@ def snapshot_from_mapping(raw: object) -> MigrationSnapshot | None:
     )
 
 
-def target_dir_mode(group: ConfigGroup) -> int:
-    """写入时直接父目录应有的权限：SSH 目录 700，其余 755。"""
-    return group.dir_mode if group.ssh else _DEFAULT_DIR_MODE
-
-
 # 探测 / 写入 / 还原脚本独立在 _configio，避免单个模块超过行数预算；这里按需转发导出名，
 # 既保留 ``_configfiles.write_script`` 这套旧调用，又避免两个模块在导入期互相依赖。
 _LAZY_EXPORTS = frozenset(
     {
+        "backup_root",
         "initialize_script",
         "parse_backup_path",
+        "source_file_path",
+        "target_dir_mode",
         "parse_init_result",
         "parse_probe",
         "parse_write_meta",
@@ -865,6 +772,7 @@ _LAZY_EXPORTS = frozenset(
 
 if TYPE_CHECKING:
     from fcmd.apps.wslman._configio import (  # noqa: F401
+        backup_root,
         initialize_script,
         parse_backup_path,
         parse_init_result,
@@ -874,6 +782,8 @@ if TYPE_CHECKING:
         probe_script,
         remote_read_argv,
         restore_script,
+        source_file_path,
+        target_dir_mode,
         write_script,
     )
 
