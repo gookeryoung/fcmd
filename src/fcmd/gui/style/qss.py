@@ -138,6 +138,22 @@ QPushButton#RunAction:disabled { background: $disabled_bg; color: $disabled_fg; 
 QPushButton#RunDanger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#RunDanger:hover { background: $danger; color: $on_accent; }
 QPushButton#RunDanger:disabled { color: $disabled_fg; border-color: $disabled_border; background: transparent; }
+/* Hero 主行动按钮：页面里只有一个「开始 / 停止」时给足点击面积（扫描页起步）。 */
+QPushButton#HeroPrimary, QPushButton#HeroDanger {
+    min-height: $hero_control_height;
+    max-height: $hero_control_height;
+    padding: 0 26px;
+    border-radius: 8px;
+    font-size: ${font_heading}pt;
+    font-weight: 700;
+}
+QPushButton#HeroPrimary { background: $accent; color: $on_accent; border-color: $accent; }
+QPushButton#HeroPrimary:hover { background: $accent_hover; border-color: $accent_hover; }
+QPushButton#HeroPrimary:pressed { background: $accent_pressed; border-color: $accent_pressed; }
+QPushButton#HeroPrimary:disabled { background: $disabled_bg; color: $disabled_fg; border-color: $disabled_border; }
+QPushButton#HeroDanger { color: $danger; border-color: $danger; background: transparent; }
+QPushButton#HeroDanger:hover { background: $danger; color: $on_accent; }
+QPushButton#HeroDanger:disabled { color: $disabled_fg; border-color: $disabled_border; background: transparent; }
 QFrame#ChatSidebar {
     background: transparent;
     border: none;
@@ -267,6 +283,18 @@ QPushButton#DiskAdd {
     padding: 8px;
 }
 QPushButton#DiskAdd:hover { background: $surface_hover; border-color: $accent; color: $text; }
+QPushButton#ScanTaskAdd {
+    background: transparent;
+    border: 1px dashed $border_strong;
+    border-radius: ${radius}px;
+    color: $muted;
+    padding: 0 14px;
+    min-height: 54px;
+    max-height: 54px;
+    font-weight: 600;
+    text-align: left;
+}
+QPushButton#ScanTaskAdd:hover { background: $surface_hover; border-color: $accent; color: $accent; }
 
 QLabel#ChoiceTitle {
     background: transparent;

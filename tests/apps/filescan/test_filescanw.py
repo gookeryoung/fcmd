@@ -126,6 +126,47 @@ def test_settings_mapping_roundtrip() -> None:
     assert filescanw.settings_from_mapping(mapping) == settings
 
 
+def test_scan_task_roundtrip_and_name_disambiguation() -> None:
+    """任务序列化保留 id / 历史字段；同名目录新增时自动加后缀。"""
+    first = filescanw.ScanTask(
+        id="abc123",
+        path="/data/logs",
+        name="日志扫描",
+        last_scanned_at="2026-01-02 03:04",
+        last_summary="命中 2 个文件 / 3 条",
+        last_status="ok",
+    )
+    assert filescanw.task_from_mapping(filescanw.task_to_mapping(first)) == first
+    existing = replace(first, name="logs")
+    assert filescanw.new_scan_task("/data/logs", existing=(existing,)).display_name == "logs-2"
+    assert filescanw.new_scan_task("/data/logs").display_name == "logs"
+
+
+def test_legacy_paths_migrate_to_tasks_and_paths_stay_in_sync() -> None:
+    """旧设置只有 ``paths``：读取时迁移成任务，写回时同时保留任务与 paths。"""
+    settings = filescanw.settings_from_mapping({"paths": ["F:/data", "F:/logs"]})
+    assert [item.path for item in settings.tasks] == ["F:/data", "F:/logs"]
+    assert [item.display_name for item in settings.tasks] == ["data", "logs"]
+    mapping = filescanw.settings_to_mapping(settings)
+    assert mapping["paths"] == ["F:/data", "F:/logs"]
+    assert [item["id"] for item in mapping["tasks"]] == ["legacy-0", "legacy-1"]
+    assert filescanw.settings_from_mapping(mapping) == settings
+
+
+def test_previous_instances_key_migrates_to_tasks() -> None:
+    """上一版写出的 ``instances`` 键仍能读入，新写盘统一用 ``tasks``。"""
+    settings = filescanw.settings_from_mapping(
+        {
+            "instances": [
+                {"id": "old-1", "path": "F:/data", "name": "旧任务", "last_status": "ok"},
+            ]
+        }
+    )
+    assert [item.id for item in settings.tasks] == ["old-1"]
+    assert [item.display_name for item in settings.tasks] == ["旧任务"]
+    assert "instances" not in filescanw.settings_to_mapping(settings)
+
+
 def test_settings_whitelist_groups_roundtrip() -> None:
     groups = (("文档", (".docx", ".pdf")), ("自定义", (".abc",)))
     settings = filescanw.FilescanSettings(whitelist_groups=groups)

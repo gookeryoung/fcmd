@@ -5,11 +5,10 @@
 基座提供），右侧按 **扫描 / 结果 / 规则 / 设置** 四页分页，每页拿满整个内容区，
 不再用顶部标签条挤压横向空间。分页按「动作 / 结果 / 规则 / 配置」分层：
 
-- **扫描**（扫描目录 + 开始 / 停止 + 当前选项只读摘要）：只放「扫什么 + 开始」，
-  扫描中同一按钮切成「停止扫描」，进度写到状态栏右侧（参考 wslmanw），不再占
-  扫描页高度；
+- **扫描**（扫描任务列表）：按任务管理目录，每行可指定目录、开始 / 停止扫描、
+  查看该任务的结果；当前选项用只读标签放在卡片标题行，进设置页修改；
 - **结果**（按文件聚合命中、规则 / 路径筛选、打码导出）：表格吃满页面高度，
-  扫描结束自动切到本页；
+  标题胶囊标明当前结果所属任务，扫描结束自动切到本页；
 - **规则**（规则表、表达式校验与规则集导入导出）；
 - **设置**（扫描范围表单、后缀白名单、缓存 / 配置导入导出）：三张卡片纵向排布
   并套 :class:`~fcmd.gui.widgets.PageScroll`，窗口压矮时滚动而不是裁掉底部动作行。
@@ -17,22 +16,24 @@
 每个页面是 :class:`~fcmd.gui.page.AppPage` 子类，状态栏文字按页隔离：扫描进度
 写到扫描页，筛选 / 导出结果写到结果页，规则增删改写到规则页，白名单 / 缓存 / 配置
 操作写到设置页，切页后各自恢复。
-扫描在 ``QThreadPool`` 中执行，进度经信号回投主线程；开始后按钮切换为「停止扫描」，
-点击置位 :class:`CancelToken`，关窗时同样置位取消并等待线程池收尾。
+扫描在 ``QThreadPool`` 中执行，一次只跑一个任务，进度经信号回投主线程；行内按钮
+开始后切换为「停止扫描」，点击置位 :class:`CancelToken`，关窗时同样置位取消并等待
+线程池收尾。扫描结果按任务 id 留在本次会话内，结果页与任务行都能重新进入查看。
 
 扫描参数、规则集、设置与报告格式全部复用 :mod:`fcmd.apps.filescan` 的纯逻辑；
 本模块只做控件编排与信号连接。窗口设置继续写
 ``${FCMD_HOME:-~/.fcmd}/ui/filescanw.json``，与旧设置文件同名字段互读（新增
-``sidebar_collapsed`` 记录侧边栏折叠状态）。
+``tasks`` 记录扫描任务与最近一次扫描摘要、``sidebar_collapsed`` 记录侧边栏
+折叠状态）。
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -43,7 +44,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidgetItem,
     QMessageBox,
+    QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
@@ -86,10 +90,15 @@ from fcmd.apps.filescan._rules import (
 )
 from fcmd.gui.page import AppPage, PageSpec
 from fcmd.gui.widgets import (
+    ButtonStateMixin,
     Card,
+    FlowLayout,
     FormGrid,
+    ItemRow,
     PageScroll,
-    StorageCard,
+    RowDetailMixin,
+    RowListWidget,
+    StatusTag,
     button,
     confirm,
     hint_label,
@@ -100,9 +109,6 @@ from fcmd.gui.window import QtMainWindow
 from fcmd.gui.workers import submit
 from fcmd.infras.download import SpeedMeter
 
-if TYPE_CHECKING:
-    from datetime import datetime
-
 __all__ = ["FilescanQtWindow", "run_qt"]
 
 TITLE = "敏感内容扫描 - filescan"
@@ -110,7 +116,7 @@ NAV_TITLE = "敏感扫描"
 DEFAULT_SIZE = (1120, 760)
 
 PAGES: tuple[PageSpec, ...] = (
-    PageSpec("scan", "扫描", "扫描目录、开始 / 停止与当前选项摘要", "scan"),
+    PageSpec("scan", "扫描", "按任务管理扫描目录，每个任务单独开始 / 停止与查看结果", "scan"),
     PageSpec("results", "结果", "按文件聚合的命中、筛选与打码导出", "search"),
     PageSpec("rules", "规则", "规则表、启停、组合表达式与规则集导入导出", "check-square"),
     PageSpec("settings", "设置", "扫描范围、后缀白名单与缓存 / 配置", "settings"),
@@ -148,6 +154,185 @@ class _FilescanPage(AppPage):  # pragma: no cover - Qt 控件
             self.body.setContentsMargins(*margins)
             self.body.setSpacing(spacing)
             self.content = self.body
+
+
+_TASK_STATUS = {
+    "ok": ("已扫描", "success"),
+    "cancelled": ("已停止", "warning"),
+    "failed": ("失败", "danger"),
+}
+"""任务的最近一次扫描状态 → 胶囊文案 / 语义色。"""
+
+
+class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
+    """扫描任务行卡：与 wslmanw 实例行同一套 ItemRow 骨架。
+
+    标题是任务名，副标题是目录；标签行给最近一次扫描状态，右侧是查看结果 / 移除 /
+    扫描三个按钮。展开箭头就地显示目录、状态、最近扫描时间与结果摘要；扫描结果本身
+    仍统一进结果页。
+    """
+
+    scanRequested = Signal(str)
+    stopRequested = Signal(str)
+    resultRequested = Signal(str)
+    removeRequested = Signal(str)
+
+    def __init__(  # noqa: PLR0913 - 行状态由任务 + 全局忙态成组传入
+        self,
+        task: fw.ScanTask,
+        *,
+        has_result: bool,
+        busy: bool,
+        active: bool,
+        stopping: bool,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(
+            task.display_name,
+            task.path or "未指定目录",
+            elide=Qt.TextElideMode.ElideMiddle,
+            parent=parent,
+        )
+        self.task = task
+        self.status_tag = StatusTag("", tone="muted", parent=self.header)
+        self.add_tag(self.status_tag)
+
+        self.result_button = button("", kind="ghost", icon="search")
+        self.result_button.clicked.connect(lambda: self.resultRequested.emit(self.task.id))
+        self.add_action(self.result_button)
+        self.remove_button = button(
+            "", kind="ghost", icon="trash", tooltip="移除任务（不会删除磁盘文件，也不影响其他任务）"
+        )
+        self.remove_button.clicked.connect(lambda: self.removeRequested.emit(self.task.id))
+        self.add_action(self.remove_button)
+        self.scan_button = button("", kind="primary", icon="scan")
+        self.scan_button.clicked.connect(self._on_scan_clicked)
+        self.add_action(self.scan_button)
+
+        self._active = active
+        self._stopping = stopping
+        self.update_state(task, has_result=has_result, busy=busy, active=active, stopping=stopping)
+
+    def _on_scan_clicked(self) -> None:
+        if self._active and not self._stopping:
+            self.stopRequested.emit(self.task.id)
+        else:
+            self.scanRequested.emit(self.task.id)
+
+    def update_state(
+        self,
+        task: fw.ScanTask,
+        *,
+        has_result: bool,
+        busy: bool,
+        active: bool,
+        stopping: bool,
+    ) -> None:
+        """按任务数据与全局扫描忙态重算文案 / 胶囊 / 按钮可用性。"""
+        self.task = task
+        self._active = active
+        self._stopping = stopping
+        self.set_title(task.display_name)
+        self.set_subtitle(task.path or "未指定目录")
+        self.set_metrics(task.last_scanned_at or "—")
+        if active and stopping:
+            self.status_tag.set_status("停止中…", "warning")
+        elif active:
+            self.status_tag.set_status("扫描中", "accent")
+        else:
+            text, tone = _TASK_STATUS.get(task.last_status, ("未扫描", "muted"))
+            self.status_tag.set_status(text, tone)
+
+        self.remove_button.setEnabled(not busy)
+        self.result_button.setEnabled(has_result and not busy)
+        self.result_button.setToolTip(
+            "查看该任务的扫描结果" if has_result else "本次会话还没有该任务的扫描结果，先扫描一次"
+        )
+        if active:
+            self.scan_button.set_kind("danger")
+            self.scan_button.set_icon_name("stop", tone="danger" if not stopping else "muted")
+            self.scan_button.setToolTip("停止扫描" if not stopping else "正在停止")
+            self.scan_button.setEnabled(not stopping)
+        else:
+            self.scan_button.set_kind("primary")
+            self.scan_button.set_icon_name("scan", tone="on_accent" if not busy else "muted")
+            self.scan_button.setToolTip("已有扫描在进行" if busy else f"扫描 {task.display_name}")
+            self.scan_button.setEnabled(not busy)
+
+    def set_progress(self, done: int, total: int) -> None:
+        """扫描中就地更新胶囊（不重建整行）。"""
+        percent = max(0, min(100, int(done * 100 / total))) if total > 0 else 0
+        self.status_tag.set_status(f"扫描 {percent}%", "accent")
+
+
+class _ScanTaskAddRow(ButtonStateMixin, QPushButton):  # pragma: no cover - Qt 控件
+    """扫描任务列表首项：虚线「添加任务」，始终固定在列表最上方。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__("添加任务", parent)
+        self.setObjectName("ScanTaskAdd")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(54)
+        self.setMaximumHeight(54)
+        self.set_icon_name("plus", size=18, tone="muted")
+
+
+class _ScanTaskEmptyRow(QWidget):  # pragma: no cover - Qt 控件
+    """没有任务时的说明卡：在「添加任务」虚线框下方给出下一步操作。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 18, 16, 18)
+        layout.setSpacing(4)
+        layout.addStretch(1)
+        title = QLabel("还没有扫描任务", self)
+        title.setObjectName("SectionTitle")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        hint = hint_label("点上方虚线框选择目录，任务创建后即可单独扫描、查看结果或展开详情。")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+
+
+class _ScanTaskDetailView(QWidget):  # pragma: no cover - Qt 控件
+    """任务行展开后的详情：完整目录 / 状态 / 最近扫描时间 / 结果摘要。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 0, 14, 10)
+        layout.setSpacing(6)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(4)
+        grid.setColumnStretch(1, 1)
+        self.values: dict[str, QLabel] = {}
+        for row, label in enumerate(("目录", "状态", "最近扫描", "结果摘要")):
+            grid.addWidget(hint_label(f"{label}：", wrap=False), row, 0, Qt.AlignmentFlag.AlignTop)
+            value = QLabel("—", self)
+            value.setWordWrap(True)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid.addWidget(value, row, 1, Qt.AlignmentFlag.AlignTop)
+            self.values[label] = value
+        layout.addLayout(grid)
+
+    def render(self, task: fw.ScanTask) -> None:
+        """按任务数据回填详情；没有历史时给出可读占位。"""
+        status, _tone = _TASK_STATUS.get(task.last_status, ("未扫描", "muted"))
+        fields = {
+            "目录": task.path or "未指定目录",
+            "状态": status,
+            "最近扫描": task.last_scanned_at or "从未扫描",
+            "结果摘要": task.last_summary or "还没有扫描记录",
+        }
+        for label, widget in self.values.items():
+            text = fields.get(label, "—")
+            widget.setText(text)
+            widget.setToolTip(text)
 
 
 class _ScanProgress(QObject):  # pragma: no cover - Qt 信号桥
@@ -354,7 +539,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         return self._result
 
 
-class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """敏感内容扫描窗口：侧边栏分页（扫描 / 结果 / 规则 / 设置）+ 状态栏 + 任务日志。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
@@ -367,7 +552,12 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._worker_running = False
         # 扫描进度按文件数计速（个/s），与状态栏右侧进度条同一套采样口径。
         self._scan_meter = SpeedMeter(smoothing=0.5)
-        self._paths: list[str] = list(self.settings.paths)
+        self._tasks: list[fw.ScanTask] = list(self.settings.tasks)
+        # 扫描结果只与任务关联在本次会话内：键是任务 id，键值是该任务最近一次结果。
+        self._results: dict[str, ScanResult] = {}
+        self._scanning_task_id = ""
+        self._stopping_task_id = ""
+        self._viewing_task_id = ""
         self._whitelist_notice = ""
         super().__init__(
             title=TITLE,
@@ -397,63 +587,51 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             },
         )
         self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
-        # 目录卡片在 _build_scan_page 里已按设置建好，不再重复 set_roots。
+        # 任务行在 _build_scan_page 里建好列表骨架，这里再按设置回填行卡。
         self._load_whitelist()
         self._refresh_rules()
         if self.settings.filter_rule:
             index = self._filter_rule.findText(self.settings.filter_rule)
             if index >= 0:
                 self._filter_rule.setCurrentIndex(index)
-        self._refresh_options_note()
+        self._refresh_options_tags()
+        self._refresh_task_rows()
         self.set_page_status("scan", self._whitelist_notice or self._summary_text())
 
     # ------------------------------------------------------------------ #
     # 构建
     # ------------------------------------------------------------------ #
     def _build_scan_page(self) -> _FilescanPage:
-        page = _FilescanPage(self, "scan", scroll=True, margins=(0, 0, 4, 8))
-        body = page.content
+        """扫描页只保留任务列表：目录、扫描、查看结果都落在每一行任务上。"""
+        page = _FilescanPage(self, "scan", scroll=False, spacing=6)
+        layout = page.content
 
-        # 扫描目录复用与 wslmanw「工作目录」/ llmw「存储」同一套 StorageCard
-        # （Steam 式磁盘卡网格 + 添加 / 移除 / 打开）。扫描没有「主目录」概念，
-        # 所以 show_primary=False：不显示主目录胶囊，也不出「设为主目录」按钮；
-        # min_count=0 允许清空（未配置目录时点扫描会提示先添加）；移除只清列表、
-        # 随时能再加回，故 confirm_remove=False 不弹确认。
-        self._dirs_card = StorageCard(
-            [Path(item) for item in self._paths],
-            title="扫描目录",
-            hint="要递归扫描的目录；可添加多个，卡片里可打开 / 移除",
-            add_text="添加目录",
-            dialog_title="添加扫描目录",
-            remove_title="移除扫描目录",
-            confirm_remove=False,
-            min_count=0,
-            show_primary=False,
-            parent=page,
-        )
-        self._dirs_card.changed.connect(self._on_dirs_changed)
-        self._dirs_card.message.connect(lambda text: self.set_page_status("scan", text))
-        clear_button = button("清空", kind="ghost")
-        clear_button.setToolTip("移除全部扫描目录（不会删除磁盘文件）")
-        clear_button.clicked.connect(self._clear_directories)
-        self._dirs_card.add_title_action(clear_button)
-        body.addWidget(self._dirs_card)
+        card = Card("扫描任务")
+        self._option_tags_host = QWidget(card)
+        tags = FlowLayout(self._option_tags_host, h_spacing=6, v_spacing=4)
+        self._option_tags: dict[str, StatusTag] = {}
+        for key in ("recursive", "depth", "workers", "whitelist", "cache"):
+            tag = StatusTag("", tone="muted", parent=self._option_tags_host)
+            self._option_tags[key] = tag
+            tags.addWidget(tag)
+        card.add_title_action(self._option_tags_host)
 
-        # 动作卡：开始 / 停止（同一按钮切换）+ 当前选项摘要。进度写到状态栏右侧
-        # （参考 wslmanw 的下载 / 导出口径），扫描页不再放进度条或第二个取消按钮。
-        action_card = Card("开始扫描")
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(6)
-        self._start_button = button("开始扫描", kind="primary", icon="scan")
-        self._start_button.clicked.connect(self._toggle_scan)
-        actions.addWidget(self._start_button)
-        actions.addStretch(1)
-        action_card.body.addLayout(actions)
-        self._options_note = hint_label("")
-        action_card.body.addWidget(self._options_note)
-        body.addWidget(action_card)
-        body.addStretch(1)
+        self._task_list = RowListWidget(card)
+        self._task_list.setObjectName("ScanTaskList")
+        self._task_list.setSpacing(4)
+        self._task_list.setMinimumHeight(200)
+        self._task_list.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
+        self._task_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._task_list.currentRowChanged.connect(self._task_list.sync_selection)
+        self._task_list.itemDoubleClicked.connect(self._on_task_double_clicked)
+        card.body.addWidget(self._task_list, 1)
+        self._task_empty = _ScanTaskEmptyRow(card)
+        self._task_empty.setVisible(False)
+        card.body.addWidget(self._task_empty, 1)
+        self._task_detail = _ScanTaskDetailView(card)
+        self._task_detail.setVisible(False)
+        self.bind_row_detail("tasks", self._task_list, self._task_detail)
+        layout.addWidget(card, 1)
         return page
 
     @staticmethod
@@ -574,6 +752,9 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         layout = page.content
 
         card = Card("扫描结果")
+        self._result_tag = StatusTag("未关联任务", tone="muted", parent=card)
+        self._result_tag.setToolTip("结果页当前展示哪个扫描任务的结果")
+        card.add_title_action(self._result_tag)
         self._tree = QTreeWidget(card)
         self._tree.setHeaderLabels(["文件 / 规则", "规则", "行号", "上下文（打码）"])
         self._tree.setAlternatingRowColors(True)
@@ -666,10 +847,6 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
     # ------------------------------------------------------------------ #
     # 数据刷新
     # ------------------------------------------------------------------ #
-    def _refresh_dirs(self) -> None:
-        """按 ``_paths`` 重画目录卡片（``set_roots`` 不触发 ``changed``）。"""
-        self._dirs_card.set_roots([Path(item) for item in self._paths])
-
     def _refresh_rules(self) -> None:
         self._rules_table.setRowCount(0)
         for row, rule in enumerate(self.ruleset.rules):
@@ -697,17 +874,136 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
     def _summary_text(self) -> str:
         return (
             f"规则 {len(self.ruleset.rules)} 条（启用 {self.ruleset.enabled_count()}）；"
-            f"目录 {len(self._paths)} 个；单文件上限 {format_size(self._max_file_bytes.value())}"
+            f"扫描任务 {len(self._tasks)} 个；单文件上限 {format_size(self._max_file_bytes.value())}"
         )
 
-    def _refresh_options_note(self) -> None:
-        """扫描页动作卡里的只读摘要：选项 / 白名单 / 缓存在设置页修改。"""
+    # ------------------------------------------------------------------ #
+    # 扫描任务
+    # ------------------------------------------------------------------ #
+    def _task_by_id(self, task_id: str) -> fw.ScanTask | None:
+        return next((item for item in self._tasks if item.id == task_id), None)
+
+    def _task_row(self, task_id: str) -> _ScanTaskRow | None:
+        for index in range(self._task_list.count()):
+            row = self._task_list.itemWidget(self._task_list.item(index))
+            if isinstance(row, _ScanTaskRow) and row.task.id == task_id:
+                return row
+        return None
+
+    def _set_task(self, task: fw.ScanTask) -> None:
+        self._tasks = [task if item.id == task.id else item for item in self._tasks]
+
+    def _refresh_task_rows(self, *, update_status: bool = True) -> None:
+        """重建任务列表：首项固定是虚线的「添加任务」，任务行保留选中与展开态。"""
+        current = self._task_list.currentItem()
+        current_row = self._task_list.itemWidget(current) if current is not None else None
+        selected_id = current_row.task.id if isinstance(current_row, _ScanTaskRow) else ""
+        expanded = self.expanded_row("tasks")
+        expanded_id = expanded.task.id if isinstance(expanded, _ScanTaskRow) else ""
+        self.detach_row_detail("tasks")
+        self._task_list.clear()
+
+        add_row = _ScanTaskAddRow(self._task_list)
+        add_row.clicked.connect(self._add_task)
+        add_item = QListWidgetItem(self._task_list)
+        add_item.setSizeHint(QSize(0, add_row.sizeHint().height()))
+        self._task_list.setItemWidget(add_item, add_row)
+
+        for task in self._tasks:
+            item = QListWidgetItem(self._task_list)
+            row = _ScanTaskRow(
+                task,
+                has_result=task.id in self._results,
+                busy=self._worker_running,
+                active=self._worker_running and task.id == self._scanning_task_id,
+                stopping=task.id == self._stopping_task_id,
+                parent=self._task_list,
+            )
+            row.toggleRequested.connect(lambda row: self.toggle_row("tasks", row))
+            row.scanRequested.connect(self._start_task_scan)
+            row.stopRequested.connect(self._cancel_task_scan)
+            row.resultRequested.connect(self._show_task_result)
+            row.removeRequested.connect(self._remove_task)
+            item.setSizeHint(QSize(0, row.sizeHint().height()))
+            self._task_list.setItemWidget(item, row)
+
+        # 空态说明不塞进列表：列表只留「添加任务」一行，说明占满剩余高度并垂直居中。
+        self._task_empty.setVisible(not self._tasks)
+        compact_height = add_row.sizeHint().height() + 8
+        self._task_list.setMinimumHeight(compact_height if not self._tasks else 200)
+        self._task_list.setMaximumHeight(compact_height if not self._tasks else 16777215)
+        self._task_list.sync_row_widths()
+        target = next((index + 1 for index, task in enumerate(self._tasks) if task.id == selected_id), -1)
+        if target < 0 and self._tasks:
+            target = 1
+        self._task_list.setCurrentRow(target)
+        if expanded_id:
+            for index in range(self._task_list.count()):
+                row = self._task_list.itemWidget(self._task_list.item(index))
+                if isinstance(row, _ScanTaskRow) and row.task.id == expanded_id:
+                    self.expand_row("tasks", row)
+                    break
+        if update_status:
+            self.set_page_status("scan", self._summary_text())
+
+    def render_row_detail(self, row: ItemRow) -> None:
+        """展开任务行时刷新详情内容。"""
+        if isinstance(row, _ScanTaskRow):
+            self._task_detail.render(row.task)
+
+    def _add_task(self) -> None:
+        """新增任务：先选目录，再生成唯一 id 与默认名称。"""
+        chosen = QFileDialog.getExistingDirectory(self, "添加扫描任务", "")
+        if not chosen:
+            return
+        normalized = str(Path(chosen).expanduser())
+        if any(item.path == normalized for item in self._tasks):
+            self.set_page_status("scan", f"目录已在任务列表中：{normalized}")
+            return
+        task = fw.new_scan_task(normalized, existing=self._tasks)
+        self._tasks.append(task)
+        self._refresh_task_rows()
+        for index, item in enumerate(self._tasks):
+            if item.id == task.id:
+                self._task_list.setCurrentRow(index)
+                break
+        self._persist_settings(self.geometry_text())
+        self.set_page_status("scan", f"已添加扫描任务「{task.display_name}」")
+
+    def _remove_task(self, task_id: str) -> None:
+        """移除任务：只清列表与本次会话结果，不删除磁盘目录。"""
+        task = self._task_by_id(task_id)
+        if task is None or self._worker_running:
+            return
+        self._tasks = [item for item in self._tasks if item.id != task_id]
+        self._results.pop(task_id, None)
+        if self._viewing_task_id == task_id:
+            self._clear_result_view("任务已移除")
+        self._refresh_task_rows()
+        self._persist_settings(self.geometry_text())
+        self.set_page_status("scan", f"已移除扫描任务「{task.display_name}」")
+
+    def _on_task_double_clicked(self, item: QListWidgetItem) -> None:
+        row = self._task_list.itemWidget(item)
+        if not isinstance(row, _ScanTaskRow):
+            return
+        if row.task.id in self._results:
+            self._show_task_result(row.task.id)
+        else:
+            self._start_task_scan(row.task.id)
+
+    def _refresh_options_tags(self) -> None:
+        """扫描页动作卡里的只读标签：语义色区分开关状态，数值 / 白名单用强调色。"""
+        recursive = self._recursive.isChecked()
+        cache = self._use_cache.isChecked()
         depth = "不限" if self._max_depth.value() <= 0 else str(self._max_depth.value())
-        self._options_note.setText(
-            f"当前：{'递归' if self._recursive.isChecked() else '不递归'} · 深度 {depth} · "
-            f"并发 {self._workers.value()} · 白名单 {len(self._whitelist_exts())} 个后缀 · "
-            f"缓存{'开' if self._use_cache.isChecked() else '关'}；选项 / 白名单 / 缓存都在「设置」页修改"
+        self._option_tags["recursive"].set_status(
+            "递归" if recursive else "不递归", "success" if recursive else "muted"
         )
+        self._option_tags["depth"].set_status(f"深度 {depth}", "muted")
+        self._option_tags["workers"].set_status(f"并发 {self._workers.value()}", "muted")
+        self._option_tags["whitelist"].set_status(f"白名单 {len(self._whitelist_exts())} 个后缀", "accent")
+        self._option_tags["cache"].set_status(f"缓存{'开' if cache else '关'}", "success" if cache else "muted")
 
     def _sync_ruleset(self, ruleset: RuleSet, *, message: str) -> None:
         self.ruleset = ruleset
@@ -733,20 +1029,6 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 if isinstance(value, str):
                     ids.add(value)
         return ids
-
-    # ------------------------------------------------------------------ #
-    # 目录
-    # ------------------------------------------------------------------ #
-    def _on_dirs_changed(self, roots: object) -> None:
-        """共享目录卡片增删后同步 ``_paths``（落盘仍走关窗 / 导入导出同一入口）。"""
-        self._paths = [str(item) for item in roots] if isinstance(roots, list) else []
-        self.set_page_status("scan", self._summary_text())
-
-    def _clear_directories(self) -> None:
-        """清空扫描目录列表：只清列表，不碰磁盘文件。"""
-        self._paths.clear()
-        self._refresh_dirs()
-        self.set_page_status("scan", self._summary_text())
 
     # ------------------------------------------------------------------ #
     # 白名单
@@ -1002,30 +1284,15 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             context_chars=max(0, self._context_chars.value()),
         )
 
-    def _toggle_scan(self) -> None:
-        """开始扫描按钮的切换态：空闲时开扫，扫描中再点就是停止。"""
-        if self._worker_running:
-            self._cancel_scan()
-        else:
-            self._start_scan()
-
-    def _set_scan_running(self, running: bool) -> None:
-        """按钮在「开始扫描 ↔ 停止扫描」之间切换，配色 / 图标一起跟着动。"""
-        if running:
-            self._start_button.set_kind("danger")
-            self._start_button.set_text("停止扫描", tone="danger")
-            self._start_button.setToolTip("停止当前扫描；已完成的部分会保留")
-        else:
-            self._start_button.setEnabled(True)
-            self._start_button.set_kind("primary")
-            self._start_button.set_text("开始扫描", tone="on_accent")
-            self._start_button.setToolTip("")
-
-    def _start_scan(self) -> None:
+    def _start_task_scan(self, task_id: str) -> None:
+        """从任务行启动扫描；规则 / 选项仍用设置页里的全局配置。"""
         if self._worker_running:
             return
-        if not self._paths:
-            QMessageBox.warning(self, "缺少目录", "请先添加至少一个扫描目录")
+        task = self._task_by_id(task_id)
+        if task is None:
+            return
+        if not task.path:
+            QMessageBox.warning(self, "缺少目录", "请先给该任务指定扫描目录")
             return
         try:
             resolve_expression(self.ruleset)
@@ -1040,19 +1307,22 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         except ValueError as exc:
             QMessageBox.critical(self, "扫描选项无效", str(exc))
             return
-        self.result = None
-        self._tree.clear()
+        self._scanning_task_id = task_id
+        self._stopping_task_id = ""
+        self._results.pop(task_id, None)
+        if self._viewing_task_id == task_id:
+            self._clear_result_view("该任务正在重新扫描…")
         self._token = CancelToken()
         self._bridge = _ScanProgress(self)
         self._bridge.progress.connect(self._on_progress)
         self._worker_running = True
         self._scan_meter.reset()
-        self.set_page_status("scan", "正在扫描…")
-        self._set_scan_running(True)
+        self._refresh_task_rows(update_status=False)
+        self.set_page_status("scan", f"正在扫描「{task.display_name}」…")
         self.show_progress("扫描准备中…", 0, None)
         submit(
             _scan_worker,
-            [Path(item) for item in self._paths],
+            [Path(task.path)],
             self.ruleset,
             options,
             self._token,
@@ -1065,9 +1335,14 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         )
 
     def _on_progress(self, done: int, total: int, path: str) -> None:
-        """左侧状态栏写当前文件，右侧进度条按文件数给百分比 / 速度 / 剩余。"""
+        """左侧状态栏写当前任务 / 文件，右侧进度条按文件数给百分比 / 速度 / 剩余。"""
+        task = self._task_by_id(self._scanning_task_id)
+        label = task.display_name if task is not None else "扫描"
         rate = self._scan_meter.update(done)
-        self.set_page_status("scan", f"正在扫描 {done}/{total}：{path}")
+        self.set_page_status("scan", f"{label} · 正在扫描 {done}/{total}：{path}")
+        row = self._task_row(self._scanning_task_id)
+        if row is not None:
+            row.set_progress(done, total)
         self.show_progress(fw.scan_progress_text(done, total, rate), done, total or None)
 
     def _scan_done(self, payload: object) -> None:
@@ -1076,33 +1351,92 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         result, cache_note = payload
         if not isinstance(result, ScanResult):
             return
-        self.result = result
-        self._render_result(result)
+        task_id = self._scanning_task_id
+        task = self._task_by_id(task_id)
+        if task is None:
+            return
         message = fw.scan_status_text(result)
         summary = f"缓存降级：{cache_note}｜{message}" if cache_note else message
-        # 扫描页保留本次结论（切回来还能看到），结果页显示同一份摘要。
-        self.set_page_status("scan", summary)
-        self.set_page_status("results", summary)
-        # 扫描完成自动切到结果页；切页会按路径筛选条件再套用一次过滤。
+        status = "cancelled" if result.stats.cancelled else "ok"
+        self._set_task(
+            replace(
+                task,
+                last_scanned_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                last_summary=summary,
+                last_status=status,
+            )
+        )
+        self._results[task_id] = result
+        self._viewing_task_id = task_id
+        self.result = result
+        self._render_result(result)
+        self._result_tag.set_status(f"任务：{task.display_name}", "accent")
+        # 扫描页保留该任务本次结论，结果页显示同一份摘要。
+        self.set_page_status("scan", f"{task.display_name}：{summary}")
+        self.set_page_status("results", f"{task.display_name}：{summary}")
+        self._persist_settings(self.geometry_text())
+        # 扫描完成自动切到结果页（关联的就是刚扫描的任务）。
         self.show_page("results")
 
     def _scan_error(self, message: str) -> None:
-        self.result = None
+        task_id = self._scanning_task_id
+        task = self._task_by_id(task_id)
+        if task is not None:
+            self._set_task(
+                replace(
+                    task,
+                    last_scanned_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    last_summary=f"扫描失败：{message}",
+                    last_status="failed",
+                )
+            )
+        self._results.pop(task_id, None)
+        if self._viewing_task_id == task_id:
+            self._clear_result_view(f"{task.display_name if task else '扫描'}失败：{message}")
+        self._persist_settings(self.geometry_text())
         self.set_page_status("scan", f"扫描失败：{message}")
 
     def _scan_finished(self) -> None:
         self._worker_running = False
-        self._set_scan_running(False)
+        self._scanning_task_id = ""
+        self._stopping_task_id = ""
+        self._refresh_task_rows(update_status=False)
         self.show_progress("", 0, None)
 
-    def _cancel_scan(self) -> None:
+    def _cancel_task_scan(self, task_id: str) -> None:
+        """停止当前任务的扫描；结果按取消状态写回任务摘要。"""
+        if not self._worker_running or task_id != self._scanning_task_id:
+            return
         if self._token is None:
             return
         self._token.cancel()
-        # 停止请求已下发：按钮先禁用，等线程池收尾后 _scan_finished 恢复成「开始扫描」。
-        self._start_button.set_text("停止中…", tone="danger")
-        self._start_button.setEnabled(False)
-        self.set_page_status("scan", "正在停止，等待进行中的文件结束…")
+        self._stopping_task_id = task_id
+        self._refresh_task_rows(update_status=False)
+        task = self._task_by_id(task_id)
+        label = task.display_name if task is not None else "扫描"
+        self.set_page_status("scan", f"正在停止「{label}」，等待进行中的文件结束…")
+
+    def _show_task_result(self, task_id: str) -> None:
+        """从任务行进入结果页：只展示该任务本次会话的扫描结果。"""
+        result = self._results.get(task_id)
+        task = self._task_by_id(task_id)
+        if result is None or task is None:
+            self.set_page_status("scan", "该任务还没有可用结果，请先扫描")
+            return
+        self._viewing_task_id = task_id
+        self.result = result
+        self._render_result(result)
+        self._result_tag.set_status(f"任务：{task.display_name}", "accent")
+        self.set_page_status("results", f"{task.display_name}：{fw.scan_status_text(result)}")
+        self.show_page("results")
+
+    def _clear_result_view(self, message: str) -> None:
+        """清掉结果页与任务的关联（目录改变 / 移除 / 重新扫描时）。"""
+        self.result = None
+        self._viewing_task_id = ""
+        self._tree.clear()
+        self._result_tag.set_status("未关联任务", "muted")
+        self.set_page_status("results", message)
 
     def _render_result(self, result: ScanResult) -> None:
         self._tree.clear()
@@ -1139,6 +1473,11 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             entry.setToolTip(0, str(item.path))
             self._tree.addTopLevelItem(entry)
 
+    def _result_prefix(self) -> str:
+        """结果页文案前缀：当前结果属于哪个任务（没有关联时为空串）。"""
+        task = self._task_by_id(self._viewing_task_id)
+        return f"{task.display_name}：" if task is not None else ""
+
     def _apply_filter(self) -> None:
         if self.result is None:
             self.set_page_status("results", "还没有扫描结果")
@@ -1147,23 +1486,28 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         rule_ids = None if selected in ("", "全部") else [selected]
         filtered = filter_result(self.result, rule_ids=rule_ids, path_contains=self._filter_path.text())
         self._render_result(filtered)
-        self.set_page_status("results", f"筛选后命中 {filtered.stats.hit_files} 个文件 / {filtered.stats.hit_count} 条")
+        self.set_page_status(
+            "results",
+            f"{self._result_prefix()}筛选后命中 {filtered.stats.hit_files} 个文件 / {filtered.stats.hit_count} 条",
+        )
 
     def _reset_filter(self) -> None:
         self._filter_rule.setCurrentIndex(0)
         self._filter_path.clear()
         if self.result is not None:
             self._render_result(self.result)
-            self.set_page_status("results", fw.scan_status_text(self.result))
+            self.set_page_status("results", f"{self._result_prefix()}{fw.scan_status_text(self.result)}")
 
     def _export_report(self) -> None:
         if self.result is None:
             QMessageBox.information(self, "没有结果", "请先完成一次扫描")
             return
+        task = self._task_by_id(self._viewing_task_id)
+        stem = task.display_name if task is not None else "filescan-report"
         chosen, _ = QFileDialog.getSaveFileName(
             self,
             "导出扫描报告",
-            "filescan-report.csv",
+            f"{stem}.csv",
             "CSV (*.csv);;JSON (*.json);;文本 (*.txt)",
         )
         if not chosen:
@@ -1212,13 +1556,20 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 "\n".join(loaded.warnings),
             )
         self.set_page_status(
-            "settings", f"已导入配置：{chosen}（目录 {len(loaded.roots)} 个，规则 {len(self.ruleset.rules)} 条）"
+            "settings", f"已导入配置：{chosen}（任务 {len(self._tasks)} 个，规则 {len(self.ruleset.rules)} 条）"
         )
 
     def _apply_config(self, config: ScanConfig) -> None:
         options = config.options
-        self._paths = [str(path) for path in config.roots]
-        self._refresh_dirs()
+        existing = {item.path: item for item in self._tasks}
+        imported: list[fw.ScanTask] = []
+        for path in config.roots:
+            text = str(path)
+            imported.append(existing.get(text) or fw.new_scan_task(text, existing=imported))
+        self._tasks = imported
+        self._results.clear()
+        self._clear_result_view("配置已导入，请重新扫描")
+        self._refresh_task_rows()
         self._recursive.setChecked(options.recursive)
         self._follow.setChecked(options.follow_symlinks)
         self._skip_binary.setChecked(options.skip_binary)
@@ -1260,8 +1611,9 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         except ValueError as exc:
             QMessageBox.critical(self, "扫描选项无效", str(exc))
             return
+        roots = tuple(Path(item.path) for item in self._tasks if item.path)
         config = ScanConfig(
-            roots=tuple(Path(item) for item in self._paths),
+            roots=roots,
             options=options,
             ruleset=self.ruleset,
             format=self.settings.report_format,
@@ -1280,7 +1632,8 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
     def _current_settings(self) -> fw.FilescanSettings:
         return replace(
             self.settings,
-            paths=tuple(self._paths),
+            paths=tuple(item.path for item in self._tasks if item.path),
+            tasks=tuple(self._tasks),
             recursive=self._recursive.isChecked(),
             max_depth=max(0, self._max_depth.value()),
             follow_symlinks=self._follow.isChecked(),
@@ -1325,7 +1678,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         """切页：结果页自动套用路径筛选；扫描页刷新「当前选项」摘要。"""
         super().show_page(key)
         if key == "scan":
-            self._refresh_options_note()
+            self._refresh_options_tags()
         elif key == "results" and self.result is not None and self._filter_path.text().strip():
             self._apply_filter()
 

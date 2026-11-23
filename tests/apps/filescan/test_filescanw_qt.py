@@ -74,11 +74,15 @@ def test_window_builds_with_defaults(home: Path) -> None:
         assert window._settings_page.page_key == "settings"
         assert window._whitelist_table.rowCount() >= 1
         assert window._rules_table.rowCount() == len(builtin_ruleset().rules)
-        assert window._start_button.isEnabled()
-        assert window._start_button.text() == "开始扫描"
-        # 取消收进同一个按钮：扫描页不再有独立的取消按钮 / 页内进度条。
-        assert not hasattr(window, "_cancel_button")
-        assert not hasattr(window, "_progress")
+        # 扫描页只有任务列表：首项固定是虚线的「添加任务」，空态说明在其下方。
+        assert window._tasks == []
+        assert window._task_list.count() == 1
+        assert not window._task_list.isHidden()
+        add_row = window._task_list.itemWidget(window._task_list.item(0))
+        assert add_row is not None and add_row.objectName() == "ScanTaskAdd"
+        assert window._task_empty is not None and not window._task_empty.isHidden()
+        assert not hasattr(window, "_start_button")
+        assert not hasattr(window, "_dirs_card")
         assert window.status_text().startswith("规则")
     finally:
         window.deleteLater()
@@ -99,7 +103,8 @@ def test_settings_and_whitelist_restored(home: Path) -> None:
     filescanw.save_settings(settings, path)
     window = _window()
     try:
-        assert window._paths == ["F:/data"]
+        assert [item.path for item in window._tasks] == ["F:/data"]
+        assert window._task_list.count() == 2  # 添加任务行 + 1 个任务
         assert not window._recursive.isChecked()
         assert window._max_depth.value() == 3
         assert window._whitelist_table.rowCount() == 1
@@ -180,35 +185,55 @@ def test_scan_worker_masks_context(home: Path, sample: Path) -> None:
 
 def test_settings_persisted_on_close(home: Path, sample: Path) -> None:
     window = _window()
-    window._paths = [str(sample)]
+    task = filescanw.new_scan_task(str(sample))
+    window._tasks = [task]
     window._persist_settings("1111x777+11+22")
     window.deleteLater()
     raw = json.loads(_guiconfig.config_path(filescanw.SETTINGS_NAME).read_text(encoding="utf-8"))
     assert raw["paths"] == [str(sample)]
+    assert raw["tasks"][0]["id"] == task.id
+    assert raw["tasks"][0]["path"] == str(sample)
     assert raw["geometry"] == "1111x777+11+22"
 
 
-def test_scan_progress_and_result_status_stay_on_their_pages(home: Path, sample: Path) -> None:
-    """状态栏按页隔离：切到结果页后，扫描进度仍写在扫描页，结果摘要写结果页。"""
-    from fcmd.apps.filescan._engine import ScanResult
+def test_scan_progress_and_result_are_bound_to_task(home: Path, sample: Path) -> None:
+    """扫描进度写任务行与状态栏；完成后结果页标明所属任务，并能从任务再次进入。"""
+    from fcmd.apps.filescan._engine import ScanResult, ScanStats
 
     window = _window()
     try:
+        task = filescanw.new_scan_task(str(sample))
+        window._tasks = [task]
+        window._refresh_task_rows()
+        window._scanning_task_id = task.id
+        window._worker_running = True
+        window._refresh_task_rows()
+
         window.show_page("results")
         window.set_page_status("results", "结果是空的")
         window._on_progress(3, 10, str(sample))
-        assert window.page_status("scan").startswith("正在扫描 3/10")
+        assert "正在扫描 3/10" in window.page_status("scan")
+        assert "notes" not in window.page_status("results")
         assert window.page_status("results") == "结果是空的"
-        # 进度同时进状态栏右侧进度条（参考 wslmanw），而不是扫描页里的控件。
         assert window.status_bar.loading_bar.is_running()
-        assert window.status_bar.loading_bar.text_label.text().startswith("扫描 30%")
+        row = window._task_row(task.id)
+        assert row is not None
+        assert row.status_tag.text() == "扫描 30%"
 
-        # 扫描完成自动切到结果页，两页各自留下本次结论。
-        window.show_page("scan")
-        window._scan_done((ScanResult(roots=(sample,)), ""))
+        # 扫描完成后：结果与任务 id 关联，结果页标题胶囊显示任务名。
+        result = ScanResult(roots=(sample,), stats=ScanStats(hit_files=1, hit_count=1))
+        window._scan_done((result, ""))
         assert window.current_page() == "results"
+        assert window._results[task.id] is result
+        assert window._viewing_task_id == task.id
+        assert window._result_tag.text() == f"任务：{task.display_name}"
         assert "命中" in window.page_status("results")
-        assert window.page_status("scan") == window.page_status("results")
+
+        # 从任务行再次进入结果页：即使当前停在扫描页也能切回来。
+        window.show_page("scan")
+        window._show_task_result(task.id)
+        assert window.current_page() == "results"
+        assert window._result_tag.text() == f"任务：{task.display_name}"
     finally:
         window.deleteLater()
 
@@ -236,38 +261,66 @@ def test_old_settings_without_sidebar_field_load_unexpanded(home: Path) -> None:
         window.deleteLater()
 
 
-def test_scan_dirs_reuse_shared_storage_card(home: Path, tmp_path: Path) -> None:
-    """扫描目录走与 wslmanw「工作目录」/ llmw「存储」同一套 StorageCard。"""
-    from fcmd.gui.widgets import DiskTile
-
+def test_tasks_load_from_settings_and_rows_are_built(home: Path, tmp_path: Path) -> None:
+    """扫描页只按任务建行卡；每个任务有自己的目录、状态与扫描 / 查看结果按钮。"""
     first, second = tmp_path / "scan-a", tmp_path / "scan-b"
+    first.mkdir()
+    second.mkdir()
     path = _guiconfig.config_path(filescanw.SETTINGS_NAME)
     path.parent.mkdir(parents=True, exist_ok=True)
     filescanw.save_settings(filescanw.FilescanSettings(paths=(str(first), str(second))), path)
     window = _window()
     try:
-        card = window._dirs_card
-        assert card.title() == "扫描目录"
-        assert card.roots() == [first, second]
-        tiles = card.grid.findChildren(DiskTile)
-        assert [tile.location.display_text for tile in tiles] == [str(first), str(second)]
-        # 扫描没有「主目录」概念：卡片上不显示主目录胶囊，也不出「设为主目录」按钮。
-        from PySide6.QtWidgets import QPushButton
+        assert [item.path for item in window._tasks] == [str(first), str(second)]
+        assert window._task_list.count() == 3  # 添加任务行 + 2 个任务
+        add_row = window._task_list.itemWidget(window._task_list.item(0))
+        assert add_row is not None and add_row.objectName() == "ScanTaskAdd"
+        rows = [
+            window._task_list.itemWidget(window._task_list.item(index)) for index in range(1, window._task_list.count())
+        ]
+        assert [row.task.path for row in rows] == [str(first), str(second)]
+        assert all(row.expand_button.isHidden() is False for row in rows)
+        assert all(row.result_button.isEnabled() is False for row in rows)
+        assert all(not hasattr(row, "dir_button") for row in rows)
+        assert "扫描任务 2 个" in window.page_status("scan")
 
-        from fcmd.gui.widgets import StatusTag
+        # 展开 / 收起：详情就地显示完整目录与最近扫描摘要。
+        window.toggle_row("tasks", rows[0])
+        assert rows[0].is_expanded() is True
+        assert window._task_detail.values["目录"].text() == str(first)
+        window.toggle_row("tasks", rows[0])
+        assert rows[0].is_expanded() is False
+    finally:
+        window.deleteLater()
 
-        assert card.findChildren(StatusTag) == []
-        buttons = [child.text() for child in card.findChildren(QPushButton)]
-        assert "设为主目录" not in buttons
-        assert buttons.count("移除") == 2
 
-        window._on_dirs_changed([Path(str(first))])
-        assert window._paths == [str(first)]
-        assert "目录 1 个" in window.page_status("scan")
+def test_add_and_remove_task(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """任务增删只动列表与本次会话结果，不碰磁盘目录；移除不弹确认。"""
+    from PySide6.QtWidgets import QFileDialog
 
-        window._clear_directories()
-        assert window._paths == []
-        assert card.roots() == []
+    from fcmd.apps.filescan import _filescanw_qt as qt_module
+
+    first = tmp_path / "scan-a"
+    first.mkdir()
+    window = _window()
+    try:
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(first))
+        window._add_task()
+        assert [item.path for item in window._tasks] == [str(first)]
+        task = window._tasks[0]
+        assert window._task_list.count() == 2  # 添加任务行 + 新任务
+        assert task.display_name == "scan-a"
+
+        # 移除任务不弹确认、不删目录，列表回到「添加任务 + 空态说明」。
+        def _no_confirm(*_args: object, **_kwargs: object) -> bool:
+            pytest.fail("移除扫描任务不应弹确认框")
+
+        monkeypatch.setattr(qt_module, "confirm", _no_confirm)
+        window._remove_task(task.id)
+        assert window._tasks == []
+        assert window._task_list.count() == 1
+        assert window._task_empty is not None and not window._task_empty.isHidden()
+        assert first.is_dir()
     finally:
         window.deleteLater()
 
@@ -291,54 +344,76 @@ def test_settings_page_holds_options_whitelist_and_cache(home: Path, sample: Pat
         ):
             assert window._settings_page.isAncestorOf(widget), widget.objectName()
 
-        # 扫描页只有「扫描目录」与「开始扫描」两张卡，且带当前选项摘要。
+        # 扫描页只剩「扫描任务」一张卡（列表 + 选项标签 + 添加任务）。
         scan_titles = [card.title() for card in window._scan_page.findChildren(Card)]
-        assert scan_titles == ["扫描目录", "开始扫描"]
-        assert window._scan_page.isAncestorOf(window._start_button)
+        assert scan_titles == ["扫描任务"]
+        assert window._scan_page.isAncestorOf(window._task_list)
+        assert window._scan_page.isAncestorOf(window._option_tags_host)
         from fcmd.gui.widgets import ProgressBar
 
         assert window._scan_page.findChildren(ProgressBar) == []
-        assert "白名单" in window._options_note.text()
+        assert "白名单" in window._option_tags["whitelist"].text()
+        assert window._option_tags["whitelist"].tone() == "accent"
+        assert window._option_tags["recursive"].tone() == "success"
 
-        # 在设置页改了选项，切回扫描页时摘要随之更新。
+        # 在设置页改了选项，切回扫描页时标签随之更新（含语义色）。
         window.show_page("settings")
         window._workers.setValue(7)
         window._max_depth.setValue(3)
+        window._recursive.setChecked(False)
+        window._use_cache.setChecked(False)
         window.show_page("scan")
-        assert "深度 3" in window._options_note.text()
-        assert "并发 7" in window._options_note.text()
+        assert "深度 3" in window._option_tags["depth"].text()
+        assert "并发 7" in window._option_tags["workers"].text()
+        assert window._option_tags["recursive"].text() == "不递归"
+        assert window._option_tags["recursive"].tone() == "muted"
+        assert window._option_tags["cache"].tone() == "muted"
     finally:
         window.deleteLater()
 
 
-def test_scan_button_toggles_between_start_and_stop(home: Path, sample: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """同一按钮在空闲 / 扫描中切换：点击先开扫，再点就是停止。"""
+def test_task_scan_button_toggles_and_stops(home: Path, sample: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """任务行内扫描按钮：空闲扫描，扫描中变停止；停止请求下发后按钮禁用，收尾后恢复。"""
+    from fcmd.apps.filescan import _filescanw_qt as qt_module
+
     window = _window()
     try:
-        calls: list[str] = []
-        monkeypatch.setattr(window, "_start_scan", lambda: calls.append("start"))
-        window._toggle_scan()
-        assert calls == ["start"]
+        task = filescanw.new_scan_task(str(sample))
+        window._tasks = [task]
+        window._refresh_task_rows()
+        calls: list[dict[str, object]] = []
+        monkeypatch.setattr(qt_module, "submit", lambda *args, **kwargs: calls.append(kwargs))
 
-        monkeypatch.setattr(window, "_cancel_scan", lambda: calls.append("stop"))
-        window._worker_running = True
-        window._toggle_scan()
-        assert calls == ["start", "stop"]
+        window._start_task_scan(task.id)
+        assert calls, "扫描应提交到线程池"
+        assert window._worker_running is True
+        assert window._scanning_task_id == task.id
+        row = window._task_row(task.id)
+        assert row is not None
+        assert row.scan_button.objectName() == "Danger"
+        assert row.result_button.isEnabled() is False
+        assert row.remove_button.isEnabled() is False
 
-        window._set_scan_running(True)
-        assert window._start_button.text() == "停止扫描"
-        assert window._start_button.objectName() == "Danger"
+        window._cancel_task_scan(task.id)
+        assert window._token is not None and window._token.cancelled
+        assert window._stopping_task_id == task.id
+        row = window._task_row(task.id)
+        assert row is not None
+        assert row.scan_button.isEnabled() is False
 
-        window._set_scan_running(False)
-        assert window._start_button.text() == "开始扫描"
-        assert window._start_button.objectName() == "Primary"
-        assert window._start_button.isEnabled()
+        window._scan_finished()
+        row = window._task_row(task.id)
+        assert row is not None
+        assert window._worker_running is False
+        assert row.scan_button.objectName() == "Primary"
+        assert row.scan_button.isEnabled() is True
+        assert row.remove_button.isEnabled() is True
     finally:
         window.deleteLater()
 
 
 def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> None:
-    """设置页改的值就是 ``_start_scan`` 用的 ScanOptions，不需要额外同步。"""
+    """设置页改的值就是 ``_start_task_scan`` 用的 ScanOptions，不需要额外同步。"""
     window = _window()
     try:
         window.show_page("settings")
@@ -362,23 +437,5 @@ def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> No
         assert options.include_exts == (".txt",)
         assert window._use_cache.isChecked() is False
         assert window._current_settings().use_cache is False
-    finally:
-        window.deleteLater()
-
-
-def test_scan_dirs_remove_without_confirmation(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """扫描目录移除只清列表、随时能加回，因此不再弹确认框。"""
-    from fcmd.gui.widgets import storage as storage_module
-
-    def _no_confirm(*_args: object, **_kwargs: object) -> bool:
-        pytest.fail("扫描目录移除不应弹确认框")
-
-    monkeypatch.setattr(storage_module, "confirm", _no_confirm)
-    window = _window()
-    try:
-        first, second = tmp_path / "scan-a", tmp_path / "scan-b"
-        window._dirs_card.set_roots([first, second])
-        window._dirs_card._remove(str(second))
-        assert window._dirs_card.roots() == [first]
     finally:
         window.deleteLater()

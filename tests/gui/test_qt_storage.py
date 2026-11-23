@@ -149,6 +149,28 @@ def test_disk_grid_max_count_hides_add_tile() -> None:
         grid.deleteLater()
 
 
+def test_disk_grid_resets_column_stretch_after_removing_roots() -> None:
+    """删掉目录、列数变少后「添加目录」卡要重新占满一行，而不是被旧列 stretch 挤窄。"""
+    app = QApplication.instance() or QApplication([])
+    grid = DiskGrid(add_text="添加目录", min_count=0)
+    try:
+        grid.set_locations(
+            [
+                DiskLocation(Path("D:/a"), "D:", primary=True),
+                DiskLocation(Path("E:/b"), "E:"),
+            ]
+        )
+        app.processEvents()
+        assert [grid._grid.columnStretch(column) for column in range(3)] == [1, 1, 1]
+
+        # 回到 0 个目录：只剩“添加”卡，第一列占满，旧列不再平分宽度。
+        grid.set_locations([])
+        app.processEvents()
+        assert [grid._grid.columnStretch(column) for column in range(3)] == [1, 0, 0]
+    finally:
+        grid.deleteLater()
+
+
 def test_storage_card_change_replaces_root_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
     """单目录「更改」：原位置替换目录，不改变顺序（主目录仍是首个）。"""
     from fcmd.gui.widgets import storage as storage_module

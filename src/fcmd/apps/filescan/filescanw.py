@@ -2,9 +2,10 @@
 
 左侧边栏四页（与 wslmanw / llmw 同一套 ``SidebarNav``，避免表单堆叠）：
 
-- **扫描**：多目录列表（共享 ``StorageCard``）+ 开始 / 停止（同一按钮切换）与
-  一行当前选项摘要（递归 / 深度 / 并发 / 白名单后缀数 / 缓存开关）；扫描进度
-  与其他长任务一样写在窗口状态栏右侧，不再占扫描页高度。
+- **扫描**：按任务管理的目录列表（参考 wslmanw 实例行）：首项固定是虚线框
+  「添加任务」，任务行可单独开始 / 停止扫描、查看结果、展开详情或移除（不确认）；
+  选项摘要（递归 / 深度 / 并发 / 白名单后缀数 / 缓存开关）用带色标签放在卡片
+  标题行。扫描进度写在窗口状态栏右侧。
 - **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
   可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出
   敏感原文）。
@@ -30,6 +31,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -65,9 +67,11 @@ __all__ = [
     "SETTINGS_NAME",
     "WHITELIST_GROUPS",
     "FilescanSettings",
+    "ScanTask",
     "apply_expression",
     "group_whitelist",
     "load_settings",
+    "new_scan_task",
     "parse_and_validate_ext_line",
     "parse_whitelist_text",
     "run_gui",
@@ -76,6 +80,8 @@ __all__ = [
     "scan_status_text",
     "settings_from_mapping",
     "settings_to_mapping",
+    "task_from_mapping",
+    "task_to_mapping",
     "validate_exts",
 ]
 
@@ -88,6 +94,111 @@ _DESCRIPTION = "目录敏感内容扫描：规则表达式、并行扫描、按�
 
 
 # ---------------------------------------------------------------------- #
+# 扫描任务
+# ---------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class ScanTask:
+    """一个扫描任务：固定目录 + 最近一次扫描的摘要（结果对象只留在本次会话）。"""
+
+    id: str
+    path: str
+    name: str = ""
+    last_scanned_at: str = ""
+    last_summary: str = ""
+    last_status: str = ""
+
+    @property
+    def display_name(self) -> str:
+        """列表标题：自定义名为空时用目录名，再退回完整路径。"""
+        if self.name.strip():
+            return self.name.strip()
+        name = Path(self.path).name
+        return name or self.path or "未指定目录"
+
+    @property
+    def has_history(self) -> bool:
+        """是否已有上一次扫描的摘要（不代表本次会话保留了结果对象）。"""
+        return bool(self.last_status or self.last_summary)
+
+
+def new_scan_task(path: str, *, existing: Iterable[ScanTask] = ()) -> ScanTask:
+    """按目录新建任务；同名目录追加 ``-2`` / ``-3`` 后缀，避免列表标题重名。"""
+    target = str(Path(path).expanduser())
+    base = Path(target).name or target or "扫描任务"
+    taken = {item.display_name for item in existing}
+    name = base
+    index = 2
+    while name in taken:
+        name = f"{base}-{index}"
+        index += 1
+    return ScanTask(id=uuid.uuid4().hex[:12], path=target, name=name)
+
+
+def task_to_mapping(task: ScanTask) -> dict[str, Any]:
+    """任务 → JSON 字典；字段名保持稳定，未知字段由读取侧忽略。"""
+    return {
+        "id": task.id,
+        "path": task.path,
+        "name": task.name,
+        "last_scanned_at": task.last_scanned_at,
+        "last_summary": task.last_summary,
+        "last_status": task.last_status,
+    }
+
+
+def task_from_mapping(raw: Mapping[str, Any], *, fallback_id: str = "") -> ScanTask | None:
+    """从字典恢复任务；缺少目录时返回 ``None``（空任务不进入列表）。"""
+    path = raw.get("path")
+    if not isinstance(path, str) or not path.strip():
+        return None
+    stored_id = raw.get("id")
+    task_id = stored_id.strip() if isinstance(stored_id, str) and stored_id.strip() else fallback_id
+    if not task_id:
+        task_id = uuid.uuid4().hex[:12]
+    return ScanTask(
+        id=task_id,
+        path=path,
+        name=_str_value(raw, "name"),
+        last_scanned_at=_str_value(raw, "last_scanned_at"),
+        last_summary=_str_value(raw, "last_summary"),
+        last_status=_str_value(raw, "last_status"),
+    )
+
+
+def _tasks_value(raw: Mapping[str, Any], legacy_paths: tuple[str, ...]) -> tuple[ScanTask, ...]:
+    """读取任务列表；旧设置只有 ``paths`` 时按「一个目录一个任务」迁移。"""
+    # 兼容上一版写出的 ``instances`` 键，新键统一为 ``tasks``。
+    stored = raw.get("tasks", raw.get("instances"))
+    tasks: list[ScanTask] = []
+    seen_ids: set[str] = set()
+    seen_paths: set[str] = set()
+    if isinstance(stored, list):
+        for index, item in enumerate(stored):
+            if not isinstance(item, Mapping):
+                continue
+            task = task_from_mapping(item, fallback_id=f"legacy-{index}")
+            if task is None:
+                continue
+            # 同一份设置里重复 id / 目录会让行按钮指向同一个任务，直接去重。
+            key = task.path.casefold()
+            if task.id in seen_ids or key in seen_paths:
+                continue
+            seen_ids.add(task.id)
+            seen_paths.add(key)
+            tasks.append(task)
+    if tasks:
+        return tuple(tasks)
+    migrated: list[ScanTask] = []
+    for index, path in enumerate(legacy_paths):
+        key = path.casefold()
+        if key in seen_paths:
+            continue
+        seen_paths.add(key)
+        migrated.append(ScanTask(id=f"legacy-{index}", path=path, name=Path(path).name or path))
+    return tuple(migrated)
+
+
+# ---------------------------------------------------------------------- #
 # 设置
 # ---------------------------------------------------------------------- #
 @dataclass
@@ -95,6 +206,7 @@ class FilescanSettings:
     """窗口与设置文件共用的配置。"""
 
     paths: tuple[str, ...] = ()
+    tasks: tuple[ScanTask, ...] = ()
     recursive: bool = True
     max_depth: int = 0
     follow_symlinks: bool = False
@@ -123,11 +235,21 @@ class FilescanSettings:
     sidebar_collapsed: bool = False
     geometry: str | None = None
 
+    def __post_init__(self) -> None:
+        """旧调用只给 ``paths`` 时补出任务列表，保证内存态 / 序列化口径一致。"""
+        if self.tasks or not self.paths:
+            return
+        self.tasks = tuple(
+            ScanTask(id=f"legacy-{index}", path=path, name=Path(path).name or path)
+            for index, path in enumerate(self.paths)
+        )
+
 
 def settings_to_mapping(settings: FilescanSettings) -> dict[str, Any]:
     """把设置转成可写入 JSON 的字典（含完整规则集）。"""
     return {
         "paths": list(settings.paths),
+        "tasks": [task_to_mapping(item) for item in settings.tasks],
         "recursive": settings.recursive,
         "max_depth": settings.max_depth,
         "follow_symlinks": settings.follow_symlinks,
@@ -220,7 +342,10 @@ def _groups_value(raw: Mapping[str, Any]) -> tuple[tuple[str, tuple[str, ...]], 
 def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
     """从字典恢复设置；缺失或非法字段逐项回落默认值，规则集损坏时载入内置规则。"""
     paths_raw = raw.get("paths", [])
-    paths = tuple(item for item in paths_raw if isinstance(item, str)) if isinstance(paths_raw, list) else ()
+    legacy_paths = tuple(item for item in paths_raw if isinstance(item, str)) if isinstance(paths_raw, list) else ()
+    tasks = _tasks_value(raw, legacy_paths)
+    # 有任务时以任务目录为准，旧 ``paths`` 只作为兼容读取；写盘时两者保持同步。
+    paths = tuple(item.path for item in tasks) or legacy_paths
     ruleset = builtin_ruleset()
     stored = raw.get("ruleset")
     if isinstance(stored, Mapping):
@@ -230,6 +355,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
             ruleset = builtin_ruleset()
     return FilescanSettings(
         paths=paths,
+        tasks=tasks,
         recursive=_bool_value(raw, "recursive", True),
         max_depth=_int_value(raw, "max_depth", 0),
         follow_symlinks=_bool_value(raw, "follow_symlinks", False),

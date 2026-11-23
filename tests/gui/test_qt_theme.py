@@ -475,6 +475,27 @@ def test_template_tokens_follow_theme_metrics() -> None:
     assert "border-radius: 12px" in card
 
 
+def test_scan_task_add_button_uses_dashed_border() -> None:
+    """扫描任务列表首项的「添加任务」用虚线框，和实心任务行区分开。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme, control_height_px=30)
+    block = text.split("QPushButton#ScanTaskAdd {", 1)[1].split("}", 1)[0]
+    assert "border: 1px dashed" in block
+    assert "text-align: left" in block
+
+
+def test_hero_buttons_are_taller_than_run_buttons() -> None:
+    """单一大按钮（Hero）比常规主按钮更高，并放大字号与内边距。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    hero_height = 30 + _qt_theme.HERO_CONTROL_HEIGHT_EXTRA
+    assert _qt_theme.template_tokens(theme, control_height_px=30)["hero_control_height"] == f"{hero_height}px"
+    text = _qt_theme.stylesheet(theme, control_height_px=30)
+    block = text.split("QPushButton#HeroPrimary, QPushButton#HeroDanger {", 1)[1].split("}", 1)[0]
+    assert f"min-height: {hero_height}px" in block
+    assert f"max-height: {hero_height}px" in block
+    assert f"font-size: {theme.fonts.heading}pt" in block
+
+
 def test_apply_theme_reapplies_when_only_overrides_change() -> None:
     """主题 id 相同但覆盖不同（例如切到带窗口覆盖的主题）时必须重新应用样式。"""
     from PySide6.QtWidgets import QApplication

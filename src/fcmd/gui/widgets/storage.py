@@ -285,6 +285,10 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
             add_tile.clicked.connect(self.addRequested.emit)
             tiles.append(add_tile)
         columns = min(self._max_columns, max(len(tiles), 1))
+        # 先清掉上一轮的列拉伸：删掉目录后列数变少，残留的旧列 stretch 会继续
+        # 平分宽度，让「添加目录」卡只占半格 / 三分之一格（例如 2 个目录 → 0 个）。
+        for column in range(self._max_columns):
+            self._grid.setColumnStretch(column, 0)
         for column in range(columns):
             self._grid.setColumnStretch(column, 1)
         for index, tile in enumerate(tiles):

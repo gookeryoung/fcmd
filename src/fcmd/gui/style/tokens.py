@@ -40,6 +40,10 @@ CONTROL_HEIGHT_EXTRA = _guitheme.METRICS.control_height_extra
 RUN_CONTROL_HEIGHT_EXTRA = _guitheme.METRICS.run_control_height_extra
 
 
+HERO_CONTROL_HEIGHT_EXTRA = 14
+"""主行动按钮（Hero）比常规控件额外加高的像素数，用于扫描页这种单一大按钮。"""
+
+
 _CONTROL_PAD_X_BUTTON = _guitheme.METRICS.button_pad_x
 
 
@@ -154,6 +158,7 @@ def template_tokens(
             "radius": str(theme.metrics.radius),
             "control_height": f"{height}px",
             "run_control_height": f"{height + theme.metrics.run_control_height_extra}px",
+            "hero_control_height": f"{height + HERO_CONTROL_HEIGHT_EXTRA}px",
             "control_pad_x": theme.metrics.button_pad_x,
             "control_pad_x_input": theme.metrics.input_pad_x,
             "font_family": font_family or pick_font_family((), UI_FONT_CANDIDATES),
