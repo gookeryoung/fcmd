@@ -15,6 +15,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QTableWidget
 
 from fcmd.apps.filescan import filescanw
+from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanResult, ScanStats
 from fcmd.apps.filescan._filescanw_qt import FilescanQtWindow
 from fcmd.apps.filescan._rules import Matcher, Rule, RuleSet, builtin_ruleset
 from fcmd.gui import config as _guiconfig
@@ -585,24 +586,24 @@ def test_result_context_is_fully_shown_and_match_is_highlighted(home: Path) -> N
     try:
         window._render_result(result)
         child = window._tree.topLevelItem(0).child(0)
-        assert child.text(3) == render_context(match, False)
+        assert child.text(2) == render_context(match, False)
         masked = "13" + "*" * 7 + "00"
-        assert child.text(3) == long_context.replace("13800138000", masked)
-        assert child.data(3, _CONTEXT_ROLE) == ("客户联系电话 ", masked, " 请勿外传，仅限内部核对使用")
+        assert child.text(2) == long_context.replace("13800138000", masked)
+        assert child.data(2, _CONTEXT_ROLE) == ("客户联系电话 ", masked, " 请勿外传，仅限内部核对使用")
 
         option = QStyleOptionViewItem()
         option.widget = window._tree
         option.font = window._tree.font()
-        index = window._tree.indexFromItem(child, 3)
-        window._tree.setColumnWidth(3, 120)
+        index = window._tree.indexFromItem(child, 2)
+        window._tree.setColumnWidth(2, 120)
         narrow = window._context_delegate.sizeHint(option, index)
-        window._tree.setColumnWidth(3, 900)
+        window._tree.setColumnWidth(2, 900)
         wide = window._context_delegate.sizeHint(option, index)
         # 换行后行高随内容增长，不再按固定单行截断。
         assert narrow.height() > wide.height()
         assert wide.height() > window._tree.fontMetrics().height()
 
-        window._tree.setColumnWidth(3, 300)
+        window._tree.setColumnWidth(2, 300)
         document = window._context_delegate._document(index, 292, selected=False, font=window._tree.font())
         assert document is not None
         cursor = QTextCursor(document)
@@ -614,3 +615,127 @@ def test_result_context_is_fully_shown_and_match_is_highlighted(home: Path) -> N
         assert cursor.charFormat().foreground().color().name() == _guitheme.resolve_theme("dark-blue").palette.text
     finally:
         window.deleteLater()
+
+
+def _hit_result(
+    path: Path,
+    excerpt: str = "13800138000",
+    context: str = "客户联系电话 13800138000 请勿外传",
+) -> tuple[ScanResult, RuleMatch]:
+    start = context.index(excerpt)
+    match = RuleMatch(
+        rule_id="cn_phone",
+        rule_name="手机号",
+        line_no=3,
+        start=start,
+        end=start + len(excerpt),
+        excerpt=excerpt,
+        context=context,
+        context_start=start,
+    )
+    return (
+        ScanResult(
+            roots=(path.parent,),
+            stats=ScanStats(hit_files=1, hit_count=1),
+            hits=[FileHit(path=path, size=120, encoding="utf-8", matches=[match])],
+        ),
+        match,
+    )
+
+
+def test_result_rows_bind_file_and_match_without_duplicate_rule_column(home: Path, tmp_path: Path) -> None:
+    """第二列改为命中片段（不再重复规则名），行绑定路径与命中对象供定位 / 复制使用。"""
+    from PySide6.QtWidgets import QApplication
+
+    from fcmd.apps.filescan._filescanw_qt import _MATCH_ROLE, _PATH_ROLE
+    from fcmd.apps.filescan._report import mask_text
+
+    target = tmp_path / "notes.txt"
+    target.write_text("客户联系电话 13800138000 请勿外传", encoding="utf-8")
+    result, match = _hit_result(target)
+    window = _window()
+    try:
+        window._render_result(result)
+        parent = window._tree.topLevelItem(0)
+        child = parent.child(0)
+        # 命中内容已在上下文列（带底色）展示，不再单占一列：规则 / 行号 / 上下文 三列。
+        assert window._tree.columnCount() == 3
+        assert window._tree.headerItem().text(1) == "行号"
+        assert child.text(0) == "手机号"
+        assert child.text(1) == "3"
+        assert child.data(0, _PATH_ROLE) == str(target)
+        assert child.data(0, _MATCH_ROLE) is match
+        assert window._item_path(child) == target
+        assert window._item_matches(child) == [match]
+        assert window._item_matches(parent) == [match]
+
+        child.setSelected(True)
+        assert window._locate_button.isEnabled() is True
+        assert window._copy_match_button.isEnabled() is True
+        window._copy_selected_matches()
+        assert QApplication.clipboard().text() == mask_text(match.excerpt)
+        assert "已打码" in window.page_status("results")
+
+        window._export_raw.setChecked(True)
+        window._copy_selected_matches()
+        assert QApplication.clipboard().text() == match.excerpt
+        window._copy_selected_matches(context=True)
+        assert QApplication.clipboard().text() == match.context
+        window._copy_selected_paths()
+        assert QApplication.clipboard().text() == str(target)
+
+        child.setSelected(False)
+        assert window._locate_button.isEnabled() is False
+    finally:
+        window.deleteLater()
+
+
+def test_locate_file_opens_file_manager(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """定位文件走系统文件管理器命令；双击行同样触发定位。"""
+    from fcmd.apps.filescan import _filescanw_qt
+
+    target = tmp_path / "notes.txt"
+    target.write_text("x", encoding="utf-8")
+    result, _match = _hit_result(target)
+    calls: list[list[str]] = []
+
+    def fake_popen(command: list[str], **_kwargs: object) -> None:
+        calls.append(command)
+
+    monkeypatch.setattr(_filescanw_qt.subprocess, "Popen", fake_popen)
+    window = _window()
+    try:
+        window._render_result(result)
+        child = window._tree.topLevelItem(0).child(0)
+        child.setSelected(True)
+        window._locate_selected_file()
+        assert len(calls) == 1
+        assert str(target) in " ".join(calls[0])
+        assert "已在文件管理器中定位" in window.page_status("results")
+
+        revealed: list[Path] = []
+        monkeypatch.setattr(window, "_reveal_file", revealed.append)
+        window._result_item_double_clicked(child, 0)
+        assert revealed == [target]
+
+        missing = tmp_path / "gone.txt"
+        monkeypatch.setattr(_filescanw_qt.subprocess, "Popen", fake_popen)
+        window._reveal_file(missing)
+        assert str(tmp_path) in " ".join(calls[-1])
+    finally:
+        window.deleteLater()
+
+
+def test_reveal_command_per_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from fcmd.apps.filescan._filescanw_qt import reveal_command
+
+    path = Path("C:/data/notes.txt")
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert reveal_command(path) == ["explorer", f"/select,{path}"]
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert reveal_command(path)[:2] == ["open", "-R"]
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert reveal_command(path)[0] == "xdg-open"
+    assert reveal_command(path)[-1].endswith("data")

@@ -32,12 +32,22 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, QPoint, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QTextCharFormat, QTextCursor, QTextDocument
+from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, QPoint, QRectF, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QPainter,
+    QTextCharFormat,
+    QTextCursor,
+    QTextDocument,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -77,6 +87,7 @@ from fcmd.apps.filescan._config import (
 from fcmd.apps.filescan._engine import (
     DEFAULT_SCAN_EXTENSIONS,
     CancelToken,
+    RuleMatch,
     ScanOptions,
     ScanResult,
     format_size,
@@ -84,7 +95,7 @@ from fcmd.apps.filescan._engine import (
     parse_ext_text,
     scan_paths,
 )
-from fcmd.apps.filescan._report import context_segments, filter_result, render_context, write_report
+from fcmd.apps.filescan._report import context_segments, filter_result, mask_text, render_context, write_report
 from fcmd.apps.filescan._rules import (
     MATCH_KEYWORD,
     MATCH_REGEX,
@@ -569,7 +580,20 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
 
 _CONTEXT_ROLE = Qt.ItemDataRole.UserRole + 11
 _CONTEXT_PADDING = 4
-"""结果树上下文列的数据角色与内边距（像素）。"""
+_PATH_ROLE = Qt.ItemDataRole.UserRole + 12
+_MATCH_ROLE = Qt.ItemDataRole.UserRole + 13
+_MATCHES_ROLE = Qt.ItemDataRole.UserRole + 14
+"""结果树的数据角色：上下文列内边距（像素）、文件路径、单条命中与文件全部命中。"""
+
+
+def reveal_command(path: Path) -> list[str]:
+    """在系统文件管理器中定位文件的命令（Windows 选中文件 / macOS Finder 显示）。"""
+    if sys.platform.startswith("win"):
+        return ["explorer", f"/select,{path}"]
+    if sys.platform == "darwin":
+        return ["open", "-R", str(path)]
+    # Linux 的 xdg-open 只能打开目录：目标是文件时退到父目录。
+    return ["xdg-open", str(path if path.is_dir() else path.parent)]
 
 
 def _context_parts(index: QModelIndex | QPersistentModelIndex) -> tuple[str, str, str] | None:
@@ -935,21 +959,43 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         card.add_title_action(hint_label("任务", wrap=False))
         card.add_title_action(self._result_task_button)
         self._sync_result_switcher()
+        # 选中行后可定位文件 / 复制命中；按钮与右键菜单共用同一套动作。
+        action_bar = QHBoxLayout()
+        action_bar.setContentsMargins(0, 0, 0, 0)
+        action_bar.setSpacing(6)
+        self._locate_button = button("定位文件", kind="ghost")
+        self._locate_button.setToolTip("在系统文件管理器中显示选中命中的文件")
+        self._locate_button.clicked.connect(self._locate_selected_file)
+        action_bar.addWidget(self._locate_button)
+        self._copy_match_button = button("复制命中内容", kind="ghost")
+        self._copy_match_button.setToolTip("复制选中命中的匹配片段（默认打码，勾选「导出 / 复制原文」后复制原文）")
+        self._copy_match_button.clicked.connect(self._copy_selected_matches)
+        action_bar.addWidget(self._copy_match_button)
+        self._copy_context_button = button("复制上下文", kind="ghost")
+        self._copy_context_button.clicked.connect(lambda: self._copy_selected_matches(context=True))
+        action_bar.addWidget(self._copy_context_button)
+        action_bar.addWidget(hint_label("双击行定位文件，右键行可打开 / 复制更多", wrap=False), 1)
+        card.body.addLayout(action_bar)
+
         self._tree = QTreeWidget(card)
-        self._tree.setHeaderLabels(["文件 / 规则", "规则", "行号", "上下文（打码）"])
+        self._tree.setHeaderLabels(["文件 / 规则", "行号", "上下文（打码）"])
         self._tree.setAlternatingRowColors(True)
         self._tree.setColumnWidth(0, 420)
-        self._tree.setColumnWidth(1, 140)
-        self._tree.setColumnWidth(2, 70)
+        self._tree.setColumnWidth(1, 70)
         self._tree.header().setStretchLastSection(True)
         self._tree.setMinimumHeight(240)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._open_result_menu)
+        self._tree.itemDoubleClicked.connect(self._result_item_double_clicked)
+        self._tree.itemSelectionChanged.connect(self._update_result_actions)
         # 上下文列换行完整显示 + 命中底色；其余列继续用默认 delegate 单行绘制。
         self._context_delegate = _ContextDelegate(self._tree)
-        self._tree.setItemDelegateForColumn(3, self._context_delegate)
+        self._tree.setItemDelegateForColumn(2, self._context_delegate)
         # 列宽变化后旧排版的换行位置失效：清缓存并重算行高，避免行高停在首帧宽度上。
         self._tree.header().sectionResized.connect(self._context_layout_changed)
         card.body.addWidget(self._tree, 1)
         layout.addWidget(card, 1)
+        self._update_result_actions()
 
         filter_bar = QHBoxLayout()
         filter_bar.setContentsMargins(0, 0, 0, 0)
@@ -968,7 +1014,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         reset = button("重置")
         reset.clicked.connect(self._reset_filter)
         filter_bar.addWidget(reset)
-        self._export_raw = QCheckBox("导出原文", self)
+        self._export_raw = QCheckBox("导出 / 复制原文", self)
+        self._export_raw.setToolTip("勾选后导出报告与复制命中内容使用原文；默认打码")
         filter_bar.addWidget(self._export_raw)
         export = button("导出报告…", kind="primary")
         export.clicked.connect(self._export_report)
@@ -1684,43 +1731,199 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                 [
                     str(hit.path),
                     "",
-                    "",
                     f"{len(hit.matches)} 条 · {hit.encoding} · {format_size(hit.size)}",
                 ]
             )
             parent.setToolTip(0, str(hit.path))
+            parent.setData(0, _PATH_ROLE, str(hit.path))
+            parent.setData(0, _MATCHES_ROLE, tuple(hit.matches))
             self._tree.addTopLevelItem(parent)
             for match in hit.matches:
                 rendered = render_context(match, False)
                 child = QTreeWidgetItem(
                     [
                         match.rule_name,
-                        match.rule_name,
                         str(match.location or match.line_no),
                         rendered,
                     ]
                 )
+                child.setData(0, _PATH_ROLE, str(hit.path))
+                child.setData(0, _MATCH_ROLE, match)
                 # 单元格文本仍是完整打码上下文（复制 / 悬停 / 测试可读）；
                 # 富文本绘制由 delegate 按三段重新排版，命中段另外上底色。
-                child.setData(3, _CONTEXT_ROLE, context_segments(match, False))
-                child.setToolTip(3, rendered)
+                child.setData(2, _CONTEXT_ROLE, context_segments(match, False))
+                child.setToolTip(0, str(hit.path))
+                child.setToolTip(2, rendered)
                 parent.addChild(child)
             parent.setExpanded(True)
             if index >= 5000:  # 极端结果集下不再逐项展开，避免长时间占用 GUI 线程
                 break
         for item in result.skipped:
-            entry = QTreeWidgetItem([str(item.path), "", "", f"跳过：{item.reason}"])
+            entry = QTreeWidgetItem([str(item.path), "", f"跳过：{item.reason}"])
             entry.setToolTip(0, str(item.path))
+            entry.setData(0, _PATH_ROLE, str(item.path))
             self._tree.addTopLevelItem(entry)
         for item in result.errors:
-            entry = QTreeWidgetItem([str(item.path), "", "", f"错误：{item.message}"])
+            entry = QTreeWidgetItem([str(item.path), "", f"错误：{item.message}"])
             entry.setToolTip(0, str(item.path))
+            entry.setData(0, _PATH_ROLE, str(item.path))
             self._tree.addTopLevelItem(entry)
+        self._update_result_actions()
 
     def _context_layout_changed(self, *_args: object) -> None:
         """列宽变化后重排上下文列：行高随换行结果重新计算。"""
         self._context_delegate.reset()
         self._tree.scheduleDelayedItemsLayout()
+
+    # ------------------------------------------------------------------ #
+    # 结果行操作：定位文件 / 复制命中
+    # ------------------------------------------------------------------ #
+    def _item_path(self, item: QTreeWidgetItem | None) -> Path | None:
+        """行绑定的文件路径（父节点 / 命中行 / 跳过与错误行都有）。"""
+        if item is None:
+            return None
+        stored = item.data(0, _PATH_ROLE)
+        return Path(stored) if isinstance(stored, str) and stored else None
+
+    def _item_matches(self, item: QTreeWidgetItem | None) -> list[RuleMatch]:
+        """行绑定的命中：命中行一条，父节点 / 文件行是该文件的全部命中。"""
+        if item is None:
+            return []
+        match = item.data(0, _MATCH_ROLE)
+        if isinstance(match, RuleMatch):
+            return [match]
+        stored = item.data(0, _MATCHES_ROLE)
+        if isinstance(stored, (tuple, list)):
+            return [entry for entry in stored if isinstance(entry, RuleMatch)]
+        return []
+
+    def _selected_matches(self) -> list[RuleMatch]:
+        """选中的命中（父节点自动展开成该文件的全部命中，按签名去重）。"""
+        matches: list[RuleMatch] = []
+        seen: set[tuple[str, str, int, int]] = set()
+        for item in self._tree.selectedItems():
+            path = str(self._item_path(item) or "")
+            for match in self._item_matches(item):
+                key = (path, match.rule_id, match.line_no, match.start)
+                if key in seen:
+                    continue
+                seen.add(key)
+                matches.append(match)
+        return matches
+
+    def _selected_paths(self) -> list[Path]:
+        """选中的文件路径（去重，保持选择顺序）。"""
+        paths: list[Path] = []
+        seen: set[str] = set()
+        for item in self._tree.selectedItems():
+            path = self._item_path(item)
+            if path is None:
+                continue
+            key = str(path).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(path)
+        return paths
+
+    def _update_result_actions(self) -> None:
+        """结果动作按钮跟随选择启用：没有选中行时置灰。"""
+        selected = bool(self._tree.selectedItems())
+        for widget in (self._locate_button, self._copy_match_button, self._copy_context_button):
+            widget.setEnabled(selected)
+
+    def _copy_to_clipboard(self, text: str, message: str) -> None:
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+        self.set_page_status("results", message)
+
+    def _copy_selected_matches(self, *, context: bool = False) -> None:
+        """复制选中命中：默认打码，勾选「导出 / 复制原文」后复制原文。"""
+        matches = self._selected_matches()
+        if not matches:
+            self.set_page_status("results", "请先在结果树选择命中行（父节点会包含该文件的全部命中）")
+            return
+        raw = self._export_raw.isChecked()
+        if context:
+            lines = [render_context(match, include_raw=raw) for match in matches]
+            label = "上下文"
+        else:
+            lines = [match.excerpt if raw else mask_text(match.excerpt) for match in matches]
+            label = "命中内容"
+        self._copy_to_clipboard(
+            "\n".join(lines),
+            f"已复制 {len(matches)} 条{label}（{'原文' if raw else '已打码'}）",
+        )
+
+    def _copy_selected_paths(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.set_page_status("results", "请先在结果树选择一行")
+            return
+        self._copy_to_clipboard("\n".join(str(path) for path in paths), f"已复制 {len(paths)} 个文件路径")
+
+    def _reveal_file(self, path: Path) -> None:
+        """在系统文件管理器中定位文件（文件已不存在时退回父目录）。"""
+        target = path if path.exists() else path.parent
+        if not target.exists():
+            self.set_page_status("results", f"定位失败：路径不存在 {path}")
+            return
+        try:
+            subprocess.Popen(reveal_command(target), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            self.set_page_status("results", f"定位失败：{exc}")
+            return
+        self.set_page_status("results", f"已在文件管理器中定位：{target}")
+
+    def _locate_selected_file(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.set_page_status("results", "请先在结果树选择一行")
+            return
+        # 只定位第一个：批量选中时弹出多个文件管理器窗口反而难用。
+        self._reveal_file(paths[0])
+
+    def _open_file(self, path: Path) -> None:
+        """用系统默认程序打开文件（只在本机打开，不改变打码口径）。"""
+        if not path.is_file():
+            self.set_page_status("results", f"打开失败：文件不存在 {path}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        self.set_page_status("results", f"已用默认程序打开：{path}")
+
+    def _open_result_menu(self, pos: QPoint) -> None:
+        """结果树右键菜单：定位 / 打开文件与复制命中、上下文、路径。"""
+        item = self._tree.itemAt(pos)
+        if item is None:
+            return
+        if not item.isSelected():
+            self._tree.setCurrentItem(item)
+        path = self._item_path(item)
+        raw = self._export_raw.isChecked()
+        menu = QMenu(self)
+        locate = menu.addAction("在文件夹中定位")
+        locate.triggered.connect(self._locate_selected_file)
+        if path is not None:
+            open_file = menu.addAction("打开文件")
+            open_file.triggered.connect(lambda _checked=False, target=path: self._open_file(target))
+        menu.addSeparator()
+        copy_match = menu.addAction(f"复制命中内容（{'原文' if raw else '已打码'}）")
+        copy_match.setEnabled(bool(self._item_matches(item)))
+        copy_match.triggered.connect(self._copy_selected_matches)
+        copy_context = menu.addAction("复制上下文")
+        copy_context.setEnabled(bool(self._item_matches(item)))
+        copy_context.triggered.connect(lambda: self._copy_selected_matches(context=True))
+        copy_path = menu.addAction("复制文件路径")
+        copy_path.setEnabled(path is not None)
+        copy_path.triggered.connect(self._copy_selected_paths)
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _result_item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        """双击行直接定位该行文件。"""
+        path = self._item_path(item)
+        if path is not None:
+            self._reveal_file(path)
 
     def _sync_result_switcher(self) -> None:
         """更新任务切换按钮：只列本次会话已有结果的任务。"""
