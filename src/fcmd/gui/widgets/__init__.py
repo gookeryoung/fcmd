@@ -36,6 +36,7 @@ from fcmd.gui.widgets.buttons import (
     confirm,
     icon_button,
     link_button,
+    set_button_icon,
     set_button_kind,
     set_button_text,
 )
@@ -136,6 +137,7 @@ __all__ = [
     "section_header",
     "segment_band",
     "segment_fill",
+    "set_button_icon",
     "set_button_kind",
     "set_button_text",
     "splitter_sizes",

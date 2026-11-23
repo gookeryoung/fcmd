@@ -67,8 +67,11 @@ def test_language_scripts_use_domestic_mirrors() -> None:
     bun_steps = _initenv.steps_for(["bun"])
     rust_steps = _initenv.steps_for(["rust"])
     assert "python3-pip" in python_steps[0].script
-    assert "pypi.tuna.tsinghua.edu.cn" in python_steps[1].script
-    assert "pypi.tuna.tsinghua.edu.cn" in uv_steps[1].script
+    # pip / uv 不再写死清华：按系统源映射，中科大源必须命中中科大 PyPI。
+    assert "mirrors.ustc.edu.cn) index='https://mirrors.ustc.edu.cn/pypi/simple'" in python_steps[1].script
+    assert "mirrors.ustc.edu.cn) index='https://mirrors.ustc.edu.cn/pypi/simple'" in uv_steps[1].script
+    assert 'grep -q "$domain" "$file"' in python_steps[1].script
+    assert "pypi.tuna.tsinghua.edu.cn" in python_steps[1].script  # 仅作为识别不到时的回退
     # Node.js 用 nvm + 国内镜像：不再用 apt 的 nodejs，源码 / 二进制都走国内。
     assert "nodejs" not in node_steps[0].script
     assert "curl git ca-certificates" in node_steps[0].script
@@ -81,15 +84,35 @@ def test_language_scripts_use_domestic_mirrors() -> None:
     assert "crates-io" in rust_steps[1].script
 
 
-def test_uv_script_installs_uv_without_github() -> None:
+def test_uv_script_installs_uv_without_github_and_updates_existing_index() -> None:
     script = _initenv.steps_for(["uv"])[1].script
     assert "pip install --user" in script
     assert "--break-system-packages" in script
     assert "astral.sh" not in script
     assert "$HOME/.config/uv/uv.toml" in script
-    assert 'python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone"' in script
+    assert 'python-install-mirror = "%s"' in script
+    assert "https://registry.npmmirror.com/-/binary/python-build-standalone" in script
+    # 已有 uv.toml 也必须更新 index-url（旧版发现 index-url 就跳过，切到中科大源后仍用清华）。
+    assert 'cp "$uv_toml" "$uv_toml.bak"' in script
+    assert "grep -vE '^[[:space:]]*(index-url|python-install-mirror)" in script
+    assert 'mv "$tmp" "$uv_toml"' in script
+    assert 'echo "uv 镜像已配置"' not in script
     # login shell 才能找到 ~/.local/bin/uv，且只补一次。
     assert 'grep -q ".local/bin" "$HOME/.profile"' in script
+
+
+def test_pypi_index_follows_system_mirror() -> None:
+    """系统镜像域名 → PyPI 索引：中科大 / 阿里 / 清华各用各自的地址，未知回退清华。"""
+    assert _initenv.pypi_index_for_mirror("mirrors.ustc.edu.cn") == "https://mirrors.ustc.edu.cn/pypi/simple"
+    assert _initenv.pypi_index_for_mirror("https://mirrors.ustc.edu.cn/ubuntu") == (
+        "https://mirrors.ustc.edu.cn/pypi/simple"
+    )
+    assert _initenv.pypi_index_for_mirror("MIRRORS.ALIYUN.COM") == "https://mirrors.aliyun.com/pypi/simple/"
+    assert _initenv.pypi_index_for_mirror("mirrors.tuna.tsinghua.edu.cn") == (
+        "https://pypi.tuna.tsinghua.edu.cn/simple"
+    )
+    assert _initenv.pypi_index_for_mirror("") == "https://pypi.tuna.tsinghua.edu.cn/simple"
+    assert _initenv.pypi_index_for_mirror("example.com") == "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 
 def test_python_script_only_configures_pip_mirror() -> None:

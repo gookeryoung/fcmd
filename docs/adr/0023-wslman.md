@@ -384,8 +384,13 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   路径，存储到 `wslmanw.json` 的 `distro_terminal_dirs`）；设为默认成功后补跑收尾
   刷新，默认胶囊立即换行，不等 3 秒轮询。「打开终端」按该目录传
   `--cd`（GUI 不走 CLI `--workdir` 的 Windows 路径校验，避免落到 Windows 当前目录的
-  `/mnt/...` 映射）；工具栏保留打开终端 / 启动 / 停止 / 导出 /
-  安装镜像（含行内「安装」已下载的归档）与 CLI 同一口径：导入前先按
+  `/mnt/...` 映射）；工具栏动作按钮**只显示图标**，中文名放 tooltip：
+  「打开终端」右侧固定跟「用 IDE 打开」「用 PI 打开」，同样按该默认目录启动
+  （IDE 用设置里选中的条目，PI 固定用内置 PI）。图标口径：修复注册＝扳手
+  （`wrench`）、重启＝`reset`、关闭全部＝`power`；其余动作与文字自动映射共用同一套。
+  行卡内的启动 / 停止与配置按钮也只显示图标（中文在 tooltip），启动 / 停止不再在
+  顶部工具栏重复；工具栏保留打开终端 / IDE / PI / 重启 / 导出 / 迁移 / 删除 /
+  关闭全部 / 安装镜像（含行内「安装」已下载的归档）与 CLI 同一口径：导入前先按
   `mkdir(parents=True, exist_ok=True)` 建好目标目录（默认装到 `install/<名称>`，
   父目录可能尚未创建；`wsl --import` 只建最后一级，父目录缺失会报「找不到路径」）。
   下载支持并发：队列每项各自有进度 / 状态与行内取消，默认同时 2 个（设置页可调
@@ -424,9 +429,12 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   Node.js 按 `node` + nvm 判定，apt 装的旧 `nodejs` 不算就绪），探测与安装都走
   `wsl.exe -d <实例> --exec bash -lc`（必须 `--exec`，否则 `$HOME` / `$(...)` 会被提前展开），
   `root=True` 的步骤加 `-u root`。**国内加速口径固定为「直接吃国内镜像」而不做运行时探测
-  选优**（选优要逐个试站点，初始化首跑反而更慢）：APT 走 linuxmirrors 换源，pip 索引与
-  uv 默认索引都指清华，uv 用 `pip install --user` 装（不走 astral.sh / GitHub Releases）、
-  其 Python 下载走 npmmirror 的 python-build-standalone；Node.js 用 nvm 装 LTS（nvm 源码
+  选优**（选优要逐个试站点，初始化首跑反而更慢）：APT 走 linuxmirrors 换源；pip / uv
+  的索引**跟随当前系统源**（`mirrors.ustc.edu.cn` → 中科大 PyPI、阿里 / 腾讯 / 华为 /
+  清华各自映射，识别不到时回退清华），已有 `uv.toml` 也会备份后重写 `index-url` /
+  `python-install-mirror`，避免切源后仍残留旧地址；uv 用 `pip install --user` 装
+  （不走 astral.sh / GitHub Releases），其 Python 下载走 npmmirror 的
+  python-build-standalone；Node.js 用 nvm 装 LTS（nvm 源码
   clone 自 gitee 镜像、`NVM_NODEJS_ORG_MIRROR` 指 npmmirror），不再用 apt 里版本较旧的
   `nodejs`；Bun 用 `npm i -g bun` 装（二进制随 `@oven/bun-linux-x64` 从 npmmirror 分发，
   不走 GitHub Releases），Bun 项自带 nvm 引导，单独勾选也能装成；Rust 沿用 rsproxy。
@@ -563,6 +571,8 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
 - 文件页两个入口「用 IDE 打开」「用 AI Agent 打开」作用于当前浏览目录；纯逻辑在
   `_open.py`，设置页「打开方式」卡片管理条目（下拉 + 运行位置 `StatusTag` +
   添加 / 编辑 / 删除），条目与选中项持久化到 `wslmanw.json` 的 `openers`。
+  文件页按钮同样只显示图标（实例 / 路径栏、IDE / Agent、上传 / 下载、新建 / 重命名 /
+  删除），中文名统一放 tooltip，路径栏的可用宽度留给输入框。
 - 条目 = 名称 + 运行位置（`windows` 宿主机 / `wsl` 实例内）+ 命令模板；占位符
   `{dir}`（实例内 POSIX 路径）、`{unc}`（Windows UNC 路径）、`{distro}`（实例名）、
   `{home}`（实例家目录）。Windows 宿主机条目必须含 `{dir}` 或 `{unc}`，WSL 内条目

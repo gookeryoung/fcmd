@@ -160,15 +160,20 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
         assert first_metrics is not None and second_metrics is not None
         assert first_metrics.width() == second_metrics.width()
         assert not _distro_row(window, 0).action_divider.isHidden()
-        assert window.start_button.isEnabled() is False
-        assert window.stop_button.isEnabled() is True
-        # 行内按钮跟着状态走：运行中显示「停止」，已停止显示「启动」
-        assert _distro_row(window, 0).start_stop_button.text() == "停止"
-        assert _distro_row(window, 1).start_stop_button.text() == "启动"
+        # 顶栏不再重复启动 / 停止；行内按钮跟着状态走，只显示图标，中文在 tooltip。
+        assert not hasattr(window, "start_button")
+        assert not hasattr(window, "stop_button")
+        running_row = _distro_row(window, 0)
+        stopped_row = _distro_row(window, 1)
+        assert _icon_name(running_row.start_stop_button) == "stop"
+        assert running_row.start_stop_button.text() == ""
+        assert "停止" in running_row.start_stop_button.toolTip()
+        assert _icon_name(stopped_row.start_stop_button) == "run"
+        assert stopped_row.start_stop_button.text() == ""
+        assert "启动" in stopped_row.start_stop_button.toolTip()
 
         window.distro_list.setCurrentRow(1)
-        assert window.start_button.isEnabled() is True
-        assert window.stop_button.isEnabled() is False
+        assert stopped_row.start_stop_button.isEnabled() is True
     finally:
         window._log_lines.clear()
         window._poll.stop()  # type: ignore[union-attr]
@@ -188,13 +193,40 @@ def test_actions_and_distro_rows_all_carry_icons(home: Path, monkeypatch: pytest
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        # 工具栏：每个动作都有图标，重启是 power、启动是 run。
-        assert all(_icon_name(item) for item in window._buttons)
-        assert _icon_name(window.start_button) == "run"
-        assert _icon_name(window.restart_button) == "power"
-        assert _icon_name(window.stop_button) == "stop"
+        # 工具栏：每个动作都有图标、不显示中文，文案进 tooltip。
+        distro_buttons = [
+            window._button_by_text[name]
+            for name in (
+                "打开终端",
+                "用 IDE 打开",
+                "用 PI 打开",
+                "重启",
+                "刷新",
+                "修复注册",
+                "导出",
+                "迁移",
+                "删除实例",
+                "关闭全部",
+            )
+        ]
+        assert all(_icon_name(item) for item in distro_buttons)
+        assert all(item.text() == "" for item in distro_buttons)
+        assert all(item.toolTip() for item in distro_buttons)
+        # 顶栏不再重复启动 / 停止：这两个动作只在行卡上。
+        assert "启动" not in window._button_by_text
+        assert "停止" not in window._button_by_text
+        # 用户口径：重启用修复注册原来的 reset 图标，关闭全部用重启原来的 power，
+        # 修复注册改用扳手。
+        assert _icon_name(window.restart_button) == "reset"
+        assert _icon_name(window._button_by_text["修复注册"]) == "wrench"
+        assert _icon_name(window._button_by_text["关闭全部"]) == "power"
+        assert _icon_name(window._button_by_text["用 IDE 打开"]) == "code"
+        assert _icon_name(window._button_by_text["用 PI 打开"]) == "bot"
 
         assert _icon_name(_distro_row(window, 0).config_button) == "settings"
+        assert _distro_row(window, 0).config_button.text() == ""
+        assert _icon_name(_distro_row(window, 0).start_stop_button) == "stop"
+        assert _distro_row(window, 0).start_stop_button.text() == ""
         assert _icon_name(_distro_row(window, 0).icon_label) == "distro-ubuntu"
         assert _icon_name(_distro_row(window, 1).icon_label) == "distro-debian"
         assert _icon_name(_distro_row(window, 2).icon_label) == "distro-kali"
@@ -207,6 +239,22 @@ def test_actions_and_distro_rows_all_carry_icons(home: Path, monkeypatch: pytest
         # 文件页的两个入口也用各自的图标，而不是都落到「打开」。
         assert _icon_name(window.files_open_ide) == "code"
         assert _icon_name(window.files_open_agent) == "bot"
+        # 文件页按钮同样只显示图标，中文名在 tooltip。
+        file_buttons = (
+            window.files_up,
+            window.files_home,
+            window.files_refresh,
+            window.files_open_ide,
+            window.files_open_agent,
+            window.files_upload,
+            window.files_download,
+            window.files_mkdir,
+            window.files_rename,
+            window.files_delete,
+        )
+        assert all(item.text() == "" for item in file_buttons)
+        assert all(item.toolTip() for item in file_buttons)
+        assert all(_icon_name(item) for item in file_buttons)
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
@@ -226,8 +274,9 @@ def test_restart_button_sits_between_start_and_stop_and_terminates_first(
     calls: list[tuple[str, object]] = []
     try:
         _wait_idle(window)
-        texts = [button.text() for button in window._buttons]
-        assert texts.index("启动") < texts.index("重启") < texts.index("停止")
+        texts = list(window._button_by_text)
+        assert "重启" in texts
+        assert "启动" not in texts and "停止" not in texts
 
         window.distro_list.setCurrentRow(0)
         assert window.restart_button.isEnabled() is True
@@ -261,10 +310,14 @@ def test_running_distro_row_uses_red_stop_button(home: Path, monkeypatch: pytest
     try:
         _wait_idle(window)
         running, stopped = _distro_row(window, 0), _distro_row(window, 1)
-        assert running.start_stop_button.text() == "停止"
+        assert _icon_name(running.start_stop_button) == "stop"
+        assert running.start_stop_button.text() == ""
+        assert "停止" in running.start_stop_button.toolTip()
         assert running.start_stop_button.objectName() == "Danger"
         assert running.start_stop_button.property("fcmdIconTone") == "danger"
-        assert stopped.start_stop_button.text() == "启动"
+        assert _icon_name(stopped.start_stop_button) == "run"
+        assert stopped.start_stop_button.text() == ""
+        assert "启动" in stopped.start_stop_button.toolTip()
         assert stopped.start_stop_button.objectName() == "Primary"
         assert stopped.start_stop_button.property("fcmdIconTone") == "on_accent"
 
@@ -279,7 +332,8 @@ def test_running_distro_row_uses_red_stop_button(home: Path, monkeypatch: pytest
 
         # 状态原地变化时按钮变体跟着切（轮询不重建行）。
         stopped.update_distro(_distro("Debian", "running", default=False), 2048, False)
-        assert stopped.start_stop_button.text() == "停止"
+        assert _icon_name(stopped.start_stop_button) == "stop"
+        assert "停止" in stopped.start_stop_button.toolTip()
         assert stopped.start_stop_button.objectName() == "Danger"
         stopped.update_distro(_distro("Debian", "stopped", default=False), 2048, False)
         assert stopped.start_stop_button.objectName() == "Primary"
@@ -366,7 +420,7 @@ def test_status_refresh_updates_rows_in_place(home: Path, monkeypatch: pytest.Mo
         assert window.distro_list.count() == 1
         assert _distro_row(window, 0) is row  # 同一个行卡实例，未被重建
         assert row.state_tag.text() == "运行中"
-        assert row.start_stop_button.text() == "停止"
+        assert _icon_name(row.start_stop_button) == "stop"
         assert window.distro_list.currentRow() == 0
     finally:
         window._poll.stop()  # type: ignore[union-attr]
@@ -906,6 +960,33 @@ def test_open_selected_starts_in_user_home(home: Path, monkeypatch: pytest.Monke
         window._open_selected()
         assert len(recorded) == 1
         assert recorded[0].argv == ("wsl.exe", "-d", "Ubuntu", "--cd", "~")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_instance_toolbar_opens_ide_at_default_cwd(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """实例页「用 IDE 打开」：按实例默认终端目录 + UNC 路径启动设置里选中的 IDE。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro("Ubuntu", "running")))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    config = WslmanConfig(path=default_path(), terminal_program="conhost")
+    monkeypatch.setattr(cli, "_build_environment", lambda: SimpleNamespace(config=config))
+    monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+    monkeypatch.setattr(_wslmanw_qt._files, "pick_unc_root", lambda name: r"\\wsl.localhost\Ubuntu")
+    monkeypatch.setattr(_wslmanw_qt.shutil, "which", lambda name: r"C:\tools\code.exe")
+    spawned: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_wslmanw_qt, "spawn_gui", lambda argv: spawned.append(tuple(argv)) or 1)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        window.settings = wslmanw.with_terminal_cwd(window.settings, "Ubuntu", "/home/me/proj")
+        window._open_selected_ide()
+        _wait_idle(window)
+        assert spawned == [("code", "--remote", "wsl+Ubuntu", "/home/me/proj")]
+        assert "用 VSCode 打开完成" in window.page_status("distros")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
@@ -2007,7 +2088,8 @@ def test_distro_config_button_dialog_and_persisted_cwd(home: Path, monkeypatch: 
     try:
         _wait_idle(window)
         row = _distro_row(window, 0)
-        assert row.config_button.text() == "配置"
+        assert row.config_button.text() == ""
+        assert "配置 Ubuntu" in row.config_button.toolTip()
         row.set_busy(True)
         assert row.config_button.isEnabled() is False
         row.set_busy(False)
@@ -3623,6 +3705,43 @@ def test_files_page_opens_workbuddy_with_unc_path(home: Path, monkeypatch: pytes
             assert expected.endswith("\\home\\me\\proj")
         else:
             assert expected.endswith("/home/me/proj")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_instance_toolbar_opens_pi_at_default_cwd(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """实例页「用 PI 打开」：固定选内置 PI，并在实例默认目录经终端启动。"""
+    root = tmp_path / "unc"
+    _prepare_openers_page(monkeypatch, root)
+    window = _wslmanw_qt.WslmanQtWindow()
+    launched: list[Any] = []
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        window.settings = wslmanw.with_terminal_cwd(window.settings, "Ubuntu", "/home/me/proj")
+
+        class _Recorder:
+            def launch(self, command: Any, **_kwargs: Any) -> int:
+                launched.append(command)
+                return 1
+
+        window.launcher = cast(Any, _Recorder())
+        window._open_selected_pi()
+        _wait_idle(window)
+        assert len(launched) == 1
+        assert launched[0].argv == (
+            "wsl.exe",
+            "-d",
+            "Ubuntu",
+            "--cd",
+            "/home/me/proj",
+            "--exec",
+            "bash",
+            "-lc",
+            "pi",
+        )
+        assert "用 PI 打开完成" in window.page_status("distros")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

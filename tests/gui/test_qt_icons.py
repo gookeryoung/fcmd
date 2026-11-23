@@ -76,15 +76,17 @@ def test_icon_for_text_maps_common_actions() -> None:
     # 「下载选中镜像」优先命中的是下载；只有镜像语境才用磁盘图标
     assert icons.icon_for_text("下载选中镜像") == "download"
     assert icons.icon_for_text("安装本地镜像…") == "disc"
-    # 实例管理补充的动作图标
-    assert icons.icon_for_text("重启") == "power"
+    # 实例管理补充的动作图标：重启沿用修复的 reset，关闭全部用 power，
+    # 修复注册改用扳手。
+    assert icons.icon_for_text("重启") == "reset"
+    assert icons.icon_for_text("修复注册") == "wrench"
     assert icons.icon_for_text("配置") == "settings"
     assert icons.icon_for_text("打开终端") == "terminal"
     assert icons.icon_for_text("重命名") == "pencil"
     assert icons.icon_for_text("迁移所选文件") == "transfer"
     assert icons.icon_for_text("取消") == "x"
     assert icons.icon_for_text("关闭") == "x"
-    assert icons.icon_for_text("关闭全部") == "stop"
+    assert icons.icon_for_text("关闭全部") == "power"
     assert icons.icon_for_text("关于") is None
 
 

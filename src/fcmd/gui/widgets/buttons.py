@@ -23,6 +23,7 @@ __all__ = [
     "confirm",
     "icon_button",
     "link_button",
+    "set_button_icon",
     "set_button_kind",
     "set_button_text",
 ]
@@ -54,6 +55,20 @@ def set_button_text(widget: QPushButton, text: str, *, tone: str | None = None) 
         return
     widget.setIcon(QIcon())
     widget.setProperty(ICON_NAME_PROPERTY, None)
+
+
+def set_button_icon(widget: QPushButton, name: str, *, tone: str = "text") -> None:
+    """只换按钮图标、不改文字；图标名 / 色调未变时直接返回。
+
+    纯图标按钮（实例行内的启动 / 停止）不能再走 :func:`set_button_text`：
+    空文案会让它清空图标。
+    """
+    from fcmd.gui.icons import ICON_NAME_PROPERTY, ICON_TONE_PROPERTY, set_icon
+
+    mapped = tone or "text"
+    if widget.property(ICON_NAME_PROPERTY) == name and widget.property(ICON_TONE_PROPERTY) == mapped:
+        return
+    set_icon(widget, name, tone=mapped)
 
 
 def set_button_kind(widget: QPushButton, kind: str) -> None:

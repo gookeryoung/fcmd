@@ -155,6 +155,11 @@ ICON_BODIES: dict[str, str] = {
         # Lucide ``power``：常用于「重启」这类先断电再拉起的动作。
         '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>'
     ),
+    "wrench": (
+        # Lucide ``wrench``：扳手，用于「修复注册」这类修复动作。
+        '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94'
+        'l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'
+    ),
     "terminal": ('<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>'),
     "code": ('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
     "bot": (
@@ -217,8 +222,9 @@ BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("全不选", "x"),
     ("全选", "check-square"),
     ("更新列表", "refresh"),
-    ("关闭全部", "stop"),
+    ("关闭全部", "power"),
     ("刷新", "refresh"),
+    ("修复注册", "wrench"),
     ("修复", "reset"),
     ("更新", "refresh"),
     ("保存", "save"),
@@ -235,7 +241,7 @@ BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("目录", "folder"),
     ("启动", "run"),
     ("运行", "run"),
-    ("重启", "power"),
+    ("重启", "reset"),
     ("停止", "stop"),
     ("发送", "send"),
     ("搜索", "search"),

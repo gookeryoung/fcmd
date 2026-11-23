@@ -57,12 +57,17 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.add_note_widget(self.image_label, stretch=1)
 
         # 启停是动态动作：待机是主按钮（启动），运行中是红色危险按钮（停止）。
-        self.start_stop_button = _owner.button("启动", kind="primary")
+        # 行卡只显示图标，中文动作名称放 tooltip，避免右侧动作区被文字撑宽。
+        self.start_stop_button = _owner.button("", kind="primary", icon="run")
         self.start_stop_button.clicked.connect(lambda: self.startStopRequested.emit(distro.name))
         self.add_action(self.start_stop_button)
         # 配置放在启停右侧：设为默认、终端默认目录等实例级设置不强制用户先选中再跑工具栏。
-        self.config_button = _owner.button("配置", kind="ghost")
-        self.config_button.setToolTip(f"配置 {distro.name}：默认发行版、终端目录、初始化环境与 SSH 迁移")
+        self.config_button = _owner.button(
+            "",
+            kind="ghost",
+            icon="settings",
+            tooltip=f"配置 {distro.name}：默认发行版、终端目录、初始化环境与 SSH 迁移",
+        )
         self.config_button.clicked.connect(lambda: self.configRequested.emit(distro.name))
         self.add_action(self.config_button)
         self._busy = False
@@ -118,11 +123,11 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.image_label.setToolTip(f"{entry.friendly_name or entry.name}\n可用架构：{arches}\n来源：{sources}")
 
     def _apply_action_state(self) -> None:
-        """启停按钮的文案 / 变体 / 图标色调：运行中给红色的「停止」，否则主按钮「启动」。
+        """启停按钮的图标 / 变体 / 色调与 tooltip：运行中给红色的「停止」，否则「启动」。
 
         禁用态（任务进行中 / 状态不可操作）统一用 ``muted`` 图标色调：主按钮与危险
         按钮的禁用底色都会变浅，保留 ``on_accent`` 的白勾或 ``danger`` 的红标在白底上
-        会看不清。
+        会看不清。行内按钮不显示文字，动作名在 tooltip。
         """
         can_start, can_stop = _owner.w.action_states(self.distro.state)
         if self.distro.needs_repair:
@@ -132,11 +137,13 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
             _owner.set_button_kind(self.start_stop_button, "danger")
             tone = "danger" if enabled else "muted"
             text = "停止"
+            icon = "stop"
         else:
             _owner.set_button_kind(self.start_stop_button, "primary")
             tone = "on_accent" if enabled else "muted"
             text = "启动"
-        _owner.set_button_text(self.start_stop_button, text, tone=tone)
+            icon = "run"
+        _owner.set_button_icon(self.start_stop_button, icon, tone=tone)
         self.start_stop_button.setEnabled(enabled)
         tip = "需先修复注册" if self.distro.needs_repair else f"{text} {self.distro.name}"
         self.start_stop_button.setToolTip(tip)

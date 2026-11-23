@@ -11,8 +11,9 @@ linuxmirrors，pip / uv / npm / bun / cargo 走国内镜像），但这里通过
 
 - APT：先跑 linuxmirrors 换系统源再装包；已装的包直接跳过，apt 索引 1 小时内
   有效则不再 ``apt-get update``，并统一 ``--no-install-recommends`` + 重试；
-- Python / uv：pip 索引与 uv 默认索引都指向清华，uv 直接用 pip 装（不走
-  astral.sh / GitHub），uv 的 Python 下载走 npmmirror 的 python-build-standalone；
+- Python / uv：pip 索引与 uv 默认索引**跟随系统镜像源**（中科大 / 阿里 / 腾讯 /
+  华为 / 清华等各自映射到对应 PyPI 镜像；识别不到时回退清华），uv 直接用 pip 装
+  （不走 astral.sh / GitHub），uv 的 Python 下载走 npmmirror 的 python-build-standalone；
 - Node.js：nvm 源码走 gitee 镜像、node 二进制走 npmmirror 的 node 镜像，不再用
   apt 里那个版本很老的 ``nodejs``；
 - Bun：走 ``npm i -g bun``（二进制随 ``@oven/bun-linux-x64`` 从 npmmirror 分发），
@@ -40,6 +41,7 @@ __all__ = [
     "parse_status",
     "present",
     "probe_script",
+    "pypi_index_for_mirror",
     "short_label",
     "ssh_key_short",
     "status_from_mapping",
@@ -69,6 +71,18 @@ _MIRROR_DOMAINS: tuple[str, ...] = (
 """判断系统源是否已换成国内镜像时识别的域名（与 linuxmirrors 默认列表的前几项一致）。"""
 
 _PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
+_PYPI_INDEX_BY_MIRROR: dict[str, str] = {
+    "mirrors.aliyun.com": "https://mirrors.aliyun.com/pypi/simple/",
+    "mirrors.tencent.com": "https://mirrors.cloud.tencent.com/pypi/simple",
+    "mirrors.huaweicloud.com": "https://repo.huaweicloud.com/repository/pypi/simple",
+    "mirrors.ustc.edu.cn": "https://mirrors.ustc.edu.cn/pypi/simple",
+    "mirrors.tuna.tsinghua.edu.cn": _PIP_INDEX_URL,
+    "mirrors.163.com": "https://mirrors.163.com/pypi/simple/",
+    "mirrors.zju.edu.cn": "https://mirrors.zju.edu.cn/pypi/web/simple",
+    "mirrors.nju.edu.cn": "https://mirrors.nju.edu.cn/pypi/web/simple",
+    "mirror.sjtu.edu.cn": "https://mirror.sjtu.edu.cn/pypi/web/simple",
+}
+"""系统镜像域名 → 对应 PyPI 索引；与 :data:`_MIRROR_DOMAINS` 同一套识别口径。"""
 _NPM_REGISTRY = "https://registry.npmmirror.com"
 _UV_PYTHON_INSTALL_MIRROR = "https://registry.npmmirror.com/-/binary/python-build-standalone"
 _NODE_MIRROR = "https://npmmirror.com/mirrors/node"
@@ -187,12 +201,51 @@ def _ssh_key_script() -> str:
     )
 
 
+def pypi_index_for_mirror(mirror: str) -> str:
+    """按系统镜像域名选对应 PyPI 索引；未知 / 未配置时回退清华。
+
+    ``mirror`` 可以是 ``mirrors.ustc.edu.cn``，也可以是包含域名的完整 URL；
+    大小写不敏感。
+    """
+    key = (mirror or "").strip().casefold()
+    for domain, index in _PYPI_INDEX_BY_MIRROR.items():
+        if domain in key:
+            return index
+    return _PIP_INDEX_URL
+
+
+def _index_detect_lines() -> tuple[str, ...]:
+    """实例内检测当前系统镜像并写入 shell 变量 ``index``。
+
+    与 :func:`probe_script` 用同一组域名读 ``/etc/apt`` 与 ``/etc/yum.repos.d``；
+    这样用户已经手工把 APT 设成中科大源时，pip / uv 不会又跑回清华。
+    """
+    domains = " ".join(_PYPI_INDEX_BY_MIRROR)
+    cases = tuple(f"  {domain}) index='{index}' ;;" for domain, index in _PYPI_INDEX_BY_MIRROR.items())
+    return (
+        'mirror=""',
+        "for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/yum.repos.d/*.repo; do",
+        '    [ -r "$file" ] || continue',
+        f"    for domain in {domains}; do",
+        '        if grep -q "$domain" "$file" 2>/dev/null; then',
+        '            mirror="$domain"',
+        "            break 2",
+        "        fi",
+        "    done",
+        "done",
+        'case "$mirror" in',
+        *cases,
+        f"  *) index='{_PIP_INDEX_URL}' ;;",
+        "esac",
+    )
+
+
 def _pip_script() -> str:
-    """pip 索引 → 清华镜像。"""
+    """pip 索引 → 跟随系统镜像源（识别不到时回退清华）。"""
     return "\n".join(
         (
             "set -e",
-            f"index='{_PIP_INDEX_URL}'",
+            *_index_detect_lines(),
             'python3 -m pip config set global.index-url "$index" >/dev/null',
             'echo "pip 镜像已配置：$index"',
         )
@@ -200,33 +253,37 @@ def _pip_script() -> str:
 
 
 def _uv_script() -> str:
-    """装 uv（pip --user 走清华，不走 astral.sh / GitHub）并写 ``uv.toml`` 镜像。"""
+    """装 uv（pip --user 走系统镜像，不走 astral.sh / GitHub）并更新 ``uv.toml`` 镜像。
+
+    ``uv.toml`` 已存在时也重写 ``index-url`` / ``python-install-mirror``（先备份），
+    否则旧的清华地址会一直留有，用户切到中科大源后 uv 仍然失败。
+    """
     return "\n".join(
         (
             "set -e",
-            f"index='{_PIP_INDEX_URL}'",
+            *_index_detect_lines(),
             'python3 -m pip config set global.index-url "$index" >/dev/null',
             'export PATH="$HOME/.local/bin:$PATH"',
             "if command -v uv >/dev/null 2>&1; then",
             '    echo "uv 已安装：$(uv --version)"',
             "else",
-            '    echo "安装 uv（pip --user + 清华镜像，不走 GitHub）…"',
+            '    echo "安装 uv（pip --user + 系统镜像源，不走 GitHub）…"',
             '    python3 -m pip install --user -q --break-system-packages -i "$index" uv 2>/dev/null || \\',
             '        python3 -m pip install --user -q -i "$index" uv',
             "fi",
             'mkdir -p "$HOME/.config/uv"',
-            'if grep -qs "index-url" "$HOME/.config/uv/uv.toml"; then',
-            '    echo "uv 镜像已配置"',
+            'uv_toml="$HOME/.config/uv/uv.toml"',
+            'tmp="$uv_toml.tmp"',
+            'if [ -f "$uv_toml" ]; then',
+            '    cp "$uv_toml" "$uv_toml.bak"',
+            '    grep -vE \'^[[:space:]]*(index-url|python-install-mirror)[[:space:]]*=\' "$uv_toml" > "$tmp" || true',
             "else",
-            '    if [ -f "$HOME/.config/uv/uv.toml" ]; then',
-            '        cp "$HOME/.config/uv/uv.toml" "$HOME/.config/uv/uv.toml.bak"',
-            "    fi",
-            "    cat > \"$HOME/.config/uv/uv.toml\" <<'FCMD_UV'",
-            f'index-url = "{_PIP_INDEX_URL}"',
-            f'python-install-mirror = "{_UV_PYTHON_INSTALL_MIRROR}"',
-            'link-mode = "copy"',
-            "FCMD_UV",
+            '    : > "$tmp"',
             "fi",
+            'printf \'index-url = "%s"\\npython-install-mirror = "%s"\\n\' "$index" '
+            f'"{_UV_PYTHON_INSTALL_MIRROR}" >> "$tmp"',
+            'grep -qE \'^[[:space:]]*link-mode[[:space:]]*=\' "$tmp" || printf \'link-mode = "copy"\\n\' >> "$tmp"',
+            'mv "$tmp" "$uv_toml"',
             # login shell（``bash -lc``）才能测到 ~/.local/bin 里的 uv。
             'if [ -f "$HOME/.profile" ] && ! grep -q ".local/bin" "$HOME/.profile"; then',
             '    printf "\\nexport PATH=\\"\\$HOME/.local/bin:\\$PATH\\"\\n" >> "$HOME/.profile"',
@@ -388,7 +445,7 @@ TASKS: tuple[InitTask, ...] = (
     InitTask(
         "python",
         "安装 Python 开发环境",
-        "安装 python3 / pip / venv，并把 pip 索引指向清华镜像；已自带 python3 的发行版（如 Kali）装完直接视为就绪。",
+        "安装 python3 / pip / venv，并把 pip 索引指向系统镜像对应的 PyPI（识别不到时回退清华）；已自带 python3 的发行版（如 Kali）装完直接视为就绪。",
         (
             InitStep("安装 Python 软件包", _apt_script("python3", "python3-pip", "python3-venv"), root=True),
             InitStep("配置 pip 镜像", _pip_script()),
@@ -397,8 +454,8 @@ TASKS: tuple[InitTask, ...] = (
     InitTask(
         "uv",
         "安装 uv",
-        "用 pip 从清华镜像安装 uv（不走 astral.sh / GitHub），并写入 ~/.config/uv/uv.toml："
-        "默认索引清华、Python 下载走 npmmirror 的 python-build-standalone。",
+        "用 pip 从系统镜像安装 uv（不走 astral.sh / GitHub），并更新 ~/.config/uv/uv.toml："
+        "索引跟随系统镜像（识别不到时回退清华）、Python 下载走 npmmirror 的 python-build-standalone。",
         (
             InitStep("安装 Python 软件包", _apt_script("python3", "python3-pip", "python3-venv"), root=True),
             InitStep("安装 uv 并配置镜像", _uv_script()),

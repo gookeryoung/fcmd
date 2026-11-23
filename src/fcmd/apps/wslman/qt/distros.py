@@ -56,22 +56,34 @@ class DistrosMixin:
 
         用流式布局而不是 ``QHBoxLayout``：窗口收到最小宽度时按钮整组换行，
         不会被压窄到文字被截断（``打开终端`` / ``修复注册`` 这类四字按钮尤其明显）。
-        每组是一个带分隔线的小行，换行只发生在组之间。
+        动作按钮只显示图标，中文名统一放 tooltip；「打开终端」右侧固定跟
+        「用 IDE 打开」「用 PI 打开」，都使用实例的默认终端目录。
         """
         toolbar = _owner.FlowLayout(h_spacing=6, v_spacing=4)
-        groups: tuple[tuple[tuple[str, Any, str], ...], ...] = (
+        groups: tuple[tuple[tuple[str, Any, str, str, str], ...], ...] = (
             (
-                ("打开终端", self._open_selected, "primary"),
-                ("启动", self._start_selected, ""),
-                ("重启", self._restart_selected, ""),
-                ("停止", self._terminate_selected, ""),
-                ("刷新", self._refresh_distros, "ghost"),
-                ("修复注册", self._repair_registrations, "ghost"),
+                ("打开终端", self._open_selected, "primary", "terminal", "打开终端（默认目录）"),
+                ("用 IDE 打开", self._open_selected_ide, "", "code", "用 IDE 打开默认目录"),
+                ("用 PI 打开", self._open_selected_pi, "", "bot", "用 PI 打开默认目录"),
             ),
-            (("导出", self._export_selected, ""), ("迁移", self._migrate_selected, "")),
             (
-                ("删除实例", self._unregister, "danger"),
-                ("关闭全部", self._shutdown, "danger"),
+                ("重启", self._restart_selected, "", "reset", "重启实例"),
+                ("刷新", self._refresh_distros, "ghost", "refresh", "刷新实例列表"),
+                (
+                    "修复注册",
+                    self._repair_registrations,
+                    "ghost",
+                    "wrench",
+                    "修复注册：用扫描到的 ext4.vhdx 重新注册失效实例",
+                ),
+            ),
+            (
+                ("导出", self._export_selected, "", "export", "导出实例"),
+                ("迁移", self._migrate_selected, "", "transfer", "迁移到其他工作目录"),
+            ),
+            (
+                ("删除实例", self._unregister, "danger", "trash", "删除实例"),
+                ("关闭全部", self._shutdown, "danger", "power", "关闭全部实例"),
             ),
         )
         for index, group in enumerate(groups):
@@ -83,18 +95,15 @@ class DistrosMixin:
                 separator = _owner.QLabel("│", row)
                 separator.setObjectName("Hint")
                 row_layout.addWidget(separator)
-            for text, handler, kind in group:
-                widget = _owner.button(text, kind=kind)
+            for text, handler, kind, icon, tooltip in group:
+                widget = _owner.button("", kind=kind, icon=icon, tooltip=tooltip)
                 widget.clicked.connect(handler)
                 row_layout.addWidget(widget)
                 self._buttons.append(widget)
                 self._button_by_text[text] = widget
             toolbar.addWidget(row)
-        self.start_button = self._button_by_text["启动"]
         self.restart_button = self._button_by_text["重启"]
-        self.stop_button = self._button_by_text["停止"]
         self.repair_button = self._button_by_text["修复注册"]
-        self.repair_button.setToolTip("用工作目录里扫描到的 ext4.vhdx 重新注册失效实例")
         return toolbar
 
     def refresh(self, *, quiet: bool = False) -> None:
@@ -202,6 +211,109 @@ class DistrosMixin:
             return message
 
         self._start("修复注册", work)
+
+    def _open_selected_ide(self) -> None:
+        """「用 IDE 打开」：在实例默认目录启动设置里选中的 IDE。"""
+        self._open_selected_with(_owner._open.KIND_IDE)
+
+    def _open_selected_pi(self) -> None:
+        """「用 PI 打开」：固定用内置 PI，在实例默认目录启动。"""
+        self._open_selected_with(_owner._open.KIND_AGENT, key="pi")
+
+    def _open_selected_with(self, kind: str, *, key: str = "") -> None:
+        """在选中实例的默认终端目录启动 IDE / AI Agent。
+
+        ``key`` 为空时用设置页选中的条目；给了 ``key``（如 ``pi``）时只找该内置项。
+        默认目录取实例配置的终端目录（``~`` 时先探测家目录），IDE 的 Windows
+        程序按 UNC 路径启动，实例内程序经终端以 ``--cd`` 进入该目录。
+        """
+        distro = self._selected()
+        if distro is None:
+            self.set_page_status("distros", "未选中实例；先选中一行再打开")
+            return
+        openers = _owner.w.openers_for(self.settings, kind)
+        if key:
+            opener = next((item for item in openers if item.key == key), None)
+        else:
+            opener = _owner.w.selected_opener(self.settings, kind)
+        if opener is None:
+            name = "PI" if key == "pi" else _owner._open.KIND_LABELS[kind]
+            _owner.QMessageBox.information(
+                self,
+                f"尚未配置{name}打开方式",
+                f"到「设置 → 打开方式」添加或选中一个{name}条目后再试。",
+            )
+            return
+        directory = _owner.w.terminal_cwd(self.settings, distro.name)
+        label = f"用 {opener.name} 打开"
+
+        def work(_cancel: threading.Event) -> str:
+            env = _owner.cli._build_environment()
+            wsl_path = _owner.cli._require_wsl(env)
+            home = "/"
+            if not directory.startswith("/"):
+                probe = env.runner.run(
+                    [wsl_path, "-d", distro.name, "--exec", "bash", "-lc", _owner._files.home_probe_script()],
+                    timeout=60.0,
+                )
+                text = _owner.decode_console(probe.stdout + probe.stderr)
+                _user, detected = _owner._files.parse_home(text)
+                if not detected:
+                    tail = _owner._initenv.tail_lines(text, 3)
+                    raise _owner.runtime_error(
+                        f"无法读取 {distro.name} 的家目录（退出码 {probe.returncode}）",
+                        hint=tail[-1] if tail else f"确认实例可以启动：wsl -d {distro.name} --exec true",
+                    )
+                home = detected
+            target = _owner._files.normalize_path(directory, home)
+            root = _owner._files.pick_unc_root(distro.name)
+            unc = str(_owner._files.to_local(root, target))
+            if opener.host == _owner._open.HOST_WINDOWS:
+                argv = _owner._open.windows_argv(opener, dir=target, unc=unc, distro=distro.name, home=home)
+                exe = argv[0]
+                if _owner.shutil.which(exe) is None and not _owner.Path(exe).is_file():
+                    raise _owner.runtime_error(
+                        f"没有找到 {exe}",
+                        hint=f"确认 {opener.name} 已安装并加入 PATH；或在「设置 → 打开方式」把命令模板改成完整路径",
+                    )
+                _owner.spawn_gui(_owner._open.wrap_windows_argv(argv))
+                return f"已在 {distro.name}:{target} 启动 {opener.name}"
+            probe = env.runner.run(
+                [
+                    wsl_path,
+                    "-d",
+                    distro.name,
+                    "--exec",
+                    "bash",
+                    "-lc",
+                    _owner._open.probe_script(opener, dir=target, unc=unc, distro=distro.name, home=home),
+                ],
+                timeout=60.0,
+            )
+            found = _owner.decode_console(probe.stdout + probe.stderr).strip()
+            exe = _owner._open.command_name(opener, dir=target, unc=unc, distro=distro.name, home=home)
+            if probe.returncode != 0 or not found:
+                raise _owner.runtime_error(
+                    f"{distro.name} 里找不到 {exe}",
+                    hint=f"先在实例里安装 {opener.name}，或在「设置 → 打开方式」把命令模板改成实际可用的命令",
+                )
+            command = _owner.build_command(
+                wsl_path=wsl_path,
+                distro=distro.name,
+                cwd=target,
+                program=env.config.terminal_program,
+                extra_args=env.config.terminal_extra_args,
+                run=(
+                    "--exec",
+                    "bash",
+                    "-lc",
+                    _owner._open.wsl_command(opener, dir=target, unc=unc, distro=distro.name, home=home),
+                ),
+            )
+            self.launcher.launch(command)
+            return f"已在 {distro.name}:{target} 启动 {opener.name}"
+
+        self._start(label, work)
 
     def _load(self, _cancel: threading.Event) -> str:
         env = _owner.cli._build_environment()
@@ -327,13 +439,11 @@ class DistrosMixin:
         if self._busy:
             return
         distro = self._selected()
-        can_start, can_stop = _owner.w.action_states(distro.state if distro is not None else None)
+        _can_start, can_stop = _owner.w.action_states(distro.state if distro is not None else None)
         if distro is not None and distro.needs_repair:
-            can_start = can_stop = False
-        self.start_button.setEnabled(can_start)
-        # 重启只对运行中的实例有意义：停止 / 启动已能覆盖其余状态。
+            can_stop = False
+        # 启动 / 停止只在行卡上操作，顶部不再重复；重启只对运行中的实例有意义。
         self.restart_button.setEnabled(can_stop)
-        self.stop_button.setEnabled(can_stop)
 
     def _repairable_count(self) -> int:
         view = self.view

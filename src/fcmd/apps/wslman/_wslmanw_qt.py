@@ -81,6 +81,7 @@ from fcmd.gui.widgets import (
     hint_label,
     make_table,
     make_table_item,
+    set_button_icon,
     set_button_text,
 )
 from fcmd.gui.window import QtMainWindow, restore_geometry
@@ -437,6 +438,7 @@ _REEXPORTS = (
     periodic,
     restore_geometry,
     runtime_error,
+    set_button_icon,
     set_button_text,
     shutil,
     spawn_detached,
