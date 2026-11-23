@@ -607,6 +607,9 @@ def test_work_dir_of_matches_registry_base_path(tmp_path: Path) -> None:
     other = tmp_path / "other"
     settings = wslmanw.WslmanwSettings(work_dir=str(root), work_dirs=(str(root), str(other)))
     assert wslmanw.work_dir_of(settings, str(root / "install" / "Ubuntu")) == root
+    # wsl --import-in-place 写出的 BasePath 带 \\?\ 扩展前缀，也要能归属到工作目录。
+    prefix = chr(92) * 2 + "?" + chr(92)
+    assert wslmanw.work_dir_of(settings, prefix + str(root / "install" / "Ubuntu")) == root
     assert wslmanw.work_dir_of(settings, str(other / "x")) == other
     assert wslmanw.work_dir_of(settings, str(tmp_path / "loose" / "Debian")) is None
     assert wslmanw.work_dir_of(settings, None) is None

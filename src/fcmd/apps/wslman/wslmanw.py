@@ -533,9 +533,23 @@ def with_terminal_cwd(settings: WslmanwSettings, name: str, cwd: str) -> Wslmanw
     return replace(settings, distro_terminal_dirs=dirs)
 
 
+def _strip_windows_extended_prefix(text: str) -> str:
+    r"""去掉 Windows 扩展长度前缀（如 ``\\?\E:\wsl`` / ``\\?\UNC\server\...``）。
+
+    ``wsl --import-in-place`` 会把注册表 ``BasePath`` 写成 ``\\?\`` 前缀；不归一
+    就会和设置里的 ``E:\wsl`` 比较失败，所有实例都显示「未在已配置目录」。
+    """
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[len("\\\\?\\UNC\\") :]
+    if text.startswith("\\\\?\\"):
+        return text[len("\\\\?\\") :]
+    return text
+
+
 def _dir_key(value: str | Path) -> str:
-    """目录比较用的规范化 key：展开 ``~`` 后按平台归一大小写与分隔符。"""
-    return os.path.normcase(str(Path(str(value).strip()).expanduser().resolve()))
+    """目录比较用的规范化 key：展开 ``~``、去扩展前缀，再按平台归一大小写与分隔符。"""
+    text = _strip_windows_extended_prefix(str(value).strip())
+    return os.path.normcase(str(Path(text).expanduser().resolve()))
 
 
 def same_dir(left: str | Path, right: str | Path) -> bool:
