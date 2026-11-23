@@ -18,7 +18,13 @@ def test_builtin_presets_cover_expected_tools() -> None:
     ide = _open.default_openers(_open.KIND_IDE)
     assert [item.key for item in ide] == ["vscode", "trae", "trae-cn", "qoder", "qoder-cn", "workbuddy"]
     agent = _open.default_openers(_open.KIND_AGENT)
-    assert [item.key for item in agent] == ["pi", "opencode", "deepseek-harness"]
+    assert [item.key for item in agent] == [
+        "pi",
+        "opencode",
+        "deepseek-harness",
+        "opencode-windows",
+        "deepseek-harness-windows",
+    ]
     assert all(item.builtin for item in ide + agent)
     assert all(item.note for item in ide + agent)
     assert _open.default_openers("other") == ()
@@ -208,12 +214,17 @@ def test_windows_candidates_cover_common_roots(tmp_path: Path) -> None:
     env = {
         "LOCALAPPDATA": str(tmp_path / "local"),
         "APPDATA": str(tmp_path / "roaming"),
+        "USERPROFILE": str(tmp_path / "home"),
         "ProgramFiles": str(tmp_path / "pf"),
     }
     candidates = [str(item) for item in _open.windows_candidates("opencode", env)]
     assert str(tmp_path / "roaming" / "npm" / "opencode.cmd") in candidates
     assert str(tmp_path / "local" / "npm" / "opencode.cmd") in candidates
     assert str(tmp_path / "pf" / "npm" / "opencode.cmd") in candidates
+    # bun / 安装脚本与 OpenCode 桌面版都落在用户目录下，不能只看 npm 全局目录。
+    assert str(tmp_path / "home" / ".bun" / "bin" / "opencode.exe") in candidates
+    assert str(tmp_path / "home" / ".opencode" / "bin" / "opencode.exe") in candidates
+    assert str(tmp_path / "local" / "Programs" / "ai.opencode.desktop" / "resources" / "opencode-cli.exe") in candidates
 
 
 def test_detect_host_keeps_domestic_and_overseas_ides_apart(tmp_path: Path) -> None:
@@ -239,6 +250,27 @@ def test_detect_host_keeps_domestic_and_overseas_ides_apart(tmp_path: Path) -> N
     assert all("Qoder CN" in item for item in (str(p) for p in _open.windows_candidates("qoder-cn", env)))
 
 
+def test_detect_host_finds_bun_opencode_and_qoder_cn_ide(tmp_path: Path) -> None:
+    """OpenCode 常见 bun 安装与 QODER CN 的 ``Qoder CN IDE`` 目录都要能认出。"""
+    bun = tmp_path / ".bun" / "bin" / "opencode.exe"
+    bun.parent.mkdir(parents=True)
+    bun.write_text("")
+    env = {"USERPROFILE": str(tmp_path)}
+    opencode = _open.detect_host("opencode", env=env, which=lambda _name: None)
+    assert opencode.found is True
+    assert opencode.path == str(bun)
+    windows = _open.detect_host("opencode-windows", env=env, which=lambda _name: None)
+    assert windows.command == f'{bun} "{{unc}}"'
+
+    qoder = tmp_path / "pf" / "Qoder CN IDE" / "bin" / "qoder-cn.cmd"
+    qoder.parent.mkdir(parents=True)
+    qoder.write_text("")
+    env = {"ProgramFiles": str(tmp_path / "pf")}
+    detected = _open.detect_host("qoder-cn", env=env, which=lambda _name: None)
+    assert detected.found is True
+    assert detected.path == str(qoder)
+
+
 def test_detect_deepseek_harness_covers_both_cli_names(tmp_path: Path) -> None:
     """DeepSeek Harness 的 dsh / deepseek-harness 两个可执行名都要能认出。"""
     host = _open.detect_host(
@@ -262,6 +294,9 @@ def test_detect_deepseek_harness_covers_both_cli_names(tmp_path: Path) -> None:
     script = _open.detect_script()
     for name in ("dsh", "deepseek-harness", "trae-cn", "qoder-cn"):
         assert name in script
+    # 安装脚本常把 PATH 写进 ~/.bashrc，登录 shell 探测要显式补常见 bin 目录。
+    assert "$HOME/.opencode/bin" in script
+    assert "$HOME/.bun/bin" in script
 
 
 def test_parse_detect_and_detect_wsl() -> None:

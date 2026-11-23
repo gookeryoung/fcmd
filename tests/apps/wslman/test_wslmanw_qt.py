@@ -2705,7 +2705,7 @@ def test_refresh_requested_during_task_runs_after_finish(home: Path, monkeypatch
 def test_reload_button_rereads_registry_and_recomputes_work_dir_size(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """「更新列表」重读注册信息：实例搬家后归属目录与占用都按新 BasePath 重算。"""
+    """「刷新」重读注册信息：实例搬家后归属目录与占用都按新 BasePath 重算。"""
     first = home / "wsl" / "install" / "Ubuntu"
     second = home / "other" / "install" / "Ubuntu"
     state = {"base": str(first)}
@@ -2774,7 +2774,7 @@ def test_reload_keeps_size_when_instance_is_outside_configured_dirs(
 
 
 def test_reload_button_while_busy_runs_full_reload_after_finish(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """重操作中点的「更新列表」不丢：收尾后完整重读，归属与占用按新位置重算。"""
+    """重操作中点的「刷新」不丢：收尾后完整重读，归属与占用按新位置重算。"""
     first = home / "wsl" / "install" / "Ubuntu"
     second = home / "other" / "install" / "Ubuntu"
     state = {"base": str(first)}
@@ -2804,7 +2804,7 @@ def test_reload_button_while_busy_runs_full_reload_after_finish(home: Path, monk
         state["base"] = str(second)
         loads.clear()
         window._busy = True
-        window._button_by_text["更新列表"].click()
+        window._button_by_text["刷新"].click()
 
         assert loads == []
         assert window._reload_pending is True
@@ -2822,6 +2822,41 @@ def test_reload_button_while_busy_runs_full_reload_after_finish(home: Path, monk
         assert metrics is not None and metrics.text() == "8.0 KiB"
     finally:
         window._busy = False
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_refresh_rescans_work_dirs_when_registry_base_path_is_stale(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """注册表 BasePath 失效（手工搬家）时，刷新重扫工作目录并采用实际磁盘位置。"""
+    stale = home / "wsl" / "install" / "Ubuntu"
+    moved = home / "other" / "install" / "Ubuntu"
+    moved.mkdir(parents=True)
+    (moved / "ext4.vhdx").write_bytes(b"x" * 16)
+    monkeypatch.setattr(cli, "_view", lambda env: _view(replace(_distro("Ubuntu", "stopped"), base_path=str(stale))))
+    monkeypatch.setattr(
+        _wslmanw_qt,
+        "distro_disk_bytes",
+        lambda base, version: (8192, False) if str(base) == str(moved) else (2048, False),
+    )
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        cast(Any, window).settings = wslmanw.with_work_dirs(
+            cast(wslmanw.WslmanwSettings, window.settings),
+            [home / "wsl", home / "other"],
+            home / "wsl",
+        )
+        window._button_by_text["刷新"].click()
+        _wait_idle(window)
+
+        row = _distro_row(window, 0)
+        assert row.distro.base_path == str(moved)
+        assert row.work_dir == home / "other"
+        metrics = row.metrics_label
+        assert metrics is not None and metrics.text() == "8.0 KiB"
+    finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
@@ -2868,7 +2903,7 @@ def test_move_task_finishes_with_full_reload(home: Path, monkeypatch: pytest.Mon
 
 
 def test_status_poll_reloads_rows_when_base_path_changes(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """轮询发现 BasePath 变了：完整重读，归属与占用跟着换，不用等手动点「更新列表」。"""
+    """轮询发现 BasePath 变了：完整重读，归属与占用跟着换，不用等手动点「刷新」。"""
     first = home / "wsl" / "install" / "Ubuntu"
     second = home / "other" / "install" / "Ubuntu"
     sizes = {str(first): (2048, False), str(second): (8192, False)}
@@ -3213,6 +3248,8 @@ def test_settings_openers_card_lists_builtins_and_persists(
             "PI（内置）",
             "OpenCode（内置）",
             "DeepSeek Harness（内置）",
+            "OpenCode（Windows）（内置）",
+            "DeepSeek Harness（Windows）（内置）",
         ]
         assert window.opener_tags[_open.KIND_IDE].text() == _open.HOST_LABELS[_open.HOST_WINDOWS]
         assert window.opener_tags[_open.KIND_AGENT].text() == _open.HOST_LABELS[_open.HOST_WSL]

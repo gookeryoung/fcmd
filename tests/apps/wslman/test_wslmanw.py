@@ -583,6 +583,28 @@ def test_work_dir_of_matches_registry_base_path(tmp_path: Path) -> None:
     assert wslmanw.work_dir_of(settings, None) is None
 
 
+def test_scan_install_dirs_finds_moved_instances(tmp_path: Path) -> None:
+    """刷新时的目录扫描：只认含 vhdx / rootfs 的 ``install/<实例>``。"""
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    settings = wslmanw.with_work_dirs(wslmanw.WslmanwSettings(), [first, second], first)
+
+    ubuntu = second / "install" / "Ubuntu"
+    ubuntu.mkdir(parents=True)
+    (ubuntu / "ext4.vhdx").write_bytes(b"x")
+    debian = first / "install" / "Debian"
+    debian.mkdir(parents=True)
+    (debian / "rootfs").mkdir()
+    empty = first / "install" / "Empty"
+    empty.mkdir(parents=True)
+
+    found = wslmanw.scan_install_dirs(settings)
+    assert found == {"ubuntu": ubuntu, "debian": debian}
+    assert wslmanw.has_distro_files(str(ubuntu)) is True
+    assert wslmanw.has_distro_files(str(empty)) is False
+    assert wslmanw.has_distro_files(None) is False
+
+
 def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: list[object] = []
     fake = types.ModuleType("fcmd.apps.wslman._wslmanw_qt")

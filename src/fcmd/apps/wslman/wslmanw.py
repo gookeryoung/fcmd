@@ -49,6 +49,7 @@ __all__ = [
     "download_queue_text",
     "export_progress_text",
     "filter_images",
+    "has_distro_files",
     "image_counts",
     "image_details",
     "image_filename",
@@ -67,6 +68,7 @@ __all__ = [
     "resolve_geometry",
     "same_dir",
     "save_settings",
+    "scan_install_dirs",
     "selected_opener",
     "settings_from_mapping",
     "settings_to_mapping",
@@ -523,6 +525,42 @@ def work_dir_of(settings: WslmanwSettings, base_path: str | None) -> Path | None
         except ValueError:
             continue
     return None
+
+
+def has_distro_files(base_path: str | None) -> bool:
+    """BasePath 下是否已有 WSL2 ``ext4.vhdx`` 或 WSL1 ``rootfs``。
+
+    只看目录是否存在不够：实例迁移 / 手动搬家后旧目录可能还在，但磁盘文件已经不在。
+    """
+    if not base_path:
+        return False
+    base = Path(base_path)
+    return (base / "ext4.vhdx").is_file() or (base / "rootfs").is_dir()
+
+
+def scan_install_dirs(settings: WslmanwSettings) -> dict[str, Path]:
+    """扫描已配置工作目录的 ``install/<实例>``，返回含磁盘文件的实例目录。
+
+    键是实例名的小写形式（与注册表 / ``wsl -l -v`` 的比对口径一致）。同名实例
+    出现在多个工作目录时保留先扫描到的那个，与 ``work_dir_paths`` 的默认目录优先
+    顺序一致。
+    """
+    found: dict[str, Path] = {}
+    for root in work_dir_paths(settings):
+        install_root = root / "install"
+        try:
+            children = tuple(install_root.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            try:
+                is_dir = child.is_dir()
+            except OSError:
+                continue
+            if not is_dir or not has_distro_files(str(child)):
+                continue
+            found.setdefault(child.name.casefold(), child)
+    return found
 
 
 def legacy_dir_note(settings: WslmanwSettings) -> str:

@@ -504,6 +504,9 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
   `wslman.json` 的 `download.dir` / `backups.dir` 继续由 CLI 使用，GUI 不再读取。
 - 实例归属：列表按注册表 `BasePath` 判断实例落在哪个已配置工作目录（`wslmanw.work_dir_of`），
   行副标题显示目录名，不在任何目录下显示「未在已配置目录」；完整路径在 tooltip。
+- 实例页「刷新」（原「更新列表」）完整重读注册信息并重算归属 / 占用；注册表 `BasePath`
+  失效（例如目录被手工搬走）时，额外扫描已配置工作目录的 `install/<实例>`，按实际
+  `ext4.vhdx` / `rootfs` 重新定位并替换旧列表信息，而不是继续保留旧路径。
 
 ### D10.1.1 实例迁移到另一个工作目录
 
@@ -514,7 +517,7 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
   把临时包导回原 `BasePath`，原实例保持可用，临时包保留并在错误里给出路径；成功后删除
   临时包并用最新注册表复核落点，返回「已迁移 <实例> 到 <新目录>」。
 - 迁移是重操作：后台任务期间工具栏禁用，进度事件写进任务日志；完成后刷新列表，行上的
-  归属工作目录立即更新。
+  归属工作目录立即更新；手动「刷新」也会重扫工作目录，修正注册表仍指向旧位置的条目。
 
 ### D10.2 用 IDE / AI Agent 打开当前目录
 
@@ -528,13 +531,18 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
 - 内置默认值（`note` 里同时标注不确定项）：
   - IDE：VSCode `code --remote wsl+{distro} "{dir}"`；Trae / Qoder 同参数（按 VS Code 系
     remote 参数估计）；TRAE CN / QODER CN（国内版）各自独立一条，命令名按
-    `trae-cn` / `qoder-cn` 估计，安装目录按 `Programs\Trae CN` / `Programs\Qoder CN`
-    估计，与海外版不共用探测名；WorkBuddy `workbuddy "{unc}"`（未确认官方 CLI）。
+    `trae-cn` / `qoder-cn` 估计，安装目录同时覆盖 `Programs\Trae CN`、`Programs\Qoder CN`
+    与常见的 `Program Files\Qoder CN IDE`，与海外版不共用探测名；WorkBuddy
+    `workbuddy "{unc}"`（未确认官方 CLI）。
   - AI Agent：PI `pi`（命令名未确认）；OpenCode `opencode`（已确认 TUI）；
     DeepSeek Harness `dsh`（按官方 npm 包 `@deepseek-ai/dsh` 的 CLI 名，检测同时覆盖
-    `deepseek-harness` 可执行名）。
+    `deepseek-harness` 可执行名）；另补 OpenCode / DeepSeek Harness 的 Windows 宿主机
+    变体（`opencode-windows` / `deepseek-harness-windows`），覆盖 PATH、`~/.bun/bin`、
+    `~/.opencode/bin` 与官方桌面版安装目录。
   - 智能检测按条目的可执行名与常见安装目录匹配（国内版与海外版可能同名不同路径，
     因此分条维护）；默认选中 VSCode / OpenCode；内置项可编辑 / 删除，也可自行添加。
+    WSL 内探测在 `bash -lc` 之外显式补 `~/.opencode/bin`、`~/.bun/bin`、`~/.local/bin`
+    等用户级 bin 目录，避免安装脚本只写 `~/.bashrc` 时已装工具被漏掉。
 - Windows 宿主机：`shutil.which` 预检后按 argv 无窗口启动，`.cmd/.bat` 经
   `cmd.exe /d /s /c` 包装（避免 WinError 193）；WSL 内：先在实例内
   `bash -lc 'command -v <命令>'` 预检，再经终端 `wsl.exe -d <实例> --cd <目录>
@@ -674,10 +682,9 @@ uv run python -m fcmd.cli._manifest_data
   「迁移 SSH 文件」两张卡片，文件页「用 IDE / AI Agent 打开当前目录」与设置页
   「打开方式」条目管理（含智能检测与安装状态标签），设置页多工作目录（默认目录推演
   下载 / 安装 / 备份、实例行标注归属目录）与实例「迁移」到另一个工作目录；
-  均有单测覆盖。
+  实例页「刷新」会重读注册信息并重扫工作目录；均有单测覆盖。
 - 文件页纯逻辑在 `_files.py`：UNC 浏览、上传下载、新建 / 重命名 / 删除，删除与
   覆盖都要确认；SSH 迁移纯逻辑在 `_sshfiles.py`（来源类型 / 跨实例 `cat` 文件流 /
   实际读取路径），真实实例（Ubuntu 24.04）上已用隔离 HOME 冒烟验证落盘权限、
   拒覆盖（退出码 3）与备份目录。
-- 下一步：本轮改动尚未提交，提交前按 L2 跑 `make flow` 并更新受影响的文档；
-  CI 仍负责 Linux 兼容性验证。
+- 下一步：提交前按 L2 跑 `make flow` 并更新受影响的文档；CI 仍负责 Linux 兼容性验证。

@@ -27,7 +27,7 @@ import contextlib
 import shutil
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -680,7 +680,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 ("启动", self._start_selected, ""),
                 ("重启", self._restart_selected, ""),
                 ("停止", self._terminate_selected, ""),
-                ("更新列表", self._on_reload_distros, "ghost"),
+                ("刷新", self._refresh_distros, "ghost"),
             ),
             (("导出", self._export_selected, ""), ("迁移", self._migrate_selected, "")),
             (
@@ -1830,7 +1830,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         """写回多目录与默认项，立即落盘；实例行上的归属目录同步刷新。
 
         重操作（刷新 / 迁移 / 下载等）进行中不重建列表：``self.view`` 可能正被
-        工作线程改写，此时只记「列表待刷新」，任务收尾后自动重算；「更新列表」也可
+        工作线程改写，此时只记「列表待刷新」，任务收尾后自动重算；「刷新」也可
         随时手动重读注册信息。
         """
         self.settings = w.with_work_dirs(self.settings, dirs, default)
@@ -1969,7 +1969,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         else:
             self.refresh()
         # 下载 / 安装 / 删除实例后重扫本地状态：行内标签与动作按钮（已下载→安装、
-        # 安装完成→已安装）要立刻跟着变，不必等用户手动「更新列表」。
+        # 安装完成→已安装）要立刻跟着变，不必等用户手动点「刷新」。
         self._refresh_image_states()
 
     def _task_error(self, label: str, message: str) -> None:
@@ -1992,7 +1992,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             return
         self._update_action_states()
         if self._reload_pending:
-            # 「更新列表」或注册信息变化等到了空闲点：重读注册信息，按当前位置重算
+            # 「刷新」或注册信息变化等到了空闲点：重读注册信息，按当前位置重算
             # 归属目录与占用（不能降级成轻量状态轮询，它只重读 ``wsl -l -v``）。
             quiet = self._reload_quiet
             self._reload_pending = False
@@ -2228,7 +2228,11 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._start("刷新", self._load, quiet=quiet)
 
     def _on_reload_distros(self) -> None:
-        """「更新列表」：完整重读注册信息（BasePath → 归属目录与占用）。
+        """兼容旧调用名：实例页「刷新」的完整重读入口。"""
+        self._refresh_distros()
+
+    def _refresh_distros(self) -> None:
+        """「刷新」：重新读取注册信息并扫描工作目录（BasePath → 归属目录与占用）。
 
         忙时不丢弃这次点击：标记完整刷新，任务收尾后自动执行。轻量状态轮询只重读
         ``wsl -l -v``，不会重算归属目录与 vhdx 占用，不能代替本动作。
@@ -2236,19 +2240,50 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         if self._busy:
             self._reload_pending = True
             self._reload_quiet = False
-            self.set_page_status("distros", "已有任务在执行；结束后自动重读列表，也可稍后点「更新列表」")
+            self.set_page_status("distros", "已有任务在执行；结束后自动刷新列表，也可稍后点「刷新」")
             return
         self.refresh()
 
     def _load(self, _cancel: threading.Event) -> str:
         env = cli._build_environment()
         view = cli._view(env)
-        self.view = view
+        view, relocated = self._resolve_scanned_bases(view)
         sizes: dict[str, tuple[int | None, bool]] = {}
         for distro in view.distros:
             sizes[distro.name] = distro_disk_bytes(distro.base_path, distro.version)
+        self.view = view
         self.sizes = sizes
-        return f"已加载 {len(view.distros)} 个实例"
+        message = f"已加载 {len(view.distros)} 个实例"
+        if relocated:
+            message += f"；{relocated} 个 BasePath 不可用，已按工作目录重新定位"
+        return message
+
+    def _resolve_scanned_bases(self, view: Any) -> tuple[Any, int]:
+        """注册表 BasePath 失效时，扫描工作目录的 ``install/<实例>`` 补全位置。
+
+        外部移动目录（包括手工搬家）后注册表可能还指向旧路径；刷新时重扫工作目录
+        才能让列表展示实际位置与占用，而不是继续沿用旧列表。
+        """
+        missing = [distro for distro in view.distros if not w.has_distro_files(distro.base_path)]
+        if not missing:
+            return view, 0
+        found = w.scan_install_dirs(self.settings)
+        if not found:
+            return view, 0
+        relocated: list[str] = []
+        distros: list[Distro] = []
+        for distro in view.distros:
+            current = distro
+            if not w.has_distro_files(current.base_path):
+                candidate = found.get(current.name.casefold())
+                if candidate is not None:
+                    current = replace(current, base_path=str(candidate))
+                    relocated.append(current.name)
+            distros.append(current)
+        if not relocated:
+            return view, 0
+        warnings = (*view.warnings, *(f"{name} 的 BasePath 不可用，已按工作目录扫描到新位置" for name in relocated))
+        return replace(view, distros=tuple(distros), warnings=warnings), len(relocated)
 
     def _selected(self) -> Distro | None:
         row = self._selected_row()

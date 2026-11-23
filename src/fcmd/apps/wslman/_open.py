@@ -189,6 +189,26 @@ BUILTINS: dict[str, tuple[Opener, ...]] = {
             "按官方 CLI dsh（npm 包 @deepseek-ai/dsh）处理；可执行名也可能是 "
             "deepseek-harness，检测两者都会覆盖。若本机命令不同，请在设置里改模板。",
         ),
+        Opener(
+            "opencode-windows",
+            "OpenCode（Windows）",
+            KIND_AGENT,
+            HOST_WINDOWS,
+            'opencode "{unc}"',
+            True,
+            "Windows 侧 OpenCode：优先 PATH 里的 opencode，其次 ~/.bun/bin、~/.opencode/bin "
+            "与桌面版 resources\\opencode-cli.exe。桌面版若不接受目录参数，请在设置里改模板。",
+        ),
+        Opener(
+            "deepseek-harness-windows",
+            "DeepSeek Harness（Windows）",
+            KIND_AGENT,
+            HOST_WINDOWS,
+            'dsh "{unc}"',
+            True,
+            "Windows 侧 DSH：优先 PATH 里的 dsh / deepseek-harness，其次 ~/.bun/bin、~/.dsh/bin "
+            "与 DeepSeek Harness 桌面版。桌面版若不接受目录参数，请在设置里改模板。",
+        ),
     ),
 }
 """内置预设。``note`` 写清不确定项，界面在编辑对话框里原样展示。"""
@@ -290,6 +310,8 @@ _EXE_NAMES: dict[str, tuple[str, ...]] = {
     "pi": ("pi",),
     "opencode": ("opencode",),
     "deepseek-harness": ("dsh", "deepseek-harness"),
+    "opencode-windows": ("opencode", "opencode-cli"),
+    "deepseek-harness-windows": ("dsh", "deepseek-harness"),
 }
 """内置条目对应的可执行文件名（PATH / ``command -v`` 探测用）。
 
@@ -302,11 +324,50 @@ _WINDOWS_INSTALLS: dict[str, tuple[str, ...]] = {
     "trae": (r"Programs\Trae\Trae.exe", r"Programs\Trae\bin\trae.cmd"),
     "trae-cn": (r"Programs\Trae CN\Trae CN.exe", r"Programs\Trae CN\bin\trae-cn.cmd"),
     "qoder": (r"Programs\Qoder\Qoder.exe", r"Programs\Qoder\bin\qoder.cmd"),
-    "qoder-cn": (r"Programs\Qoder CN\Qoder CN.exe", r"Programs\Qoder CN\bin\qoder-cn.cmd"),
+    "qoder-cn": (
+        # 国内版实际安装目录有 ``Programs\Qoder CN`` 与 ``Program Files\Qoder CN IDE``
+        # 两种；两种都列，检测到哪个用哪个。
+        r"Programs\Qoder CN\Qoder CN.exe",
+        r"Programs\Qoder CN\bin\qoder-cn.cmd",
+        r"Programs\Qoder CN IDE\Qoder CN IDE.exe",
+        r"Programs\Qoder CN IDE\bin\qoder-cn.cmd",
+        r"Qoder CN IDE\Qoder CN IDE.exe",
+        r"Qoder CN IDE\bin\qoder-cn.cmd",
+    ),
     "workbuddy": (r"Programs\WorkBuddy\WorkBuddy.exe", r"WorkBuddy\WorkBuddy.exe"),
-    "pi": (r"npm\pi.cmd",),
-    "opencode": (r"npm\opencode.cmd",),
-    "deepseek-harness": (r"npm\dsh.cmd", r"npm\deepseek-harness.cmd"),
+    "pi": (r"npm\pi.cmd", r".bun\bin\pi.exe"),
+    "opencode": (
+        r"npm\opencode.cmd",
+        r".bun\bin\opencode.exe",
+        r".opencode\bin\opencode.exe",
+        r".local\bin\opencode.exe",
+        r"Programs\ai.opencode.desktop\resources\opencode-cli.exe",
+        r"Programs\ai.opencode.desktop\OpenCode.exe",
+    ),
+    "deepseek-harness": (
+        r"npm\dsh.cmd",
+        r"npm\deepseek-harness.cmd",
+        r".bun\bin\dsh.exe",
+        r".dsh\bin\dsh.exe",
+        r".local\bin\dsh.exe",
+    ),
+    "opencode-windows": (
+        r"npm\opencode.cmd",
+        r".bun\bin\opencode.exe",
+        r".opencode\bin\opencode.exe",
+        r".local\bin\opencode.exe",
+        r"Programs\ai.opencode.desktop\resources\opencode-cli.exe",
+        r"Programs\ai.opencode.desktop\OpenCode.exe",
+    ),
+    "deepseek-harness-windows": (
+        r"npm\dsh.cmd",
+        r"npm\deepseek-harness.cmd",
+        r".bun\bin\dsh.exe",
+        r".dsh\bin\dsh.exe",
+        r".local\bin\dsh.exe",
+        r"Programs\DeepSeek Harness\DeepSeek Harness.exe",
+        r"Programs\DeepSeek Harness\resources\app.asar.unpacked\dsh\bin\dsh.exe",
+    ),
 }
 """常见安装位置（相对常见安装根目录）；PATH 里没有时再按这些候选逐一确认。
 
@@ -330,11 +391,12 @@ def _with_exe(template: str, path: str) -> str:
 
 
 def windows_candidates(key: str, env: Mapping[str, str] | None = None) -> tuple[Path, ...]:
-    """Windows 上常见安装位置：LOCALAPPDATA / APPDATA / Program Files（含 x86）。"""
+    """Windows 上常见安装位置：LOCALAPPDATA / APPDATA / 用户目录 / Program Files（含 x86）。"""
     values = os.environ if env is None else env
     roots = [
         values.get("LOCALAPPDATA", ""),
         values.get("APPDATA", ""),
+        values.get("USERPROFILE", ""),
         values.get("ProgramFiles", ""),
         values.get("ProgramFiles(x86)", ""),
     ]
@@ -373,6 +435,10 @@ def detect_script() -> str:
     return "\n".join(
         (
             "set +e",
+            # 工具安装脚本常把 PATH 写进 ~/.bashrc，而 ``bash -lc`` 只读登录配置；
+            # 显式补上常见用户级 bin 目录，避免已经装好的 opencode / dsh 被漏掉。
+            'PATH="$HOME/.opencode/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$PATH"',
+            "export PATH",
             f"for cmd in {' '.join(exes)}; do",
             '  p=$(command -v -- "$cmd" 2>/dev/null)',
             '  [ -n "$p" ] && printf "OPEN=%s|%s\\n" "$cmd" "$p"',
