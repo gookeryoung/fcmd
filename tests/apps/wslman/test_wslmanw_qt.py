@@ -2599,6 +2599,91 @@ def test_refresh_requested_during_task_runs_after_finish(home: Path, monkeypatch
         window.deleteLater()
 
 
+def test_reload_button_rereads_registry_and_recomputes_work_dir(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """「更新列表」走完整刷新：重读注册信息，并按当前工作目录重算行内归属。"""
+    installed = str(home / "wsl" / "install" / "Ubuntu")
+    monkeypatch.setattr(cli, "_view", lambda env: _view(replace(_distro(), base_path=installed)))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    loaded: list[str] = []
+
+    def fake_load(self: _wslmanw_qt.WslmanQtWindow, _cancel: threading.Event) -> str:
+        loaded.append("load")
+        self.view = _view(replace(_distro(), base_path=installed))
+        self.sizes = {"Ubuntu": (2048, False)}
+        return "已加载 1 个实例"
+
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load", fake_load)
+    try:
+        _wait_idle(window)
+        assert _distro_row(window, 0).work_dir == home / "wsl"
+
+        other = home / "other"
+        window.settings = wslmanw.with_work_dirs(window.settings, [other, home / "wsl"], other)
+        window._on_reload_distros()
+        _wait_idle(window)
+
+        assert loaded == ["load"]
+        # 默认目录换了，但实例仍归属于 home/wsl，归属不能被默认目录带偏。
+        assert _distro_row(window, 0).work_dir == home / "wsl"
+        assert "wsl" in _distro_row(window, 0).sub_label.text()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_reload_button_while_busy_marks_pending(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """重操作进行中点「更新列表」：不另起任务，明确提示待刷新。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    loaded: list[str] = []
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load", lambda self, cancel: loaded.append("load") or "")
+    try:
+        _wait_idle(window)
+        window._busy = True
+        window._button_by_text["更新列表"].click()
+
+        assert loaded == []
+        assert window._refresh_pending is True
+        assert "已有任务在执行" in window.page_status("distros")
+    finally:
+        window._busy = False
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_work_dir_change_during_busy_defers_row_rebuild(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """工作目录在任务中变化：先标记待刷新，收尾后自动按新配置重建行卡。"""
+    installed = str(home / "wsl" / "install" / "Ubuntu")
+    monkeypatch.setattr(cli, "_view", lambda env: _view(replace(_distro(), base_path=installed)))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        rebuilt: list[str] = []
+        monkeypatch.setattr(
+            _wslmanw_qt.WslmanQtWindow, "_refresh_rows", lambda self: rebuilt.append("rows")
+        )
+        other = home / "other"
+        window._busy = True
+        window._store_work_dirs([other, home / "wsl"], other, "默认工作目录已切换")
+
+        assert rebuilt == []
+        assert window._list_pending is True
+        assert "列表待刷新" in window.page_status("distros")
+
+        window._busy = False
+        window._task_finished()
+        assert rebuilt == ["rows"]
+        assert window._list_pending is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 # ---------------------------------------------------------------------- #
 # 文件页：家目录浏览 + 上传下载 / 增删改
 # ---------------------------------------------------------------------- #

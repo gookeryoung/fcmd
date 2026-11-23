@@ -484,6 +484,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._images_note = ""
         self._busy = False
         self._refresh_pending = False
+        self._list_pending = False
         self._opener_detections: dict[str, tuple[dict[str, _open.Detection], dict[str, _open.Detection]]] = {}
         self._detecting = False
         self._detect_token = 0
@@ -642,6 +643,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 ("启动", self._start_selected, ""),
                 ("重启", self._restart_selected, ""),
                 ("停止", self._terminate_selected, ""),
+                ("更新列表", self._on_reload_distros, "ghost"),
             ),
             (("导出", self._export_selected, ""), ("迁移", self._migrate_selected, "")),
             (
@@ -1776,11 +1778,21 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self.work_grid.set_locations(default_disk_locations(roots, primary_label="默认工作目录"))
 
     def _store_work_dirs(self, dirs: Sequence[str | Path], default: str | Path, message: str) -> None:
-        """写回多目录与默认项，立即落盘；实例行上的归属目录同步刷新。"""
+        """写回多目录与默认项，立即落盘；实例行上的归属目录同步刷新。
+
+        重操作（刷新 / 迁移 / 下载等）进行中不重建列表：``self.view`` 可能正被
+        工作线程改写，此时只记「列表待刷新」，任务收尾后自动重算；「更新列表」也可
+        随时手动重读注册信息。
+        """
         self.settings = w.with_work_dirs(self.settings, dirs, default)
         self._refresh_work_card()
         if hasattr(self, "distro_list"):
-            self._refresh_rows()
+            if self._busy:
+                self._list_pending = True
+                self.set_page_status("distros", "工作目录已更新；任务进行中，列表待刷新")
+            else:
+                self._list_pending = False
+                self._refresh_rows()
         try:
             w.save_settings(self.settings, self._own_settings_path)
         except OSError as exc:
@@ -1919,6 +1931,11 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         if self._closing:
             return
         self._update_action_states()
+        if self._list_pending:
+            # 工作目录在任务进行中改过：当时没重建列表，收尾后按新配置重算归属。
+            self._list_pending = False
+            if hasattr(self, "distro_list"):
+                self._refresh_rows()
         if self._refresh_pending:
             # 任务收尾前发起的列表刷新（``_task_done`` 里的 ``refresh()``）会被忙态挡下。
             # 这里改走轻量状态刷新而不是再起一个「刷新」任务：窗口保持空闲，只重读
@@ -2071,10 +2088,20 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
     # 列表与详情
     # ------------------------------------------------------------------ #
     def refresh(self) -> None:
+        """重新读取实例注册信息，并按当前工作目录配置重算每个实例的归属目录。"""
         if self._busy:
             self._refresh_pending = True
             return
+        self._list_pending = False
         self._start("刷新", self._load)
+
+    def _on_reload_distros(self) -> None:
+        """「更新列表」：手动重读注册信息；重操作进行中只提示待刷新。"""
+        if self._busy:
+            self._refresh_pending = True
+            self.set_page_status("distros", "已有任务在执行；结束后自动刷新，也可稍后点「更新列表」")
+            return
+        self.refresh()
 
     def _load(self, _cancel: threading.Event) -> str:
         env = cli._build_environment()
