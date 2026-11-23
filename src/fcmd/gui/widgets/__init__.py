@@ -85,6 +85,7 @@ from fcmd.gui.widgets.text import (
     ElidedLabel,
     HintLabel,
     MonoLabel,
+    SectionHeader,
     SectionTitle,
     StatusTag,
     ToneLabelMixin,
@@ -92,7 +93,6 @@ from fcmd.gui.widgets.text import (
     hint_label,
     mono_font,
     mono_label,
-    section_header,
     value_label,
 )
 
@@ -128,6 +128,7 @@ __all__ = [
     "ProgressRow",
     "RowDetailMixin",
     "RowListWidget",
+    "SectionHeader",
     "SectionTitle",
     "SegmentBar",
     "SelectionRow",
@@ -155,7 +156,6 @@ __all__ = [
     "mono_font",
     "mono_label",
     "pill_tabs",
-    "section_header",
     "segment_band",
     "segment_fill",
     "set_button_icon",

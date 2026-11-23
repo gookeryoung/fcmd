@@ -13,6 +13,7 @@ __all__ = [
     "ElidedLabel",
     "HintLabel",
     "MonoLabel",
+    "SectionHeader",
     "SectionTitle",
     "StatusTag",
     "ToneLabelMixin",
@@ -20,7 +21,6 @@ __all__ = [
     "hint_label",
     "mono_font",
     "mono_label",
-    "section_header",
     "value_label",
 ]
 
@@ -148,7 +148,7 @@ class SectionTitle(QLabel):  # pragma: no cover - Qt 控件
     """分节标题标签：固定 ``SectionTitle`` objectName，避免各处手写。
 
     页面标题行、卡片内小节、对话框分组共用同一套字号 / 颜色；需要右侧状态 /
-    动作时用 :func:`section_header` 或直接把它加进自己的 ``QHBoxLayout``。
+    动作时用 :class:`SectionHeader`。
     """
 
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
@@ -156,20 +156,27 @@ class SectionTitle(QLabel):  # pragma: no cover - Qt 控件
         self.setObjectName("SectionTitle")
 
 
-def section_header(title: str, parent: QWidget | None = None) -> tuple[QHBoxLayout, SectionTitle]:
-    """卡片内的分节标题行：``SectionTitle`` 标签 + 弹性空白。
+class SectionHeader(QWidget):  # pragma: no cover - Qt 控件
+    """分节标题行：``SectionTitle`` + 弹性空白 + 右侧动作区。
 
-    返回 ``(布局, 标题标签)``，调用方把布局加进 ``Card.body`` 后继续往布局右侧
-    追加状态 / 动作控件。与直接使用 ``Card`` 标题的区别是保留 ``SectionTitle``
-    的标题字号，避免改变既有卡片的视觉层级。
+    直接 ``card.body.addWidget(header)``，再用 :meth:`add_action` 追加状态 / 动作控件；
+    比原来的 ``(布局, 标签)`` 二元组更好组合，也避免调用方把布局挂到错误的父级。
     """
-    header = QHBoxLayout()
-    header.setContentsMargins(0, 0, 0, 0)
-    header.setSpacing(8)
-    label = SectionTitle(title, parent)
-    header.addWidget(label)
-    header.addStretch(1)
-    return header, label
+
+    def __init__(self, title: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        self.title = SectionTitle(title, self)
+        row.addWidget(self.title)
+        row.addStretch(1)
+        self._row = row
+
+    def add_action(self, widget: QWidget, stretch: int = 0) -> QWidget:
+        """把状态 / 动作控件追加到标题右侧；``stretch`` 传给布局（输入框常用 1）。"""
+        self._row.addWidget(widget, stretch)
+        return widget
 
 
 class ElidedLabel(ToneLabelMixin, QLabel):  # pragma: no cover - Qt 控件

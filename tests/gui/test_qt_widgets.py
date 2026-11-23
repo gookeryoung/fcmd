@@ -59,6 +59,7 @@ from fcmd.gui.widgets import (
     ProgressRow,
     RowDetailMixin,
     RowListWidget,
+    SectionHeader,
     SectionTitle,
     SegmentBar,
     SelectionRow,
@@ -72,7 +73,6 @@ from fcmd.gui.widgets import (
     link_button,
     mono_label,
     pill_tabs,
-    section_header,
     segment_band,
     segment_fill,
     set_button_kind,
@@ -548,11 +548,14 @@ def test_collapsible_set_title_updates_toggle() -> None:
 def test_section_header_keeps_section_title_contract() -> None:
     """分节标题继续使用 SectionTitle，右侧留给状态 / 动作控件。"""
     card = Card()
-    header, label = section_header("系统信息", card)
+    header = SectionHeader("系统信息", card)
+    label = header.title
     try:
         assert label.text() == "系统信息"
         assert label.objectName() == "SectionTitle"
-        assert header.count() == 2
+        assert header.layout().count() == 2  # 标题 + stretch
+        header.add_action(button("动作"))
+        assert header.layout().count() == 3
     finally:
         card.deleteLater()
 
@@ -943,18 +946,19 @@ def test_button_attaches_shared_icon_automatically() -> None:
 
 
 def test_section_title_and_header_share_object_name() -> None:
-    """分节标题固定 ``SectionTitle``；section_header 返回同一子类并自带弹性空白。"""
+    """分节标题固定 ``SectionTitle``；SectionHeader 自带弹性空白与动作区。"""
     title = SectionTitle("小节")
-    header, label = section_header("小节")
+    header = SectionHeader("小节")
+    label = header.title
     try:
         assert title.objectName() == "SectionTitle"
         assert isinstance(label, SectionTitle)
         assert label.objectName() == "SectionTitle"
         assert label.text() == "小节"
-        assert header.count() == 2  # 标题 + stretch
+        assert header.layout().count() == 2  # 标题 + stretch
     finally:
         title.deleteLater()
-        label.deleteLater()
+        header.deleteLater()
 
 
 def test_tone_label_mixin_and_factory_subclasses() -> None:

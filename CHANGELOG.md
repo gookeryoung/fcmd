@@ -7,6 +7,9 @@
 
 ### 变更
 
+- 分节标题助手 `section_header()` 改为 `SectionHeader` 控件：标题 + 弹性空白 +
+  `add_action()`，调用方直接 `addWidget` 到卡片正文；llmw 性能测试与概览页
+  同步替换，不再手工拼布局再 `addLayout`。
 - 按钮图标的 `set_icon_name()` 支持 `size`，并把尺寸纳入幂等判断；行卡展开 / 复制 /
   `DiskAddTile` / `SidebarActionButton` 改走 mixin 方法，不再直接调 `icons.set_icon`。
 - `filescanw` 改成侧边栏分页（与 `wslmanw` / `llmw` 同构）：扫描 / 结果 / 规则三页

@@ -49,12 +49,12 @@ from fcmd.gui.widgets import (
     FormGrid,
     PageScroll,
     ProgressRow,
+    SectionHeader,
     button,
     hint_label,
     link_button,
     make_table,
     make_table_item,
-    section_header,
 )
 from fcmd.gui.workers import submit
 
@@ -143,14 +143,15 @@ class BenchDialog(QDialog):  # pragma: no cover - Qt 控件
     def _build_target(self) -> Card:
         """被测服务：与页面卡片一致，标题行右侧放选择框与刷新入口。"""
         card = Card(parent=self)
-        header, self._target_title = section_header("测试目标", card)
+        header = SectionHeader("测试目标", card)
+        self._target_title = header.title
         self._target_combo = QComboBox(card)
         self._target_combo.setMinimumWidth(320)
         self._refresh_services_button = link_button("刷新服务", tooltip="重新读取已登记服务")
         self._refresh_services_button.clicked.connect(self.state.refresh_services)
-        header.addWidget(self._target_combo, 1)
-        header.addWidget(self._refresh_services_button)
-        card.body.addLayout(header)
+        header.add_action(self._target_combo, 1)
+        header.add_action(self._refresh_services_button)
+        card.body.addWidget(header)
         self._target_hint = hint_label("", wrap=True)
         card.body.addWidget(self._target_hint)
         return card
@@ -232,11 +233,12 @@ class BenchDialog(QDialog):  # pragma: no cover - Qt 控件
 
     def _build_results(self) -> Card:
         card = Card(parent=self)
-        header, self._results_title = section_header("测试结果", card)
+        header = SectionHeader("测试结果", card)
+        self._results_title = header.title
         self._bench_progress = ProgressRow("选择场景后点击「开始测试」", show_bar=False, parent=card)
         self._bench_status = self._bench_progress.label
-        header.addWidget(self._bench_progress)
-        card.body.addLayout(header)
+        header.add_action(self._bench_progress)
+        card.body.addWidget(header)
 
         self._bench_table = make_table(
             RESULT_COLUMNS,
