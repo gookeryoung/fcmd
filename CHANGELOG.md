@@ -30,6 +30,12 @@
   `FCMD_HOME` 指向临时目录），并拦截 `subprocess.run` / `Popen` / `os.startfile` /
   `QDesktopServices.openUrl`，跑测试不再碰真实 WSL、终端或 IDE；新增
   `tests/apps/wslman/test_wslman_hermetic.py` 自测这套替身。
+- `wslmanw` 镜像页筛选精简为四个互不重叠的口径（全部 / 可下载 / 已安装 / 已备份），
+  去掉只是「可下载」取反的「仅安装」；每个胶囊补 tooltip，状态行增加「已备份 N」，
+  行内「已安装 / 已备份 / 已下载 / sha256」胶囊与详情区都写清含义（已备份 = 备份目录里
+  有同名导出包）。
+- `wslmanw` 实例页新增「备份」（`archive` 图标）：一键导出到
+  `${工作目录}/backup/<实例>.tar`，覆盖前确认；完成后镜像行的「已备份」胶囊立即更新。
 - `wslmanw`「迁移 SSH 文件」的状态持久化到 `wslmanw.json` 的 `distro_ssh_status`：
   再次打开配置对话框直接回显上次扫描的标签 / 摘要 / 实例侧现状，不再为看一眼状态去
   启动实例或重扫来源（文件清单仍要求重新扫描，迁移按钮在回显态下禁用）；
