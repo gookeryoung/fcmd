@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from fcmd.gui import icons as _icons
 from fcmd.gui.widgets.buttons import ButtonStateMixin, button, confirm
 from fcmd.gui.widgets.cards import Card
+from fcmd.gui.widgets.forms import PathField
 from fcmd.gui.widgets.metrics import ProgressBar
 from fcmd.gui.widgets.text import ElidedLabel, StatusTag, hint_label
 from fcmd.shared.formatting import format_bytes
@@ -39,6 +40,7 @@ __all__ = [
     "DiskGrid",
     "DiskLocation",
     "DiskTile",
+    "PathPairCard",
     "StorageCard",
     "StorageRoots",
     "default_disk_locations",
@@ -61,6 +63,8 @@ class DiskLocation:
     primary: bool = False
     path_text: str = ""
     primary_label: str = "主目录"
+    meta: str = ""
+    """副标题（文件系统 / 逻辑说明）；空串时回落到 ``fstype`` 或「本地磁盘」。"""
 
     @property
     def used(self) -> int:
@@ -92,6 +96,7 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
         *,
         can_remove: bool,
         change_text: str = "",
+        show_primary: bool = True,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -103,17 +108,24 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(6)
-        layout.addLayout(self._build_header(location))
+        layout.addLayout(self._build_header(location, show_primary=show_primary))
         path = ElidedLabel(location.display_text, parent=self)
         path.setObjectName("DiskPath")
         path.setToolTip(str(location.path))
         layout.addWidget(path)
         layout.addWidget(self._build_usage(location))
-        layout.addLayout(self._build_actions(location, can_remove=can_remove, change_text=change_text))
+        layout.addLayout(
+            self._build_actions(
+                location,
+                can_remove=can_remove,
+                change_text=change_text,
+                show_primary=show_primary,
+            )
+        )
         layout.addStretch(1)
 
-    def _build_header(self, location: DiskLocation) -> QHBoxLayout:
-        """标题行：硬盘图标 + 盘符 / 挂载点 + 文件系统 + 主目录标记。"""
+    def _build_header(self, location: DiskLocation, *, show_primary: bool = True) -> QHBoxLayout:
+        """标题行：硬盘图标 + 盘符 / 挂载点 + 文件系统 + 主目录标记（可关）。"""
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
@@ -128,11 +140,11 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
         drive = QLabel(location.label, self)
         drive.setObjectName("DiskDrive")
         row.addWidget(drive)
-        meta = QLabel(location.fstype or "本地磁盘", self)
+        meta = QLabel(location.meta or location.fstype or "本地磁盘", self)
         meta.setObjectName("DiskMeta")
         row.addWidget(meta)
         row.addStretch(1)
-        if location.primary:
+        if show_primary and location.primary:
             row.addWidget(StatusTag(location.primary_label, tone="accent", parent=self))
         return row
 
@@ -159,8 +171,15 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
             return "无法读取磁盘容量"
         return f"剩余 {format_bytes(location.free)} / 共 {format_bytes(location.total)}"
 
-    def _build_actions(self, location: DiskLocation, *, can_remove: bool, change_text: str = "") -> QHBoxLayout:
-        """动作行：更改（可选）/ 打开 / 设为主目录 / 移除。"""
+    def _build_actions(
+        self,
+        location: DiskLocation,
+        *,
+        can_remove: bool,
+        change_text: str = "",
+        show_primary: bool = True,
+    ) -> QHBoxLayout:
+        """动作行：更改（可选）/ 打开 / 设为主目录（可关）/ 移除。"""
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 0)
         row.setSpacing(6)
@@ -172,7 +191,7 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
         open_button = button("打开", kind="ghost", icon="folder")
         open_button.clicked.connect(lambda: self.openRequested.emit(str(location.path)))
         row.addWidget(open_button)
-        if not location.primary:
+        if show_primary and not location.primary:
             primary_button = button("设为主目录", kind="ghost", icon="check")
             primary_button.setToolTip("写入 / 下载等默认落到这个目录")
             primary_button.clicked.connect(lambda: self.primaryRequested.emit(str(location.path)))
@@ -202,7 +221,9 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
     """目录卡片网格：默认最多三列并排，超出后换行；末尾是「添加」卡片。
 
     ``add_text=None`` 时不出「添加」卡片（单目录、由卡片自带「更改」按钮的场景用）；
-    ``change_text`` 给卡片的动作行加一个「更改」按钮（排在「打开」之前）。
+    ``change_text`` 给卡片的动作行加一个「更改」按钮（排在「打开」之前）；
+    ``show_primary=False`` 时不显示主目录胶囊与「设为主目录」（目录地位平等的场景，
+    如扫描目录）。
     """
 
     addRequested = Signal()
@@ -211,7 +232,7 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
     removeRequested = Signal(str)
     primaryRequested = Signal(str)
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - 复用组件的可选外观参数成组出现
         self,
         parent: QWidget | None = None,
         *,
@@ -219,12 +240,17 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
         change_text: str = "",
         max_columns: int = _MAX_COLUMNS,
         min_count: int = 1,
+        max_count: int = 0,
+        show_primary: bool = True,
     ) -> None:
         super().__init__(parent)
         self._add_text = add_text
         self._change_text = change_text
+        self._show_primary = show_primary
         self._max_columns = max(max_columns, 1)
         self._min_count = max(min_count, 0)
+        self._max_count = max(max_count, 0)
+        """允许的最大目录数；``0`` 表示不限。达到上限后不再显示「添加」卡片。"""
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
@@ -241,13 +267,20 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
         can_remove = len(locations) > self._min_count
         tiles: list[QWidget] = []
         for location in locations:
-            tile = DiskTile(location, can_remove=can_remove, change_text=self._change_text, parent=self)
+            tile = DiskTile(
+                location,
+                can_remove=can_remove,
+                change_text=self._change_text,
+                show_primary=self._show_primary,
+                parent=self,
+            )
             tile.openRequested.connect(self.openRequested.emit)
             tile.changeRequested.connect(self.changeRequested.emit)
             tile.removeRequested.connect(self.removeRequested.emit)
             tile.primaryRequested.connect(self.primaryRequested.emit)
             tiles.append(tile)
-        if self._add_text is not None:
+        can_add = self._add_text is not None and (self._max_count <= 0 or len(locations) < self._max_count)
+        if can_add and self._add_text is not None:
             add_tile = DiskAddTile(self._add_text, self)
             add_tile.clicked.connect(self.addRequested.emit)
             tiles.append(add_tile)
@@ -261,6 +294,64 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
             spacer = QWidget(self)
             spacer.setMinimumHeight(1)
             self._grid.addWidget(spacer, index // columns, index % columns)
+
+
+class PathPairCard(Card):  # pragma: no cover - Qt 控件
+    """成对目录卡片：左侧 / 右侧两行路径 + 「交换左右」，用于比较 / 同步 / 迁移。
+
+    与 :class:`StorageCard` 的分工：多目录管理需要磁盘容量与主目录语义时用
+    StorageCard；只需要两个对等目录、且希望保持紧凑表单行的场景用本类。
+    字段本身复用 :class:`~fcmd.gui.widgets.forms.PathField`，调用方可继续用
+    ``card.left_field`` / ``card.right_field`` 读写路径与提示。
+    """
+
+    changed = Signal(str, str)
+
+    def __init__(  # noqa: PLR0913 - 成对目录的标签 / 标题都是展示选项
+        self,
+        left: str = "",
+        right: str = "",
+        *,
+        title: str = "文件夹对",
+        left_label: str = "左侧：",
+        right_label: str = "右侧：",
+        swap_text: str = "交换左右",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(title, parent)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(4)
+        self.left_field = PathField(value=left, placeholder="选择文件夹", title="选择文件夹", parent=self)
+        self.right_field = PathField(value=right, placeholder="选择文件夹", title="选择文件夹", parent=self)
+        self.left_field.edit.textChanged.connect(self._emit_changed)
+        self.right_field.edit.textChanged.connect(self._emit_changed)
+        grid.addWidget(QLabel(left_label, self), 0, 0)
+        grid.addWidget(self.left_field, 0, 1)
+        grid.addWidget(QLabel(right_label, self), 1, 0)
+        grid.addWidget(self.right_field, 1, 1)
+        self.swap_button = button(swap_text)
+        self.swap_button.clicked.connect(self.swap)
+        grid.addWidget(self.swap_button, 0, 2, 2, 1, Qt.AlignmentFlag.AlignVCenter)
+        grid.setColumnStretch(1, 1)
+        self.body.addLayout(grid)
+
+    def sides(self) -> tuple[str, str]:
+        """当前左右目录（已去首尾空白）。"""
+        return self.left_field.value(), self.right_field.value()
+
+    def set_sides(self, left: str, right: str) -> None:
+        """整体写入左右目录（不触发额外业务动作）。"""
+        self.left_field.set_value(left)
+        self.right_field.set_value(right)
+
+    def swap(self) -> None:
+        """交换左右目录（textChanged 会各发一次 changed）。"""
+        left, right = self.sides()
+        self.set_sides(right, left)
+
+    def _emit_changed(self, _text: str = "") -> None:
+        self.changed.emit(*self.sides())
 
 
 class StorageRoots:
@@ -325,8 +416,18 @@ class StorageRoots:
         return True
 
 
-def default_disk_locations(roots: Sequence[Path], *, primary_label: str = "主目录") -> list[DiskLocation]:
-    """默认容量探测：盘符 / 挂载点 + ``shutil.disk_usage``；应用可覆盖以显示文件系统。"""
+def default_disk_locations(
+    roots: Sequence[Path],
+    *,
+    primary_label: str = "主目录",
+    labels: Sequence[str] = (),
+    metas: Sequence[str] = (),
+) -> list[DiskLocation]:
+    """默认容量探测：盘符 / 挂载点 + ``shutil.disk_usage``；应用可覆盖以显示文件系统。
+
+    ``labels`` / ``metas`` 按目录下标覆盖卡片标题与副标题，用于「左目录 / 右目录」
+    这类逻辑分组；未给出时沿用盘符 / 挂载点。
+    """
     locations: list[DiskLocation] = []
     for index, path in enumerate(roots):
         probe = path
@@ -339,10 +440,14 @@ def default_disk_locations(roots: Sequence[Path], *, primary_label: str = "主�
         except OSError:
             pass
         anchor = path.drive or path.anchor or str(path.parent)
+        anchor = anchor.rstrip("/") or anchor
+        label = labels[index] if index < len(labels) and labels[index] else anchor
+        meta = metas[index] if index < len(metas) and metas[index] else (anchor if label != anchor else "")
         locations.append(
             DiskLocation(
                 path=path,
-                label=anchor.rstrip("/") or anchor,
+                label=label,
+                meta=meta,
                 total=total,
                 free=free,
                 exists=path.is_dir(),
@@ -357,7 +462,17 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
     """可复用的「多存储目录」设置卡：磁盘网格 + 添加 / 移除 / 设为主目录。
 
     宿主提供初始目录列表与 ``locations`` 映射（默认用容量探测）；任何增删 /
-    主目录切换只改组件内的 :class:`StorageRoots` 并发 ``changed``，由宿主负责落盘。
+    更改 / 主目录切换只改组件内的 :class:`StorageRoots` 并发 ``changed``，由宿主
+    负责落盘。三种常见用法：
+
+    - **单目录**：``add_text=None``、``min_count=1``、``max_count=1``、
+      ``show_primary=False``、``change_text="更改"``；
+    - **多目录 + 主目录**（llmw 模型目录 / wslman 工作目录）：默认配置；
+    - **多目录平权**（filescan 扫描目录）：``show_primary=False``，可设 ``max_count``；
+    - **成对目录**（左右比较 / 同步）且要紧凑表单行时用 :class:`PathPairCard`。
+
+    ``labels`` / ``metas`` 可按下标覆盖卡片标题与副标题（如「左目录 / 右目录」），
+    达到 ``max_count`` 后不再显示「添加」卡片。
     """
 
     changed = Signal(object)
@@ -369,27 +484,50 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
         *,
         title: str = "存储",
         hint: str = "",
-        add_text: str = "添加目录",
+        add_text: str | None = "添加目录",
+        change_text: str = "",
         primary_label: str = "主目录",
         dialog_title: str = "添加目录",
         remove_title: str = "移除目录",
         note: str = "",
         min_count: int = 1,
+        max_count: int = 0,
+        labels: Sequence[str] = (),
+        metas: Sequence[str] = (),
+        show_primary: bool = True,
         locations: Callable[[Sequence[Path]], list[DiskLocation]] | None = None,
         open_path: Callable[[Path], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(title, parent)
         self._roots = StorageRoots([Path(str(item)) for item in roots], min_count=min_count)
-        self._locations = locations or (lambda items: default_disk_locations(items, primary_label=primary_label))
+        self._primary_label = primary_label
+        self._labels = tuple(labels)
+        self._metas = tuple(metas)
+        self._locations = locations or (
+            lambda items: default_disk_locations(
+                items,
+                primary_label=primary_label,
+                labels=self._labels,
+                metas=self._metas,
+            )
+        )
         self._open_path = open_path or (lambda path: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
         self._dialog_title = dialog_title
         self._remove_title = remove_title
         if hint:
             # 添加入口只保留网格末尾的虚线卡片（Steam 式），不再在标题行重复放按钮。
             self.body.addWidget(hint_label(hint, wrap=False))
-        self.grid = DiskGrid(self, add_text=add_text, min_count=min_count)
+        self.grid = DiskGrid(
+            self,
+            add_text=add_text,
+            change_text=change_text,
+            min_count=min_count,
+            max_count=max_count,
+            show_primary=show_primary,
+        )
         self.grid.addRequested.connect(self._add)
+        self.grid.changeRequested.connect(self._change)
         self.grid.openRequested.connect(self._open)
         self.grid.removeRequested.connect(self._remove)
         self.grid.primaryRequested.connect(self._make_primary)
@@ -425,6 +563,35 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 动作
     # ------------------------------------------------------------------ #
+    def swap(self, first: int = 0, second: int = 1) -> bool:
+        """交换两个目录的位置（双目录 / 手动排序场景）；越界或相同时返回 ``False``。"""
+        roots = self._roots.paths
+        if first == second or not (0 <= first < len(roots) and 0 <= second < len(roots)):
+            return False
+        roots[first], roots[second] = roots[second], roots[first]
+        self._roots.set_roots(roots)
+        self._notify("已交换目录位置")
+        return True
+
+    def _change(self, path: str) -> None:
+        """把某个目录替换为新选目录（单目录卡片的「更改」走这里）。"""
+        roots = self._roots.paths
+        target = Path(str(path)).expanduser()
+        index = next((i for i, item in enumerate(roots) if self._roots._key(item) == self._roots._key(target)), -1)
+        if index < 0:
+            self.message.emit(f"目录不在列表中：{path}")
+            return
+        chosen = QFileDialog.getExistingDirectory(self, self._dialog_title, str(roots[index]))
+        if not chosen:
+            return
+        new_path = Path(chosen).expanduser()
+        if any(i != index and self._roots._key(item) == self._roots._key(new_path) for i, item in enumerate(roots)):
+            self.message.emit(f"目录已在列表中：{chosen}")
+            return
+        roots[index] = new_path
+        self._roots.set_roots(roots)
+        self._notify(f"已更改目录：{chosen}")
+
     def _add(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, self._dialog_title, str(Path.home()))
         if not chosen:

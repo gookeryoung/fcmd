@@ -13,7 +13,15 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from fcmd.gui.widgets import DiskLocation, DiskTile, StorageCard, StorageRoots
+from fcmd.gui.widgets import (
+    DiskGrid,
+    DiskLocation,
+    DiskTile,
+    PathPairCard,
+    StorageCard,
+    StorageRoots,
+    default_disk_locations,
+)
 
 
 def test_storage_roots_add_remove_and_primary(tmp_path: Path) -> None:
@@ -77,5 +85,122 @@ def test_storage_card_can_clear_last_root_when_host_allows(monkeypatch: pytest.M
         card._remove(str(Path("D:/models")))
         app.processEvents()
         assert card.roots() == []
+    finally:
+        card.deleteLater()
+
+
+def test_storage_card_can_hide_primary_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``show_primary=False``：目录地位平等，不出主目录胶囊与「设为主目录」。"""
+    from PySide6.QtWidgets import QLabel
+
+    from fcmd.gui.widgets import storage as storage_module
+
+    # 移除动作会弹确认框；离屏环境下必须打桩，否则模态框会把测试挂住。
+    monkeypatch.setattr(storage_module, "confirm", lambda *_args, **_kwargs: True)
+    app = QApplication.instance() or QApplication([])
+    card = StorageCard([Path("D:/scan-a"), Path("E:/scan-b")], show_primary=False, min_count=0)
+    try:
+        app.processEvents()
+        buttons = [child.text() for child in card.findChildren(QPushButton)]
+        assert "设为主目录" not in buttons
+        assert buttons.count("移除") == 2
+        assert [child.text() for child in card.findChildren(QLabel) if child.text() == "主目录"] == []
+        # 移除到空列表不受 min_count 限制（宿主自己决定空列表语义）。
+        card._remove(str(Path("D:/scan-a")))
+        assert card.roots() == [Path("E:/scan-b")]
+    finally:
+        card.deleteLater()
+
+
+def test_default_disk_locations_override_labels_and_meta(tmp_path: Path) -> None:
+    """labels / metas 按目录下标覆盖卡片标题与副标题，用于左 / 右逻辑分组。"""
+    locations = default_disk_locations(
+        [tmp_path / "a", tmp_path / "b"],
+        labels=("左目录", "右目录"),
+        metas=("L:", "R:"),
+    )
+    assert [(item.label, item.meta) for item in locations] == [("左目录", "L:"), ("右目录", "R:")]
+    assert locations[0].primary is True
+    assert locations[1].primary is False
+
+
+def test_disk_grid_max_count_hides_add_tile() -> None:
+    """达到 max_count 后不再显示「添加目录」卡片。"""
+    from PySide6.QtWidgets import QPushButton
+
+    app = QApplication.instance() or QApplication([])
+    grid = DiskGrid(add_text="添加目录", max_count=2, min_count=0)
+    try:
+        grid.set_locations(
+            [
+                DiskLocation(Path("D:/a"), "D:", primary=True),
+                DiskLocation(Path("E:/b"), "E:"),
+            ]
+        )
+        app.processEvents()
+        add = [child for child in grid.findChildren(QPushButton) if child.objectName() == "DiskAdd"]
+        assert add == []
+        # 移除一个后又允许添加。
+        grid.set_locations([DiskLocation(Path("D:/a"), "D:", primary=True)])
+        app.processEvents()
+        add = [child for child in grid.findChildren(QPushButton) if child.objectName() == "DiskAdd"]
+        assert len(add) == 1
+    finally:
+        grid.deleteLater()
+
+
+def test_storage_card_change_replaces_root_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    """单目录「更改」：原位置替换目录，不改变顺序（主目录仍是首个）。"""
+    from fcmd.gui.widgets import storage as storage_module
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(storage_module.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "E:/new")
+    card = StorageCard(
+        [Path("D:/old"), Path("F:/keep")],
+        add_text=None,
+        min_count=1,
+        max_count=2,
+        show_primary=False,
+        change_text="更改",
+    )
+    changes: list[object] = []
+    card.changed.connect(changes.append)
+    try:
+        app.processEvents()
+        card._change("D:/old")
+        assert card.roots() == [Path("E:/new"), Path("F:/keep")]
+        assert changes and [Path(str(item)) for item in changes[-1]] == card.roots()  # type: ignore[union-attr]
+    finally:
+        card.deleteLater()
+
+
+def test_storage_card_swap_reorders_roots() -> None:
+    """swap() 交换两个目录位置并发 changed（双目录 / 手动排序复用）。"""
+    app = QApplication.instance() or QApplication([])
+    card = StorageCard([Path("D:/left"), Path("E:/right")], add_text=None, min_count=2, show_primary=False)
+    try:
+        app.processEvents()
+        assert card.swap() is True
+        assert card.roots() == [Path("E:/right"), Path("D:/left")]
+        assert card.swap(0, 5) is False
+    finally:
+        card.deleteLater()
+
+
+def test_path_pair_card_reads_swaps_and_emits() -> None:
+    """成对目录卡片：左右字段、整体读写、交换与 changed 信号。"""
+    app = QApplication.instance() or QApplication([])
+    card = PathPairCard("L", "R")
+    seen: list[tuple[str, str]] = []
+    card.changed.connect(lambda left, right: seen.append((left, right)))
+    try:
+        app.processEvents()
+        assert card.sides() == ("L", "R")
+        card.swap()
+        assert card.sides() == ("R", "L")
+        assert seen[-1] == ("R", "L")  # 交换后两次 textChanged 的最终值
+        card.set_sides("A", "B")
+        assert card.sides() == ("A", "B")
+        assert seen[-1] == ("A", "B")
     finally:
         card.deleteLater()

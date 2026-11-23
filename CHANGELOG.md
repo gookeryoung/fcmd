@@ -7,6 +7,15 @@
 
 ### 变更
 
+- 存储目录组件通用化：`StorageCard` 支持单目录 / 多目录 / 平权目录三种配方
+  （`add_text` 可为 `None`、`max_count` 上限、`labels` / `metas` 覆盖标题与副标题），
+  补齐「更改」目录、`swap()` 交换与达到上限隐藏添加入口；新增 `PathPairCard`
+  统一左右成对目录（`filesyncw` 已复用，保留原 `_left_row` / `_right_row` 绑定）。
+  `filescanw` 扫描目录也改走 `StorageCard`（平权目录配方），删除旧的列表 + 三按钮区。
+- `filescanw`「扫描目录」改用共享 `StorageCard`（与 `wslmanw` 工作目录 / `llmw` 存储
+  同一套磁盘卡网格）：目录以卡片列出（路径 + 容量 + 打开 / 移除），末尾虚线卡添加目录，
+  标题行保留「清空」；`StorageCard` 新增 `show_primary` 选项，扫描目录没有主目录概念时
+  隐藏主目录胶囊与「设为主目录」，宿主不必再自己拼列表 + 增删按钮。
 - 分节标题助手 `section_header()` 改为 `SectionHeader` 控件：标题 + 弹性空白 +
   `add_action()`，调用方直接 `addWidget` 到卡片正文；llmw 性能测试与概览页
   同步替换，不再手工拼布局再 `addLayout`。

@@ -71,7 +71,7 @@ from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
 from fcmd.gui.widgets import (
     Card,
-    PathField,
+    PathPairCard,
     button,
     confirm,
     make_table,
@@ -175,32 +175,13 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.log("选择左右目录后点击「比较」，确认结果与计划再执行「同步」。")
 
     def _build_folders_card(self) -> Card:
-        """左右目录两行，右侧「交换左右」纵向居中。"""
-        card = Card("文件夹对", self)
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(4)
-        self._left_row = PathField(
-            value=self._settings.left,
-            placeholder="选择文件夹",
-            title="选择文件夹",
-            parent=card,
-        )
-        self._right_row = PathField(
-            value=self._settings.right,
-            placeholder="选择文件夹",
-            title="选择文件夹",
-            parent=card,
-        )
-        grid.addWidget(QLabel("左侧：", card), 0, 0)
-        grid.addWidget(self._left_row, 0, 1)
-        grid.addWidget(QLabel("右侧：", card), 1, 0)
-        grid.addWidget(self._right_row, 1, 1)
-        self._swap_button = button("交换左右")
-        self._swap_button.clicked.connect(self._swap)
-        grid.addWidget(self._swap_button, 0, 2, 2, 1, Qt.AlignmentFlag.AlignVCenter)
-        grid.setColumnStretch(1, 1)
-        card.body.addLayout(grid)
+        """左右目录两行，右侧「交换左右」纵向居中（共享 ``PathPairCard``）。"""
+        card = PathPairCard(self._settings.left, self._settings.right, parent=self)
+        self._pair_card = card
+        # 兼容既有属性名：业务代码与测试继续用 _left_row / _right_row 读写路径。
+        self._left_row = card.left_field
+        self._right_row = card.right_field
+        self._swap_button = card.swap_button
         return card
 
     def _build_options_card(self) -> Card:
@@ -309,10 +290,8 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 交互
     # ------------------------------------------------------------------ #
     def _swap(self) -> None:
-        """交换左右目录。"""
-        left = self._left_row.value()
-        self._left_row.set_value(self._right_row.value())
-        self._right_row.set_value(left)
+        """交换左右目录（组件内完成，左右字段沿用原绑定）。"""
+        self._pair_card.swap()
 
     def _on_sync_mode_change(self, *_args: str) -> None:
         """切换同步模式后，用缓存结果即时重算计划动作列。"""
