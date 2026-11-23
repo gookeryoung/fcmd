@@ -834,9 +834,9 @@ def test_button_attaches_shared_icon_automatically() -> None:
     """公共按钮按文案自动挂图标；显式传空串可保持纯文字。"""
     refresh = button("刷新", kind="ghost")
     assert refresh.icon().isNull() is False
-    plain = button("取消")
+    plain = button("关于")
     assert plain.icon().isNull() is True
-    forced = button("取消", icon="trash")
+    forced = button("关于", icon="trash")
     assert forced.icon().isNull() is False
     disabled_icon = button("刷新", icon="")
     assert disabled_icon.icon().isNull() is True

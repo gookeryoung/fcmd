@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from fcmd.gui import icons
 from fcmd.gui import style as _qt_theme
@@ -76,8 +76,49 @@ def test_icon_for_text_maps_common_actions() -> None:
     # 「下载选中镜像」优先命中的是下载；只有镜像语境才用磁盘图标
     assert icons.icon_for_text("下载选中镜像") == "download"
     assert icons.icon_for_text("安装本地镜像…") == "disc"
-    assert icons.icon_for_text("取消") is None
+    # 实例管理补充的动作图标
+    assert icons.icon_for_text("重启") == "power"
+    assert icons.icon_for_text("配置") == "settings"
+    assert icons.icon_for_text("打开终端") == "terminal"
+    assert icons.icon_for_text("重命名") == "pencil"
+    assert icons.icon_for_text("迁移所选文件") == "transfer"
+    assert icons.icon_for_text("取消") == "x"
+    assert icons.icon_for_text("关闭") == "x"
+    assert icons.icon_for_text("关闭全部") == "stop"
     assert icons.icon_for_text("关于") is None
+
+
+def test_distro_icon_matches_common_distributions_with_generic_fallback() -> None:
+    """发行版图标：常见发行版按名称命中，识别不出的回落通用图标。"""
+    assert icons.distro_icon("Ubuntu-24.04") == "distro-ubuntu"
+    assert icons.distro_icon("ubuntu") == "distro-ubuntu"
+    assert icons.distro_icon("Debian") == "distro-debian"
+    assert icons.distro_icon("kali-linux") == "distro-kali"
+    assert icons.distro_icon("Alpine") == "distro-alpine"
+    assert icons.distro_icon("openSUSE-Tumbleweed") == "distro-opensuse"
+    assert icons.distro_icon("archlinux") == "distro-arch"
+    assert icons.distro_icon("FedoraLinux-42") == "distro-fedora"
+    # 兜底不为空：列表里不会出现空图标 / 问号。
+    assert icons.distro_icon("SomeRandomDistro") == "distro"
+    assert icons.distro_icon("") == "distro"
+    for name in ("distro", "distro-ubuntu", "distro-debian", "distro-kali", "distro-alpine", "distro-opensuse"):
+        assert name in icons.ICON_BODIES
+        assert icons.pixmap(name, size=16).isNull() is False
+
+
+def test_set_icon_can_render_on_labels() -> None:
+    """``set_icon`` 也支持没有 ``setIcon`` 的控件（发行版图标挂在 QLabel 上）。"""
+    app = QApplication.instance() or QApplication([])
+    _qt_theme.apply_theme(app, _guitheme.resolve_theme("dark-blue"))
+    label = QLabel()
+    try:
+        icons.set_icon(label, "distro-ubuntu", tone="accent")
+        assert label.property("fcmdIconName") == "distro-ubuntu"
+        assert label.pixmap().isNull() is False
+        icons.refresh_icons()
+        assert label.pixmap().isNull() is False
+    finally:
+        label.deleteLater()
 
 
 def _first_opaque_color(widget: QPushButton) -> str:

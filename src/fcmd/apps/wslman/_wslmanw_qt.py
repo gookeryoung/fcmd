@@ -185,6 +185,14 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.add_tag(self.state_tag)
         self.default_tag = StatusTag("默认", tone="accent", parent=self.header)
         self.add_tag(self.default_tag)
+        # 发行版图标：按实例名挑对应发行版，识别不出回落通用图标（不留空、不显示问号）。
+        # 与动作按钮同一套 ``icons`` 线图标，尺寸 / 色调跟随主题。
+        self.icon_label = QLabel(self.header)
+        self.icon_label.setObjectName("DistroIcon")
+        self.icon_label.setToolTip(distro.name)
+        self.icon_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.title_row.insertWidget(0, self.icon_label)
+        _qt_icons.set_icon(self.icon_label, _qt_icons.distro_icon(distro.name), tone="accent")
         # 对应的在线镜像（自定义导入 / 匹配不到时给「本地导入」）放在副标题行，
         # 跟版本同一排：状态胶囊也在副标题行尾，两行各自独立，窄窗口或大字体现
         # 也不会和「镜像 …」挤在一起。超长时右侧省略，完整文案走 tooltip。
@@ -339,7 +347,10 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.action = self._action_kind(entry)
         self.download_button: QPushButton | None = None
         if self.action:
-            self.download_button = button(self._action_text(), kind="primary")
+            # 「安装」不命中关键词（避免抢走「安装本地镜像」的磁盘图标），显式给下载图标。
+            self.download_button = button(
+                self._action_text(), kind="primary", icon="download" if self.action == "install" else None
+            )
             self.download_button.setToolTip(self._action_tooltip())
             self.download_button.clicked.connect(self._on_action)
             self.add_action(self.download_button)

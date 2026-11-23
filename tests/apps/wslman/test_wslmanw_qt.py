@@ -1334,6 +1334,9 @@ def test_image_row_actions_follow_state(home: Path, monkeypatch: pytest.MonkeyPa
         assert row_plain.download_button.text() == "下载"
         assert row_downloaded.download_button is not None
         assert row_downloaded.download_button.text() == "安装"
+        # 「安装」没有关键词命中，靠行内按钮显式给下载图标，不留下空图标。
+        assert _icon_name(row_downloaded.download_button) == "download"
+        assert _icon_name(row_plain.download_button) == "download"
         assert row_installed.download_button is None
 
         # 行内标签：已下载 / 已安装

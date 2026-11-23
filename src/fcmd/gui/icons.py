@@ -38,6 +38,7 @@ __all__ = [
     "ICON_BODIES",
     "ICON_SIZE",
     "default_color",
+    "distro_icon",
     "icon",
     "icon_for_text",
     "pixmap",
@@ -150,6 +151,41 @@ ICON_BODIES: dict[str, str] = {
         '<path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>'
     ),
     "stop": '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+    "power": (
+        # Lucide ``power``：常用于「重启」这类先断电再拉起的动作。
+        '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>'
+    ),
+    "terminal": ('<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>'),
+    "code": ('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
+    "bot": (
+        '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/>'
+        '<path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>'
+    ),
+    "pencil": (
+        '<path d="M21.17 6.81a1 1 0 0 0-3.98-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35'
+        'a.5.5 0 0 0 .62.63l4.36-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>'
+    ),
+    "check-square": ('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/>'),
+    "transfer": ('<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>'),
+    # 发行版图标：与上面的动作图标同一套线性描边风格，靠轮廓区分不同发行版；
+    # 识别不出的名称统一回落到 ``distro``，不留空、不显示问号。
+    "distro": ('<rect width="18" height="12" x="3" y="6" rx="2"/><path d="m7 11 2 2-2 2"/><path d="M13 15h4"/>'),
+    "distro-ubuntu": (
+        '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="5" r="1.4"/>'
+        '<circle cx="6" cy="15.5" r="1.4"/><circle cx="18" cy="15.5" r="1.4"/>'
+    ),
+    "distro-debian": (
+        '<path d="M12 21a9 9 0 1 1 9-9c0 3.6-2.6 6.5-6 6.9-2.7.4-5.2-1.1-5.9-3.7'
+        '-.6-2.3.6-4.7 2.9-5.4 1.9-.6 4 .3 4.8 2.2"/>'
+    ),
+    "distro-kali": ('<path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>'),
+    "distro-alpine": ('<path d="m2 20 6.5-11 3 5"/><path d="m9 20 6-10 7 10z"/>'),
+    "distro-opensuse": (
+        '<path d="M5 19c-1.5-1-2-2.5-2-4 0-5 4-9 9-9h2a5 5 0 0 1 5 5v1a6 6 0 0 1-6 6H8'
+        'a3 3 0 0 1-3-3z"/><circle cx="16.5" cy="9.5" r="1"/><path d="M17 12c1 .5 1.5 1.5 1.5 2.5"/>'
+    ),
+    "distro-arch": ('<path d="m3 21 9-18 9 18h-5l-4-8-4 8z"/>'),
+    "distro-fedora": ('<circle cx="12" cy="12" r="9"/><path d="M10 17V9a2 2 0 0 1 2-2h2.5"/><path d="M8 12h5.5"/>'),
     "send": (
         '<path d="M14.54 21.69a.5.5 0 0 0 .94-.02l6.5-19a.5.5 0 0 0-.64-.64l-19 6.5'
         'a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/>'
@@ -172,14 +208,22 @@ ICON_BODIES: dict[str, str] = {
 
 BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("新对话", "plus"),
+    ("打开终端", "terminal"),
     ("重新检测", "refresh"),
     ("重新扫描", "refresh"),
     ("重新加载", "refresh"),
+    ("开始初始化", "run"),
+    ("开始安装", "download"),
+    ("全不选", "x"),
+    ("全选", "check-square"),
+    ("更新列表", "refresh"),
     ("关闭全部", "stop"),
     ("刷新", "refresh"),
+    ("更新", "refresh"),
     ("保存", "save"),
     ("删除", "trash"),
     ("清空", "trash"),
+    ("清理", "trash"),
     ("下载", "download"),
     ("导入", "upload"),
     ("导出", "export"),
@@ -190,17 +234,25 @@ BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("目录", "folder"),
     ("启动", "run"),
     ("运行", "run"),
+    ("重启", "power"),
     ("停止", "stop"),
     ("发送", "send"),
     ("搜索", "search"),
     ("扫描", "scan"),
     ("检测", "scan"),
+    ("配置", "settings"),
+    ("重命名", "pencil"),
+    ("编辑", "pencil"),
+    ("迁移", "transfer"),
     ("新建", "plus"),
     ("添加", "plus"),
     ("复制", "copy"),
     ("转换", "convert"),
     ("量化", "convert"),
     ("重置", "reset"),
+    ("默认", "reset"),
+    ("取消", "x"),
+    ("关闭", "x"),
     ("确定", "check"),
     ("已启动", "check"),
     ("已转换", "check"),
@@ -215,6 +267,32 @@ def icon_for_text(text: str) -> str | None:
         if keyword in text:
             return name
     return None
+
+
+_DISTRO_ICON_HINTS: tuple[tuple[str, str], ...] = (
+    ("ubuntu", "distro-ubuntu"),
+    ("debian", "distro-debian"),
+    ("kali", "distro-kali"),
+    ("alpine", "distro-alpine"),
+    ("opensuse", "distro-opensuse"),
+    ("suse", "distro-opensuse"),
+    ("arch", "distro-arch"),
+    ("fedora", "distro-fedora"),
+)
+"""发行版名称关键词 → 图标名；按实例名做大小写无关的子串匹配。"""
+
+
+def distro_icon(name: str) -> str:
+    """按发行版名称挑图标（``Ubuntu-24.04`` / ``kali-linux`` 这类也命中）。
+
+    识别不出的发行版回落到通用 ``distro`` 图标：列表里不会出现空图标或问号，
+    用户仍能从名称文字确认是哪一个实例。
+    """
+    key = (name or "").casefold()
+    for hint, icon_name in _DISTRO_ICON_HINTS:
+        if hint in key:
+            return icon_name
+    return "distro"
 
 
 _SVG_TEMPLATE = (
@@ -310,11 +388,17 @@ def set_icon(widget: Any, name: str, *, size: int = ICON_SIZE, tone: str = "text
 
     图标是位图，主题切换后必须重新生成；``tone`` 决定它与哪类文字配色一致
     （主按钮 ``on_accent``、危险按钮 ``danger``、次要按钮 ``muted``）。
+    按钮类控件走 ``setIcon``；没有 ``setIcon`` 的控件（如 ``QLabel``）按图标设置
+    像素图，主题切换时同样由 :func:`refresh_icons` 重绘。
     """
     from PySide6.QtCore import QSize
 
-    widget.setIcon(icon(name, size=size, color=tone_color(tone)))
-    widget.setIconSize(QSize(size, size))
+    color = tone_color(tone)
+    if hasattr(widget, "setIcon"):
+        widget.setIcon(icon(name, size=size, color=color))
+        widget.setIconSize(QSize(size, size))
+    else:
+        widget.setPixmap(pixmap(name, size=size, color=color))
     widget.setProperty(ICON_NAME_PROPERTY, name)
     widget.setProperty(ICON_SIZE_PROPERTY, int(size))
     widget.setProperty(ICON_TONE_PROPERTY, tone)
