@@ -447,15 +447,33 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def _decode_output(raw: bytes | None) -> str:
+    """把子进程输出解码为文本。
+
+    ``wsl.exe`` 在 Windows 上输出 UTF-16LE（带 BOM 或隔字节 NUL），按 UTF-8 解码会
+    让读取线程抛 ``UnicodeDecodeError``、``stdout`` 变成 ``None``；这里先按 BOM 与
+    NUL 分布判定 UTF-16，其余按 UTF-8 容错解码。
+    """
+    if not raw:
+        return ""
+    if raw.startswith(codecs.BOM_UTF16_LE) or raw.startswith(codecs.BOM_UTF16_BE):
+        return raw.decode("utf-16", "replace")
+    if len(raw) >= 2 and raw[1] == 0:
+        return raw.decode("utf-16-le", "replace")
+    if len(raw) >= 2 and raw[0] == 0:
+        return raw.decode("utf-16-be", "replace")
+    return raw.decode("utf-8", "replace")
+
+
 def run_command(cmd: Sequence[str], timeout: float = 15.0, env: dict[str, str] | None = None) -> CommandResult:
     """执行外部命令并捕获输出；超时 / 不存在统一返回非零结果。"""
     try:
-        proc = subprocess.run(list(cmd), capture_output=True, text=True, timeout=timeout, check=False, env=env)
+        proc = subprocess.run(list(cmd), capture_output=True, timeout=timeout, check=False, env=env)
     except subprocess.TimeoutExpired:
         return CommandResult(-1, "", f"命令超时: {cmd[0]}")
     except OSError as exc:
         return CommandResult(-1, "", str(exc))
-    return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+    return CommandResult(proc.returncode, _decode_output(proc.stdout), _decode_output(proc.stderr))
 
 
 STREAM_CHUNK = 4096
