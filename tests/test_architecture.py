@@ -186,6 +186,21 @@ LEGACY_LARGE = {
 LINE_BUDGET = 800
 
 
+def test_qt_pages_excluded_from_coverage_and_typecheck() -> None:
+    """``apps/<app>/qt/`` 的 Qt 页面胶水必须同时从 coverage 与 pyrefly 排除。
+
+    ADR 0033 / 0034 约定 Qt 控件胶水不计覆盖率；ADR 0046 把页面迁入
+    ``apps/<app>/qt/`` 后，若只改 pyrefly 而漏改 ``.coveragerc``，会让整目录
+    计入覆盖率并拉低门禁（曾导致 3.14 覆盖门禁跌破阈值）。
+    """
+    root = PACKAGE.parent.parent
+    coveragerc = (root / ".coveragerc").read_text(encoding="utf-8")
+    omit_block = coveragerc.split("omit =", 1)[1].split("source", 1)[0]
+    assert "src/fcmd/apps/*/qt/*" in omit_block, ".coveragerc omit 缺少 apps/*/qt 排除（ADR 0046）"
+    pyrefly = (root / "pyrefly.toml").read_text(encoding="utf-8")
+    assert "src/fcmd/apps/*/qt/**" in pyrefly, "pyrefly.toml 缺少 apps/*/qt 排除（ADR 0046）"
+
+
 def test_new_modules_stay_within_line_budget() -> None:
     """新文件不超过 800 行；存量大文件只允许缩小，不允许新增白名单。"""
     oversized = sorted(

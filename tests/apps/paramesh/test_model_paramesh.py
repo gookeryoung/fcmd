@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -10,6 +12,7 @@ from fcmd.apps.paramesh._errors import ParameshError
 from fcmd.apps.paramesh._model import (
     canonical_payload_json,
     format_model_summary,
+    load_models,
     parse_models,
     select_model,
 )
@@ -222,3 +225,174 @@ def test_summary_mentions_geometry_and_tbd(model_text: Callable[..., str]) -> No
     assert "m1" in summary
     assert "外径" in summary
     assert "局部缺陷" in summary
+
+
+class TestModelValidationBranches:
+    """必填 / 形状 / 取值范围校验的其余分支（逐条拒绝）。"""
+
+    def test_top_level_shape_errors(self) -> None:
+        with pytest.raises(ParameshError, match="models 缺失"):
+            parse_models("schema: dynacalc-model/1\nmodels:\n")
+        with pytest.raises(ParameshError, match="models 必须是列表"):
+            parse_models("schema: dynacalc-model/1\nmodels: abc")
+        with pytest.raises(ParameshError, match="顶层必须是映射"):
+            parse_models("- 1")
+        with pytest.raises(ParameshError, match="models 不能为空"):
+            parse_models("schema: dynacalc-model/1\nmodels: []")
+        with pytest.raises(ParameshError, match="YAML 解析失败"):
+            parse_models("schema: [")
+
+    def test_geometry_missing_or_wrong_type(self, model_text: Callable[..., str]) -> None:
+        with pytest.raises(ParameshError, match="geometry 缺失"):
+            parse_models(model_text(geometry=None))
+        with pytest.raises(ParameshError, match="必须是映射"):
+            parse_models(model_text(geometry=[1]))
+
+    def test_model_id_errors(self, model_text: Callable[..., str]) -> None:
+        with pytest.raises(ParameshError, match="id 缺失"):
+            parse_models(model_text(id=None))
+        with pytest.raises(ParameshError, match="id 必须是文本"):
+            parse_models(model_text(id=123))
+        with pytest.raises(ParameshError, match="不允许 TBD"):
+            parse_models(model_text(id="TBD"))
+        with pytest.raises(ParameshError, match="不能为空"):
+            parse_models(model_text(id="  "))
+
+    def test_confidence_errors(self, model_text: Callable[..., str]) -> None:
+        with pytest.raises(ParameshError, match=r"confidence\.geometry 缺失"):
+            parse_models(model_text(confidence={"geometry": None}))
+        with pytest.raises(ParameshError, match="必须是文本枚举"):
+            parse_models(model_text(confidence={"geometry": 1}))
+        with pytest.raises(ParameshError, match="不允许 TBD"):
+            parse_models(model_text(confidence={"geometry": "TBD"}))
+        with pytest.raises(ParameshError, match="取值未知"):
+            parse_models(model_text(confidence={"geometry": "guess"}))
+
+    def test_confidence_unknown_domain_warns(self, model_text: Callable[..., str]) -> None:
+        model = parse_models(model_text(confidence={"thermal": "controlled"}))[0]
+        assert any("未知域" in warning for warning in model.warnings)
+
+    def test_numeric_field_errors(self, model_text: Callable[..., str]) -> None:
+        with pytest.raises(ParameshError, match="nominal 缺失"):
+            parse_models(model_text(geometry={"wall_thickness": {"nominal": None}}))
+        with pytest.raises(ParameshError, match="必须是数值或 TBD"):
+            parse_models(model_text(geometry={"outer_diameter": "abc"}))
+        with pytest.raises(ParameshError, match="必须是数值"):
+            parse_models(model_text(geometry={"outer_diameter": True}))
+        with pytest.raises(ParameshError, match="有限数值"):
+            parse_models(model_text(geometry={"outer_diameter": float("inf")}))
+
+    def test_circumferential_uniform_accepted(self, model_text: Callable[..., str]) -> None:
+        model = parse_models(
+            model_text(geometry={"wall_thickness": {"circumferential": {"kind": "uniform", "value": 9.9}}})
+        )[0]
+        assert model.circumferential_kind == "uniform"
+        assert model.circumferential_value == 9.9
+
+    def test_circumferential_polyline_errors(self, model_text: Callable[..., str]) -> None:
+        def _build(samples: list[Any]) -> str:
+            return model_text(
+                geometry={"wall_thickness": {"circumferential": {"kind": "polyline", "samples": samples}}}
+            )
+
+        with pytest.raises(ParameshError, match=r"\[0, 360\)"):
+            parse_models(_build([{"angle_deg": 400, "thickness": 9.8}, {"angle_deg": 410, "thickness": 9.9}]))
+        with pytest.raises(ParameshError, match="严格递增"):
+            parse_models(_build([{"angle_deg": 10, "thickness": 9.8}, {"angle_deg": 10, "thickness": 9.9}]))
+        with pytest.raises(ParameshError, match="至少需要 2 个点"):
+            parse_models(_build([{"angle_deg": 0, "thickness": 9.8}]))
+
+    def test_axis_tbd_is_accepted(self, model_text: Callable[..., str]) -> None:
+        model = parse_models(model_text(density_field={"axial": {"kind": "tbd"}}))[0]
+        assert model.end_loose_declared is False
+
+    def test_axis_polyline_errors(self, model_text: Callable[..., str]) -> None:
+        def _build(samples: list[Any]) -> str:
+            return model_text(density_field={"axial": {"kind": "polyline", "samples": samples}})
+
+        with pytest.raises(ParameshError, match="position 必须在 0–1 内"):
+            parse_models(_build([{"position": 2.0, "density": 1.6}, {"position": 1.0, "density": 1.6}]))
+        with pytest.raises(ParameshError, match="严格递增"):
+            parse_models(_build([{"position": 0.5, "density": 1.6}, {"position": 0.5, "density": 1.7}]))
+        with pytest.raises(ParameshError, match="至少需要 2 个点"):
+            parse_models(_build([{"position": 0.0, "density": 1.6}]))
+
+    def test_drawing_pass_errors(self, model_text: Callable[..., str]) -> None:
+        with pytest.raises(ParameshError, match="index 缺失"):
+            parse_models(model_text(drawing={"passes": [{}]}))
+        with pytest.raises(ParameshError, match="必须是整数"):
+            parse_models(model_text(drawing={"passes": [{"index": "1"}]}))
+        with pytest.raises(ParameshError, match="index 必须 ≥ 1"):
+            parse_models(model_text(drawing={"passes": [{"index": 0}]}))
+        with pytest.raises(ParameshError, match="index 必须唯一"):
+            parse_models(model_text(drawing={"passes": [{"index": 1}, {"index": 1}]}))
+        with pytest.raises(ParameshError, match=r"diameter_reduction 必须在 \[0, 1\)"):
+            parse_models(model_text(drawing={"passes": [{"index": 1, "diameter_reduction": 1.5}]}))
+        with pytest.raises(ParameshError, match="wall_thickness_change 必须 > -1"):
+            parse_models(model_text(drawing={"passes": [{"index": 1, "wall_thickness_change": -1.0}]}))
+        with pytest.raises(ParameshError, match=r"die_angle_deg 必须在 \(0, 90\)"):
+            parse_models(model_text(drawing={"passes": [{"index": 1, "die_angle_deg": 90.0}]}))
+        with pytest.raises(ParameshError, match=r"cumulative_reduction 必须在 \[0, 1\)"):
+            parse_models(model_text(drawing={"cumulative_reduction": 1.0}))
+
+    def test_defect_errors_and_severity(self, model_text: Callable[..., str]) -> None:
+        with pytest.raises(ParameshError, match="id 必须唯一"):
+            parse_models(
+                model_text(
+                    density_field={"local_defects": [{"id": "D1", "kind": "void"}, {"id": "D1", "kind": "void"}]}
+                )
+            )
+        model = parse_models(
+            model_text(
+                density_field={
+                    "local_defects": [{"id": "D1", "kind": "void", "location": {"angle_deg": 30}, "severity": 0.5}]
+                }
+            )
+        )[0]
+        defect = model.defects[0]
+        assert defect.angle_deg == 30
+        assert defect.axial is None
+
+    def test_defect_location_range(self, model_text: Callable[..., str]) -> None:
+        with pytest.raises(ParameshError, match=r"location\.axial 必须在 0–1 内"):
+            parse_models(
+                model_text(density_field={"local_defects": [{"id": "D1", "kind": "void", "location": {"axial": 2.0}}]})
+            )
+
+    def test_unknown_field_warns(self, model_text: Callable[..., str]) -> None:
+        model = parse_models(model_text(unknown_field=1))[0]
+        assert any("未知字段" in warning for warning in model.warnings)
+
+    def test_load_models_io_error(self, tmp_path: Path) -> None:
+        with pytest.raises(ParameshError, match="无法读取模型文件"):
+            load_models(tmp_path / "missing.yaml")
+
+    def test_select_model_empty(self) -> None:
+        with pytest.raises(ParameshError, match="没有可用模型"):
+            select_model([])
+
+    def test_summary_circumferential_and_end_loose(self, model_text: Callable[..., str]) -> None:
+        uniform = parse_models(
+            model_text(geometry={"wall_thickness": {"circumferential": {"kind": "uniform", "value": 9.9}}})
+        )[0]
+        assert "周向壁厚：uniform（9.9 mm）" in format_model_summary(uniform)
+
+        polyline = parse_models(
+            model_text(
+                geometry={
+                    "wall_thickness": {
+                        "circumferential": {
+                            "kind": "polyline",
+                            "samples": [
+                                {"angle_deg": 0, "thickness": 9.8},
+                                {"angle_deg": 180, "thickness": 10.2},
+                            ],
+                        }
+                    }
+                }
+            )
+        )[0]
+        assert "周向壁厚：polyline（2 个样本）" in format_model_summary(polyline)
+
+        end_loose = parse_models(model_text(density_field={"end_loose": {"length_fraction": 0.1}}))[0]
+        assert "端部疏松：0.1 × 全长" in format_model_summary(end_loose)
