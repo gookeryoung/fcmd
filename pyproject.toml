@@ -208,6 +208,10 @@ extras = [
     "pe",
     "win32"
 ]
+python-versions = [
+    "3.10",
+    "3.14"
+]
 
 [dependency-groups]
 dev = [ "fcmd[lint,test,full]" ]
