@@ -947,3 +947,19 @@ def test_backup_names_scans_all_work_dirs(tmp_path: Path) -> None:
     (second / "notes.txt").write_bytes(b"x")
     (second / "Debian.tgz").write_bytes(b"x")
     assert wslmanw.backup_names((first, second, tmp_path / "missing")) == frozenset({"ubuntu", "kali", "debian"})
+
+
+def test_copy_defaults_and_name_validation(tmp_path: Path) -> None:
+    """复制实例默认名称依次避让、默认目录落在源实例所属工作目录的 install 下。"""
+    assert wslmanw.copy_default_name("Ubuntu", ("Ubuntu",)) == "Ubuntu-copy"
+    assert wslmanw.copy_default_name("Ubuntu", ("Ubuntu", "Ubuntu-copy")) == "Ubuntu-copy2"
+    assert wslmanw.copy_name_problem("Ubuntu-copy", ("Ubuntu",)) is None
+    assert wslmanw.copy_name_problem("  ", ("Ubuntu",)) == "实例名称不能为空"
+    assert "已存在" in str(wslmanw.copy_name_problem("ubuntu", ("Ubuntu",)))
+    assert "路径分隔符" in str(wslmanw.copy_name_problem("a/b", ("Ubuntu",)))
+
+    settings = wslmanw.WslmanwSettings(work_dir=str(tmp_path / "wsl"))
+    target = wslmanw.copy_default_dir(settings, str(tmp_path / "wsl" / "install" / "Ubuntu"), "Ubuntu-copy")
+    assert target == tmp_path / "wsl" / "install" / "Ubuntu-copy"
+    outside = wslmanw.copy_default_dir(settings, str(tmp_path / "elsewhere"), "X")
+    assert outside == tmp_path / "wsl" / "install" / "X"

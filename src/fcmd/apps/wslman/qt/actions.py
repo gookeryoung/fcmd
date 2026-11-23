@@ -250,6 +250,112 @@ class ActionsMixin:
 
         self._start("迁移", work)
 
+    def _copy_selected(self) -> None:
+        """复制实例：自定新名称与目标目录，源实例保持不变。"""
+        distro = self._selected()
+        if distro is None:
+            return
+        entries = self.view.distros if self.view is not None else ()
+        taken = tuple(item.name for item in entries)
+        dialog = _owner._CopyDistroDialog(self, distro, self.sizes.get(distro.name, (None, False)), taken)
+        if dialog.exec() != _owner.QDialog.DialogCode.Accepted:
+            return
+        payload = dialog.payload()
+        if payload is None:
+            return
+        name, target = payload
+        terminate_first = self._export_running_choice(distro)
+        if terminate_first is None:
+            return
+
+        def work(_cancel: threading.Event) -> str:
+            return self._copy_worker(distro, name, target, terminate_first)
+
+        self._start("复制", work)
+
+    def _copy_worker(self, distro: Distro, name: str, target: _owner.Path, terminate_first: bool) -> str:
+        """复制工作线程：导出源实例到目标卷的临时包 → 以新名称导入 → 清理临时包。
+
+        只读源实例：导出期间加 ``TransferLock``，失败只清理新建的目标目录与新实例，
+        不会删除或改写源实例。``terminate_first`` 由调用方在运行中实例上确认。
+        """
+        env = _owner.cli._build_environment()
+        current = _owner.cli._require_target(env, distro.name)
+        if _owner.cli._view(env).find(name) is not None:
+            raise _owner.invalid_argument(f"实例 {name} 已存在", hint="换一个名称，或先删除同名实例")
+        if current.base_path and _owner.w.same_dir(target, _owner.Path(current.base_path)):
+            raise _owner.invalid_argument("目标目录不能与源实例目录相同", hint="换一个目录")
+        problem = _owner.cli._dir_problem(target)
+        if problem:
+            raise _owner.invalid_argument(f"复制目标目录不可用：{problem}", hint="选择一个空目录（不存在会自动创建）")
+
+        estimate, estimated = _owner.distro_disk_bytes(current.base_path, current.version)
+        export_estimate, _ = _owner.distro_export_bytes(current.base_path, current.version)
+        need = estimate + (export_estimate or 0)
+        check = _owner.cli._preflight_for(env, target.parent, need, estimated=estimated)
+        if not check.ok:
+            raise _owner.runtime_error(f"目标卷可用空间不足：{check.detail}", hint="换一个目录，或清理磁盘后重试")
+
+        version = str(current.version) if current.version else ""
+        temp = target.parent / f".{name}-copy.tar"
+        part = _owner.cli.part_path(temp)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with _owner.contextlib.suppress(OSError):
+            part.unlink()
+        with _owner.contextlib.suppress(OSError):
+            temp.unlink()
+
+        def emit(message: str) -> None:
+            if self._bridge is not None:
+                self._bridge.event.emit(message)
+
+        try:
+            with _owner.cli.TransferLock(current.name, directory=env.lock_dir):
+                if terminate_first:
+                    emit(f"[复制] 停止源实例 {current.name}")
+                    _owner.cli._run_step(env, ["--terminate", current.name], action=f"停止 {current.name}")
+                emit(f"[复制] 导出 {current.name} → {temp}")
+                _owner.cli._run_step(
+                    env,
+                    ["--export", current.name, str(part)],
+                    action=f"导出 {current.name}",
+                    hint="检查目标目录的空间与权限",
+                    timeout=3600.0,
+                )
+            _owner.cli.atomic_replace(part, temp)
+            target.mkdir(parents=True, exist_ok=True)
+            import_args = ["--import", name, str(target), str(temp)]
+            if version:
+                import_args.extend(["--version", version])
+            emit(f"[复制] 导入 {name} → {target}")
+            _owner.cli._run_step(
+                env,
+                import_args,
+                action=f"复制 {current.name} → {name}",
+                hint="源实例未受影响；检查目标目录空间与权限后重试",
+                timeout=3600.0,
+            )
+        except BaseException as exc:
+            # 失败只回收新建实例与目标目录；源实例与其磁盘全程未改。
+            with _owner.contextlib.suppress(Exception):
+                _owner.cli._run_step(env, ["--unregister", name], action=f"清理半成品 {name}")
+            _owner.shutil.rmtree(target, ignore_errors=True)
+            for stale in (temp, part):
+                with _owner.contextlib.suppress(OSError):
+                    stale.unlink()
+            raise _owner.runtime_error(
+                f"复制失败：{_owner.w._error_text(exc)}",
+                hint="源实例未受影响；检查目标目录空间与权限后重试",
+            ) from exc
+
+        with _owner.contextlib.suppress(OSError):
+            temp.unlink()
+        after = _owner.cli._try_view(env)
+        landed = after.find(name) if after is not None else None
+        if landed is not None and landed.base_path and not _owner.w.same_dir(landed.base_path, target):
+            return f"已复制 {current.name} → {name}，但复核时磁盘位置为 {landed.base_path}；请刷新列表确认"
+        return f"已复制 {current.name} → {name}（{target}）"
+
     def _migrate_worker(self, distro: Distro, target_root: _owner.Path, target: _owner.Path) -> str:
         """迁移工作线程：导出到目标卷 → 删除旧实例 → 导入；失败尝试导回原位置。"""
         env = _owner.cli._build_environment()

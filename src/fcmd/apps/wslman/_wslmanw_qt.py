@@ -483,6 +483,7 @@ _SshMigrateSection = _qt_ssh._SshMigrateSection
 
 from fcmd.gui.widgets import ItemRow  # noqa: E402, F401
 
+from .qt.copy_dialog import _CopyDistroDialog  # noqa: E402, F401
 from .qt.dialogs import (  # noqa: E402, F401
     _DistroConfigDialog,
     _ImageManagerDialog,

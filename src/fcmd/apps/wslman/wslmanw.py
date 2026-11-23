@@ -43,6 +43,9 @@ __all__ = [
     "action_states",
     "backup_names",
     "config_path",
+    "copy_default_dir",
+    "copy_default_name",
+    "copy_name_problem",
     "derived_dirs",
     "detail_fields",
     "dialog_geometry",
@@ -681,6 +684,36 @@ def derived_dirs(settings: WslmanwSettings) -> dict[str, Path]:
 
 
 _BACKUP_SUFFIXES = (".tar.gz", ".tgz", ".tar")
+
+
+def copy_default_name(source: str, taken: Sequence[str]) -> str:
+    """复制实例的默认名称：``<源>-copy``，已被占用时依次递增 ``-copy2`` / ``-copy3``。"""
+    existing = {name.strip().casefold() for name in taken if name.strip()}
+    base = f"{source}-copy"
+    if base.casefold() not in existing:
+        return base
+    index = 2
+    while f"{base}{index}".casefold() in existing:
+        index += 1
+    return f"{base}{index}"
+
+
+def copy_name_problem(name: str, taken: Sequence[str]) -> str | None:
+    """校验复制实例的新名称；合法时返回 ``None``。"""
+    text = name.strip()
+    if not text:
+        return "实例名称不能为空"
+    if any(char in text for char in ("/", "\\", ":")):
+        return "实例名称不能包含路径分隔符"
+    if text.casefold() in {item.strip().casefold() for item in taken if item.strip()}:
+        return f"实例名称已存在：{text}"
+    return None
+
+
+def copy_default_dir(settings: WslmanwSettings, base_path: str | None, name: str) -> Path:
+    """复制实例的默认目录：源实例所属工作目录的 ``install/<新名称>``；找不到时用默认目录。"""
+    root = work_dir_of(settings, base_path) or work_dir_path(settings)
+    return root / "install" / name
 
 
 def backup_names(directories: Sequence[Path]) -> frozenset[str]:

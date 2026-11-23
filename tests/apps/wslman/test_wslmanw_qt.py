@@ -206,6 +206,7 @@ def test_actions_and_distro_rows_all_carry_icons(home: Path, monkeypatch: pytest
                 "安装",
                 "导出",
                 "迁移",
+                "复制",
                 "删除实例",
                 "关闭全部",
             )
@@ -224,6 +225,7 @@ def test_actions_and_distro_rows_all_carry_icons(home: Path, monkeypatch: pytest
         assert _icon_name(window._button_by_text["用 IDE 打开"]) == "code"
         assert _icon_name(window._button_by_text["用 PI 打开"]) == "bot"
         assert _icon_name(window._button_by_text["安装"]) == "download"
+        assert _icon_name(window._button_by_text["复制"]) == "copy"
         labels = list(window._button_by_text)
         assert labels.index("安装") < labels.index("导出")
 
@@ -520,7 +522,7 @@ def test_export_progress_lands_in_status_bar(home: Path, monkeypatch: pytest.Mon
 
 
 def test_image_row_shows_wslui_mirror_sources(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """镜像行副标题后显示 WSLUI 提供的可用镜像源，完整 URL 在 tooltip。"""
+    """镜像行折叠时只显示源数量，完整名单与 URL 在 tooltip / 展开区。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
     window = _wslmanw_qt.WslmanQtWindow()
@@ -4392,6 +4394,104 @@ def test_instance_and_image_backup_tags_use_gui_backup_dir(home: Path, monkeypat
         entry = _image_entry("Ubuntu")
         marked = _wslmanw_qt._images.mark_local_state((entry,), installed=(), backups=window._local_backup_names())
         assert marked[0].backed_up is True
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_copy_dialog_auto_defaults_name_and_target(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """复制对话框默认名 <源>-copy、默认目录 <工作目录>/install/<新名称>，改名时目录跟随。"""
+    source = _distro("Ubuntu", "stopped")
+    monkeypatch.setattr(cli, "_view", lambda env: _view(source))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        dialog = _wslmanw_qt._CopyDistroDialog(window, source, (2048, False), ("Ubuntu",))
+        assert dialog.name.text() == "Ubuntu-copy"
+        assert Path(dialog.target.text()) == home / "wsl" / "install" / "Ubuntu-copy"
+        dialog.name.setText("Ubuntu-clone")
+        assert Path(dialog.target.text()) == home / "wsl" / "install" / "Ubuntu-clone"
+        dialog._start()
+        assert dialog.payload() == ("Ubuntu-clone", home / "wsl" / "install" / "Ubuntu-clone")
+        dialog.deleteLater()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_copy_worker_exports_and_imports_without_touching_source(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """复制成功：导出源实例 → 导入新名称到目标目录；不删除源实例，临时包清理。"""
+    window, first, second, distro_item = _two_root_window(home, monkeypatch, tmp_path)
+    target = second / "install" / "Ubuntu-copy"
+    temp = target.parent / ".Ubuntu-copy-copy.tar"
+    commands: list[list[str]] = []
+    imported = replace(distro_item, name="Ubuntu-copy", base_path=str(target))
+    try:
+        monkeypatch.setattr(cli, "_require_target", lambda env, name: distro_item)
+        monkeypatch.setattr(cli, "_dir_problem", lambda path: None)
+        monkeypatch.setattr(
+            cli, "_preflight_for", lambda env, root, need, estimated=False: SimpleNamespace(ok=True, detail="")
+        )
+        monkeypatch.setattr(cli, "part_path", lambda path: Path(f"{path}.part"))
+        monkeypatch.setattr(cli, "atomic_replace", lambda part, path: Path(path).write_text("tar", encoding="utf-8"))
+        monkeypatch.setattr(_wslmanw_qt, "distro_export_bytes", lambda *args: (512, False))
+        monkeypatch.setattr(cli, "_try_view", lambda env: _view(imported))
+
+        def run_step(env: Any, args: list[str], **kwargs: Any) -> None:
+            commands.append(list(args))
+            if args[0] == "--export":
+                Path(args[2]).write_text("tar", encoding="utf-8")
+
+        monkeypatch.setattr(cli, "_run_step", run_step)
+        message = window._copy_worker(distro_item, "Ubuntu-copy", target, False)
+        assert commands[0][:2] == ["--export", "Ubuntu"]
+        assert commands[1] == ["--import", "Ubuntu-copy", str(target), str(temp), "--version", "2"]
+        assert not any(args[0] == "--unregister" for args in commands)
+        assert str(target) in message and "已复制" in message
+        assert not temp.exists()
+        assert first.exists()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_copy_worker_cleans_new_instance_when_import_fails(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """导入失败只回收新建实例与目标目录；源实例不受影响。"""
+    window, first, second, distro_item = _two_root_window(home, monkeypatch, tmp_path)
+    target = second / "install" / "Ubuntu-copy"
+    commands: list[list[str]] = []
+    try:
+        monkeypatch.setattr(cli, "_require_target", lambda env, name: distro_item)
+        monkeypatch.setattr(cli, "_dir_problem", lambda path: None)
+        monkeypatch.setattr(
+            cli, "_preflight_for", lambda env, root, need, estimated=False: SimpleNamespace(ok=True, detail="")
+        )
+        monkeypatch.setattr(cli, "part_path", lambda path: Path(f"{path}.part"))
+        monkeypatch.setattr(cli, "atomic_replace", lambda part, path: Path(path).write_text("tar", encoding="utf-8"))
+        monkeypatch.setattr(_wslmanw_qt, "distro_export_bytes", lambda *args: (512, False))
+
+        def run_step(env: Any, args: list[str], **kwargs: Any) -> None:
+            commands.append(list(args))
+            if args[0] == "--export":
+                Path(args[2]).write_text("tar", encoding="utf-8")
+            if args[0] == "--import":
+                Path(args[2]).mkdir(parents=True, exist_ok=True)
+                (Path(args[2]) / "ext4.vhdx").write_bytes(b"disk")
+                raise _wslmanw_qt.runtime_error("导入失败")
+
+        monkeypatch.setattr(cli, "_run_step", run_step)
+        with pytest.raises(WslmanError) as caught:
+            window._copy_worker(distro_item, "Ubuntu-copy", target, False)
+        assert "复制失败" in str(caught.value)
+        assert "源实例未受影响" in (caught.value.hint or "")
+        assert commands[1][0] == "--import"
+        assert ["--unregister", "Ubuntu-copy"] in commands
+        assert not target.exists()
+        assert first.exists()
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

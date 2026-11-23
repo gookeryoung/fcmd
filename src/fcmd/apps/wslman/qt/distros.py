@@ -94,6 +94,13 @@ class DistrosMixin:
                 ),
                 ("导出", self._export_selected, "", "export", "导出实例到指定位置"),
                 ("迁移", self._migrate_selected, "", "transfer", "迁移到其他工作目录"),
+                (
+                    "复制",
+                    self._copy_selected,
+                    "",
+                    "copy",
+                    "复制为新实例（自定名称与目录，源实例不变）",
+                ),
             ),
             (
                 ("删除实例", self._unregister, "danger", "trash", "删除实例"),
