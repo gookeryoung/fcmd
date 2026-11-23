@@ -44,6 +44,7 @@ from fcmd.gui.widgets import (
 )
 
 from .._wslmanw_qt import WslmanQtWindow
+from .config_dialog import _DistroConfigDialog  # noqa: F401 - 对外保持旧导入路径
 
 
 class _OpenerDialog(QDialog):  # pragma: no cover - 模态对话框

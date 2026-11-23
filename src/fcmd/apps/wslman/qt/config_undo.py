@@ -6,9 +6,19 @@
 
 from __future__ import annotations
 
-import fcmd.apps.wslman._wslmanw_qt as _owner
-
 from ._compat import Any, Sequence
+
+
+class _OwnerProxy:
+    """延迟取 ``_wslmanw_qt``：卡片会在窗口模块导入过程中被加载，顶层 import 会成环。"""
+
+    def __getattr__(self, name: str) -> Any:
+        from fcmd.apps.wslman import _wslmanw_qt
+
+        return getattr(_wslmanw_qt, name)
+
+
+_owner: Any = _OwnerProxy()
 
 
 class _ConfigUndoMixin:
@@ -67,14 +77,6 @@ class _ConfigUndoMixin:
             del self._log_lines[: len(self._log_lines) - _owner._CONFIG_LOG_LINES_MAX]
         self.log.setPlainText("\n".join(self._log_lines))
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
-
-
-def _host_path(base: _owner.Path, path: str) -> _owner.Path:
-    """把相对 ``$HOME`` 的 POSIX 路径拼到 Windows 家目录上。"""
-    result = base
-    for part in path.split("/"):
-        result = result / part
-    return result
 
     def _sync_restore_hint(self) -> None:
         """显示「可还原上次迁移」：记录只在这里回显，不自动启动实例。"""
@@ -244,3 +246,11 @@ def _host_path(base: _owner.Path, path: str) -> _owner.Path:
         self._set_busy(False)
         if self._refresh_after_run:
             self.refresh()
+
+
+def _host_path(base: _owner.Path, path: str) -> _owner.Path:
+    """把相对 ``$HOME`` 的 POSIX 路径拼到 Windows 家目录上。"""
+    result = base
+    for part in path.split("/"):
+        result = result / part
+    return result
