@@ -148,6 +148,10 @@ MAX_DIR_LEVELS = {"apps": 3, "default": 2}
   `_llmw_qt_center.py` 约 2.3k → 1.06k 行；`RunPage` 拆分与 P5 清理待办。
 - P4：`RunPage` 的 115 个方法拆到 `apps/llm/qt/{run_paint,run_params,run_models,run_actions}.py`；
   `_llmw_qt_run.py` 约 2.2k → 771 行；`models_rows.py` 承接行卡/详情视图。
+- 实现说明：P2/P3 采用「mixin 组合 + 方法迁出」保持行为不变；共享状态仍由窗口实例持有，
+  独立 `WslmanViewState` 的彻底提取留作后续优化（D3 的终极形态，不再影响文件规模）。
+  pyrefly 暂时排除 `apps/*/qt/**`，因为 mixin 之间通过 `self` 交叉调用；每个 mixin 的
+  签名仍由运行时测试覆盖。
 - P5：`_wslmanw_qt.py`、`_llmw_qt_center.py`、`_llmw_qt_run.py` 均已移出行数白名单；
   `gui/style.py` / `infras/media.py` 等过期白名单项已清理；chat/paint 页面按 D5 在触达时再迁。
 
