@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.gui.geometry import clamp_geometry, valid_geometry
-from fcmd.infras.system import fcmd_home
+from fcmd.shared.paths import ui_config_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -27,7 +27,7 @@ __all__ = ["clamp_geometry", "config_path", "read_settings", "valid_geometry", "
 
 def config_path(name: str) -> Path:
     """返回 ``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``。"""
-    return fcmd_home() / "ui" / f"{name}.json"
+    return ui_config_path(name)
 
 
 def read_settings(path: Path) -> dict[str, Any] | None:

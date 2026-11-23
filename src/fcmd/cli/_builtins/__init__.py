@@ -28,6 +28,7 @@ _ROUTES: dict[str, tuple[str, str]] = {
     "env": ("env_cmd", "run"),
     "doctor": ("doctor_cmd", "run"),
     "profiler": ("profiler_cmd", "run"),
+    "mcp": ("mcp_cmd", "run"),
 }
 
 # 路由表与对外声明的内建命令名单必须一致（新增/删除内建命令时漏改一处即启动报错）

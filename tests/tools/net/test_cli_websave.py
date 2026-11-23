@@ -101,7 +101,7 @@ class TestWebsave:
     def mock_http_get(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         """模拟 http_get 函数。"""
         mock = MagicMock()
-        monkeypatch.setattr(fcmd.infras.net, "http_get", mock)
+        monkeypatch.setattr(fcmd.infras.net.http, "http_get", mock)
         return mock
 
     def test_save_website_basic(
@@ -224,14 +224,14 @@ class TestDownloadAssets:
     def mock_http_get(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         """模拟 http_get 函数。"""
         mock = MagicMock()
-        monkeypatch.setattr(fcmd.infras.net, "http_get", mock)
+        monkeypatch.setattr(fcmd.infras.net.http, "http_get", mock)
         return mock
 
     @pytest.fixture
     def mock_download_asset(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         """模拟 download_asset 函数。"""
         mock = MagicMock()
-        monkeypatch.setattr(fcmd.infras.net, "download_asset", mock)
+        monkeypatch.setattr(fcmd.infras.net.webpage, "download_asset", mock)
         return mock
 
     def test_css_recursive_download(self, tmp_path: Path, mock_download_asset: MagicMock) -> None:
@@ -456,7 +456,7 @@ class TestDownloadAssetsRecursiveBranches:
                 return css.encode("utf-8")
             return b"PNG"
 
-        monkeypatch.setattr("fcmd.infras.net.download_asset", _fake_download)
+        monkeypatch.setattr("fcmd.infras.net.webpage.download_asset", _fake_download)
 
         cache: dict[str, Path | None] = {}
         download_assets_recursive(["https://example.com/a.css"], tmp_path, cache)
@@ -474,7 +474,7 @@ class TestProbeMirrorsRetry:
 
         def _fake_probe(url: str, timeout: float, user_agent: str, sample_bytes: int, allow_html: bool = False) -> Any:
             calls.append((url, sample_bytes))
-            attempts = sum(1 for item in calls if item == (url, net._PROBE_QUICK_BYTES))
+            attempts = sum(1 for item in calls if item == (url, net.probe._PROBE_QUICK_BYTES))
             ok = url == "https://ok.example" or attempts > 1
             return net.UrlProbe(
                 url,
@@ -485,7 +485,7 @@ class TestProbeMirrorsRetry:
                 "" if ok else "超时",
             )
 
-        monkeypatch.setattr(net, "_probe_download", _fake_probe)
+        monkeypatch.setattr(net.probe, "_probe_download", _fake_probe)
         results = net.probe_mirrors(["https://ok.example", "https://flaky.example"], timeout=1.0)
 
         assert [probe.url for probe in results] == ["https://ok.example", "https://flaky.example"]

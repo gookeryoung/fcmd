@@ -1459,7 +1459,7 @@ class TestResolveMirror:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", fake)
+        monkeypatch.setattr("fcmd.tools.dev._envdev_mirrors.probe_mirrors", fake)
 
         result = fcmd.tools.dev.envdev_core.resolve_mirror("pip", "ustc", {"a": "https://a"}, "aliyun")
         assert result == "ustc"
@@ -1470,7 +1470,7 @@ class TestResolveMirror:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """探测结果为空（全部不可达）时回退默认镜像。"""
-        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", lambda urls, **_: [])
+        monkeypatch.setattr("fcmd.tools.dev._envdev_mirrors.probe_mirrors", lambda urls, **_: [])
 
         result = fcmd.tools.dev.envdev_core.resolve_mirror("conda", "auto", {"ustc": "https://u"}, "aliyun")
         assert result == "aliyun"

@@ -32,7 +32,7 @@ from fcmd.gui import icons as _icons
 from fcmd.gui.widgets.buttons import button, confirm
 from fcmd.gui.widgets.cards import Card
 from fcmd.gui.widgets.text import ElidedLabel, StatusTag, hint_label
-from fcmd.infras.system import format_bytes
+from fcmd.shared.formatting import format_bytes
 
 __all__ = [
     "DiskAddTile",

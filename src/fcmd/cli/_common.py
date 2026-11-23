@@ -9,7 +9,7 @@ __all__ = ["_BUILTIN_COMMANDS", "print_unknown_tool"]
 
 # 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
 # 放在此处供 main.py / _completion_scripts.py 共享，避免循环导入
-_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml", "env", "doctor", "profiler")
+_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml", "env", "doctor", "profiler", "mcp")
 
 
 def print_unknown_tool(name: str) -> None:

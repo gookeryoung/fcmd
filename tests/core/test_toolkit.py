@@ -1362,12 +1362,11 @@ def test_parser_help_shows_examples(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
     """KeyboardInterrupt 返回 INTERRUPTED。"""
-    from fcmd.core import _tool_exec
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(_tool_exec, "run", boom)
+    monkeypatch.setattr("fcmd.core.toolkit.execute.run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1379,13 +1378,12 @@ def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """FcmdError（参数类，如 CycleError）返回 INVALID_INPUT。"""
-    from fcmd.core import _tool_exec
     from fcmd.core.errors import CycleError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise CycleError(["cycle"])
 
-    monkeypatch.setattr(_tool_exec, "run", boom)
+    monkeypatch.setattr("fcmd.core.toolkit.execute.run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1397,13 +1395,12 @@ def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     """FcmdError + quiet 不打印。"""
-    from fcmd.core import _tool_exec
     from fcmd.core.errors import CycleError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise CycleError(["cycle"])
 
-    monkeypatch.setattr(_tool_exec, "run", boom)
+    monkeypatch.setattr("fcmd.core.toolkit.execute.run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1415,13 +1412,12 @@ def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError + quiet 不打印诊断。"""
-    from fcmd.core import _tool_exec
     from fcmd.core.errors import TaskFailedError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise TaskFailedError(task="a", cause=RuntimeError("boom"), attempts=1)
 
-    monkeypatch.setattr(_tool_exec, "run", boom)
+    monkeypatch.setattr("fcmd.core.toolkit.execute.run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1433,7 +1429,6 @@ def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_task_failed_with_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError 携带 report 时打印失败任务。"""
-    from fcmd.core import _tool_exec
     from fcmd.core.errors import TaskFailedError
     from fcmd.core.report import RunReport
     from fcmd.core.task import TaskResult
@@ -1449,7 +1444,7 @@ def test_run_tool_task_failed_with_report(monkeypatch: pytest.MonkeyPatch) -> No
         err.report = report
         raise err
 
-    monkeypatch.setattr(_tool_exec, "run", boom)
+    monkeypatch.setattr("fcmd.core.toolkit.execute.run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1732,14 +1727,13 @@ def test_run_tool_mixed_none_and_named_empty_argv() -> None:
 # ---------------------------------------------------------------------- #
 def test_run_tool_task_failed_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError 不带 report 时不打印失败任务诊断（report is None 分支）。"""
-    from fcmd.core import _tool_exec
     from fcmd.core.errors import TaskFailedError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         # report 默认 None，触发 632->636 跳转（不进入 for 循环）
         raise TaskFailedError(task="a", cause=RuntimeError("boom"), attempts=1)
 
-    monkeypatch.setattr(_tool_exec, "run", boom)
+    monkeypatch.setattr("fcmd.core.toolkit.execute.run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -2006,8 +2000,10 @@ def test_report_tool_failure_skips_when_error_pending(
     from fcmd.core import _tool_exec
 
     calls: list[tuple[str, str | None]] = []
-    monkeypatch.setattr(_tool_exec, "has_pending_error", lambda: True)
-    monkeypatch.setattr(_tool_exec, "emit_error", lambda name, target, **kwargs: calls.append((name, target)))
+    monkeypatch.setattr("fcmd.core.toolkit.present.has_pending_error", lambda: True)
+    monkeypatch.setattr(
+        "fcmd.core.toolkit.present.emit_error", lambda name, target, **kwargs: calls.append((name, target))
+    )
 
     _tool_exec._report_tool_failure("demo", None, code="X", message="m", json_output=True)
 
@@ -2019,8 +2015,10 @@ def test_report_tool_failure_json_uses_envelope(monkeypatch: pytest.MonkeyPatch)
     from fcmd.core import _tool_exec
 
     seen: dict[str, Any] = {}
-    monkeypatch.setattr(_tool_exec, "has_pending_error", lambda: False)
-    monkeypatch.setattr(_tool_exec, "emit_error", lambda name, target, **kwargs: seen.update(name=name, **kwargs))
+    monkeypatch.setattr("fcmd.core.toolkit.present.has_pending_error", lambda: False)
+    monkeypatch.setattr(
+        "fcmd.core.toolkit.present.emit_error", lambda name, target, **kwargs: seen.update(name=name, **kwargs)
+    )
 
     _tool_exec._report_tool_failure("demo", "run", code="USAGE", message="m", json_output=True, hint="h")
 
@@ -2041,7 +2039,7 @@ def test_execute_tool_tasks_reports_failed_report(
         success=False,
         results={"a": SimpleNamespace(status=TaskStatus.FAILED, duration=0.0)},
     )
-    monkeypatch.setattr(_tool_exec, "run", lambda *args, **kwargs: report)
+    monkeypatch.setattr("fcmd.core.toolkit.execute.run", lambda *args, **kwargs: report)
 
     code = _tool_exec._execute_tool_tasks("demo", None, {}, spec, {None: spec})
 

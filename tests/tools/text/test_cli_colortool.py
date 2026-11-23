@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.infras import text as textinfra
+from fcmd.infras.text import color as textcolor
 from tests.helpers import run_and_capture as _run_and_capture
 
 
@@ -149,7 +150,7 @@ class TestColoraideConversion:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """缺库时打印 extra 安装提示，按运行期失败退出（1）。"""
-        monkeypatch.setattr(textinfra, "_require_coloraide", lambda: None)
+        monkeypatch.setattr(textcolor, "_require_coloraide", lambda: None)
         code, out = _run_and_capture("colortool", ["hex2rgb", "#ff5733"], capsys)
         assert code == 1
         assert "pip install fcmd[color]" in out

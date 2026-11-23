@@ -11,6 +11,9 @@ import re
 import sys
 from pathlib import Path
 
+from fcmd.shared.formatting import format_bytes
+from fcmd.shared.paths import fcmd_home
+
 __all__ = [
     "backup_folder",
     "collect_system_info",
@@ -23,12 +26,6 @@ __all__ = [
     "which_commands",
     "write_text_file",
 ]
-
-
-def fcmd_home() -> Path:
-    """返回 ``${FCMD_HOME:-~/.fcmd}``；环境变量里的 ``~`` 会被展开。"""
-    raw = os.environ.get("FCMD_HOME")
-    return Path(raw).expanduser() if raw else Path.home() / ".fcmd"
 
 
 def kill_processes(names: list[str]) -> list[str]:
@@ -82,26 +79,6 @@ def which_commands(commands: list[str]) -> list[str]:
         else:
             messages.append(f"{command} -> {path}")
     return messages
-
-
-def format_bytes(size: int, *, binary: bool = False) -> str:
-    """将字节数格式化为人类可读字符串（形如 ``1.5 GB`` / ``1.5 GiB``）。
-
-    Parameters
-    ----------
-    size:
-        字节数；小于 1024 时按整数显示（``512 B``）。
-    binary:
-        为 ``True`` 时使用 IEC 单位（``KiB`` / ``MiB`` / ``GiB`` …），
-        否则使用 ``KB`` / ``MB`` / ``GB`` …；两者都按 1024 进制换算。
-    """
-    units = ("B", "KiB", "MiB", "GiB", "TiB", "PiB") if binary else ("B", "KB", "MB", "GB", "TB", "PB")
-    value: float = float(size)
-    for unit in units[:-1]:
-        if value < 1024:
-            return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
-        value /= 1024
-    return f"{value:.1f} {units[-1]}"
 
 
 def collect_system_info() -> dict[str, str]:

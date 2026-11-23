@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -17,8 +16,8 @@ from typing import Any
 
 import fcmd
 from fcmd.apps.dynacalc._solver import load_jobs
-from fcmd.console import print_error
-from fcmd.infras.system import fcmd_home
+from fcmd.gui import config as _guiconfig
+from fcmd.gui.settings import SettingsStore
 
 __all__ = [
     "DynacalcSettings",
@@ -56,7 +55,7 @@ class DynacalcSettings:
 
 def config_path() -> Path:
     """``${FCMD_HOME:-~/.fcmd}/ui/dynacalcw.json``。"""
-    return fcmd_home() / "ui" / "dynacalcw.json"
+    return _guiconfig.config_path("dynacalcw")
 
 
 _TEXT_FIELDS = ("params", "model", "out", "template", "solver", "mesh_root", "mesh_level")
@@ -65,11 +64,7 @@ _INT_FIELDS = {"ncpu": 1, "concurrency": 1, "timeout_s": 1, "retries": 0}
 
 def load_settings(path: Path | None = None) -> DynacalcSettings:
     """读取设置；文件缺失、损坏或含非法类型时整体回到默认值（窗口仍可打开）。"""
-    target = path or config_path()
-    try:
-        raw = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return DynacalcSettings()
+    raw = SettingsStore("dynacalcw", path).load()
     return _settings_from(raw) or DynacalcSettings()
 
 
@@ -103,16 +98,8 @@ def _settings_from(raw: Any) -> DynacalcSettings | None:
 
 
 def save_settings(settings: DynacalcSettings, path: Path | None = None) -> None:
-    """原子写入设置；失败只报错不抛出。"""
-    target = path or config_path()
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(asdict(settings), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        temporary = target.with_suffix(".tmp")
-        temporary.write_text(text, encoding="utf-8", newline="\n")
-        temporary.replace(target)
-    except OSError as exc:
-        print_error(f"保存 dynacalcw 设置失败：{exc}")
+    """原子写入设置（写入失败静默，不影响窗口关闭）。"""
+    SettingsStore("dynacalcw", path).save(asdict(settings))
 
 
 def parse_codes(text: str) -> tuple[str, ...]:

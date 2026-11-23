@@ -7,6 +7,20 @@
 
 ### 变更
 
+- 结构优化 P0：新增 `fcmd/shared/`（`paths.fcmd_home` / `formatting.format_bytes`），
+  `gui.config` 与 `gui.widgets.storage` 改依赖 shared，移除 gui → infras 的反向依赖；
+  新增 `tests/test_architecture.py`（import 方向 + 行数预算 + tools 域隔离）。
+- 结构优化 P1：`core/toolkit` 拆为 `spec` / `parser` / `schema` / `plan` / `routing` /
+  `execute` / `present`，`args.py` / `exec.py` 保留兼容 facade；`core/profiling.py`
+  拆为 `profiling/{model,render}.py`，`fcmd.core.profiling` 导入路径不变。
+- 结构优化 P2：MCP 从 `cli` 迁出为 `fcmd/mcp/{server,security,whitelist}.py`，
+  `cli/mcp_adapter.py` / `agent_*.py` 保留模块别名 shim；新增 `fcmd mcp serve`
+  内建命令（缺 `mcp` 依赖时给出安装提示）。
+- 结构优化 P3：`infras/net`、`infras/text`、`infras/data`、`infras/fs` 按主题拆为
+  子包，`__init__.py` re-export 旧 API；`infras/media.py` 暂保持单文件（PIL/resvg
+  可变状态与图标构建耦合，单独排期）。
+- 结构优化 P4（试点）：新增 `gui.settings.SettingsStore`，`dynacalcw` 的设置读写
+  改用统一存储（原子写入 + `.bak` 回退）；其余应用后续按同一接口迁移。
 - `@fx.tool` 新增三个编排原语（ADR 0045）：
   - `preconditions=[...]`：目标命令的前置断言，按签名注入 CLI 变量，失败即中止
     （`PRECONDITION_FAILED`），不进 DAG / 不计步数，`--dry-run` 跳过；

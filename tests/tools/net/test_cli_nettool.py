@@ -334,7 +334,7 @@ class TestProbeMirrors:
             latency = 300.0 if url.endswith("slow-latency") else 20.0
             return UrlProbe(url, True, latency, 0.0, 2048)
 
-        monkeypatch.setattr("fcmd.infras.net._probe_download", fake_probe)
+        monkeypatch.setattr("fcmd.infras.net.probe._probe_download", fake_probe)
         urls = ["https://a/dead", "https://b/slow-latency", "https://c/normal"]
         results = probe_mirrors(urls)
 
@@ -356,7 +356,7 @@ class TestProbeMirrors:
                 return UrlProbe(url, False, 0.0, 0.0, 0, "超时/网络错误")
             return UrlProbe(url, True, 30.0, 1000.0 if sample_bytes > 2048 else 0.0, sample_bytes)
 
-        monkeypatch.setattr("fcmd.infras.net._probe_download", fake_probe)
+        monkeypatch.setattr("fcmd.infras.net.probe._probe_download", fake_probe)
         results = probe_mirrors(["https://flaky.example"])
         assert results[0].ok is True
         assert calls.count("https://flaky.example") == 3  # 阶段一失败 + 重试 + 阶段二测吞吐
