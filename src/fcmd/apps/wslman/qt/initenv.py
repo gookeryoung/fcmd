@@ -63,12 +63,16 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         header.setSpacing(6)
         self.collapsed_hint = _owner.hint_label("尚未检测环境。", wrap=False)
         header.addWidget(self.collapsed_hint)
+        # 状态标签单独一行用 FlowLayout 换行：12 个项目并排时窗口一窄就会被裁掉。
+        self.tags_row = _owner.QWidget(self)
+        self.tags_layout = _owner.FlowLayout(self.tags_row, h_spacing=6, v_spacing=2)
         for task in _owner._initenv.TASKS:
             tag = _owner.StatusTag(_owner._initenv.short_label(task.key), tone="success", parent=self)
             tag.setToolTip(f"{task.label}：已初始化")
             tag.setVisible(False)
-            header.addWidget(tag)
+            self.tags_layout.addWidget(tag)
             self._collapsed_tags[task.key] = tag
+        self.tags_row.setVisible(False)
         self.summary = _owner.ElidedLabel("尚未检测环境。", parent=self)
         self.summary.setObjectName("Hint")
         self.summary.setToolTip(_owner._INIT_ENV_HINT)
@@ -83,6 +87,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self.toggle_button.clicked.connect(self._on_toggle_clicked)
         header.addWidget(self.toggle_button)
         self.body.addLayout(header)
+        self.body.addWidget(self.tags_row)
 
         # 展开后才出现的内容：左右两栏（勾选 / 状态）+ 日志；说明只在 tooltip。
         self.details = _owner.QWidget(self)
@@ -161,9 +166,10 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         )
         self.package_mirror.currentIndexChanged.connect(self._on_package_mirror_index_changed)
         source_row.addWidget(self.package_mirror)
-        source_row.addWidget(
-            _owner.hint_label("独立于系统镜像源；仅影响 pip / uv，npm / bun 仍用 npmmirror。", wrap=False), 1
-        )
+        note = _owner.ElidedLabel("独立于系统镜像源；仅影响 pip / uv，npm / bun 仍用 npmmirror。", parent=self)
+        note.setObjectName("Hint")
+        note.setToolTip("独立于系统镜像源（APT / YUM），只影响 pip / uv 的索引；npm / bun 仍使用 npmmirror。")
+        source_row.addWidget(note, 1)
         self.body.addLayout(source_row)
 
         # 动作行固定在卡片里，不随详情显隐：收起态下也能全选 / 检测 / 复制 / 初始化。
@@ -239,6 +245,13 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             tag.set_status(_owner._initenv.short_label(key), "success" if done else "danger")
             tag.setToolTip(f"{self._tasks[key].label}：{'已初始化' if done else '未初始化'}")
             tag.setVisible(self._collapsed)
+        show_tags = self._collapsed and self._status is not None
+        if self.tags_row.isVisible() != show_tags:
+            self.tags_row.setVisible(show_tags)
+            self.updateGeometry()
+            window = self.window()
+            if window is not self and isinstance(window, _owner.QDialog):
+                _owner.QTimer.singleShot(0, window.adjustSize)
         self.collapsed_hint.setVisible(self._collapsed)
         self.summary.setVisible(not self._collapsed)
         self.details.setVisible(not self._collapsed)

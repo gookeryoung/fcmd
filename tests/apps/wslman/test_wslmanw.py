@@ -119,6 +119,7 @@ def test_settings_mapping_is_json_friendly() -> None:
         "distro_package_mirrors": {},
         "distro_env_status": {},
         "distro_config_status": {},
+        "distro_config_restore": {},
         "distro_opener_paths": {},
         "openers": {
             "ide": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_IDE)],
@@ -186,6 +187,30 @@ def test_config_status_cache_roundtrip() -> None:
     broken = wslmanw.settings_from_mapping({"distro_config_status": {"Ubuntu": "nope", "Debian": {}}})
     assert wslmanw.config_status_for(broken, "Ubuntu") is None
     assert wslmanw.config_status_for(broken, "Debian") is None
+
+
+def test_config_restore_record_roundtrip_and_clear() -> None:
+    """还原记录随设置文件往返；清空后返回 ``None``，坏行按无记录处理。"""
+    record = _configfiles.RestoreRecord(
+        "2026-01-01 12:00:00",
+        "Windows 宿主",
+        (
+            _configfiles.RestoreEntry(".gitconfig", ".fcmd-config-backup-1/.gitconfig", 42),
+            _configfiles.RestoreEntry(".ssh/id_ed25519", "", 100),
+        ),
+    )
+    settings = wslmanw.with_config_restore(wslmanw.WslmanwSettings(), "Ubuntu", record)
+    restored = wslmanw.settings_from_mapping(wslmanw.settings_to_mapping(settings))
+    assert wslmanw.config_restore_for(restored, "Ubuntu") == record
+    assert wslmanw.config_restore_for(restored, "Debian") is None
+
+    cleared = wslmanw.with_config_restore(restored, "Ubuntu", None)
+    assert wslmanw.config_restore_for(cleared, "Ubuntu") is None
+    broken = wslmanw.settings_from_mapping(
+        {"distro_config_restore": {"Ubuntu": "nope", "Debian": {"stamp": "", "entries": "[]"}}}
+    )
+    assert wslmanw.config_restore_for(broken, "Ubuntu") is None
+    assert wslmanw.config_restore_for(broken, "Debian") is None
 
 
 def test_terminal_cwd_roundtrip_and_default(tmp_path: Path) -> None:

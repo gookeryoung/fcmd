@@ -2832,7 +2832,7 @@ def test_distro_config_embeds_init_env_section(home: Path, monkeypatch: pytest.M
     dialog = _wslmanw_qt._DistroConfigDialog(owner, _distro("Ubuntu"), "~")  # type: ignore[arg-type]
     try:
         assert isinstance(dialog.init_env, _wslmanw_qt._InitEnvSection)
-        assert dialog.init_env.parent() is dialog
+        assert dialog.isAncestorOf(dialog.init_env)
         assert dialog.init_env.details.isHidden() is True
         assert _icon_name(dialog.init_env.toggle_button) == "chevron-down"
         for name in ("detect_button", "run_button", "copy_key"):
@@ -3209,7 +3209,7 @@ def test_distro_config_embeds_config_migrate_and_confirms_close(home: Path, monk
     try:
         monkeypatch.setattr(dialog.init_env, "refresh_status", lambda: None)
         assert isinstance(dialog.config_migrate, _wslmanw_qt._ConfigMigrateSection)
-        assert dialog.config_migrate.parent() is dialog
+        assert dialog.isAncestorOf(dialog.config_migrate)
         assert dialog.config_migrate.collapsed is True
         assert dialog.config_migrate._instances == ("Debian",)
         assert dialog.config_migrate.source_instance.itemText(0) == "Debian"
@@ -4335,6 +4335,33 @@ def _config_snapshot() -> Any:
         _configfiles.ConfigSource(_configfiles.SOURCE_WINDOWS, "", r"C:\Users\me"),
         stamp=1700000000.0,
     )
+
+
+def test_distro_config_content_fits_narrow_width(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """窗口窄时初始化环境不能把内容裁掉：状态标签换行、长说明省略，内容最小宽度不超过视口。"""
+    app = QApplication.instance()
+    assert app is not None
+    owner = QWidget()
+    dialog = _wslmanw_qt._DistroConfigDialog(owner, _distro("Ubuntu"), "~")  # type: ignore[arg-type]
+    try:
+        dialog.init_env._apply_status(_initenv.EnvStatus(python="3.12.3", node="22.11.0", nvm="yes"))
+        dialog.init_env.toggle_collapsed(False)
+        dialog.show()
+        app.processEvents()
+        dialog.resize(680, 520)
+        app.processEvents()
+        viewport = dialog.scroll.viewport().width()
+        # 内容最小宽度必须能塞进视口，否则 QScrollArea 不横向滚动时会直接裁掉右侧。
+        assert dialog.scroll.widget().minimumSizeHint().width() <= viewport
+        # 12 个状态标签放在 FlowLayout 里，宽度不够时换行而不是被挤掉。
+        assert dialog.init_env.tags_row.layout().count() == len(_initenv.TASKS)
+        for tag in dialog.init_env._collapsed_tags.values():
+            assert dialog.init_env.tags_row.isAncestorOf(tag)
+        # 软件包源说明改成省略标签，不再用固定整行宽度的 HintLabel 撑破卡片。
+        assert dialog.init_env.minimumSizeHint().width() <= viewport
+    finally:
+        dialog.deleteLater()
+        owner.deleteLater()
 
 
 def test_config_migrate_section_shows_cached_status_without_scanning(

@@ -43,6 +43,7 @@ __all__ = [
     "action_states",
     "backup_names",
     "config_path",
+    "config_restore_for",
     "config_status_for",
     "copy_default_dir",
     "copy_default_name",
@@ -94,6 +95,7 @@ __all__ = [
     "summary_text",
     "terminal_cwd",
     "unregister_confirm_enabled",
+    "with_config_restore",
     "with_config_status",
     "with_dialog_geometry",
     "with_env_status",
@@ -319,6 +321,8 @@ class WslmanwSettings:
     """按实例名持久化的 WSL 内可执行文件路径（``command -v`` 原样结果）。"""
     distro_config_status: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     """按实例名持久化的「迁移配置文件」上次扫描状态；打开配置时直接回显，不再重扫。"""
+    distro_config_restore: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    """按实例名持久化的「还原上次迁移」记录：新增 / 覆盖的文件与备份路径。"""
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -341,6 +345,7 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "distro_env_status": {name: dict(values) for name, values in settings.distro_env_status.items()},
         "distro_opener_paths": {name: dict(values) for name, values in settings.distro_opener_paths.items()},
         "distro_config_status": {name: dict(values) for name, values in settings.distro_config_status.items()},
+        "distro_config_restore": {name: dict(values) for name, values in settings.distro_config_restore.items()},
         "openers": {
             "ide": [_open.to_mapping(item) for item in settings.ide_openers],
             "agent": [_open.to_mapping(item) for item in settings.agent_openers],
@@ -381,6 +386,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         distro_env_status=_status_cache(raw.get("distro_env_status")),
         distro_opener_paths=_opener_path_cache(raw.get("distro_opener_paths")),
         distro_config_status=_config_status_cache(raw.get("distro_config_status", raw.get("distro_ssh_status"))),
+        distro_config_restore=_config_restore_cache(raw.get("distro_config_restore")),
         ide_openers=ide_openers,
         agent_openers=agent_openers,
         ide_opener=_selected_key(selected_map.get("ide"), ide_openers, kind=_open.KIND_IDE),
@@ -514,6 +520,35 @@ def ssh_status_for(settings: WslmanwSettings, name: str) -> _configfiles.Migrati
 def with_ssh_status(settings: WslmanwSettings, name: str, snapshot: _configfiles.MigrationSnapshot) -> WslmanwSettings:
     """兼容旧调用名：等价于 :func:`with_config_status`。"""
     return with_config_status(settings, name, snapshot)
+
+
+def config_restore_for(settings: WslmanwSettings, name: str) -> _configfiles.RestoreRecord | None:
+    """回显上次迁移的还原记录；没有记录（例如已还原）时返回 ``None``。"""
+    return _configfiles.RestoreRecord.from_mapping(settings.distro_config_restore.get(name))
+
+
+def with_config_restore(
+    settings: WslmanwSettings, name: str, record: _configfiles.RestoreRecord | None
+) -> WslmanwSettings:
+    """写入 / 清空实例的「还原上次迁移」记录。"""
+    cached = dict(settings.distro_config_restore)
+    if record is None or not record.entries:
+        cached.pop(name, None)
+    else:
+        cached[name] = record.to_mapping()
+    return replace(settings, distro_config_restore=cached)
+
+
+def _config_restore_cache(raw: Any) -> dict[str, dict[str, str]]:
+    """解析实例 → 还原记录映射；坏行跳过。"""
+    if not isinstance(raw, Mapping):
+        return {}
+    cached: dict[str, dict[str, str]] = {}
+    for name, values in raw.items():
+        record = _configfiles.RestoreRecord.from_mapping(values)
+        if isinstance(name, str) and name.strip() and record is not None:
+            cached[name.strip()] = record.to_mapping()
+    return cached
 
 
 def opener_paths_for(settings: WslmanwSettings, name: str) -> Mapping[str, str]:

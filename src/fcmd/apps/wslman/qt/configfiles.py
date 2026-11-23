@@ -29,7 +29,9 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         *,
         instances: Sequence[str] = (),
         status: _owner._configfiles.MigrationSnapshot | None = None,
+        restore: _owner._configfiles.RestoreRecord | None = None,
         on_scanned: Any = None,
+        on_restored: Any = None,
         state_provider: Any = None,
     ) -> None:
         super().__init__("迁移配置文件", parent)
@@ -37,6 +39,9 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         self._instances = tuple(instances)
         self._state_provider = state_provider
         self._on_scanned = on_scanned
+        self._on_restored = on_restored
+        self._restore_record = restore
+        self._pending_restore: _owner._configfiles.RestoreRecord | None = None
         self._busy = False
         self._closing = False
         self._scanned = False
@@ -177,6 +182,11 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         self.target_hint.setWordWrap(True)
         details.addWidget(self.target_hint)
 
+        self.restore_hint = _owner.hint_label("")
+        self.restore_hint.setWordWrap(True)
+        self.restore_hint.setVisible(False)
+        details.addWidget(self.restore_hint)
+
         self.log = _owner.QPlainTextEdit(self)
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("迁移日志…")
@@ -197,6 +207,11 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         self.select_none.clicked.connect(lambda: self._set_all(False))
         actions.addWidget(self.select_none)
         actions.addStretch(1)
+        self.restore_button = _owner.button("还原上次迁移", kind="ghost")
+        self.restore_button.setToolTip("把实例配置恢复到上次迁移之前：覆盖过的从备份恢复，新增的删除")
+        self.restore_button.clicked.connect(self._restore_last)
+        self.restore_button.setEnabled(False)
+        actions.addWidget(self.restore_button)
         self.scan_button = _owner.button("扫描")
         self.scan_button.clicked.connect(self.refresh)
         actions.addWidget(self.scan_button)
@@ -208,6 +223,7 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
 
         self._sync_collapsed_view()
         self._sync_source_controls()
+        self._sync_restore_hint()
         if status is not None:
             self._apply_cached(status)
 
@@ -258,6 +274,30 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         )
         self.toggle_button.setToolTip("收起详情" if not self._collapsed else "展开详情")
         self.toggle_button.setAccessibleName(self.toggle_button.toolTip())
+
+    def _sync_restore_hint(self) -> None:
+        """显示「可还原上次迁移」：记录只在这里回显，不自动启动实例。"""
+        record = self._restore_record
+        if record is None or not record.entries:
+            self.restore_hint.setVisible(False)
+            self.restore_button.setToolTip("没有可还原的迁移记录")
+            return
+        text = f"可还原上次迁移：{record.summary}"
+        self.restore_hint.setText(text)
+        self.restore_hint.setToolTip(text)
+        self.restore_hint.setVisible(True)
+        self.restore_button.setToolTip(f"恢复 {record.summary} 前的实例配置；迁移后被修改的新增文件会跳过")
+
+    def _persist_restore(self) -> None:
+        """把本次迁移的还原记录交给窗口持久化（失败也会记录已完成部分）。"""
+        if self._pending_restore is None or not self._pending_restore.entries:
+            return
+        self._restore_record = self._pending_restore
+        self._pending_restore = None
+        if callable(self._on_restored):
+            self._on_restored(self._restore_record)
+        self._sync_restore_hint()
+        self._sync_actions()
 
     def stop(self) -> None:
         """对话框关闭时调用：忽略后续回调；后台命令本身继续执行。"""
@@ -322,6 +362,7 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         self.file_hint.setText("点「扫描」读取来源目录并检测实例。")
         self.target_hint.setText("尚未检测实例内的配置文件。")
         self.collapsed_hint.setText("尚未扫描来源目录。")
+        self._sync_restore_hint()
         self._sync_actions()
 
     def refresh(self) -> None:
@@ -603,6 +644,7 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self.scan_button.setEnabled(not busy)
+        self.restore_button.setEnabled(not busy and self._restore_record is not None)
         # 扫描 / 迁移期间锁住来源选择，避免结果回来时来源已经换了。
         self.source_kind.setEnabled(not busy)
         self.source_instance.setEnabled(not busy)
@@ -622,6 +664,7 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
             self.migrate_button.setToolTip("先扫描确认实例现状")
         else:
             self.migrate_button.setToolTip("")
+        self.restore_button.setEnabled(not self._busy and self._restore_record is not None)
         self.select_all.setEnabled(not self._busy)
         self.select_none.setEnabled(not self._busy)
 
@@ -657,6 +700,7 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
                 return
         self._set_busy(True)
         self._refresh_after_run = False
+        self._pending_restore = None
         self._append_log("开始迁移：" + "、".join(paths))
         _owner.submit_daemon(
             lambda: self._migrate(paths, overwrite),
@@ -700,10 +744,13 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         wsl_path = _owner.cli._require_wsl(env)
         source = self._source_snapshot or self._source()
         stamp = _owner.time.time()
+        stamp_text = _owner.time.strftime("%Y-%m-%d %H:%M:%S", _owner.time.localtime(stamp))
+        restore_entries: list[_owner._configfiles.RestoreEntry] = []
         for path in paths:
             entry = self._files.get(path)
             if entry is None:
                 raise _owner.runtime_error(f"来源文件已变化：{path}", hint="重新扫描后再迁移")
+            existed = self._target is not None and self._target.find(path) is not None
             if source.is_wsl:
                 data = self._read_remote(env, wsl_path, source, path, entry)
             else:
@@ -738,27 +785,99 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
                 if result.returncode == 3:
                     hint = "目标文件在扫描后才出现；重新扫描并确认覆盖后再试"
                 raise _owner.runtime_error(f"{path} 迁移失败（退出码 {result.returncode}）", hint=hint)
-            mode, owner = _owner._configfiles.parse_write_result(text)
+            mode, owner, written_size = _owner._configfiles.parse_write_meta(text)
             if mode != entry.mode_text:
                 raise _owner.runtime_error(
                     f"{path} 写入后权限为 {mode or '未知'}（期望 {entry.mode_text}）",
                     hint="确认目标目录位于 Linux 文件系统（不要落在 /mnt/c），再重新迁移",
                 )
             self._bridge.event.emit(f"[{path}] 完成（{owner or '未知用户'} · {mode}）")
+            backup = _owner._configfiles.parse_backup_path(text) if existed else ""
+            restore_entries.append(_owner._configfiles.RestoreEntry(path, backup, written_size))
+            self._pending_restore = _owner._configfiles.RestoreRecord(stamp_text, source.label, tuple(restore_entries))
         return f"已迁移 {len(paths)} 个文件"
 
     def _migrate_done(self, message: str) -> None:
         self._refresh_after_run = True
+        self._persist_restore()
         self._append_log(message)
         self.summary.setText("迁移完成，正在刷新…")
 
     def _migrate_error(self, message: str) -> None:
         self._refresh_after_run = True
+        # 已经写成功的文件仍然要能还原，失败时也保存部分记录。
+        self._persist_restore()
         self._append_log(f"迁移失败：{message}")
         self.summary.setText("迁移失败")
         _owner.QMessageBox.critical(self, "迁移失败", message)
 
     def _migrate_finished(self) -> None:
+        if self._closing:
+            return
+        self._set_busy(False)
+        if self._refresh_after_run:
+            self.refresh()
+
+    # ------------------------------------------------------------------ #
+    # 还原
+    # ------------------------------------------------------------------ #
+    def _restore_last(self) -> None:
+        record = self._restore_record
+        if record is None or not record.entries or self._busy:
+            return
+        text = (
+            f"将把实例配置恢复到「{record.stamp}」迁移之前：\n\n"
+            f"· 迁移前已存在、被覆盖的 {record.overwritten} 个文件：从备份恢复\n"
+            f"· 迁移时新增的 {record.created} 个文件：删除（迁移后被修改过的会跳过）\n\n继续？"
+        )
+        if not _owner.confirm(self, "还原上次迁移", text):
+            return
+        self._set_busy(True)
+        self._refresh_after_run = False
+        self._append_log(f"开始还原：{record.summary}")
+        _owner.submit_daemon(
+            lambda: self._run_restore(record),
+            on_done=self._restore_done,
+            on_error=self._restore_error,
+            on_finished=self._restore_finished,
+        )
+
+    def _run_restore(self, record: _owner._configfiles.RestoreRecord) -> str:
+        env = _owner.cli._build_environment()
+        wsl_path = _owner.cli._require_wsl(env)
+        script = _owner._configfiles.restore_script(record)
+        result = env.runner.run(
+            [wsl_path, "-d", self._distro.name, "--exec", "bash", "-lc", script],
+            timeout=180.0,
+        )
+        text = _owner.decode_console(result.stdout + result.stderr).strip()
+        for line in _owner._initenv.tail_lines(text):
+            self._bridge.event.emit(line)
+        if result.returncode != 0:
+            tail = _owner._initenv.tail_lines(text, 3)
+            raise _owner.runtime_error(
+                f"还原失败（退出码 {result.returncode}）",
+                hint=tail[-1] if tail else "查看日志；被修改过的新增文件会跳过，可按需手动删除",
+            )
+        return f"已还原 {len(record.entries)} 个文件"
+
+    def _restore_done(self, message: str) -> None:
+        self._refresh_after_run = True
+        self._restore_record = None
+        self._pending_restore = None
+        if callable(self._on_restored):
+            self._on_restored(None)
+        self._sync_restore_hint()
+        self._append_log(message)
+        self.summary.setText("还原完成，正在刷新…")
+
+    def _restore_error(self, message: str) -> None:
+        self._refresh_after_run = True
+        self._append_log(f"还原失败：{message}")
+        self.summary.setText("还原失败")
+        _owner.QMessageBox.critical(self, "还原失败", message)
+
+    def _restore_finished(self) -> None:
         if self._closing:
             return
         self._set_busy(False)

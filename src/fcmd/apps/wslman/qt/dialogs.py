@@ -36,7 +36,15 @@ from fcmd.apps.wslman._distro import Distro
 from fcmd.apps.wslman._errors import WslmanError
 from fcmd.apps.wslman._images import ImageEntry
 from fcmd.apps.wslman._transfer import sha256_file
-from fcmd.gui.widgets import FormGrid, button, fit_dialog_to_content, hint_label, make_table, make_table_item
+from fcmd.gui.widgets import (
+    FormGrid,
+    PageScroll,
+    button,
+    fit_dialog_to_content,
+    hint_label,
+    make_table,
+    make_table_item,
+)
 
 from .._wslmanw_qt import (
     WslmanQtWindow,
@@ -61,16 +69,21 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         self.setWindowTitle(f"配置 {distro.name}")
         self.setToolTip(f"实例：{distro.name}")
         self._distro = distro
+        self._clamping = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.setSpacing(8)
+        # 两张卡片都可能展开：内容超过屏幕时用滚动区承接，底部保存按钮固定可见。
+        self.scroll = PageScroll(self, margins=(0, 0, 0, 0))
+        outer.addWidget(self.scroll, 1)
+        content = self.scroll.body
 
         self.make_default = QCheckBox("设为默认发行版", self)
         self.make_default.setChecked(distro.default)
         if distro.default:
             self.make_default.setEnabled(False)
             self.make_default.setToolTip("该实例已是默认发行版；设置为其它实例后才会取消")
-        outer.addWidget(self.make_default)
+        content.addWidget(self.make_default)
 
         form = QGridLayout()
         form.setContentsMargins(0, 0, 0, 0)
@@ -84,8 +97,8 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         reset = button("默认 ~")
         reset.clicked.connect(lambda: self.cwd.setText(w.DEFAULT_TERMINAL_CWD))
         form.addWidget(reset, 0, 2)
-        outer.addLayout(form)
-        outer.addWidget(
+        content.addLayout(form)
+        content.addWidget(
             hint_label("打开终端时作为 wsl --cd 的目录；可填 ~（用户主目录）或 /home/me/project 这类 Linux 路径。")
         )
 
@@ -105,7 +118,7 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
                 distro.name, value
             ),
         )
-        outer.addWidget(self.init_env)
+        content.addWidget(self.init_env)
 
         # 配置迁移单独一张卡：要选来源、看项目进度与冲突，比塞进「初始化环境」更清楚。
         # 同样只回显上次扫描结果（不启动实例、不重扫），扫描完成后立即写回缓存。
@@ -114,11 +127,13 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
             distro,
             instances=instances,
             status=w.config_status_for(settings, distro.name) if settings is not None else None,
+            restore=w.config_restore_for(settings, distro.name) if settings is not None else None,
             on_scanned=lambda snapshot: getattr(owner, "_save_config_status", lambda *_: None)(distro.name, snapshot),
+            on_restored=lambda record: getattr(owner, "_save_config_restore", lambda *_: None)(distro.name, record),
             state_provider=self._live_state,
         )
         self.ssh_migrate = self.config_migrate  # 旧属性名：迁移卡片已从 SSH 扩展为配置文件
-        outer.addWidget(self.config_migrate)
+        content.addWidget(self.config_migrate)
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
@@ -148,11 +163,71 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         return fresh.state if fresh is not None else (found.state if found is not None else None)
 
     def showEvent(self, event: Any) -> None:
-        """显示时按内容收口；不自动检测，避免打开配置就把停止的实例启动。"""
+        """显示时按内容收口并夹回屏幕；不自动检测，避免打开配置就把停止的实例启动。"""
         super().showEvent(event)
         # 上次展开态关窗会把「展开后的高度」存进几何；本次卡片默认收起，
         # 原样恢复会多出大块底部空白，所以每次显示都按内容收口一次。
         fit_dialog_to_content(self, min_width=680)
+        self._clamp_to_screen()
+
+    def adjustSize(self) -> None:
+        """卡片展开 / 收起时按内容高度调整对话框，但不超过屏幕。
+
+        ``PageScroll`` 自己不会把内容高度传给对话框的 ``sizeHint``；这里显式取内容
+        容器的高度，让展开后对话框尽量长高、收起后再缩回，同时把上限留给屏幕。
+        """
+        super().adjustSize()
+        if not self.isVisible() or not hasattr(self, "scroll"):
+            return
+        screen = self.screen() or _owner.QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        frame = self.frameGeometry()
+        extra_height = max(frame.height() - self.height(), 0)
+        max_height = max(available.height() - extra_height, 240)
+        chrome = max(self.height() - self.scroll.viewport().height(), 0)
+        content = self.scroll.widget().sizeHint().height()
+        desired = min(max(content + chrome, 320), max_height)
+        if desired != self.height():
+            self.resize(self.width(), desired)
+        self._clamp_to_screen()
+
+    def resizeEvent(self, event: Any) -> None:
+        """卡片展开 / 收起会 adjustSize：尺寸变化后重新夹回屏幕，别把底部按钮顶出去。"""
+        super().resizeEvent(event)
+        if self.isVisible():
+            self._clamp_to_screen()
+
+    def _clamp_to_screen(self) -> None:
+        """把对话框收进当前屏幕可用区域；优先保证底部的保存 / 取消按钮可见。"""
+        if self._clamping:
+            return
+        screen = self.screen() or _owner.QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        frame = self.frameGeometry()
+        extra_width = max(frame.width() - self.width(), 0)
+        extra_height = max(frame.height() - self.height(), 0)
+        max_width = max(available.width() - extra_width, 320)
+        max_height = max(available.height() - extra_height, 240)
+        self._clamping = True
+        try:
+            width = min(self.width(), max_width)
+            height = min(self.height(), max_height)
+            if (width, height) != (self.width(), self.height()):
+                self.resize(width, height)
+            # move() 作用于窗口框架，而 geometry() 是客户区；用 frameGeometry 算增量，
+            # 否则标题栏高度会让「刚好贴底」的对话框再多出几个像素。
+            frame = self.frameGeometry()
+            x = min(max(frame.x(), available.left()), available.left() + max(available.width() - frame.width(), 0))
+            y = min(max(frame.y(), available.top()), available.top() + max(available.height() - frame.height(), 0))
+            position = self.pos()
+            if (x, y) != (frame.x(), frame.y()):
+                self.move(position.x() + x - frame.x(), position.y() + y - frame.y())
+        finally:
+            self._clamping = False
 
     def _close_allowed(self) -> bool:
         """初始化 / 迁移在后台进行时允许关闭，但先说明任务不会中止。"""

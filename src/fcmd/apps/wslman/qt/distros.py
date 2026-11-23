@@ -568,6 +568,11 @@ class DistrosMixin:
         """兼容旧调用名：卡片已从 SSH 扩展为配置文件。"""
         self._save_config_status(name, snapshot)
 
+    def _save_config_restore(self, name: str, record: Any) -> None:
+        """持久化「还原上次迁移」记录；``None`` 表示已还原 / 无记录。"""
+        self.settings = _owner.w.with_config_restore(self.settings, name, record)
+        self._persist_settings(self.geometry_text())
+
     def _save_opener_paths(self, name: str, found: Mapping[str, str]) -> None:
         """持久化实例内 ``command -v`` 结果：实例停止时智能检测直接复用。"""
         self.settings = _owner.w.with_opener_paths(self.settings, name, found)
