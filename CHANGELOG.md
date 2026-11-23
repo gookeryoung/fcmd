@@ -21,6 +21,10 @@
 - 修改实例的软件包源后，即使 Python / uv 已初始化，点「开始初始化」也会先执行独立的
   pip / uv 配置步骤（只改 `pip config` 与 `uv.toml`，不重装 uv、不碰系统源）；
   环境检测的初始化项目标签同时覆盖两种状态：绿色「已初始化」/ 红色「未初始化」。
+- `wslmanw` 实例页在「导出」左侧新增「安装」：支持 `.tar` / `.tar.gz` / `.wsl` 直接导入，
+  `.vhdx` 复制到实例目录后 `--import-in-place`，以及 zip / 7z / rar / gz / bz2 / xz /
+  tar.bz2 / tar.xz 等压缩包；解压后自动找 `ext4.vhdx`、`rootfs.tar` / `install.tar`，
+  只有 Linux 文件树时临时打包成 tar 再导入。
 - 修复 `wslmanw`「初始化环境」把 Kali 等自带 python3 的实例误判为未初始化：`uv` / `Bun`
   拆成独立初始化项目，每个项目只看自己那个工具（Python 只看 `python3`，`uv` 看 `uv`，
   `Bun` 看 `bun`，Node.js 看 `node` + nvm）；Bun 项自带 nvm 引导，只勾 Bun 也能装成。

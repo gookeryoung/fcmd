@@ -776,15 +776,24 @@ def test_local_archives_filters_suffixes_and_skips_missing_dir(tmp_path: Path) -
     """扫描只认可导入的归档后缀，目录不存在时返回空而不是报错。"""
     (tmp_path / "b.wsl").write_bytes(b"x")
     (tmp_path / "a.tar.gz").write_bytes(b"x")
-    (tmp_path / "c.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "c.vhdx").write_bytes(b"x")
+    (tmp_path / "d.zip").write_bytes(b"x")
+    (tmp_path / "e.txt").write_text("x", encoding="utf-8")
     (tmp_path / "nested").mkdir()
-    assert [path.name for path in wslmanw.local_archives(tmp_path)] == ["a.tar.gz", "b.wsl"]
+    assert [path.name for path in wslmanw.local_archives(tmp_path)] == [
+        "a.tar.gz",
+        "b.wsl",
+        "c.vhdx",
+        "d.zip",
+    ]
     assert wslmanw.local_archives(tmp_path / "missing") == ()
 
 
 def test_guess_distro_name_strips_suffix_and_arch() -> None:
     assert wslmanw.guess_distro_name(Path("Debian-x86_64.tar")) == "Debian"
     assert wslmanw.guess_distro_name(Path("Ubuntu 24.04.wsl")) == "Ubuntu_24.04"
+    assert wslmanw.guess_distro_name(Path("kali.ext4.vhdx")) == "kali.ext4"
+    assert wslmanw.guess_distro_name(Path("Debian.zip")) == "Debian"
     assert wslmanw.guess_distro_name(Path("---.tar")) == "distro"
 
 

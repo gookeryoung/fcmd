@@ -554,7 +554,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         preset: Path | None = None,
     ) -> None:
         super().__init__(owner)
-        self.setWindowTitle("安装镜像")
+        self.setWindowTitle("安装实例")
         self.setMinimumWidth(820)
         self._owner = owner
         self._entries = entries
@@ -644,7 +644,9 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         if preset_row is not None:
             self.table.selectRow(preset_row)
         elif not self._archives:
-            self._info["校验状态"].setText("该目录没有 .tar / .tar.gz / .tgz / .wsl 镜像包，可用「选择文件…」指定")
+            self._info["校验状态"].setText(
+                "该目录没有可安装的镜像包（tar / wsl / vhdx / zip / 7z / rar 等），可用「选择文件…」指定"
+            )
         elif self.table.rowCount():
             self.table.selectRow(0)
 
@@ -671,7 +673,8 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
             self,
             "选择本地镜像包",
             self.directory.text(),
-            "镜像包 (*.tar *.tar.gz *.tgz *.wsl);;全部文件 (*.*)",
+            "镜像包 (*.tar *.tar.gz *.tgz *.tar.bz2 *.tbz *.tar.xz *.txz *.wsl *.vhdx "
+            "*.zip *.7z *.rar *.gz *.bz2 *.xz);;全部文件 (*.*)",
         )
         if not chosen:
             return

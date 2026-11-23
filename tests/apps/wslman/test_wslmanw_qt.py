@@ -203,6 +203,7 @@ def test_actions_and_distro_rows_all_carry_icons(home: Path, monkeypatch: pytest
                 "重启",
                 "刷新",
                 "修复注册",
+                "安装",
                 "导出",
                 "迁移",
                 "删除实例",
@@ -222,6 +223,9 @@ def test_actions_and_distro_rows_all_carry_icons(home: Path, monkeypatch: pytest
         assert _icon_name(window._button_by_text["关闭全部"]) == "power"
         assert _icon_name(window._button_by_text["用 IDE 打开"]) == "code"
         assert _icon_name(window._button_by_text["用 PI 打开"]) == "bot"
+        assert _icon_name(window._button_by_text["安装"]) == "download"
+        labels = list(window._button_by_text)
+        assert labels.index("安装") < labels.index("导出")
 
         assert _icon_name(_distro_row(window, 0).config_button) == "settings"
         assert _distro_row(window, 0).config_button.text() == ""
@@ -2007,6 +2011,33 @@ def test_install_archive_creates_missing_target_parents(
         assert steps[0][2] == str(target)
         assert steps[0][3] == str(archive)
         assert window.status_text().startswith("安装完成") or "已安装" in window.status_text()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_install_archive_copies_vhdx_and_uses_import_in_place(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """直接选 .vhdx：复制到 install/<名称>/ext4.vhdx，再走 --import-in-place。"""
+    source = tmp_path / "download" / "kali.ext4.vhdx"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"disk")
+    target = home / "wsl" / "install" / "kali-linux"
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(cli, "_dir_problem", lambda path: None)
+    steps: list[list[str]] = []
+    monkeypatch.setattr(cli, "_run_step", lambda _env, argv, **_kwargs: steps.append(list(argv)))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window._install_archive(source, "kali-linux", target, replace=False, backup=None)
+        _wait_idle(window)
+        disk = target / "ext4.vhdx"
+        assert disk.read_bytes() == b"disk"
+        assert steps == [["--import-in-place", "kali-linux", str(disk)]]
+        assert "安装完成" in window.status_text()
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

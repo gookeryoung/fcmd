@@ -79,6 +79,13 @@ class DistrosMixin:
             ),
             (
                 (
+                    "安装",
+                    self._install_local,
+                    "",
+                    "download",
+                    "安装本地镜像包（tar / wsl / vhdx / zip / 7z / rar 等）",
+                ),
+                (
                     "备份",
                     self._backup_selected,
                     "",

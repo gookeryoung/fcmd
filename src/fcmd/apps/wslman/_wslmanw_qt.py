@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.wslman import _files, _images, _initenv, _mirrors, _open
+from fcmd.apps.wslman import _files, _images, _initenv, _install, _mirrors, _open
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman import wslmanw as w
 from fcmd.apps.wslman._config import load_config
@@ -417,6 +417,7 @@ _REEXPORTS = (
     _images_note_text,
     _images_stamp,
     _initenv,
+    _install,
     _mirrors,
     _open,
     build_command,

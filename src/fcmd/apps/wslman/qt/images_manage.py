@@ -64,63 +64,94 @@ class ImagesManageMixin:
         self._install_archive(archive, name, target, replace=replace, backup=backup)
 
     def _install_archive(self, archive: Path, name: str, target: Path, *, replace: bool, backup: Path | None) -> None:
-        """工作线程执行 ``wsl --import``；替换沿用 CLI 的 ``_guard_replace`` 与备份顺序。"""
+        """工作线程安装本地包：tar / wsl / vhdx / 压缩包都走同一套替换与目录预检。"""
 
-        def work(_cancel: threading.Event) -> str:
-            env = _owner.cli._build_environment()
-            existing = _owner.cli._view(env).find(name)
-            command = f'fcmd wslman import {name} "{archive}" --dir "{target}"'
-            if existing is not None:
-                if not replace:
-                    raise _owner.invalid_argument(
-                        f"实例 {name} 已存在",
-                        hint=f"勾选「替换同名实例」后重试，或改用 CLI：{command} --replace --yes",
+        def work(_cancel: threading.Event) -> str:  # noqa: PLR0912 - 替换 / 目录 / vhdx / tar 分支
+            payload = _owner._install.prepare_payload(archive, target.parent)
+            try:
+                env = _owner.cli._build_environment()
+                existing = _owner.cli._view(env).find(name)
+                command = f'fcmd wslman import {name} "{archive}" --dir "{target}"'
+                if existing is not None:
+                    if not replace:
+                        raise _owner.invalid_argument(
+                            f"实例 {name} 已存在",
+                            hint=f"勾选「替换同名实例」后重试，或改用 CLI：{command} --replace --yes",
+                        )
+                    running = existing.state == "running"
+                    steps = [
+                        step
+                        for step, flag in (("停止", running), ("备份", backup is not None), ("删除实例", True))
+                        if flag
+                    ]
+                    if self._bridge is not None:
+                        self._bridge.event.emit(f"[安装] 替换 {existing.name}：" + " → ".join(steps) + " → 重新导入")
+                    _owner.cli._guard_replace(
+                        env, existing=existing, yes=True, backup=backup, terminate_first=running, command=command
                     )
-                running = existing.state == "running"
-                steps = [
-                    step for step, flag in (("停止", running), ("备份", backup is not None), ("删除实例", True)) if flag
-                ]
-                if self._bridge is not None:
-                    self._bridge.event.emit(f"[安装] 替换 {existing.name}：" + " → ".join(steps) + " → 重新导入")
-                _owner.cli._guard_replace(
-                    env, existing=existing, yes=True, backup=backup, terminate_first=running, command=command
-                )
-                if running:
-                    _owner.cli._run_step(env, ["--terminate", existing.name], action=f"停止 {existing.name}")
-                if backup is not None:
+                    if running:
+                        _owner.cli._run_step(env, ["--terminate", existing.name], action=f"停止 {existing.name}")
+                    if backup is not None:
+                        _owner.cli._run_step(
+                            env,
+                            ["--export", existing.name, str(backup)],
+                            action=f"备份 {existing.name}",
+                            hint="备份失败时不会删除旧实例",
+                            timeout=3600.0,
+                        )
+                    _owner.cli._run_step(env, ["--unregister", existing.name], action=f"删除实例 {existing.name}")
+                # 目录校验放在替换处理之后：替换会删除并清空旧目录，先校验会把「已存在」误报成目录问题。
+                problem = _owner.cli._dir_problem(target)
+                if problem:
+                    raise _owner.invalid_argument(
+                        f"安装目录不可用：{problem}", hint="选择一个空目录（不存在会自动创建）"
+                    )
+                # 默认装到工作目录的 install/<名称>，父目录可能还没建过；``wsl --import``
+                # 只创建最后一级目录，父目录缺失会直接报「系统找不到指定的路径」。
+                try:
+                    target.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    raise _owner.invalid_argument(
+                        f"无法创建安装目录：{target}",
+                        hint=f"换一个可写的本地目录（{exc}）",
+                    ) from exc
+                if payload.kind == "vhdx":
+                    # vhdx 用 --import-in-place：复制到 target/ext4.vhdx，保持实例目录可管理。
+                    disk = target / "ext4.vhdx"
+                    if payload.path.resolve() != disk.resolve():
+                        if self._bridge is not None:
+                            self._bridge.event.emit(f"[安装] 复制磁盘 {payload.path.name} → {disk}")
+                        try:
+                            _owner.shutil.copy2(payload.path, disk)
+                        except OSError as exc:
+                            raise _owner.invalid_argument(
+                                f"复制 vhdx 失败：{payload.path}",
+                                hint=f"确认目标目录可写且空间足够（{exc}）",
+                            ) from exc
+                    if self._bridge is not None:
+                        self._bridge.event.emit(f"[安装] 注册磁盘 {disk} → {name}")
                     _owner.cli._run_step(
                         env,
-                        ["--export", existing.name, str(backup)],
-                        action=f"备份 {existing.name}",
-                        hint="备份失败时不会删除旧实例",
+                        ["--import-in-place", name, str(disk)],
+                        action=f"安装 {name}",
+                        hint="vhdx 必须是 WSL2 的 ext4.vhdx；注册后可用「迁移」换目录",
                         timeout=3600.0,
                     )
-                _owner.cli._run_step(env, ["--unregister", existing.name], action=f"删除实例 {existing.name}")
-            # 目录校验放在替换处理之后：替换会删除并清空旧目录，先校验会把「已存在」误报成目录问题。
-            problem = _owner.cli._dir_problem(target)
-            if problem:
-                raise _owner.invalid_argument(f"安装目录不可用：{problem}", hint="选择一个空目录（不存在会自动创建）")
-            # 默认装到工作目录的 install/<名称>，父目录可能还没建过；``wsl --import``
-            # 只创建最后一级目录，父目录缺失会直接报「系统找不到指定的路径」。
-            # CLI 导入同样是先 ``mkdir(parents=True)`` 再执行，这里保持同一口径。
-            try:
-                target.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                raise _owner.invalid_argument(
-                    f"无法创建安装目录：{target}",
-                    hint=f"换一个可写的本地目录（{exc}）",
-                ) from exc
-            if self._bridge is not None:
-                self._bridge.event.emit(f"[安装] 导入 {archive.name} → {target}")
-            _owner.cli._run_step(
-                env,
-                ["--import", name, str(target), str(archive), "--version", "2"],
-                action=f"安装 {name}",
-                hint="目标目录必须为空；WSL1 镜像请改用 CLI 指定 --version 1",
-                timeout=3600.0,
-            )
-            size = archive.stat().st_size
-            return f"已安装 {name} 到 {target}（{archive.name}，{_owner.format_bytes(size)}）"
+                else:
+                    if self._bridge is not None:
+                        self._bridge.event.emit(f"[安装] 导入 {payload.path.name} → {target}")
+                    _owner.cli._run_step(
+                        env,
+                        ["--import", name, str(target), str(payload.path), "--version", "2"],
+                        action=f"安装 {name}",
+                        hint="目标目录必须为空；WSL1 镜像请改用 CLI 指定 --version 1",
+                        timeout=3600.0,
+                    )
+                size = payload.path.stat().st_size
+                return f"已安装 {name} 到 {target}（{archive.name}，{_owner.format_bytes(size)}）"
+            finally:
+                if payload.cleanup is not None:
+                    _owner.shutil.rmtree(payload.cleanup, ignore_errors=True)
 
         self._start("安装", work)
 

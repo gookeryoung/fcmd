@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.apps.wslman import _images, _initenv, _mirrors, _open, _sshfiles
+from fcmd.apps.wslman import _images, _initenv, _install, _mirrors, _open, _sshfiles
 from fcmd.apps.wslman._config import work_root
 from fcmd.apps.wslman._disk import format_bytes
 from fcmd.apps.wslman._distro import Distro, DistroView, state_label
@@ -1205,8 +1205,8 @@ def image_filename(name: str, download: _images.ImageDownload) -> str:
     return f"{name}-{download.arch}.tar"
 
 
-_ARCHIVE_SUFFIXES: tuple[str, ...] = (".tar", ".tar.gz", ".tgz", ".wsl")
-"""可交给 ``wsl --import`` 的本地镜像包后缀；``.wsl`` 是官方清单里的未压缩 tar。"""
+_ARCHIVE_SUFFIXES: tuple[str, ...] = _install.INSTALL_SUFFIXES
+"""可安装的本地镜像包后缀：tar / wsl / vhdx / zip / 7z / rar / gz / bz2 / xz。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1340,7 +1340,14 @@ def inspect_archive(path: Path, entries: Sequence[_images.ImageEntry]) -> LocalA
     size = path.stat().st_size
     matched = match_archive(path, entries)
     if matched is None:
-        return LocalArchive(path, size, guess_distro_name(path), "未知", "本地文件（未匹配官方清单）")
+        lowered = path.name.casefold()
+        if lowered.endswith(_install.VHDX_SUFFIXES):
+            source = "本地磁盘（vhdx，原地注册）"
+        elif lowered.endswith(_install.ARCHIVE_SUFFIXES):
+            source = "本地压缩包（解压后安装）"
+        else:
+            source = "本地文件（未匹配官方清单）"
+        return LocalArchive(path, size, guess_distro_name(path), "未知", source)
     entry, download = matched
     return LocalArchive(
         path,
