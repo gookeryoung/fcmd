@@ -41,6 +41,7 @@ from fcmd.apps.wslman._initenv_pkg import (
     pip_script,
     pypi_index_for_mirror,
     pypi_index_for_package_mirror,
+    source_mirror_lines,
     uv_script,
 )
 
@@ -75,19 +76,6 @@ __all__ = [
 
 _MIRROR_URL = "https://linuxmirrors.cn/main.sh"
 _MIRROR_SOURCE = "mirrors.aliyun.com"
-_MIRROR_DOMAINS: tuple[str, ...] = (
-    "mirrors.aliyun.com",
-    "mirrors.tencent.com",
-    "mirrors.huaweicloud.com",
-    "mirrors.ustc.edu.cn",
-    "mirrors.tuna.tsinghua.edu.cn",
-    "mirrors.163.com",
-    "mirrors.zju.edu.cn",
-    "mirrors.nju.edu.cn",
-    "mirror.sjtu.edu.cn",
-)
-"""判断系统源是否已换成国内镜像时识别的域名（与 linuxmirrors 默认列表的前几项一致）。"""
-
 _NPM_REGISTRY = "https://registry.npmmirror.com"
 _NODE_MIRROR = "https://npmmirror.com/mirrors/node"
 _NVM_GIT = "https://gitee.com/mirrors/nvm.git"
@@ -463,7 +451,6 @@ def task_labels(keys: Sequence[str]) -> tuple[str, ...]:
 
 def probe_script() -> str:
     """只读探测脚本：固定输出 ``WSLMAN_*`` 行，供 :func:`parse_status` 解析。"""
-    domains = " ".join(_MIRROR_DOMAINS)
     return "\n".join(
         (
             "set +e",
@@ -474,16 +461,7 @@ def probe_script() -> str:
             '    os_name="$(. /etc/os-release 2>/dev/null; printf "%s" "${PRETTY_NAME:-$NAME}")"',
             "fi",
             'printf "WSLMAN_OS=%s\\n" "$os_name"',
-            'mirror=""',
-            "for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/yum.repos.d/*.repo; do",
-            '    [ -r "$file" ] || continue',
-            f"    for domain in {domains}; do",
-            '        if grep -q "$domain" "$file" 2>/dev/null; then',
-            '            mirror="$domain"',
-            "            break 2",
-            "        fi",
-            "    done",
-            "done",
+            *source_mirror_lines(),
             'printf "WSLMAN_MIRROR=%s\\n" "$mirror"',
             'ssh_pub=""',
             'if [ -r "$HOME/.ssh/id_ed25519.pub" ]; then',

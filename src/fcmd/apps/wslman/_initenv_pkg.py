@@ -16,6 +16,7 @@ __all__ = [
     "pip_script",
     "pypi_index_for_mirror",
     "pypi_index_for_package_mirror",
+    "source_mirror_lines",
     "uv_config_lines",
     "uv_script",
 ]
@@ -77,24 +78,53 @@ def pypi_index_for_package_mirror(mirror: str) -> str:
     return _PYPI_INDEX_BY_MIRROR.get(key, _PIP_INDEX_URL)
 
 
+def source_mirror_lines() -> tuple[str, ...]:
+    """检测**当前启用**的系统源并写入 ``mirror``。
+
+    先让 apt 自己报告启用的索引 URI（``apt-get indextargets``），这样注释掉的旧行、
+    ``.sources`` 里的 ``Enabled: no`` 与备份文件都不会被误认成当前源；没有 apt 时
+    再按文件解析，且跳过注释行 / 未启用段落。
+    """
+    domains = " ".join(_PYPI_INDEX_BY_MIRROR)
+    return (
+        'mirror=""',
+        "if command -v apt-get >/dev/null 2>&1; then",
+        "    apt_uris=\"$(apt-get indextargets --format '$(URI)' 2>/dev/null)\"",
+        f"    for domain in {domains}; do",
+        '        if echo "$apt_uris" | grep -q "$domain"; then',
+        '            mirror="$domain"',
+        "            break",
+        "        fi",
+        "    done",
+        "fi",
+        'if [ -z "$mirror" ]; then',
+        "    for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/yum.repos.d/*.repo; do",
+        '        [ -r "$file" ] || continue',
+        '        case "$file" in',
+        "            *.list) active=\"$(grep -vE '^[[:space:]]*#' \"$file\" | grep -E '^[[:space:]]*deb(-src)?[[:space:]]')\";;",
+        '            *.sources) active="$(awk \'BEGIN{RS=""} !/Enabled:[[:space:]]*no/\' "$file")";;',
+        "            *.repo) active=\"$(grep -vE '^[[:space:]]*(#|[[])' \"$file\" | grep -E '^[[:space:]]*(baseurl|metalink|mirrorlist)[[:space:]]*=')\";;",
+        '            *) active="" ;;',
+        "        esac",
+        f"        for domain in {domains}; do",
+        '            if echo "$active" | grep -q "$domain"; then',
+        '                mirror="$domain"',
+        "                break 2",
+        "            fi",
+        "        done",
+        "    done",
+        "fi",
+    )
+
+
 def index_detect_lines(package_mirror: str = PACKAGE_MIRROR_AUTO) -> tuple[str, ...]:
     """写入 shell 变量 ``index``：固定软件包源，或按系统镜像检测。"""
     fixed = pypi_index_for_package_mirror(package_mirror)
     if fixed:
         return (f"index='{fixed}'",)
-    domains = " ".join(_PYPI_INDEX_BY_MIRROR)
     cases = tuple(f"  {domain}) index='{index}' ;;" for domain, index in _PYPI_INDEX_BY_MIRROR.items())
     return (
-        'mirror=""',
-        "for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/yum.repos.d/*.repo; do",
-        '    [ -r "$file" ] || continue',
-        f"    for domain in {domains}; do",
-        '        if grep -q "$domain" "$file" 2>/dev/null; then',
-        '            mirror="$domain"',
-        "            break 2",
-        "        fi",
-        "    done",
-        "done",
+        *source_mirror_lines(),
         'case "$mirror" in',
         *cases,
         f"  *) index='{_PIP_INDEX_URL}' ;;",

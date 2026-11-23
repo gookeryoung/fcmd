@@ -105,6 +105,7 @@ class ActionsMixin:
         self._start("停止", work)
 
     def _export_selected(self) -> None:
+        """导出到任意位置：默认建议落到备份目录的同名 ``.tar``。"""
         distro = self._selected()
         if distro is None:
             return
@@ -116,22 +117,52 @@ class ActionsMixin:
         )
         if not target:
             return
-        terminate_first = False
-        if distro.state == "running":
-            answer = _owner.QMessageBox.question(
-                self,
-                "实例运行中",
-                "运行中导出可能不一致。选择「是」先停止，选择「否」接受风险继续？",
-                _owner.QMessageBox.StandardButton.Yes
-                | _owner.QMessageBox.StandardButton.No
-                | _owner.QMessageBox.StandardButton.Cancel,
-                _owner.QMessageBox.StandardButton.Cancel,
-            )
-            if answer == _owner.QMessageBox.StandardButton.Cancel:
-                return
-            terminate_first = answer == _owner.QMessageBox.StandardButton.Yes
+        terminate_first = self._export_running_choice(distro)
+        if terminate_first is None:
+            return
+        self._export_to(distro, _owner.Path(target), terminate_first=terminate_first, label="导出")
 
-        path = _owner.Path(target)
+    def _backup_selected(self) -> None:
+        """一键备份：直接导出到备份目录的 ``<实例>.tar``。
+
+        备份目录就是镜像行「已备份」胶囊的判定来源：备份完成后胶囊与筛选立即生效，
+        换机 / 重装 / 删实例前不用再临时挑路径。
+        """
+        distro = self._selected()
+        if distro is None:
+            return
+        path = self._backup_dir_path() / f"{distro.name}.tar"
+        if path.exists() and not _owner.confirm(
+            self, "备份文件已存在", f"{path} 已存在，覆盖这个备份？\n\n（旧备份内容会被替换）"
+        ):
+            return
+        terminate_first = self._export_running_choice(distro)
+        if terminate_first is None:
+            return
+        self._export_to(distro, path, terminate_first=terminate_first, label="备份")
+
+    def _export_running_choice(self, distro: Distro) -> bool | None:
+        """运行中导出的二选一：``True`` 先停止、``False`` 接受风险、``None`` 取消。"""
+        if distro.state != "running":
+            return False
+        answer = _owner.QMessageBox.question(
+            self,
+            "实例运行中",
+            "运行中导出可能不一致。选择「是」先停止，选择「否」接受风险继续？",
+            _owner.QMessageBox.StandardButton.Yes
+            | _owner.QMessageBox.StandardButton.No
+            | _owner.QMessageBox.StandardButton.Cancel,
+            _owner.QMessageBox.StandardButton.Cancel,
+        )
+        if answer == _owner.QMessageBox.StandardButton.Cancel:
+            return None
+        return answer == _owner.QMessageBox.StandardButton.Yes
+
+    def _export_to(self, distro: Distro, path: Path, *, terminate_first: bool, label: str) -> None:
+        """导出流水线（与 CLI ``export`` 同口径）：预检 → 流式导出 → 原子改名的 ``.part``。
+
+        ``label`` 只影响状态行 / 日志文案（「导出」/「备份」），执行细节一致。
+        """
 
         def work(_cancel: threading.Event) -> str:
             env = _owner.cli._build_environment()
@@ -166,9 +197,9 @@ class ActionsMixin:
             except BaseException:
                 _owner.cli._abort_parts([item for item in parts if item is not None], keep=env.config.keep_partial)
                 raise
-            return f"已导出 {path}（{_owner.format_bytes(size)}，sha256 {digest}）"
+            return f"已{label} {path}（{_owner.format_bytes(size)}，sha256 {digest}）"
 
-        self._start("导出", work)
+        self._start(label, work)
 
     def _migrate_selected(self) -> None:
         """把实例整体迁到另一个已配置的工作目录（导出 → 删除 → 导入，失败回滚）。"""

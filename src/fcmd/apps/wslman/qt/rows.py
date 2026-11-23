@@ -229,7 +229,12 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self._busy = False
         self._active = False
         for text, tone in _owner.w.image_marks(entry):
-            self.add_tag(_owner.StatusTag(text, tone=tone, parent=self.header))
+            tag = _owner.StatusTag(text, tone=tone, parent=self.header)
+            # 「已安装 / 已备份 / 已下载 / sha256」的含义收进 tooltip，行内只留短标签。
+            hint = _owner.w.IMAGE_MARK_HINTS.get(text)
+            if hint:
+                tag.setToolTip(hint)
+            self.add_tag(tag)
         self.set_metrics(metrics)
 
         # 每行自带动作按钮：未下载 →「下载」；已下载未安装 →「安装」；已安装 → 无按钮。
@@ -334,6 +339,14 @@ class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
             grid.addWidget(value, row, column * 2 + 1, _owner.Qt.AlignmentFlag.AlignTop)
             self.values[label] = value
         layout.addLayout(grid)
+        # 「已备份」是镜像行的状态胶囊之一，含义写在这里：备份目录里有同名导出包。
+        layout.addWidget(
+            _owner.hint_label(
+                "已安装 = 本机已有同名实例；已备份 = 备份目录里有 <镜像名>.tar / .tar.gz"
+                "（实例页「备份」生成，可直接安装恢复）",
+                wrap=True,
+            )
+        )
         layout.addWidget(_owner.hint_label("下载地址", wrap=False))
         self.url = _owner.QPlainTextEdit(self)
         self.url.setReadOnly(True)

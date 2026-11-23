@@ -70,7 +70,11 @@ def test_language_scripts_use_domestic_mirrors() -> None:
     # pip / uv 不再写死清华：按系统源映射，中科大源必须命中中科大 PyPI。
     assert "mirrors.ustc.edu.cn) index='https://mirrors.ustc.edu.cn/pypi/simple'" in python_steps[1].script
     assert "mirrors.ustc.edu.cn) index='https://mirrors.ustc.edu.cn/pypi/simple'" in uv_steps[1].script
-    assert 'grep -q "$domain" "$file"' in python_steps[1].script
+    # 自动检测先让 apt 报告启用的 URI，避免注释 / 备份 / disabled 源里的旧域名被误判。
+    assert "apt-get indextargets --format '$(URI)'" in python_steps[1].script
+    assert "!/Enabled:[[:space:]]*no/" in python_steps[1].script
+    assert "grep -vE '^[[:space:]]*#'" in python_steps[1].script
+    assert 'grep -q "$domain" "$file"' not in python_steps[1].script
     assert "pypi.tuna.tsinghua.edu.cn" in python_steps[1].script  # 仅作为识别不到时的回退
     # Node.js 用 nvm + 国内镜像：不再用 apt 的 nodejs，源码 / 二进制都走国内。
     assert "nodejs" not in node_steps[0].script
@@ -181,6 +185,7 @@ def test_probe_script_is_read_only_and_prefixed() -> None:
     assert script.startswith("set +e")
     assert "WSLMAN_SSH_PUB" in script
     assert "mirrors.aliyun.com" in script
+    assert "apt-get indextargets --format '$(URI)'" in script
     assert "id_ed25519.pub" in script
     assert "apt-get install" not in script
 

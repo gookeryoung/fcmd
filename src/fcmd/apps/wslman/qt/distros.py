@@ -78,7 +78,14 @@ class DistrosMixin:
                 ),
             ),
             (
-                ("导出", self._export_selected, "", "export", "导出实例"),
+                (
+                    "备份",
+                    self._backup_selected,
+                    "",
+                    "archive",
+                    "备份到备份目录（<实例>.tar，镜像页的「已备份」即指它）",
+                ),
+                ("导出", self._export_selected, "", "export", "导出实例到指定位置"),
                 ("迁移", self._migrate_selected, "", "transfer", "迁移到其他工作目录"),
             ),
             (

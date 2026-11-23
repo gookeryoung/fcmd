@@ -9,7 +9,7 @@
 - ``panel-left-close`` / ``panel-left-open``：带面板边框的折叠 / 展开（预留）。
 
 除侧边栏页面图标外，还内置 ``refresh`` / ``download`` / ``upload`` / ``save`` /
-``folder`` / ``search`` / ``trash`` / ``send`` / ``convert`` / ``export`` / ``disc``
+``folder`` / ``search`` / ``trash`` / ``send`` / ``convert`` / ``export`` / ``disc`` / ``archive``
  等按钮动作图标；:func:`icon_for_text` 按按钮文案推断图标，
 ``fcmd.gui.widgets.button`` 默认调用它。
 
@@ -172,6 +172,12 @@ ICON_BODIES: dict[str, str] = {
     ),
     "check-square": ('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/>'),
     "transfer": ('<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>'),
+    "archive": (
+        # Lucide ``archive``：带盖的收纳箱，用于「备份到备份目录」（区别于 ``export``
+        # 的「导出到任意文件」——备份是固定落到备份目录、会被镜像页「已备份」识别）。
+        '<rect width="20" height="5" x="2" y="3" rx="1"/>'
+        '<path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>'
+    ),
     # 发行版图标：与上面的动作图标同一套线性描边风格，靠轮廓区分不同发行版；
     # 识别不出的名称统一回落到 ``distro``，不留空、不显示问号。
     "distro": ('<rect width="18" height="12" x="3" y="6" rx="2"/><path d="m7 11 2 2-2 2"/><path d="M13 15h4"/>'),
@@ -234,6 +240,7 @@ BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("下载", "download"),
     ("导入", "upload"),
     ("导出", "export"),
+    ("备份", "archive"),
     ("镜像", "disc"),
     ("打开", "folder"),
     ("浏览", "folder"),

@@ -32,6 +32,8 @@ from fcmd.infras.download import format_speed
 __all__ = [
     "DEFAULT_MAX_DOWNLOADS",
     "DEFAULT_TERMINAL_CWD",
+    "IMAGE_FILTER_HINTS",
+    "IMAGE_MARK_HINTS",
     "MAX_DOWNLOADS",
     "MIN_DOWNLOADS",
     "MIN_HEIGHT",
@@ -129,12 +131,34 @@ _SOURCE_SHORT = {"cli": "CLI", "manifest": "清单", "store": "Store"}
 
 IMAGE_FILTERS: tuple[tuple[str, str], ...] = (
     ("all", "全部"),
-    ("download", "可直链下载"),
-    ("install", "仅安装"),
+    ("download", "可下载"),
     ("installed", "已安装"),
     ("backed_up", "已备份"),
 )
-"""镜像页的筛选按钮：``download`` 有可直链归档，``install`` 只能走 ``wsl --install``。"""
+"""镜像页的筛选按钮。
+
+只保留四个互不重叠的口径：能否下载到本地、是否已安装、是否已备份。
+「可直链下载 / 仅安装」原来是一对互补项——「仅安装」只是「可下载」的取反，
+既不能缩小范围也不表示用户的一种意图，已合并：没有直链归档的条目仍出现在
+「全部」里，行内标注「仅 wsl --install」，下载能力不再单独做成筛选项。
+"""
+
+IMAGE_FILTER_HINTS: dict[str, str] = {
+    "all": "官方清单与 wsl --list --online 列出的全部镜像",
+    "download": "有可直链归档：能下载到本地后再安装（没有直链的条目改用 wsl --install）",
+    "installed": "本机已注册的 WSL 实例",
+    "backed_up": "备份目录里有同名导出包（<镜像名>.tar / .tar.gz）；可在实例页用「备份」生成并恢复",
+}
+"""筛选按钮的 tooltip：把每个口径写清楚，避免「可直链下载 / 仅安装」这类歧义。"""
+
+IMAGE_MARK_HINTS: dict[str, str] = {
+    "已安装": "本机已有同名的 WSL 实例",
+    "已下载": "下载目录里已有该镜像的归档文件",
+    "已备份": "备份目录里有同名导出包（<镜像名>.tar / .tar.gz）；在实例页点「备份」生成",
+    "sha256": "清单提供校验和：下载后会自动校验",
+    "无 sha256": "清单没有校验和：下载后无法标记 verified",
+}
+"""行内状态胶囊的含义说明（挂在胶囊 tooltip 上）。"""
 
 DEFAULT_IMAGE_FILTER = "all"
 
@@ -982,8 +1006,6 @@ def filter_images(
             continue
         if filter_key == "download" and not entry.downloads:
             continue
-        if filter_key == "install" and entry.downloads:
-            continue
         if filter_key == "installed" and not entry.installed:
             continue
         if filter_key == "backed_up" and not entry.backed_up:
@@ -1026,14 +1048,12 @@ def sort_images(entries: Sequence[_images.ImageEntry], key: str = DEFAULT_IMAGE_
 
 
 def image_counts(entries: Sequence[_images.ImageEntry]) -> dict[str, int]:
-    """各筛选口径的条目数，供状态行显示「已安装 N / 可直链 M」。"""
+    """各筛选口径的条目数，供状态行显示「已安装 N / 可下载 M / 已备份 K」。"""
     counts = {ident: 0 for ident, _label in IMAGE_FILTERS}
     counts["all"] = len(entries)
     for entry in entries:
         if entry.downloads:
             counts["download"] += 1
-        else:
-            counts["install"] += 1
         if entry.installed:
             counts["installed"] += 1
         if entry.backed_up:
@@ -1059,7 +1079,8 @@ def image_status_text(
         parts.append(next((label for ident, label in IMAGE_SOURCES if ident == source), source))
     parts.append(f"显示 {shown} 个")
     parts.append(f"已安装 {counts['installed']}")
-    parts.append(f"可直链 {counts['download']}")
+    parts.append(f"可下载 {counts['download']}")
+    parts.append(f"已备份 {counts['backed_up']}")
     text = " · ".join(parts)
     if shown == 0 and counts["all"]:
         text += "（没有匹配项，可调整筛选或搜索词）"

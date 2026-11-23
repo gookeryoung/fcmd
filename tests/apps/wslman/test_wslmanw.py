@@ -357,7 +357,13 @@ def test_filter_images_by_query_status_and_source() -> None:
     assert [entry.name for entry in wslmanw.filter_images(entries)] == ["Ubuntu", "Debian", "OracleLinux"]
     assert [entry.name for entry in wslmanw.filter_images(entries, query="gnu")] == ["Debian"]
     assert [entry.name for entry in wslmanw.filter_images(entries, filter_key="download")] == ["Ubuntu", "Debian"]
-    assert [entry.name for entry in wslmanw.filter_images(entries, filter_key="install")] == ["OracleLinux"]
+    # 「仅安装」已合并进「全部」：没有直链归档的条目仍在这里，靠行内文案区分。
+    assert [entry.name for entry in wslmanw.filter_images(entries, filter_key="all")] == [
+        "Ubuntu",
+        "Debian",
+        "OracleLinux",
+    ]
+    assert wslmanw.filter_images(entries, filter_key="install") == entries
     assert [entry.name for entry in wslmanw.filter_images(entries, filter_key="installed")] == ["Ubuntu"]
     assert [entry.name for entry in wslmanw.filter_images(entries, source="store")] == ["OracleLinux"]
     assert wslmanw.filter_images(entries, filter_key="backed_up") == ()
@@ -419,10 +425,11 @@ def test_sort_images_and_counts() -> None:
         _image("Oracle", download=False),
     )
     counts = wslmanw.image_counts(entries)
-    assert counts == {"all": 3, "download": 2, "install": 1, "installed": 0, "backed_up": 0}
+    assert counts == {"all": 3, "download": 2, "installed": 0, "backed_up": 0}
     status = wslmanw.image_status_text(entries, 2, filter_key="download", source="manifest", note="cli+清单 · 10:00")
     assert "共 3 个镜像" in status
-    assert "可直链下载 2 个" in status
+    assert "可下载 2 个" in status
+    assert "已备份 0" in status
     assert "官方清单" in status
     assert "显示 2 个" in status
     assert status.endswith("cli+清单 · 10:00")

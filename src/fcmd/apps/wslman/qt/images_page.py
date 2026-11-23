@@ -64,6 +64,8 @@ class ImagesPageMixin:
             chip = _owner.button(label)
             chip.setObjectName("FilterChip")
             chip.setCheckable(True)
+            # 每个口径都写清含义：避免「可直链下载 / 仅安装」那类反义凑数的筛选项。
+            chip.setToolTip(_owner.w.IMAGE_FILTER_HINTS.get(key, label))
             chip.setCursor(_owner.Qt.CursorShape.PointingHandCursor)
             # ``_checked`` 必须有默认值：PySide 会按「可零参调用」挑 ``clicked()`` 重载。
             chip.clicked.connect(lambda _checked=False, key=key: self._on_image_filter_changed(key))

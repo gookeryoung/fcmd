@@ -593,10 +593,9 @@ def test_image_rows_and_filter(home: Path, monkeypatch: pytest.MonkeyPatch) -> N
         window.image_filter_buttons["installed"].click()
         assert window.image_list.count() == 1
         assert _image_row(window, 0).entry.name == "Ubuntu"
-        window.image_filter_buttons["install"].click()
-        assert window.image_list.count() == 1
-        assert _image_row(window, 0).entry.name == "Debian"
+        # 「仅安装」已合并：没有直链归档的条目在「全部」里，不再单独成筛选。
         window.image_filter_buttons["all"].click()
+        assert window.image_list.count() == 2
 
         # 来源筛选与排序下拉。
         window.image_source.setCurrentIndex(window.image_source.findData("store"))
@@ -4134,6 +4133,112 @@ def test_ssh_status_cache_survives_other_settings_saves(home: Path, monkeypatch:
             assert dialog.ssh_migrate.state_tag.isHidden() is False
         finally:
             dialog.deleteLater()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_image_filter_chips_have_hints_and_no_redundant_pair(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """筛选项精简为四个互不重叠的口径，每个都在 tooltip 里写清含义。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        labels = [label for _key, label in wslmanw.IMAGE_FILTERS]
+        assert labels == ["全部", "可下载", "已安装", "已备份"]
+        assert "仅安装" not in labels
+        assert set(window.image_filter_buttons) == {"all", "download", "installed", "backed_up"}
+        for key, chip in window.image_filter_buttons.items():
+            assert chip.toolTip() == wslmanw.IMAGE_FILTER_HINTS[key]
+            assert chip.toolTip()
+        assert "备份目录" in window.image_filter_buttons["backed_up"].toolTip()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_image_row_tags_explain_installed_and_backed_up(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """行内「已安装 / 已备份」胶囊要有 tooltip，说明判定来源（备份目录里的导出包）。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entry = replace(_image_entry("Ubuntu"), installed=True, backed_up=True)
+        window._apply_images((_catalog((entry,)), (entry,)))
+        row = _image_row(window, 0)
+        tags = [tag for tag in row.header.findChildren(_wslmanw_qt.StatusTag) if tag.isVisibleTo(row)]
+        texts = {tag.text(): tag.toolTip() for tag in tags}
+        assert "备份目录" in texts["已备份"]
+        assert "WSL 实例" in texts["已安装"]
+        # 详情区也写清两个胶囊的含义。
+        window.distro_list.setCurrentRow(0) if window.distro_list.count() else None
+        window.focus_row("images", row)
+        hints = " ".join(label.text() for label in window.image_detail_view.findChildren(_wslmanw_qt.QLabel))
+        assert "已备份" in hints
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_backup_action_exports_to_backup_dir(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """实例页「备份」：直接导出到备份目录的 <实例>.tar，供镜像页「已备份」识别。"""
+    view = _view(_distro("Ubuntu", "stopped"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    monkeypatch.setattr(_wslmanw_qt, "distro_export_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        distro = view.find("Ubuntu")
+        assert distro is not None
+        backup = window._backup_dir_path() / "Ubuntu.tar"
+        started: list[tuple[str, Any]] = []
+
+        monkeypatch.setattr(cli, "_require_target", lambda env, name: distro)
+        monkeypatch.setattr(cli, "_guard_running_export", lambda *args, **kwargs: None)
+        monkeypatch.setattr(cli, "_preflight_for", lambda *args, **kwargs: SimpleNamespace(ok=True, detail=""))
+        monkeypatch.setattr(cli, "_export_parts", lambda path, mode: (None,))
+
+        def fake_stream(env: Any, name: str, path: Any, parts: Any, **kwargs: Any) -> tuple[int, str]:
+            target = Path(str(path))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"tar")
+            return 3, "deadbeef"
+
+        monkeypatch.setattr(cli, "_export_stream", fake_stream)
+        monkeypatch.setattr(window, "_start", lambda label, work, **kwargs: started.append((label, work)))
+
+        window.distro_list.setCurrentRow(0)
+        assert window._button_by_text["备份"].toolTip()
+        window._backup_selected()
+        assert [label for label, _work in started] == ["备份"]
+        message = started[0][1](threading.Event())
+        assert backup.read_bytes() == b"tar"
+        assert "已备份" in message
+        assert str(backup) in message
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_backup_action_keeps_existing_file_unless_confirmed(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """备份文件已存在时先确认；取消则不发起任何任务。"""
+    view = _view(_distro("Ubuntu", "stopped"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        window._backup_dir_path().mkdir(parents=True, exist_ok=True)
+        (window._backup_dir_path() / "Ubuntu.tar").write_bytes(b"old")
+        started: list[str] = []
+        monkeypatch.setattr(window, "_start", lambda label, work, **kwargs: started.append(label))
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: False)
+        window._backup_selected()
+        assert started == []
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
