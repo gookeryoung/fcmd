@@ -15,8 +15,10 @@
   APT 已装包跳过 + 索引新鲜不重复 `update`，pip / uv 索引走清华（uv 用 `pip --user` 装、
   Python 下载走 npmmirror），nvm 源码走 gitee + node 二进制走 npmmirror，Bun 走
   `npm i -g bun`（二进制随 npm 包分发），不再依赖 GitHub / astral.sh；
-  Python / Node.js 两个项目就绪判定改为「含配套工具」，状态区新增 `uv` / `Bun` /
-  `Node.js（nvm）` 与合并后的 `pip&uv` / `npm&bun` 镜像行。
+  状态区新增 `uv` / `Bun` / `Node.js（nvm）` 与合并后的 `pip&uv` / `npm&bun` 镜像行。
+- 修复 `wslmanw`「初始化环境」把 Kali 等自带 python3 的实例误判为未初始化：`uv` / `Bun`
+  拆成独立初始化项目，每个项目只看自己那个工具（Python 只看 `python3`，`uv` 看 `uv`，
+  `Bun` 看 `bun`，Node.js 看 `node` + nvm）；Bun 项自带 nvm 引导，只勾 Bun 也能装成。
 - 推进 ADR 0046 P4：llmw 模型页 `_BrowsePanel` 方法拆到 `apps/llm/qt/models_*.py`，
   `_llmw_qt_center.py` 约 2.3k → 499 行；P4 续拆 `RunPage` 到 `apps/llm/qt/run_*.py`，
   `_llmw_qt_run.py` 约 2.2k → 771 行；清理已失效的行数白名单项。

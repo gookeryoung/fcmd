@@ -2090,7 +2090,7 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert section.details.isHidden() is False
         assert all(tag.isHidden() for tag in section._collapsed_tags.values())
 
-        section._apply_status(_initenv.EnvStatus(python="3.12.3", uv="0.5.14"))
+        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
         # 仅 Python 就绪：只有它勾选 + 禁用 + 绿标，其余仍可操作。
         assert section._done == {"python"}
         assert section.run_button.isEnabled() is True
@@ -2098,13 +2098,13 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert section.checks["python"].isEnabled() is False
         assert section.checks["python"].isChecked() is True
         assert section.status_tags["python"].isHidden() is False
-        for key in ("mirror", "ssh", "node", "rust"):
+        for key in ("mirror", "ssh", "uv", "node", "bun", "rust"):
             assert section.checks[key].isEnabled() is True
             assert section.checks[key].isChecked() is True
             assert section.status_tags[key].isHidden() is True
         section._set_all(False)
         assert section.checks["python"].isChecked() is True
-        assert not any(section.checks[key].isChecked() for key in ("mirror", "ssh", "node", "rust"))
+        assert not any(section.checks[key].isChecked() for key in ("mirror", "ssh", "uv", "node", "bun", "rust"))
 
         section._apply_status(_initenv.EnvStatus())
         assert section.copy_key.isEnabled() is False
@@ -2155,7 +2155,7 @@ def test_init_env_section_restores_saved_selection(home: Path) -> None:
         assert section.checks["node"].isChecked() is False
         assert section.selected_keys() == ("python", "rust")
 
-        section._apply_status(_initenv.EnvStatus(python="3.12.3", uv="0.5.14"))
+        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
         # 已就绪的 python 被强制勾选并禁用，但不再计入待执行选择。
         assert section.checks["python"].isChecked() is True
         assert section.checks["python"].isEnabled() is False
@@ -2363,7 +2363,7 @@ def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.
     owner = QWidget()
     section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"))
     try:
-        section._apply_status(_initenv.EnvStatus(python="3.12.3", uv="0.5.14"))
+        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
         section._set_all(False)
         section.checks["node"].setChecked(True)
         section.checks["python"].setChecked(True)  # 已就绪，禁用后即使勾着也不执行
@@ -2381,7 +2381,7 @@ def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.
             section, "_execute", lambda steps: seen.append(tuple(step.label for step in steps)) or "初始化完成"
         )
         section._run_selected()
-        assert seen == [("安装 Node.js 依赖", "安装 nvm / Node.js / Bun")]
+        assert seen == [("安装 Node.js 依赖", "安装 nvm / Node.js")]
     finally:
         section.deleteLater()
         owner.deleteLater()

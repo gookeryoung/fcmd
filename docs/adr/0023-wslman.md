@@ -418,7 +418,10 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   跳过 30 分钟缓存，更新期间按钮禁用并显示「更新中…」）；筛选 / 排序 / 来源写入
   `wslmanw.json` 的 `image_filter` / `image_sort` / `image_source`，下次启动恢复。
 - 实例配置对话框内嵌「初始化环境」卡片（纯逻辑在 `_initenv.py`）：
-  勾选国内系统源 / SSH 密钥 / Python（含 uv）/ Node.js（nvm + Bun）/ Rust，探测与安装都走
+  勾选国内系统源 / SSH 密钥 / Python / uv / Node.js / Bun / Rust（**7 个独立项目**，每个只看
+  自己那个工具是否就绪：Python 只看 `python3`，Kali、Ubuntu 这类自带 python3 的发行版直接显示
+  已初始化，不会因为没装 uv 被误判；`uv` / `Bun` 各自成项，没装就单独出现在待初始化列表里；
+  Node.js 按 `node` + nvm 判定，apt 装的旧 `nodejs` 不算就绪），探测与安装都走
   `wsl.exe -d <实例> --exec bash -lc`（必须 `--exec`，否则 `$HOME` / `$(...)` 会被提前展开），
   `root=True` 的步骤加 `-u root`。**国内加速口径固定为「直接吃国内镜像」而不做运行时探测
   选优**（选优要逐个试站点，初始化首跑反而更慢）：APT 走 linuxmirrors 换源，pip 索引与
@@ -426,11 +429,13 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   其 Python 下载走 npmmirror 的 python-build-standalone；Node.js 用 nvm 装 LTS（nvm 源码
   clone 自 gitee 镜像、`NVM_NODEJS_ORG_MIRROR` 指 npmmirror），不再用 apt 里版本较旧的
   `nodejs`；Bun 用 `npm i -g bun` 装（二进制随 `@oven/bun-linux-x64` 从 npmmirror 分发，
-  不走 GitHub Releases）；Rust 沿用 rsproxy。此外 `_apt_script` 先 `dpkg -s` 过滤已装包、
+  不走 GitHub Releases），Bun 项自带 nvm 引导，单独勾选也能装成；Rust 沿用 rsproxy。
+  此外 `_apt_script` 先 `dpkg -s` 过滤已装包、
   apt 索引 1 小时内有效就不重复 `update`，并统一 `--no-install-recommends` + 重试，避免
   重复初始化的绝大部分耗时。nvm 与 `~/.local/bin` 会以带标记的 rc 块写进 `~/.bashrc` /
   `~/.profile`（幂等、不重复追加），并把 node / npm / npx / bun 软链到 `~/.local/bin`，
-  保证 `bash -lc`（只读 profile）也能测到 node / bun。打开即后台探测实例环境并按探测结果回填：
+  保证 `bash -lc`（只读 profile）也能测到 node / bun，同时 `nvm which default` 有值时不重装。
+  打开即后台探测实例环境并按探测结果回填：
   **已就绪的项目保持勾选但禁用，并在勾选框右侧标注绿色「已初始化」胶囊**（`StatusTag`
   `tone="success"`）；未就绪的默认勾选、可自由增删，全选 / 全不选与「开始初始化」都只
   作用于未就绪项目，避免重复跑脚本。卡片默认收起，收起行只显示已初始化项目标签与
@@ -438,7 +443,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   「检测环境」「复制 SSH 公钥」「开始初始化」三个动作固定在卡片内，
   不随详情收起，收起态下也能直接操作；全选 / 全不选也放在这条常显动作行。
   展开后复用标题行显示一行摘要（收起行与摘要行互斥，不额外占高），正文是
-  左右两栏（左：5 个勾选项；右：状态值一行一项，9 项：系统镜像源 / SSH 密钥 / Python /
+  左右两栏（左：7 个勾选项；右：状态值一行一项，9 项：系统镜像源 / SSH 密钥 / Python /
   uv / Node.js（nvm）/ Bun / Rust / pip&uv 镜像 / npm&bun 镜像）+ 日志
   （经 `EventBridge` 增量回填），状态值单行省略、完整内容进 tooltip，说明文字
   收在卡片 tooltip 里，展开高度只随内容增长。每个实例的勾选写入 `wslmanw.json`
@@ -586,10 +591,16 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
     「智能检测」若实例停止会先确认再执行 `wsl -d`；成功检测后立即写回缓存。
     探测脚本最后显式 `exit 0`：循环最后一项没命中时 shell 会返回 1，不能因此把
     前面已经找到的 PI / OpenCode 等结果整体当成失败。
-- Windows 宿主机：`shutil.which` 预检后按 argv 无窗口启动，`.cmd/.bat` 经
-  `cmd.exe /d /s /c` 包装（避免 WinError 193）；WSL 内：先在实例内
+- Windows 宿主机：`shutil.which` 预检后按 argv **可见窗口**启动（不设
+  `STARTUPINFO.wShowWindow=SW_HIDE`：IDE 的 CLI 会把窗口请求转给已有 / 新拉起的
+  Electron 主进程，继承 SW_HIDE 会让窗口创建后一直隐藏，表现为「进程在、界面停在
+  正在打开」），`.cmd/.bat` 经 `cmd.exe /d /c` + **参数列表**包装（不预先拼成
+  一个字符串：Python 的 `list2cmdline` 会把带空格路径的引号转义成 `\"`，`cmd.exe`
+  不认；也不要 `/s`，它会拆掉带空格路径的首个引号对，实测 IDE CLI 直接退出 1）；
+  WSL 内：先在实例内
   `bash -lc 'command -v <命令>'` 预检，再经终端 `wsl.exe -d <实例> --cd <目录>
   --exec bash -lc <模板>`（`_terminal.build_command` 的 `run` 参数）启动。
+  启动成功后状态行写「已启动」并记任务日志，不再停在「正在打开」。
 - 工具未安装 / 启动失败都会弹窗并在文件页状态行写明原因与处理建议，不静默失败。
 
 ### D11 配置

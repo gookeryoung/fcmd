@@ -9,8 +9,11 @@ from fcmd.apps.wslman import _initenv
 
 def test_tasks_cover_required_items() -> None:
     keys = [task.key for task in _initenv.TASKS]
-    assert keys == ["mirror", "ssh", "python", "node", "rust"]
+    # uv / Bun 各自独立成项：没有 uv 不能让「Python」显示未初始化。
+    assert keys == ["mirror", "ssh", "python", "uv", "node", "bun", "rust"]
     assert _initenv.task_by_key("python") is not None
+    assert _initenv.task_by_key("uv") is not None
+    assert _initenv.task_by_key("bun") is not None
     assert _initenv.task_by_key("missing") is None
 
 
@@ -19,7 +22,9 @@ def test_short_label_covers_all_tasks_and_falls_back() -> None:
         "镜像源",
         "SSH 密钥",
         "Python",
+        "uv",
         "Node.js",
+        "Bun",
         "Rust",
     )
     assert _initenv.short_label("unknown") == "unknown"
@@ -57,29 +62,41 @@ def test_ssh_script_is_ed25519_and_keeps_existing_key() -> None:
 
 def test_language_scripts_use_domestic_mirrors() -> None:
     python_steps = _initenv.steps_for(["python"])
+    uv_steps = _initenv.steps_for(["uv"])
     node_steps = _initenv.steps_for(["node"])
+    bun_steps = _initenv.steps_for(["bun"])
     rust_steps = _initenv.steps_for(["rust"])
     assert "python3-pip" in python_steps[0].script
     assert "pypi.tuna.tsinghua.edu.cn" in python_steps[1].script
-    # Node.js 改成 nvm + Bun：不再用 apt 的 nodejs，源码 / 二进制都走国内镜像。
+    assert "pypi.tuna.tsinghua.edu.cn" in uv_steps[1].script
+    # Node.js 用 nvm + 国内镜像：不再用 apt 的 nodejs，源码 / 二进制都走国内。
     assert "nodejs" not in node_steps[0].script
     assert "curl git ca-certificates" in node_steps[0].script
     assert "gitee.com/mirrors/nvm.git" in node_steps[1].script
     assert "NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node" in node_steps[1].script
-    assert "-g bun --registry https://registry.npmmirror.com" in node_steps[1].script
+    # Bun 自已顾自己做不依赖：缺 Node.js 时先用同一套 nvm 镜装修好。
+    assert "gitee.com/mirrors/nvm.git" in bun_steps[1].script
+    assert "-g bun --registry https://registry.npmmirror.com" in bun_steps[1].script
     assert "rsproxy.cn" in rust_steps[1].script
     assert "crates-io" in rust_steps[1].script
 
 
-def test_python_script_installs_uv_without_github() -> None:
-    script = _initenv.steps_for(["python"])[1].script
+def test_uv_script_installs_uv_without_github() -> None:
+    script = _initenv.steps_for(["uv"])[1].script
     assert "pip install --user" in script
     assert "--break-system-packages" in script
     assert "astral.sh" not in script
-    assert "~/.config/uv/uv.toml" in script or "$HOME/.config/uv/uv.toml" in script
+    assert "$HOME/.config/uv/uv.toml" in script
     assert 'python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone"' in script
     # login shell 才能找到 ~/.local/bin/uv，且只补一次。
     assert 'grep -q ".local/bin" "$HOME/.profile"' in script
+
+
+def test_python_script_only_configures_pip_mirror() -> None:
+    """Python 项只管 python3 / pip：就绪判定只看 python3（Kali 自带时就该显示已初始化）。"""
+    script = _initenv.steps_for(["python"])[1].script
+    assert "pip config set global.index-url" in script
+    assert "uv" not in script
 
 
 def test_node_script_keeps_nvm_reachable_from_login_shell() -> None:
@@ -90,6 +107,8 @@ def test_node_script_keeps_nvm_reachable_from_login_shell() -> None:
     assert 'grep -qF "fcmd wslman init"' in script
     assert 'ln -sf "$node_bin/$name" "$HOME/.local/bin/$name"' in script
     assert "registry.npmmirror.com" in script
+    # 已有 nvm + default 版本时不重装（否则每次勾选都会重新下载 node）。
+    assert "if ! nvm which default >/dev/null 2>&1; then" in script
 
 
 def test_apt_script_skips_installed_packages_and_stale_update() -> None:
@@ -184,12 +203,28 @@ def test_present_and_default_checked() -> None:
     assert all(_initenv.present(task.key, ready) for task in _initenv.TASKS)
     assert not any(_initenv.default_checked(task.key, ready) for task in _initenv.TASKS)
 
-    # 缺配套工具（uv / nvm / bun）算没就绪：点一次初始化把差距补齐。
-    bare = _initenv.EnvStatus(python="3.12.3", node="20.11.0")
-    assert _initenv.present("python", bare) is False
-    assert _initenv.present("node", bare) is False
-    assert _initenv.present("python", _initenv.EnvStatus(python="3.12.3", uv="0.5.14")) is True
-    assert _initenv.present("node", _initenv.EnvStatus(node="20.11.0", bun="1.2.0")) is False
+    # 每个项目只看自己那个工具，不互相绑架。
+    kali = _initenv.EnvStatus(python="3.12.3")
+    assert _initenv.present("python", kali) is True
+    assert _initenv.default_checked("python", kali) is False
+    assert _initenv.present("uv", kali) is False
+    assert _initenv.default_checked("uv", kali) is True
+    # 只装了 node（非 nvm）也不能算「已初始化」：还没走 nvm 方案。
+    assert _initenv.present("node", _initenv.EnvStatus(node="20.11.0")) is False
+    assert _initenv.present("node", _initenv.EnvStatus(node="20.11.0", nvm="yes")) is True
+    assert _initenv.present("bun", _initenv.EnvStatus(node="20.11.0", nvm="yes")) is False
+    assert _initenv.status_from_mapping(_initenv.status_to_mapping(kali)) == kali
+
+
+def test_kali_with_system_python_counts_as_initialized() -> None:
+    """回归：Kali 这类自带 python3、没有 uv 的实例，Python 项必须显示已初始化。"""
+    status = _initenv.parse_status("WSLMAN_PYTHON=3.11.9\nWSLMAN_UV=\n")
+    assert _initenv.present("python", status) is True
+    assert _initenv.default_checked("python", status) is False
+    assert _initenv.present("uv", status) is False
+    rows = {label: (value, ok) for label, value, ok in _initenv.status_rows(status)}
+    assert rows["Python"] == ("3.11.9", True)
+    assert rows["uv"] == ("未安装", False)
 
 
 def test_status_rows_and_summary_reflect_state() -> None:

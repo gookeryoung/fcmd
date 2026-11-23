@@ -187,8 +187,20 @@ def _ssh_key_script() -> str:
     )
 
 
-def _python_script() -> str:
-    """pip 索引 + uv：uv 用 pip 装（不走 astral.sh / GitHub），配置写 uv.toml。"""
+def _pip_script() -> str:
+    """pip 索引 → 清华镜像。"""
+    return "\n".join(
+        (
+            "set -e",
+            f"index='{_PIP_INDEX_URL}'",
+            'python3 -m pip config set global.index-url "$index" >/dev/null',
+            'echo "pip 镜像已配置：$index"',
+        )
+    )
+
+
+def _uv_script() -> str:
+    """装 uv（pip --user 走清华，不走 astral.sh / GitHub）并写 ``uv.toml`` 镜像。"""
     return "\n".join(
         (
             "set -e",
@@ -219,54 +231,90 @@ def _python_script() -> str:
             'if [ -f "$HOME/.profile" ] && ! grep -q ".local/bin" "$HOME/.profile"; then',
             '    printf "\\nexport PATH=\\"\\$HOME/.local/bin:\\$PATH\\"\\n" >> "$HOME/.profile"',
             "fi",
-            'echo "Python、pip 与 uv 镜像已配置"',
+            'echo "uv 已就绪：$(uv --version)"',
         )
     )
 
 
+def _rc_lines() -> tuple[str, ...]:
+    """把 nvm 与 ``~/.local/bin`` 幂等写进 login / interactive shell 的 rc 文件。"""
+    return (
+        "add_rc() {",
+        '    file="$1"',
+        '    [ -e "$file" ] || touch "$file"',
+        '    if grep -qF "fcmd wslman init" "$file" 2>/dev/null; then',
+        "        return 0",
+        "    fi",
+        "    cat >> \"$file\" <<'FCMD_RC'",
+        "# >>> fcmd wslman init >>>",
+        'export NVM_DIR="$HOME/.nvm"',
+        '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1',
+        'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac',
+        "# <<< fcmd wslman init <<<",
+        "FCMD_RC",
+        "}",
+        'add_rc "$HOME/.bashrc"',
+        'add_rc "$HOME/.profile"',
+        'if [ -e "$HOME/.zshrc" ]; then add_rc "$HOME/.zshrc"; fi',
+    )
+
+
+def _nvm_lines() -> tuple[str, ...]:
+    """nvm + Node.js LTS：nvm 源码走 gitee、node 二进制走 npmmirror。
+
+    已经装过就不重装（``nvm which default`` 能拿到路径即视为就绪），并把 node / npm
+    软链到 ``~/.local/bin``，让不读 rc 的 ``bash -lc`` 也能测到。
+    """
+    return (
+        'export NVM_DIR="$HOME/.nvm"',
+        'if [ ! -s "$NVM_DIR/nvm.sh" ]; then',
+        '    echo "安装 nvm（gitee 镜像，避免 GitHub 超时）…"',
+        '    if [ -d "$NVM_DIR" ]; then rm -rf "$NVM_DIR"; fi',
+        f'    if ! git clone --depth 1 {_NVM_GIT} "$NVM_DIR" 2>/dev/null; then',
+        '        echo "gitee 镜像不可用，回退 GitHub…"',
+        f'        git clone --depth 1 {_NVM_GIT_FALLBACK} "$NVM_DIR"',
+        "    fi",
+        "fi",
+        '. "$NVM_DIR/nvm.sh"',
+        f"export NVM_NODEJS_ORG_MIRROR={_NODE_MIRROR}",
+        "if ! nvm which default >/dev/null 2>&1; then",
+        '    echo "安装 Node.js LTS（npmmirror 镜像）…"',
+        "    nvm install --lts >/dev/null",
+        "    nvm alias default 'lts/*' >/dev/null",
+        "fi",
+        'node_bin="$(dirname "$(nvm which default)")"',
+        'export PATH="$node_bin:$PATH"',
+        'mkdir -p "$HOME/.local/bin"',
+        "for name in node npm npx corepack; do",
+        '    if [ -x "$node_bin/$name" ]; then',
+        '        ln -sf "$node_bin/$name" "$HOME/.local/bin/$name"',
+        "    fi",
+        "done",
+    )
+
+
 def _node_script() -> str:
-    """nvm（gitee）+ Node.js LTS（npmmirror）+ Bun（npm 包），都绕开 GitHub。"""
+    """nvm（gitee）+ Node.js LTS（npmmirror）+ npm 镜像。"""
     return "\n".join(
         (
             "set -e",
-            'export NVM_DIR="$HOME/.nvm"',
-            "add_rc() {",
-            '    file="$1"',
-            '    [ -e "$file" ] || touch "$file"',
-            '    if grep -qF "fcmd wslman init" "$file" 2>/dev/null; then',
-            "        return 0",
-            "    fi",
-            "    cat >> \"$file\" <<'FCMD_RC'",
-            "# >>> fcmd wslman init >>>",
-            'export NVM_DIR="$HOME/.nvm"',
-            '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1',
-            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac',
-            "# <<< fcmd wslman init <<<",
-            "FCMD_RC",
-            "}",
-            'if [ ! -s "$NVM_DIR/nvm.sh" ]; then',
-            '    echo "安装 nvm（gitee 镜像，避免 GitHub 超时）…"',
-            '    if [ -d "$NVM_DIR" ]; then rm -rf "$NVM_DIR"; fi',
-            f'    if ! git clone --depth 1 {_NVM_GIT} "$NVM_DIR" 2>/dev/null; then',
-            '        echo "gitee 镜像不可用，回退 GitHub…"',
-            f'        git clone --depth 1 {_NVM_GIT_FALLBACK} "$NVM_DIR"',
-            "    fi",
-            "fi",
-            '. "$NVM_DIR/nvm.sh"',
-            f"export NVM_NODEJS_ORG_MIRROR={_NODE_MIRROR}",
-            'echo "安装 Node.js LTS（npmmirror 镜像）…"',
-            "nvm install --lts >/dev/null",
-            "nvm alias default 'lts/*' >/dev/null",
-            "nvm use --lts >/dev/null 2>&1 || nvm use default >/dev/null",
-            'node_bin="$(dirname "$(nvm which default)")"',
-            'export PATH="$node_bin:$PATH"',
+            *_nvm_lines(),
             f"npm config set registry {_NPM_REGISTRY} >/dev/null",
-            'mkdir -p "$HOME/.local/bin"',
-            "for name in node npm npx corepack; do",
-            '    if [ -x "$node_bin/$name" ]; then',
-            '        ln -sf "$node_bin/$name" "$HOME/.local/bin/$name"',
-            "    fi",
-            "done",
+            *_rc_lines(),
+            'echo "Node.js $(node --version)（nvm）已就绪"',
+        )
+    )
+
+
+def _bun_script() -> str:
+    """Bun：走 npm 包（二进制随 ``@oven/bun-linux-x64`` 从 npmmirror 分发）。
+
+    缺 Node.js 时先用 nvm 装好（同一套国内镜像），不把失败丢给用户。
+    """
+    return "\n".join(
+        (
+            "set -e",
+            *_nvm_lines(),
             'if [ ! -x "$node_bin/bun" ]; then',
             '    echo "安装 Bun（npm 包 + npmmirror，不走 GitHub Releases）…"',
             f"    npm install -g bun --registry {_NPM_REGISTRY} --no-fund --no-audit",
@@ -279,10 +327,8 @@ def _node_script() -> str:
             "fi",
             'if [ -x "$node_bin/bun" ]; then ln -sf "$node_bin/bun" "$HOME/.local/bin/bun"; fi',
             'if [ -x "$node_bin/bunx" ]; then ln -sf "$node_bin/bunx" "$HOME/.local/bin/bunx"; fi',
-            'add_rc "$HOME/.bashrc"',
-            'add_rc "$HOME/.profile"',
-            'if [ -e "$HOME/.zshrc" ]; then add_rc "$HOME/.zshrc"; fi',
-            'echo "Node.js $(node --version) · Bun $(bun --version 2>/dev/null) 已就绪"',
+            *_rc_lines(),
+            'echo "Bun $(bun --version 2>/dev/null) 已就绪"',
         )
     )
 
@@ -342,21 +388,39 @@ TASKS: tuple[InitTask, ...] = (
     InitTask(
         "python",
         "安装 Python 开发环境",
-        "安装 python3 / pip / venv 与 uv：pip 索引与 uv 默认索引都指向清华镜像（uv 直接用 pip 装，"
-        "不走 astral.sh / GitHub），uv 的 Python 下载走 npmmirror 的 python-build-standalone。",
+        "安装 python3 / pip / venv，并把 pip 索引指向清华镜像；已自带 python3 的发行版（如 Kali）装完直接视为就绪。",
         (
             InitStep("安装 Python 软件包", _apt_script("python3", "python3-pip", "python3-venv"), root=True),
-            InitStep("配置 pip / uv 镜像", _python_script()),
+            InitStep("配置 pip 镜像", _pip_script()),
+        ),
+    ),
+    InitTask(
+        "uv",
+        "安装 uv",
+        "用 pip 从清华镜像安装 uv（不走 astral.sh / GitHub），并写入 ~/.config/uv/uv.toml："
+        "默认索引清华、Python 下载走 npmmirror 的 python-build-standalone。",
+        (
+            InitStep("安装 Python 软件包", _apt_script("python3", "python3-pip", "python3-venv"), root=True),
+            InitStep("安装 uv 并配置镜像", _uv_script()),
         ),
     ),
     InitTask(
         "node",
         "安装 Node.js 开发环境",
-        "用 nvm 安装 Node.js LTS（nvm 源码走 gitee 镜像、node 二进制走 npmmirror），再装 Bun"
-        "（npm 包 + npmmirror 分发，不走 GitHub Releases），npm / bun 的 registry 都指向 npmmirror。",
+        "用 nvm 安装 Node.js LTS（nvm 源码走 gitee 镜像、node 二进制走 npmmirror），npm registry 指向 npmmirror。",
         (
             InitStep("安装 Node.js 依赖", _apt_script("curl", "git", "ca-certificates"), root=True),
-            InitStep("安装 nvm / Node.js / Bun", _node_script()),
+            InitStep("安装 nvm / Node.js", _node_script()),
+        ),
+    ),
+    InitTask(
+        "bun",
+        "安装 Bun",
+        "通过 npm 包安装 Bun（二进制随 @oven/bun-linux-x64 从 npmmirror 分发，不走 GitHub "
+        "Releases），写入 ~/.bunfig.toml 镜像；缺 Node.js 时先用 nvm 装好。",
+        (
+            InitStep("安装 Node.js 依赖", _apt_script("curl", "git", "ca-certificates"), root=True),
+            InitStep("安装 Bun 并配置镜像", _bun_script()),
         ),
     ),
     InitTask(
@@ -379,7 +443,9 @@ _TASK_SHORT: dict[str, str] = {
     "mirror": "镜像源",
     "ssh": "SSH 密钥",
     "python": "Python",
+    "uv": "uv",
     "node": "Node.js",
+    "bun": "Bun",
     "rust": "Rust",
 }
 
@@ -532,20 +598,25 @@ def status_from_mapping(raw: object) -> EnvStatus | None:
     return EnvStatus(**{name: value.strip() if isinstance(value, str) else "" for name, value in values.items()})
 
 
-def present(key: str, status: EnvStatus) -> bool:
+def present(key: str, status: EnvStatus) -> bool:  # noqa: PLR0911 - 每个初始化项目独立判定，扁平分支最直观
     """判断某个初始化项目是否已就绪。
 
-    Python 项目包含 uv、Node.js 项目包含 nvm 与 Bun：只装了 python / node 但缺
-    配套工具时算「未就绪」，点一次初始化就能把差距补齐。
+    每个项目只看自己那个工具：Python 已经有 python3 就算就绪（Kali / Ubuntu 这类
+    发行版自带 python3，不应因为没装 uv 就显示未初始化）；uv / Bun / Node.js 各自
+    独立成项，没装就单独出现在待初始化列表里。
     """
     if key == "mirror":
         return bool(status.mirror)
     if key == "ssh":
         return status.ssh_ready
     if key == "python":
-        return bool(status.python) and bool(status.uv)
+        return bool(status.python)
+    if key == "uv":
+        return bool(status.uv)
     if key == "node":
-        return bool(status.node) and status.nvm == "yes" and bool(status.bun)
+        return bool(status.node) and status.nvm == "yes"
+    if key == "bun":
+        return bool(status.bun)
     if key == "rust":
         return bool(status.rust)
     return False
