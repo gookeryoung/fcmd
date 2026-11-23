@@ -521,24 +521,37 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   自身滚动）→ 下载动作行。状态行与动作行都是单行控件，窗口压到最小高度时不会被
   列表压扁 / 与列表重叠（换行标签 + 拉伸列表的组合在矮窗口下会被 Qt 压成一行并
   叠到下一行控件上）。
-- 镜像源参考 WSL Dashboard（owu/wsl-dashboard）的公开接口：拉取
-  `api2.wslui.com/co-creation/api/online-distros`（地址由 `api1.wslui.com` 的
-  install helper 给出），缓存到 `cache/wslman-wslui-mirrors.json`（6 小时）。镜像行
-  折叠时只显示源数量（`镜像源：N 个`），展开后的「镜像源」字段（与 tooltip 同一份
-  名单）列出该条目的全部候选：匹配到的 WSLUI 源（清华 / 中科大 / 阿里 / 北外 /
-  火山等）、有官方 sha256 可校验的国内镜像（中科大 / 阿里云 / 华为云）与官方源兜底；
-  折叠行只报数量是因为 Ubuntu / Kali 这类条目在清单里有 4～13 条源，全铺到行卡会把
-  副标题挤没。实测 TUNA / 北外在部分出口 IP 上整站 403（含根路径），所以这两家的源
-  只能当候选，自动下载会先测速再依次回退。
-  名称匹配在「同名 + 版本」之外补充「无数字版本的同一发行版」降级（`Debian` /
-  `kali-linux` / `archlinux`），带版本号的条目不会被指向别的版本。`自动` 下载时
-  先对所有候选并发拉前 3 MiB 测吞吐，全部失败再回退 TCP 延迟，按快慢依次尝试。
-  候选各带自己的落盘名与摘要口径：WSLUI 的 `lxc` rootfs 与官方 `.wsl` 不是同一份
-  字节，不拿官方 sha256 校验、显式指定校验和时也不参与；换源不会把不同格式写进
-  同一个文件。每个候选的落盘名为 WSLUI 的 `<实例>-<arch>.<格式>` 或官方原名，
-  重扫按前缀 / 原名识别「已下载」。行内进度之外，状态栏右侧进度条显示聚合百分比 /
-  已下载 / 总量 / 速度 / 剩余（与导出实例同一口径），左侧写「正在下载 N 项 · 进度 ·
-  排队」。
+- 镜像源参考 WSL Dashboard（owu/wsl-dashboard）的公开接口：直取
+  `api2.wslui.com/co-creation/api/online-distros`（WSL Dashboard 自身也从这个接口拿，
+  一次往返；失败时才回头问 `api1.wslui.com` 的 install helper 要地址），缓存到
+  `cache/wslman-wslui-mirrors.json`（6 小时）。镜像行折叠时只显示源数量
+  （`镜像源：N 个`），展开后的「镜像源」字段（与 tooltip 同一份名单）列出该条目的
+  全部候选：匹配到的 WSLUI 源（清华 / 中科大 / 阿里 / 北外 / 火山等）、有官方 sha256
+  可校验的国内镜像与 GitHub 加速前缀、官方源兜底；折叠行只报数量是因为 Ubuntu /
+  Kali 这类条目在清单里有 4～17 条源，全铺到行卡会把副标题挤没。实测 TUNA / 北外
+  在部分出口 IP 上整站 403（含根路径），所以这两家的源只能当候选，自动下载会先
+  测速再依次回退。名称匹配在「同名 + 版本」之外补充「无数字版本的同一发行版」降级
+  （`Debian` / `kali-linux` / `archlinux`），带版本号的条目不会被指向别的版本。
+  `自动` 下载时先对所有候选并发拉前 3 MiB 测吞吐，全部失败再回退 TCP 延迟，按快慢
+  依次尝试。候选各带自己的落盘名与摘要口径：WSLUI 的 `lxc` rootfs 与官方 `.wsl`
+  不是同一份字节，不拿官方 sha256 校验、显式指定校验和时也不参与；换源不会把不同
+  格式写进同一个文件。每个候选的落盘名为 WSLUI 的 `<实例>-<arch>.<格式>` 或官方
+  原名，重扫按前缀 / 原名识别「已下载」。行内进度之外，状态栏右侧进度条显示聚合
+  百分比 / 已下载 / 总量 / 速度 / 剩余（与导出实例同一口径），左侧写「正在下载 N 项
+  · 进度 · 排队」。
+- 国内镜像只收录「与官方字节一致」的改写：`releases.ubuntu.com` → 中科大 / 阿里云 /
+  华为云 / 南京大学（`Content-Length` 一致）；`download.fedoraproject.org/pub/fedora`
+  → 中科大 `/fedora`；`fastly.mirror.pkgbuild.com/wsl`（Arch Linux）→ 中科大 / 南京大学
+  `/archlinux/wsl`（`Content-Length` 与 `Last-Modified` 全部一致，南京大学实测
+  431 KiB/s vs 官方 170 KiB/s）。GitHub Releases 上的发行版镜像（openSUSE / SUSE /
+  AlmaLinux / RLC+）在部分网络直连不可用，改用 `ghfast.top` / `gh-proxy.com` /
+  `ghproxy.net` 三个加速前缀（整条官方 URL 拼在前缀后），只在条目有官方 sha256 时
+  参与，字节是否可信由下载后的摘要校验决定。eLxr（GitLab）、Debian（salsa）、
+  Azure Linux（微软 CDN）、Oracle Linux（Azure Blob）、Kali 仍只有官方源。
+- 更新列表不再逐个串行：官方清单（`wsl --list --online` 与 `DistributionInfo.json`
+  在 `_images.collect_images` 内部并发）、WSLUI 镜像源与本地状态（`wsl -l -v` + 目录
+  扫描）在窗口工作线程里三路并发，刷新耗时从「三者相加」（冷启动时 `wsl --list
+  --online` 单次可达 15 s）降到只取最慢的一个（实测 0.5～1.0 s）。
 - 窄窗口（最小宽度 900）：实例动作行用共享 `FlowLayout` 按组换行，按钮保持完整
   文案而不是每个压到 ~59px 被截断；设置页「打开方式」下拉框不再固定 220px，
   而是吃剩余宽度，卡片最小宽度不超过 `PageScroll` 视口，右侧内容不会被窗口裁掉。

@@ -7,6 +7,15 @@
 
 ### 变更
 
+- `wslmanw` 镜像列表刷新提速：官方清单（`wsl --list --online` + `DistributionInfo.json`）、
+  WSLUI 镜像源、本地状态三路并发，耗时从「三者相加」（冷启动时 `wsl --list --online`
+  单次可达 15 s）降到只取最慢的一个（实测 0.5～1.0 s）；WSLUI 清单改为一次请求直取
+  `online-distros`（与 WSL Dashboard 一致），失败才回到 install helper 要地址。
+- 新增可用镜像源：Arch Linux 的 WSL 镜像（`fastly.mirror.pkgbuild.com/wsl`）在中科大 /
+  南京大学有字节一致副本（实测 431 KiB/s vs 官方 170 KiB/s）；GitHub Releases 上的发行版
+  镜像（openSUSE / SUSE / AlmaLinux / RLC+）在部分网络直连不可用，改用 ghfast.top /
+  gh-proxy.com / ghproxy.net 三个加速前缀（仅当条目有官方 sha256 时参与，下载后仍然
+  校验摘要）。AlmaLinux / SUSE 这类条目从「1 个官方源」变为 4 个候选。
 - `wslmanw` 实例页在「迁移」后新增「复制」：弹框询问新实例名称与目标目录，默认
   `<源>-copy`（占用时递增）与源实例所属工作目录的 `install/<新名称>`；复制会导出
   源实例并以新名称导入，源实例保持不变，失败只回收新建实例与目标目录。

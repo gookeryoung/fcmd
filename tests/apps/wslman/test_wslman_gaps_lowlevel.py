@@ -26,9 +26,10 @@ def test_mirror_labels_and_trusted_ids() -> None:
     assert _mirrors.label(_mirrors.AUTO) == "自动（镜像源测速择优）"
     assert _mirrors.label("ustc") == "中科大 USTC"
     assert _mirrors.label("huawei") == "华为云"
+    assert _mirrors.label("ghfast") == "ghfast.top 加速"
     assert _mirrors.label("custom") == "custom"
-    assert _mirrors.trusted_ids() == ("official", "ustc", "aliyun", "huawei")
-    assert _mirrors.identifiers() == ("auto", "official", "ustc", "aliyun", "huawei")
+    assert _mirrors.trusted_ids() == ("official", "ustc", "aliyun", "huawei", "nju")
+    assert _mirrors.identifiers() == ("auto", "official", "ustc", "aliyun", "huawei", "nju")
 
 
 def test_candidates_respects_verifiability_and_rewrites_mirror_urls() -> None:
@@ -38,7 +39,7 @@ def test_candidates_respects_verifiability_and_rewrites_mirror_urls() -> None:
     assert [candidate.ident for candidate in _mirrors.candidates(url, policy="official")] == ["official"]
 
     picked = _mirrors.candidates(url)
-    assert [candidate.ident for candidate in picked] == ["ustc", "aliyun", "huawei", "official"]
+    assert [candidate.ident for candidate in picked] == ["ustc", "aliyun", "huawei", "nju", "official"]
     assert picked[0].url == "https://mirrors.ustc.edu.cn/ubuntu-releases/24.04/ubuntu-24.04-wsl-amd64.wsl"
     assert picked[0].trusted is True
     assert picked[-1].url == url
@@ -48,6 +49,23 @@ def test_candidates_respects_verifiability_and_rewrites_mirror_urls() -> None:
         "url": "https://mirrors.ustc.edu.cn/ubuntu-releases/24.04/ubuntu-24.04-wsl-amd64.wsl",
         "trusted": True,
     }
+
+
+def test_candidates_add_github_proxies_and_arch_archlinux_mirrors() -> None:
+    """GitHub Releases 镜像走加速前缀（仅可校验时），Arch 的 WSL 镜像有中科大 / 南大副本。"""
+    gh = "https://github.com/AlmaLinux/wsl-images/releases/download/v9.9/AlmaLinux-9.9_x64.wsl"
+    proxied = _mirrors.candidates(gh)
+    assert [candidate.ident for candidate in proxied] == ["ghfast", "gh-proxy", "ghproxy-net", "official"]
+    assert proxied[0].url == f"https://ghfast.top/{gh}"
+    # 无官方摘要时不加加速前缀：未校验的第三方字节不能当可信候选。
+    assert [candidate.ident for candidate in _mirrors.candidates(gh, verifiable=False)] == ["official"]
+
+    arch = "https://fastly.mirror.pkgbuild.com/wsl/2026.11/archlinux.wsl"
+    assert [candidate.url for candidate in _mirrors.candidates(arch)] == [
+        "https://mirrors.ustc.edu.cn/archlinux/wsl/2026.11/archlinux.wsl",
+        "https://mirrors.nju.edu.cn/archlinux/wsl/2026.11/archlinux.wsl",
+        arch,
+    ]
 
 
 # ---------------------------------------------------------------------- #

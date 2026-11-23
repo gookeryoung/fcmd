@@ -2131,7 +2131,7 @@ _DOWNLOAD_SOURCES = frozenset({"auto", "cli", "manifest", "file"})
         "overwrite": "覆盖已存在的目标文件",
         "preview": "只打印计划、来源与目标路径，不联网、不写文件",
         "json_output": "输出机读结果信封",
-        "mirror": "下载源顺序：auto（默认，国内镜像优先）/ official / ustc / aliyun / huawei",
+        "mirror": "下载源顺序：auto（默认，国内镜像 / GitHub 加速优先）/ official / ustc / aliyun / huawei / nju",
     },
 )
 def download(  # noqa: PLR0912, PLR0913, PLR0917

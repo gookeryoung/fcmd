@@ -18,6 +18,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -394,17 +395,22 @@ def collect_images(  # noqa: PLR0913 - 两个源函数、时钟、缓存、fatal
     cli_rows: tuple[OnlineRow, ...] | None = None
     manifest_entries: tuple[ImageEntry, ...] | None = None
     cli_error: Exception | None = None
-    try:
-        cli_rows = tuple(fetch_cli())
-    except Exception as exc:
-        if fatal is not None and fatal(exc):
-            raise
-        cli_error = exc
-        warnings.append(f"wsl --list --online 不可用：{exc}")
-    try:
-        manifest_entries = tuple(fetch_manifest())
-    except Exception as exc:
-        warnings.append(f"官方镜像清单不可用：{exc}")
+    # 两个源互不依赖：并发拉。``wsl --list --online`` 自己也要联网，单次 1～15 s，
+    # 和清单下载串行时刷新时间就是两者相加，并发后只取较慢的那个。
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="images-fetch") as pool:
+        cli_future = pool.submit(lambda: tuple(fetch_cli()))
+        manifest_future = pool.submit(lambda: tuple(fetch_manifest()))
+        try:
+            cli_rows = cli_future.result()
+        except Exception as exc:
+            if fatal is not None and fatal(exc):
+                raise
+            cli_error = exc
+            warnings.append(f"wsl --list --online 不可用：{exc}")
+        try:
+            manifest_entries = manifest_future.result()
+        except Exception as exc:
+            warnings.append(f"官方镜像清单不可用：{exc}")
 
     if cli_rows is None and manifest_entries is None and cache is None:
         # 两条在线源都拿不到、也没有缓存时才报错：优先抛 CLI 的原错误（退出码语义不变）。

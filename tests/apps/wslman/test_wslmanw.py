@@ -289,7 +289,14 @@ def test_mirror_sources_order_wslui_then_verified_then_official() -> None:
 
     pairs = wslmanw.mirror_sources(entry, wslui)
 
-    assert [label for label, _url in pairs] == ["南京大学", "中科大 USTC", "阿里云", "华为云", "官方源"]
+    assert [label for label, _url in pairs] == [
+        "南京大学",
+        "中科大 USTC",
+        "阿里云",
+        "华为云",
+        "南京大学",
+        "官方源",
+    ]
     lines = wslmanw.mirror_lines(pairs).splitlines()
     assert lines[0] == "南京大学 · https://mirrors.nju.edu.cn/rootfs.tar.xz"
     assert lines[-1] == f"官方源 · {url}"

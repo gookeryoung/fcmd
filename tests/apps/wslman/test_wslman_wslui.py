@@ -107,7 +107,22 @@ def test_load_catalog_caches_and_falls_back(tmp_path: Path, monkeypatch: pytest.
 
     second = _wslui.load_catalog()
     assert second.from_cache is True
-    assert len(calls) == 2  # 第二次直接命中新鲜缓存，不再联网
+    assert len(calls) == 1  # 第二次直接命中新鲜缓存，不再联网
+
+    # 清单接口本身失败时才回头问 install helper 要地址（多一次往返）。
+    calls.clear()
+
+    def helper_fallback(url: str, *, timeout: float = 12.0) -> Any:
+        calls.append(url)
+        if "helper/install" in url:
+            return {"data": {"online_distros": {"url": "https://mirror.example/list.json"}}}
+        if "online-distros" in url:
+            raise OSError("blocked")
+        return SAMPLE
+
+    monkeypatch.setattr(_wslui, "_http_json", helper_fallback)
+    assert _wslui.load_catalog(force=True).distros
+    assert calls == [_wslui.MIRROR_FALLBACK_URL, _wslui.INSTALL_INFO_URL, "https://mirror.example/list.json"]
 
     def broken(*_args: Any, **_kwargs: Any) -> Any:
         raise OSError("offline")

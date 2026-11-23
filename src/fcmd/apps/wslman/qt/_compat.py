@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ __all__ = [
     "QPushButton",
     "QWidget",
     "Sequence",
+    "ThreadPoolExecutor",
     "_files",
     "_initenv",
     "_open",

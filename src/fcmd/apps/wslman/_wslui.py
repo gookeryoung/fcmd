@@ -178,7 +178,7 @@ def parse_catalog(raw: Any) -> tuple[WsluiDistro, ...]:
     return tuple(distros)
 
 
-def _http_json(url: str, *, timeout: float = 20.0) -> Any:
+def _http_json(url: str, *, timeout: float = 12.0) -> Any:
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8-sig"))
@@ -186,7 +186,7 @@ def _http_json(url: str, *, timeout: float = 20.0) -> Any:
 
 def _mirror_list_url() -> str:
     try:
-        payload = _http_json(INSTALL_INFO_URL)
+        payload = _http_json(INSTALL_INFO_URL, timeout=6.0)
         data = payload.get("data") if isinstance(payload, dict) else None
         online = data.get("online_distros") if isinstance(data, dict) else None
         url = online.get("url") if isinstance(online, dict) else None
@@ -251,6 +251,22 @@ def _save_cache(distros: tuple[WsluiDistro, ...], fetched_at: float) -> None:
         write_json_atomic(cache_path(), payload)
 
 
+def _fetch_catalog() -> tuple[WsluiDistro, ...]:
+    """拉镜像源清单：先直取 WSL Dashboard 用的 ``online-distros``（一次往返），
+    拿不到再走 ``install helper`` 指出的地址（多一次往返，仅当第一条路径失败）。
+
+    两条路径返回的是同一份数据（WSL Dashboard 自身就从 ``online-distros`` 拿）；
+    把常用的那条放前面，刷新清单就从 2 个串行请求降到 1 个。
+    """
+    try:
+        distros = parse_catalog(_http_json(MIRROR_FALLBACK_URL, timeout=8.0))
+        if distros:
+            return distros
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    return parse_catalog(_http_json(_mirror_list_url(), timeout=15.0))
+
+
 def load_catalog(*, force: bool = False) -> WsluiCatalog:
     """读取镜像源清单：新鲜缓存直接返回，否则网络刷新；失败时复用过期缓存。"""
     cached, fetched_at = _read_cache()
@@ -259,8 +275,7 @@ def load_catalog(*, force: bool = False) -> WsluiCatalog:
         return WsluiCatalog(cached, fetched_at, from_cache=True)
     warnings: list[str] = []
     try:
-        url = _mirror_list_url()
-        distros = parse_catalog(_http_json(url, timeout=30.0))
+        distros = _fetch_catalog()
         if not distros:
             raise ValueError("镜像源清单为空")
         now = time.time()

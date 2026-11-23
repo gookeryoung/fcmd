@@ -16,6 +16,7 @@ from ._compat import (  # noqa: F401
     QPushButton,
     QWidget,
     Sequence,
+    ThreadPoolExecutor,
     _files,
     _initenv,
     _open,
@@ -140,14 +141,20 @@ class ImagesDownloadMixin:
 
     def _images_worker(self, force: bool = False) -> tuple[Any, tuple[ImageEntry, ...], Any]:
         env = _owner.cli._build_environment()
-        catalog = _owner._images.collect_images(
-            fetch_cli=lambda: _owner.cli._online_rows(env),
-            fetch_manifest=_owner.cli._manifest_images,
-            force=force,
-        )
-        # WSLUI 镜像源是附加信息：失败不能拖垮官方清单，只记 warning。
-        wslui = _owner._wslui.load_catalog(force=force)
-        return catalog, self._mark_local(catalog.entries, env), wslui
+        # 官方清单与 WSLUI 镜像源互不依赖：并发拉，刷新时间只取较慢的那个。
+        # 本地状态（wsl -l -v / 目录扫描）也放进来，总耗时 ≈ 最慢的一次网络请求。
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="images-page") as pool:
+            wslui_future = pool.submit(lambda: _owner._wslui.load_catalog(force=force))
+            catalog = _owner._images.collect_images(
+                fetch_cli=lambda: _owner.cli._online_rows(env),
+                fetch_manifest=_owner.cli._manifest_images,
+                force=force,
+            )
+            local_future = pool.submit(lambda: self._mark_local(catalog.entries, env))
+            # WSLUI 镜像源是附加信息：失败不能拖垮官方清单，只记 warning。
+            wslui = wslui_future.result()
+            entries = local_future.result()
+        return catalog, entries, wslui
 
     def _mark_local(self, entries: Any, env: Any) -> tuple[ImageEntry, ...]:
         """标注本地状态：已安装 / 已备份（``wsl`` 侧）+ 已下载（下载目录里的归档）。
