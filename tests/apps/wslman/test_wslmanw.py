@@ -136,10 +136,15 @@ def test_env_status_and_opener_paths_cache_roundtrip() -> None:
         mirror="mirrors.aliyun.com",
         ssh_public_key="ssh-ed25519 AAAA",
         python="3.12.3",
-        node="v22.0.0",
+        uv="0.5.14",
+        node="22.11.0",
+        nvm="yes",
+        bun="1.2.0",
         rust="1.80.0",
         pip_index="https://pypi.tuna.tsinghua.edu.cn/simple",
+        uv_index="https://pypi.tuna.tsinghua.edu.cn/simple",
         npm_registry="https://registry.npmmirror.com",
+        bun_registry="https://registry.npmmirror.com",
     )
     settings = wslmanw.with_env_status(wslmanw.WslmanwSettings(), "Ubuntu", status)
     settings = wslmanw.with_opener_paths(settings, "Ubuntu", {"opencode": "/usr/bin/opencode"})

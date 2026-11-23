@@ -418,9 +418,19 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   跳过 30 分钟缓存，更新期间按钮禁用并显示「更新中…」）；筛选 / 排序 / 来源写入
   `wslmanw.json` 的 `image_filter` / `image_sort` / `image_source`，下次启动恢复。
 - 实例配置对话框内嵌「初始化环境」卡片（纯逻辑在 `_initenv.py`）：
-  勾选国内系统源 / SSH 密钥 / Python / Node.js / Rust，探测与安装都走
+  勾选国内系统源 / SSH 密钥 / Python（含 uv）/ Node.js（nvm + Bun）/ Rust，探测与安装都走
   `wsl.exe -d <实例> --exec bash -lc`（必须 `--exec`，否则 `$HOME` / `$(...)` 会被提前展开），
-  `root=True` 的步骤加 `-u root`。打开即后台探测实例环境并按探测结果回填：
+  `root=True` 的步骤加 `-u root`。**国内加速口径固定为「直接吃国内镜像」而不做运行时探测
+  选优**（选优要逐个试站点，初始化首跑反而更慢）：APT 走 linuxmirrors 换源，pip 索引与
+  uv 默认索引都指清华，uv 用 `pip install --user` 装（不走 astral.sh / GitHub Releases）、
+  其 Python 下载走 npmmirror 的 python-build-standalone；Node.js 用 nvm 装 LTS（nvm 源码
+  clone 自 gitee 镜像、`NVM_NODEJS_ORG_MIRROR` 指 npmmirror），不再用 apt 里版本较旧的
+  `nodejs`；Bun 用 `npm i -g bun` 装（二进制随 `@oven/bun-linux-x64` 从 npmmirror 分发，
+  不走 GitHub Releases）；Rust 沿用 rsproxy。此外 `_apt_script` 先 `dpkg -s` 过滤已装包、
+  apt 索引 1 小时内有效就不重复 `update`，并统一 `--no-install-recommends` + 重试，避免
+  重复初始化的绝大部分耗时。nvm 与 `~/.local/bin` 会以带标记的 rc 块写进 `~/.bashrc` /
+  `~/.profile`（幂等、不重复追加），并把 node / npm / npx / bun 软链到 `~/.local/bin`，
+  保证 `bash -lc`（只读 profile）也能测到 node / bun。打开即后台探测实例环境并按探测结果回填：
   **已就绪的项目保持勾选但禁用，并在勾选框右侧标注绿色「已初始化」胶囊**（`StatusTag`
   `tone="success"`）；未就绪的默认勾选、可自由增删，全选 / 全不选与「开始初始化」都只
   作用于未就绪项目，避免重复跑脚本。卡片默认收起，收起行只显示已初始化项目标签与
@@ -428,7 +438,8 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   「检测环境」「复制 SSH 公钥」「开始初始化」三个动作固定在卡片内，
   不随详情收起，收起态下也能直接操作；全选 / 全不选也放在这条常显动作行。
   展开后复用标题行显示一行摘要（收起行与摘要行互斥，不额外占高），正文是
-  左右两栏（左：5 个勾选项；右：状态值两对一行，7 项压到 4 行）+ 日志
+  左右两栏（左：5 个勾选项；右：状态值一行一项，9 项：系统镜像源 / SSH 密钥 / Python /
+  uv / Node.js（nvm）/ Bun / Rust / pip&uv 镜像 / npm&bun 镜像）+ 日志
   （经 `EventBridge` 增量回填），状态值单行省略、完整内容进 tooltip，说明文字
   收在卡片 tooltip 里，展开高度只随内容增长。每个实例的勾选写入 `wslmanw.json`
   的 `distro_init_tasks`，下次打开沿用；展开 / 收起后下个事件循环再 `adjustSize`，
@@ -464,6 +475,9 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   自身滚动）→ 下载动作行。状态行与动作行都是单行控件，窗口压到最小高度时不会被
   列表压扁 / 与列表重叠（换行标签 + 拉伸列表的组合在矮窗口下会被 Qt 压成一行并
   叠到下一行控件上）。
+- 窄窗口（最小宽度 900）：实例动作行用共享 `FlowLayout` 按组换行，按钮保持完整
+  文案而不是每个压到 ~59px 被截断；设置页「打开方式」下拉框不再固定 220px，
+  而是吃剩余宽度，卡片最小宽度不超过 `PageScroll` 视口，右侧内容不会被窗口裁掉。
 - 「管理镜像」对话框直接管理下载目录里的文件：列出完整镜像包与 ``.part`` 未完成
   下载（名称 / 大小 / 识别为 / 状态），支持导出（复制到选定目录）、删除、清理缓存
   （镜像清单缓存 + 全部 ``.part``）和打开目录；操作在对话框内即时刷新，关闭后重扫

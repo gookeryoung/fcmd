@@ -2047,10 +2047,15 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
                 mirror="mirrors.aliyun.com",
                 ssh_public_key=public_key,
                 python="3.12.3",
+                uv="0.5.14",
                 node="20.11.0",
+                nvm="yes",
+                bun="1.2.0",
                 rust="1.80.0",
                 pip_index="https://pypi.tuna.tsinghua.edu.cn/simple",
+                uv_index="https://pypi.tuna.tsinghua.edu.cn/simple",
                 npm_registry="https://registry.npmmirror.com/",
+                bun_registry="https://registry.npmmirror.com",
             )
         )
         # 全部就绪：保持勾选但禁用，绿色「已初始化」标签可见。
@@ -2085,7 +2090,7 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert section.details.isHidden() is False
         assert all(tag.isHidden() for tag in section._collapsed_tags.values())
 
-        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
+        section._apply_status(_initenv.EnvStatus(python="3.12.3", uv="0.5.14"))
         # 仅 Python 就绪：只有它勾选 + 禁用 + 绿标，其余仍可操作。
         assert section._done == {"python"}
         assert section.run_button.isEnabled() is True
@@ -2150,7 +2155,7 @@ def test_init_env_section_restores_saved_selection(home: Path) -> None:
         assert section.checks["node"].isChecked() is False
         assert section.selected_keys() == ("python", "rust")
 
-        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
+        section._apply_status(_initenv.EnvStatus(python="3.12.3", uv="0.5.14"))
         # 已就绪的 python 被强制勾选并禁用，但不再计入待执行选择。
         assert section.checks["python"].isChecked() is True
         assert section.checks["python"].isEnabled() is False
@@ -2203,7 +2208,7 @@ def test_init_env_section_detect_parses_probe_output(home: Path, monkeypatch: py
 
 def test_init_env_section_shows_cached_status_without_running(home: Path) -> None:
     """带缓存打开配置：直接回显上次结果，不执行 wsl -d 启动实例。"""
-    cached = _initenv.EnvStatus(user="me", home="/home/me", python="3.12.3")
+    cached = _initenv.EnvStatus(user="me", home="/home/me", python="3.12.3", uv="0.5.14")
     owner = QWidget()
     section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu", "stopped"), status=cached)
     try:
@@ -2358,7 +2363,7 @@ def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.
     owner = QWidget()
     section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"))
     try:
-        section._apply_status(_initenv.EnvStatus(python="3.12.3"))
+        section._apply_status(_initenv.EnvStatus(python="3.12.3", uv="0.5.14"))
         section._set_all(False)
         section.checks["node"].setChecked(True)
         section.checks["python"].setChecked(True)  # 已就绪，禁用后即使勾着也不执行
@@ -2376,7 +2381,7 @@ def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.
             section, "_execute", lambda steps: seen.append(tuple(step.label for step in steps)) or "初始化完成"
         )
         section._run_selected()
-        assert seen == [("安装 Node.js 软件包", "配置 npm 镜像")]
+        assert seen == [("安装 Node.js 依赖", "安装 nvm / Node.js / Bun")]
     finally:
         section.deleteLater()
         owner.deleteLater()

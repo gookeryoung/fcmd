@@ -11,6 +11,12 @@
   `_wslmanw_qt.py` 保留同名 re-export；布局守卫支持 `apps/<app>/qt/` 三层。
 - 推进 ADR 0046 P2/P3：`WslmanQtWindow` 方法拆为 10 个 `qt/*.py` mixin，行卡/详情、
   初始化环境、SSH 迁移段落独立成模块；`_wslmanw_qt.py` 约 5.3k → 480 行。
+- `wslmanw`「初始化环境」加 `uv`、Node.js 改为 nvm + Bun，并统一国内加速口径：
+  APT 已装包跳过 + 索引新鲜不重复 `update`，pip / uv 索引走清华（uv 用 `pip --user` 装、
+  Python 下载走 npmmirror），nvm 源码走 gitee + node 二进制走 npmmirror，Bun 走
+  `npm i -g bun`（二进制随 npm 包分发），不再依赖 GitHub / astral.sh；
+  Python / Node.js 两个项目就绪判定改为「含配套工具」，状态区新增 `uv` / `Bun` /
+  `Node.js（nvm）` 与合并后的 `pip&uv` / `npm&bun` 镜像行。
 - 推进 ADR 0046 P4：llmw 模型页 `_BrowsePanel` 方法拆到 `apps/llm/qt/models_*.py`，
   `_llmw_qt_center.py` 约 2.3k → 499 行；P4 续拆 `RunPage` 到 `apps/llm/qt/run_*.py`，
   `_llmw_qt_run.py` 约 2.2k → 771 行；清理已失效的行数白名单项。

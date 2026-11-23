@@ -4,8 +4,20 @@
 控件里独立出来：界面只负责展示与调度，单测覆盖这里的脚本拼装与结果解析。
 
 执行口径与 :mod:`fcmd.tools.dev.envdev` 保持一致（国内系统镜像源用
-linuxmirrors，pip / npm / cargo 走国内镜像），但这里通过 ``wsl.exe -d <实例>
--- bash -lc`` 在目标实例内执行，不要求实例内安装 fcmd。
+linuxmirrors，pip / uv / npm / bun / cargo 走国内镜像），但这里通过
+``wsl.exe -d <实例> -- bash -lc`` 在目标实例内执行，不要求实例内安装 fcmd。
+
+国内加速口径（都是「直接吃国内镜像」，不在初始化时探测选优，避免拖长首跑时间）：
+
+- APT：先跑 linuxmirrors 换系统源再装包；已装的包直接跳过，apt 索引 1 小时内
+  有效则不再 ``apt-get update``，并统一 ``--no-install-recommends`` + 重试；
+- Python / uv：pip 索引与 uv 默认索引都指向清华，uv 直接用 pip 装（不走
+  astral.sh / GitHub），uv 的 Python 下载走 npmmirror 的 python-build-standalone；
+- Node.js：nvm 源码走 gitee 镜像、node 二进制走 npmmirror 的 node 镜像，不再用
+  apt 里那个版本很老的 ``nodejs``；
+- Bun：走 ``npm i -g bun``（二进制随 ``@oven/bun-linux-x64`` 从 npmmirror 分发），
+  不走 bun.sh 的 GitHub Releases；
+- Rust：rustup 与 cargo 都走 rsproxy.cn。
 """
 
 from __future__ import annotations
@@ -58,6 +70,11 @@ _MIRROR_DOMAINS: tuple[str, ...] = (
 
 _PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 _NPM_REGISTRY = "https://registry.npmmirror.com"
+_UV_PYTHON_INSTALL_MIRROR = "https://registry.npmmirror.com/-/binary/python-build-standalone"
+_NODE_MIRROR = "https://npmmirror.com/mirrors/node"
+_NVM_GIT = "https://gitee.com/mirrors/nvm.git"
+_NVM_GIT_FALLBACK = "https://github.com/nvm-sh/nvm.git"
+"""国内加速用的固定镜像地址：nvm 源码走 gitee，node 二进制与 bun 走 npmmirror。"""
 
 PROBE_PREFIX = "WSLMAN_"
 """探测脚本每条结果行的前缀；以它过滤 ``bash -lc`` 读到的 profile 横幅。"""
@@ -93,10 +110,15 @@ class EnvStatus:
     mirror: str = ""
     ssh_public_key: str = ""
     python: str = ""
+    uv: str = ""
     node: str = ""
+    nvm: str = ""
+    bun: str = ""
     rust: str = ""
     pip_index: str = ""
+    uv_index: str = ""
     npm_registry: str = ""
+    bun_registry: str = ""
 
     @property
     def ssh_ready(self) -> bool:
@@ -104,11 +126,25 @@ class EnvStatus:
 
 
 def _apt_script(*packages: str) -> str:
+    """装包但尽量少干活：已装的跳过，apt 索引新鲜时不重复 update。"""
+    wanted = " ".join(packages)
     return "\n".join(
         (
             "set -e",
-            "apt-get update",
-            f"apt-get install -y {' '.join(packages)}",
+            "export DEBIAN_FRONTEND=noninteractive",
+            'missing=""',
+            f"for pkg in {wanted}; do",
+            '    dpkg -s "$pkg" >/dev/null 2>&1 || missing="$missing $pkg"',
+            "done",
+            'if [ -z "$missing" ]; then',
+            f'    echo "软件包已安装：{wanted}"',
+            "    exit 0",
+            "fi",
+            'echo "需要安装：$missing"',
+            "if ! find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -newermt '-1 hour' -print -quit | grep -q .; then",
+            "    apt-get update -o Acquire::Retries=3",
+            "fi",
+            "apt-get install -y --no-install-recommends -o Acquire::Retries=3 $missing",
         )
     )
 
@@ -152,21 +188,101 @@ def _ssh_key_script() -> str:
 
 
 def _python_script() -> str:
+    """pip 索引 + uv：uv 用 pip 装（不走 astral.sh / GitHub），配置写 uv.toml。"""
     return "\n".join(
         (
             "set -e",
-            "python3 -m pip config set global.index-url " + _PIP_INDEX_URL,
-            'echo "Python 与 pip 镜像已配置"',
+            f"index='{_PIP_INDEX_URL}'",
+            'python3 -m pip config set global.index-url "$index" >/dev/null',
+            'export PATH="$HOME/.local/bin:$PATH"',
+            "if command -v uv >/dev/null 2>&1; then",
+            '    echo "uv 已安装：$(uv --version)"',
+            "else",
+            '    echo "安装 uv（pip --user + 清华镜像，不走 GitHub）…"',
+            '    python3 -m pip install --user -q --break-system-packages -i "$index" uv 2>/dev/null || \\',
+            '        python3 -m pip install --user -q -i "$index" uv',
+            "fi",
+            'mkdir -p "$HOME/.config/uv"',
+            'if grep -qs "index-url" "$HOME/.config/uv/uv.toml"; then',
+            '    echo "uv 镜像已配置"',
+            "else",
+            '    if [ -f "$HOME/.config/uv/uv.toml" ]; then',
+            '        cp "$HOME/.config/uv/uv.toml" "$HOME/.config/uv/uv.toml.bak"',
+            "    fi",
+            "    cat > \"$HOME/.config/uv/uv.toml\" <<'FCMD_UV'",
+            f'index-url = "{_PIP_INDEX_URL}"',
+            f'python-install-mirror = "{_UV_PYTHON_INSTALL_MIRROR}"',
+            'link-mode = "copy"',
+            "FCMD_UV",
+            "fi",
+            # login shell（``bash -lc``）才能测到 ~/.local/bin 里的 uv。
+            'if [ -f "$HOME/.profile" ] && ! grep -q ".local/bin" "$HOME/.profile"; then',
+            '    printf "\\nexport PATH=\\"\\$HOME/.local/bin:\\$PATH\\"\\n" >> "$HOME/.profile"',
+            "fi",
+            'echo "Python、pip 与 uv 镜像已配置"',
         )
     )
 
 
 def _node_script() -> str:
+    """nvm（gitee）+ Node.js LTS（npmmirror）+ Bun（npm 包），都绕开 GitHub。"""
     return "\n".join(
         (
             "set -e",
-            f"npm config set registry {_NPM_REGISTRY}",
-            'echo "Node.js 与 npm 镜像已配置"',
+            'export NVM_DIR="$HOME/.nvm"',
+            "add_rc() {",
+            '    file="$1"',
+            '    [ -e "$file" ] || touch "$file"',
+            '    if grep -qF "fcmd wslman init" "$file" 2>/dev/null; then',
+            "        return 0",
+            "    fi",
+            "    cat >> \"$file\" <<'FCMD_RC'",
+            "# >>> fcmd wslman init >>>",
+            'export NVM_DIR="$HOME/.nvm"',
+            '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1',
+            'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac',
+            "# <<< fcmd wslman init <<<",
+            "FCMD_RC",
+            "}",
+            'if [ ! -s "$NVM_DIR/nvm.sh" ]; then',
+            '    echo "安装 nvm（gitee 镜像，避免 GitHub 超时）…"',
+            '    if [ -d "$NVM_DIR" ]; then rm -rf "$NVM_DIR"; fi',
+            f'    if ! git clone --depth 1 {_NVM_GIT} "$NVM_DIR" 2>/dev/null; then',
+            '        echo "gitee 镜像不可用，回退 GitHub…"',
+            f'        git clone --depth 1 {_NVM_GIT_FALLBACK} "$NVM_DIR"',
+            "    fi",
+            "fi",
+            '. "$NVM_DIR/nvm.sh"',
+            f"export NVM_NODEJS_ORG_MIRROR={_NODE_MIRROR}",
+            'echo "安装 Node.js LTS（npmmirror 镜像）…"',
+            "nvm install --lts >/dev/null",
+            "nvm alias default 'lts/*' >/dev/null",
+            "nvm use --lts >/dev/null 2>&1 || nvm use default >/dev/null",
+            'node_bin="$(dirname "$(nvm which default)")"',
+            'export PATH="$node_bin:$PATH"',
+            f"npm config set registry {_NPM_REGISTRY} >/dev/null",
+            'mkdir -p "$HOME/.local/bin"',
+            "for name in node npm npx corepack; do",
+            '    if [ -x "$node_bin/$name" ]; then',
+            '        ln -sf "$node_bin/$name" "$HOME/.local/bin/$name"',
+            "    fi",
+            "done",
+            'if [ ! -x "$node_bin/bun" ]; then',
+            '    echo "安装 Bun（npm 包 + npmmirror，不走 GitHub Releases）…"',
+            f"    npm install -g bun --registry {_NPM_REGISTRY} --no-fund --no-audit",
+            "fi",
+            'if ! grep -qs "registry" "$HOME/.bunfig.toml"; then',
+            "    cat >> \"$HOME/.bunfig.toml\" <<'FCMD_BUN'",
+            "[install]",
+            f'registry = "{_NPM_REGISTRY}"',
+            "FCMD_BUN",
+            "fi",
+            'if [ -x "$node_bin/bun" ]; then ln -sf "$node_bin/bun" "$HOME/.local/bin/bun"; fi',
+            'if [ -x "$node_bin/bunx" ]; then ln -sf "$node_bin/bunx" "$HOME/.local/bin/bunx"; fi',
+            'add_rc "$HOME/.bashrc"',
+            'add_rc "$HOME/.profile"',
+            'if [ -e "$HOME/.zshrc" ]; then add_rc "$HOME/.zshrc"; fi',
+            'echo "Node.js $(node --version) · Bun $(bun --version 2>/dev/null) 已就绪"',
         )
     )
 
@@ -226,19 +342,21 @@ TASKS: tuple[InitTask, ...] = (
     InitTask(
         "python",
         "安装 Python 开发环境",
-        "安装 python3 / pip / venv，并把 pip 索引指向清华镜像。",
+        "安装 python3 / pip / venv 与 uv：pip 索引与 uv 默认索引都指向清华镜像（uv 直接用 pip 装，"
+        "不走 astral.sh / GitHub），uv 的 Python 下载走 npmmirror 的 python-build-standalone。",
         (
             InitStep("安装 Python 软件包", _apt_script("python3", "python3-pip", "python3-venv"), root=True),
-            InitStep("配置 pip 镜像", _python_script()),
+            InitStep("配置 pip / uv 镜像", _python_script()),
         ),
     ),
     InitTask(
         "node",
         "安装 Node.js 开发环境",
-        "安装 nodejs / npm，并把 npm registry 指向 npmmirror。",
+        "用 nvm 安装 Node.js LTS（nvm 源码走 gitee 镜像、node 二进制走 npmmirror），再装 Bun"
+        "（npm 包 + npmmirror 分发，不走 GitHub Releases），npm / bun 的 registry 都指向 npmmirror。",
         (
-            InitStep("安装 Node.js 软件包", _apt_script("nodejs", "npm"), root=True),
-            InitStep("配置 npm 镜像", _node_script()),
+            InitStep("安装 Node.js 依赖", _apt_script("curl", "git", "ca-certificates"), root=True),
+            InitStep("安装 nvm / Node.js / Bun", _node_script()),
         ),
     ),
     InitTask(
@@ -321,10 +439,21 @@ def probe_script() -> str:
             "fi",
             'printf "WSLMAN_SSH_PUB=%s\\n" "$ssh_pub"',
             'printf "WSLMAN_PYTHON=%s\\n" "$(python3 --version 2>/dev/null | awk \'{print $2}\')"',
-            'printf "WSLMAN_NODE=%s\\n" "$(node --version 2>/dev/null | sed \'s/^v//\')"',
+            'uv_bin="$(command -v uv 2>/dev/null)"',
+            '[ -z "$uv_bin" ] && [ -x "$HOME/.local/bin/uv" ] && uv_bin="$HOME/.local/bin/uv"',
+            'printf "WSLMAN_UV=%s\\n" "$([ -n "$uv_bin" ] && "$uv_bin" --version 2>/dev/null | awk \'{print $2}\')"',
+            'node_bin="$(command -v node 2>/dev/null)"',
+            '[ -z "$node_bin" ] && [ -x "$HOME/.local/bin/node" ] && node_bin="$HOME/.local/bin/node"',
+            'printf "WSLMAN_NODE=%s\\n" "$([ -n "$node_bin" ] && "$node_bin" --version 2>/dev/null | sed \'s/^v//\')"',
+            'printf "WSLMAN_NVM=%s\\n" "$([ -s "$HOME/.nvm/nvm.sh" ] && echo yes)"',
+            'bun_bin="$(command -v bun 2>/dev/null)"',
+            '[ -z "$bun_bin" ] && [ -x "$HOME/.local/bin/bun" ] && bun_bin="$HOME/.local/bin/bun"',
+            'printf "WSLMAN_BUN=%s\\n" "$([ -n "$bun_bin" ] && "$bun_bin" --version 2>/dev/null)"',
             'printf "WSLMAN_RUST=%s\\n" "$(rustc --version 2>/dev/null | awk \'{print $2}\')"',
             'printf "WSLMAN_PIP_INDEX=%s\\n" "$(python3 -m pip config get global.index-url 2>/dev/null)"',
-            'printf "WSLMAN_NPM_REGISTRY=%s\\n" "$(npm config get registry 2>/dev/null)"',
+            'printf "WSLMAN_UV_INDEX=%s\\n" "$(sed -n \'s/^index-url *= *"\\(.*\\)"/\\1/p\' "$HOME/.config/uv/uv.toml" 2>/dev/null | head -1)"',
+            'printf "WSLMAN_NPM_REGISTRY=%s\\n" "$(sed -n \'s/^registry *= *//p\' "$HOME/.npmrc" 2>/dev/null | head -1)"',
+            'printf "WSLMAN_BUN_REGISTRY=%s\\n" "$(sed -n \'s/^registry *= *"\\(.*\\)"/\\1/p\' "$HOME/.bunfig.toml" 2>/dev/null | head -1)"',
         )
     )
 
@@ -356,10 +485,15 @@ def parse_status(text: str) -> EnvStatus:
         mirror=values.get("MIRROR", ""),
         ssh_public_key=_decode_key(values.get("SSH_PUB", "")),
         python=values.get("PYTHON", ""),
+        uv=values.get("UV", ""),
         node=values.get("NODE", ""),
+        nvm=values.get("NVM", ""),
+        bun=values.get("BUN", ""),
         rust=values.get("RUST", ""),
         pip_index=values.get("PIP_INDEX", ""),
+        uv_index=values.get("UV_INDEX", ""),
         npm_registry=values.get("NPM_REGISTRY", ""),
+        bun_registry=values.get("BUN_REGISTRY", ""),
     )
 
 
@@ -370,10 +504,15 @@ _STATUS_FIELDS: tuple[str, ...] = (
     "mirror",
     "ssh_public_key",
     "python",
+    "uv",
     "node",
+    "nvm",
+    "bun",
     "rust",
     "pip_index",
+    "uv_index",
     "npm_registry",
+    "bun_registry",
 )
 """``EnvStatus`` 可持久化字段；与设置文件里的缓存保持同一口径。"""
 
@@ -394,15 +533,19 @@ def status_from_mapping(raw: object) -> EnvStatus | None:
 
 
 def present(key: str, status: EnvStatus) -> bool:
-    """判断某个初始化项目是否已就绪。"""
+    """判断某个初始化项目是否已就绪。
+
+    Python 项目包含 uv、Node.js 项目包含 nvm 与 Bun：只装了 python / node 但缺
+    配套工具时算「未就绪」，点一次初始化就能把差距补齐。
+    """
     if key == "mirror":
         return bool(status.mirror)
     if key == "ssh":
         return status.ssh_ready
     if key == "python":
-        return bool(status.python)
+        return bool(status.python) and bool(status.uv)
     if key == "node":
-        return bool(status.node)
+        return bool(status.node) and status.nvm == "yes" and bool(status.bun)
     if key == "rust":
         return bool(status.rust)
     return False
@@ -429,26 +572,52 @@ def tail_lines(text: str, limit: int = 80) -> tuple[str, ...]:
     return tuple(lines[-limit:])
 
 
+def _pair_value(primary: str, secondary: str) -> str:
+    """pip / uv（或 npm / bun）镜像合成一行：一致时只显示一个，避免两行重复 URL。"""
+    if primary and secondary and primary.rstrip("/") != secondary.rstrip("/"):
+        return f"{primary} · {secondary}"
+    return primary or secondary or "未配置"
+
+
 def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
     """环境详情区逐项 ``(字段, 值, 是否就绪)``，供界面统一着色。"""
+    node_ready = bool(status.node) and status.nvm == "yes"
+    if not status.node:
+        node_value = "未安装"
+    elif node_ready:
+        node_value = f"{status.node}（nvm）"
+    else:
+        node_value = f"{status.node}（非 nvm）"
     return (
         ("系统镜像源", status.mirror or "未配置（仍为官方源）", bool(status.mirror)),
         ("SSH 密钥", ssh_key_short(status.ssh_public_key) if status.ssh_ready else "未生成", status.ssh_ready),
         ("Python", status.python or "未安装", bool(status.python)),
-        ("Node.js", status.node or "未安装", bool(status.node)),
+        ("uv", status.uv or "未安装", bool(status.uv)),
+        ("Node.js（nvm）", node_value, node_ready),
+        ("Bun", status.bun or "未安装", bool(status.bun)),
         ("Rust", status.rust or "未安装", bool(status.rust)),
-        ("pip 镜像", status.pip_index or "未配置", bool(status.pip_index)),
-        ("npm 镜像", status.npm_registry or "未配置", bool(status.npm_registry)),
+        (
+            "pip / uv 镜像",
+            _pair_value(status.pip_index, status.uv_index),
+            bool(status.pip_index) and bool(status.uv_index),
+        ),
+        (
+            "npm / bun 镜像",
+            _pair_value(status.npm_registry, status.bun_registry),
+            bool(status.npm_registry) and bool(status.bun_registry),
+        ),
     )
 
 
 def summary_text(status: EnvStatus) -> str:
-    """一行摘要：``镜像源 ✓ · SSH ✗ · Python 3.12.3 · Node.js ✗ · Rust ✗``。"""
+    """一行摘要：``镜像源 ✓ · SSH ✗ · Python 3.12.3 / uv 0.5.14 · Node.js …``。"""
+    python = f"{status.python} / uv {status.uv}" if status.python and status.uv else (status.python or "✗")
+    node = f"{status.node} / bun {status.bun}" if status.node and status.bun else (status.node or "✗")
     parts = [
         f"镜像源 {'✓' if status.mirror else '✗'}",
         f"SSH {'✓' if status.ssh_ready else '✗'}",
-        f"Python {status.python or '✗'}",
-        f"Node.js {status.node or '✗'}",
+        f"Python {python}",
+        f"Node.js {node}",
         f"Rust {status.rust or '✗'}",
     ]
     return " · ".join(parts)
