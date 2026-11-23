@@ -7,6 +7,11 @@
 
 ### 变更
 
+- 补完 P4/P5 收尾：`gui/style.py` 拆为 `gui/style/{qss,tokens,state,apply}.py`；
+  `filescanw` / `filesyncw` / `pevieww` / `renamerw` / `reshackw` / `wslmanw` /
+  `pptmakew` / `paramcadw` / `parameshw` / `cmderw` / `llmw` / `mirrortoolw`
+  的设置读写迁移到 `gui.settings.SettingsStore`；
+  `cli._discovery` 新增 `install_fake_registry` / `reset_discovery_state` 公共测试接缝。
 - 结构优化 P0：新增 `fcmd/shared/`（`paths.fcmd_home` / `formatting.format_bytes`），
   `gui.config` 与 `gui.widgets.storage` 改依赖 shared，移除 gui → infras 的反向依赖；
   新增 `tests/test_architecture.py`（import 方向 + 行数预算 + tools 域隔离）。

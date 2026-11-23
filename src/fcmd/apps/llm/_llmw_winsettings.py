@@ -15,6 +15,7 @@ from typing import Any
 from fcmd.apps.llm import _llmconfig
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _geometry
+from fcmd.gui.settings import SettingsStore
 
 __all__ = [
     "DEFAULT_HEIGHT",
@@ -73,7 +74,7 @@ valid_geometry = _guiconfig.valid_geometry
 
 def load_settings(path: Path | None = None) -> LlmSettings:  # noqa: PLR0912 - 逐字段校验并回退
     """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("llmw", path or config_path()).load()
     settings = LlmSettings()
     if raw is not None:
         geometry = raw.get("geometry")
@@ -150,7 +151,7 @@ def load_settings(path: Path | None = None) -> LlmSettings:  # noqa: PLR0912 - �
 
 def save_settings(settings: LlmSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
-    _guiconfig.write_settings(
+    SettingsStore("llmw", path or config_path()).save(
         {
             "geometry": settings.geometry,
             "hardware": settings.hardware,
@@ -171,7 +172,6 @@ def save_settings(settings: LlmSettings, path: Path | None = None) -> None:
             "chat_active": settings.chat_active,
             "paint": settings.paint,
         },
-        path or config_path(),
     )
 
 

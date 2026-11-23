@@ -23,6 +23,7 @@ from pathlib import Path
 import fcmd
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _guiwindow
+from fcmd.gui.settings import SettingsStore
 
 __all__ = [
     "DEFAULT_GEOMETRY",
@@ -79,7 +80,7 @@ def add_recent_file(files: list[str], path: Path, limit: int = RECENT_LIMIT) -> 
 
 def load_settings(path: Path | None = None) -> PeviewSettings:
     """读取设置文件；缺失、JSON 损坏或字段非法时逐项回退默认值。"""
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("pevieww", path).load()
     if raw is None:
         return PeviewSettings()
     settings = PeviewSettings()
@@ -106,7 +107,7 @@ def save_settings(settings: PeviewSettings, path: Path | None = None) -> None:
         "geometry": settings.geometry,
         "splitter": list(settings.splitter) if settings.splitter is not None else None,
     }
-    _guiconfig.write_settings(payload, path or config_path())
+    SettingsStore("pevieww", path).save(payload)
 
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:

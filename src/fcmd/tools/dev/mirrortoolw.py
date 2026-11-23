@@ -23,6 +23,7 @@ from pathlib import Path
 import fcmd
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _guiwindow
+from fcmd.gui.settings import SettingsStore
 
 __all__ = [
     "DEFAULT_GEOMETRY",
@@ -163,7 +164,7 @@ def normalize_timeout(value: object) -> float:
 
 def load_settings(path: Path | None = None) -> MirrorToolSettings:
     """读取设置文件；缺失、损坏或字段非法时逐项回退默认值。"""
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("mirrortoolw", path).load()
     if raw is None:
         return MirrorToolSettings()
 
@@ -199,7 +200,7 @@ def save_settings(settings: MirrorToolSettings, path: Path | None = None) -> Non
         "search": settings.search,
         "geometry": settings.geometry,
     }
-    _guiconfig.write_settings(payload, path or config_path())
+    SettingsStore("mirrortoolw", path).save(payload)
 
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:

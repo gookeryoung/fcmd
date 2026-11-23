@@ -26,6 +26,7 @@ from fcmd.apps.wslman._distro import Distro, DistroView, state_label
 from fcmd.apps.wslman._errors import WslmanError
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _geometry
+from fcmd.gui.settings import SettingsStore
 from fcmd.infras.download import format_speed
 
 __all__ = [
@@ -823,14 +824,14 @@ def config_path() -> Path:
 
 
 def load_settings(path: Path | None = None) -> WslmanwSettings:
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("wslmanw", path).load()
     if raw is None:
         return WslmanwSettings()
     return settings_from_mapping(raw)
 
 
 def save_settings(settings: WslmanwSettings, path: Path | None = None) -> None:
-    _guiconfig.write_settings(settings_to_mapping(settings), path or config_path())
+    SettingsStore("wslmanw", path).save(settings_to_mapping(settings))
 
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.gui import config as _guiconfig
+from fcmd.gui.settings import SettingsStore
 
 __all__ = ["CanvasMap", "Settings", "load_settings", "run_gui", "save_settings"]
 
@@ -39,7 +40,7 @@ def settings_path() -> Path:
 
 def load_settings(path: Path | None = None) -> Settings:
     """读取设置；文件缺失或损坏时回落默认值。"""
-    raw = _guiconfig.read_settings(path or settings_path())
+    raw = SettingsStore("paramcadw", path or settings_path()).load()
     if raw is None:
         return Settings()
     model_path = raw.get("model_path")
@@ -60,13 +61,12 @@ def load_settings(path: Path | None = None) -> Settings:
 
 def save_settings(settings: Settings, path: Path | None = None) -> None:
     """写入设置；失败静默（关闭窗口不应因落盘失败中断）。"""
-    _guiconfig.write_settings(
+    SettingsStore("paramcadw", path or settings_path()).save(
         {
             "geometry": settings.geometry,
             "model_path": settings.model_path,
             "splitter": list(settings.splitter) if settings.splitter is not None else None,
         },
-        path or settings_path(),
     )
 
 

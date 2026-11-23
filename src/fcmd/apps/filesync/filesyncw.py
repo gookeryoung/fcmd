@@ -35,6 +35,7 @@ from fcmd.apps.filesync._core import (
 )
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _guiwindow
+from fcmd.gui.settings import SettingsStore
 
 __all__ = [
     "DEFAULT_GEOMETRY",
@@ -143,7 +144,7 @@ def settings_from_mapping(
 
 def load_settings(path: Path | None = None) -> FilesyncSettings:
     """读取设置文件；缺失、损坏或顶层非对象时返回默认设置。"""
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("filesyncw", path).load()
     if raw is None:
         return FilesyncSettings()
     return settings_from_mapping(raw)
@@ -151,7 +152,7 @@ def load_settings(path: Path | None = None) -> FilesyncSettings:
 
 def save_settings(settings: FilesyncSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略。"""
-    _guiconfig.write_settings(settings_to_mapping(settings), path or config_path())
+    SettingsStore("filesyncw", path).save(settings_to_mapping(settings))
 
 
 def mode_label(value: str, labels: Mapping[str, str]) -> str:

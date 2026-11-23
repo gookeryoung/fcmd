@@ -42,6 +42,7 @@ from fcmd.apps.renamer._core import (
 )
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _guiwindow
+from fcmd.gui.settings import SettingsStore
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -239,7 +240,7 @@ def settings_from_mapping(
 
 def load_settings(path: Path | None = None) -> RenamerSettings:
     """读取设置；文件缺失、损坏或顶层非对象时返回默认设置。"""
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("renamerw", path).load()
     if raw is None:
         return RenamerSettings()
     return settings_from_mapping(raw)
@@ -247,7 +248,7 @@ def load_settings(path: Path | None = None) -> RenamerSettings:
 
 def save_settings(settings: RenamerSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略。"""
-    _guiconfig.write_settings(settings_to_mapping(settings), path or config_path())
+    SettingsStore("renamerw", path).save(settings_to_mapping(settings))
 
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:

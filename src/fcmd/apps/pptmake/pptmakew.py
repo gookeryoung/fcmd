@@ -25,6 +25,7 @@ from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _tokens as tokens
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _guiwindow
+from fcmd.gui.settings import SettingsStore
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -132,7 +133,7 @@ def settings_from_mapping(raw: Mapping[str, Any], base: PptmakeSettings | None =
 
 def load_settings(path: Path | None = None) -> PptmakeSettings:
     """读取设置；缺失或损坏时返回默认值。"""
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("pptmakew", path).load()
     if raw is None:
         return PptmakeSettings()
     return settings_from_mapping(raw)
@@ -140,7 +141,7 @@ def load_settings(path: Path | None = None) -> PptmakeSettings:
 
 def save_settings(settings: PptmakeSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败静默忽略。"""
-    _guiconfig.write_settings(settings_to_mapping(settings), path or config_path())
+    SettingsStore("pptmakew", path).save(settings_to_mapping(settings))
 
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:

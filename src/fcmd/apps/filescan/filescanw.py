@@ -57,6 +57,7 @@ from fcmd.apps.filescan._rules import (
     ruleset_to_mapping,
 )
 from fcmd.gui import config as _guiconfig
+from fcmd.gui.settings import SettingsStore
 
 __all__ = [
     "SETTINGS_NAME",
@@ -260,7 +261,7 @@ def config_path() -> Path:
 
 def load_settings(path: Path | None = None) -> FilescanSettings:
     """读取设置；文件缺失或损坏时返回默认设置。"""
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("filescanw", path).load()
     if raw is None:
         return FilescanSettings()
     return settings_from_mapping(raw)
@@ -268,7 +269,7 @@ def load_settings(path: Path | None = None) -> FilescanSettings:
 
 def save_settings(settings: FilescanSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略。"""
-    _guiconfig.write_settings(settings_to_mapping(settings), path or config_path())
+    SettingsStore("filescanw", path).save(settings_to_mapping(settings))
 
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:

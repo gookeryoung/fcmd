@@ -24,6 +24,7 @@ import importlib.util
 import os
 import pkgutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,8 +42,10 @@ __all__ = [
     "ensure_tools_discovered",
     "import_all_tool_modules",
     "import_tool_module",
+    "install_fake_registry",
     "list_tool_rows",
     "load_tool_subs",
+    "reset_discovery_state",
     "resolve_tool",
     "resolve_tool_fast",
     "tool_description",
@@ -57,6 +60,49 @@ _TOOL_MODULES: dict[str, str] = {}
 
 # 发现标志：True 表示已扫描过工具根包（fcmd.tools / fcmd.apps）
 _TOOLS_DISCOVERED = False
+
+
+def install_fake_registry(
+    modules: Mapping[str, str],
+    *,
+    aliases: Mapping[str, str] | None = None,
+    tools: Mapping[str, Mapping[str | None, ToolSpec]] | None = None,
+) -> None:
+    """测试接缝：整体替换工具发现状态（模块映射 / 别名 / 可选注册表）。
+
+    发现实现是 CLI 的内部细节；测试若直接 patch ``_TOOL_MODULES`` /
+    ``_TOOL_ALIASES`` / ``_TOOL_REGISTRY``，重构时会成片失败。本函数把
+    「安装一份假发现结果」收敛成一个公共入口，后续测试通过它注入。
+
+    Parameters
+    ----------
+    modules:
+        规范工具名 → 模块路径。
+    aliases:
+        别名 → 规范名；省略时每个工具名映射到自身。
+    tools:
+        可选的 ``_TOOL_REGISTRY`` 替换内容（``{tool: {subcommand: ToolSpec}}``）；
+        省略时只替换模块/别名，保留已注册的工具。
+    """
+    global _TOOLS_DISCOVERED  # noqa: PLW0603 - 测试接缝需要写发现标志
+    _TOOL_MODULES.clear()
+    _TOOL_MODULES.update(modules)
+    _TOOL_ALIASES.clear()
+    _TOOL_ALIASES.update(aliases or {name: name for name in modules})
+    if tools is not None:
+        from fcmd.core.toolkit import _TOOL_REGISTRY
+
+        _TOOL_REGISTRY.clear()
+        _TOOL_REGISTRY.update({name: dict(subs) for name, subs in tools.items()})
+    _TOOLS_DISCOVERED = True
+
+
+def reset_discovery_state() -> None:
+    """清空发现状态（测试用；生产路径不应调用）。"""
+    global _TOOLS_DISCOVERED  # noqa: PLW0603 - 测试接缝需要写发现标志
+    _TOOL_MODULES.clear()
+    _TOOL_ALIASES.clear()
+    _TOOLS_DISCOVERED = False
 
 
 def ensure_tools_discovered() -> None:

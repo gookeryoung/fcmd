@@ -96,6 +96,7 @@ from fcmd.apps.cmder._volumes import format_bytes as _format_bytes
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _geometry
 from fcmd.gui import theme as _guitheme
+from fcmd.gui.settings import SettingsStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -470,7 +471,7 @@ def _bookmarks_from_raw(raw: object) -> list[str]:
 def load_settings(path: Path | None = None) -> CmderSettings:
     """读取设置；文件缺失、JSON 损坏或字段非法时逐项回退默认值。"""
     fallback = default_directory()
-    raw = _guiconfig.read_settings(path or config_path())
+    raw = SettingsStore("cmderw", path).load()
     if raw is None:
         return CmderSettings(
             left=PanelState(path=str(fallback)),
@@ -545,7 +546,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "queue_parallel": settings.queue_parallel,
         "filter_definition": settings.filter_definition.to_dict(),
     }
-    _guiconfig.write_settings(payload, path or config_path())
+    SettingsStore("cmderw", path).save(payload)
 
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
