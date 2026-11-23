@@ -176,3 +176,32 @@ def test_wslui_candidates_carry_own_filename_and_skip_official_sha() -> None:
     assert candidates[0].trusted is False
     assert candidates[0].verify is False
     assert candidates[0].sha256 is None
+
+
+def test_probe_throughput_keeps_partial_bytes_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """慢源在测速窗口内只拉了一部分也算吞吐，不能因超时被当成 0 退化成延迟排序。"""
+
+    class FakeResponse:
+        status = 206
+        headers: dict[str, str] = {}
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def read1(self, _size: int) -> bytes:
+            self.calls += 1
+            if self.calls < 3:
+                return b"x" * 65536
+            raise TimeoutError("slow mirror")
+
+        read = read1
+
+    monkeypatch.setattr(_wslui.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    speed = _wslui.probe_throughput("https://mirror.example.com/u.wsl")
+    assert speed > 0

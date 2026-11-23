@@ -573,6 +573,21 @@ _PROGRESS_INTERVAL_S = 0.1
 _MAX_RESUME_ATTEMPTS = 6
 """同一来源断流后最多续传几次；每次只要有字节推进就继续，避免坏网络下一遍遍从头下。"""
 
+_SPEED_POLL_S = 0.5
+"""下载中速度看门狗的轮询间隔；只用于「明显太慢就换源」，不参与正常进度上报。"""
+
+_MIN_SWITCH_SPEED = 512 * 1024
+"""自动下载的最低可接受速度（字节/秒）；低于它且还有其它候选时换源。
+
+测速窗口只看前几秒，CDN 常见的「首段很快、随后限速」只能靠下载中的持续速度兜住。
+"""
+
+_SPEED_GRACE_S = 8.0
+"""下载开始后先跑多久再判断速度：避开建连、TLS、首包与磁盘预分配造成的瞬时低值。"""
+
+_SPEED_WINDOW_S = 2.0
+"""速度看门狗的统计窗口：只看最近 2 秒，CDN 中途限速不会被全程均值掩盖。"""
+
 
 def download_mirrored(  # noqa: PLR0913
     target: Path,
@@ -583,6 +598,8 @@ def download_mirrored(  # noqa: PLR0913
     cancelled: Callable[[], bool] | None = None,
     opener: _Opener | None = None,
     progress: ProgressCallback | None = None,
+    min_speed: int = _MIN_SWITCH_SPEED,
+    speed_grace: float = _SPEED_GRACE_S,
 ) -> DownloadResult:
     """按候选顺序下载：自动测速后的最快源优先，失败或校验不过就换下一个。
 
@@ -591,6 +608,9 @@ def download_mirrored(  # noqa: PLR0913
     （``filename``，不同格式的制品不会写进同一个文件）、自己的摘要（``sha256``）与
     ``verify`` 标记：WSLUI 的 ``tar.xz`` 与官方 ``.wsl`` 不是同一份字节，不拿官方
     sha256 校验它。``source`` 记录实际用的那个候选。
+
+    ``min_speed`` 是下载中持续速度的下限：测速窗口只看开头几秒，源在首段之后被
+    限速时，只要还有后备源就切到下一个，避免整份文件以 KB/s 慢慢拉完。
     """
     sentinel = Path(target)
     kept_part = sentinel
@@ -599,38 +619,98 @@ def download_mirrored(  # noqa: PLR0913
         last_candidate = index == len(candidates) - 1
         candidate_target = sentinel.parent / candidate.filename if candidate.filename else sentinel
         expected = candidate.sha256 or (expected_sha256 if candidate.verify else None)
-        for _attempt in range(_MAX_RESUME_ATTEMPTS):
-            if cancelled is not None and cancelled():
-                raise KeyboardInterrupt
-            part = part_path(candidate_target)
-            meta_path = _meta_for(part)
-            kept_part = part
-            before = part.stat().st_size if part.is_file() else 0
-            try:
-                result = download(
-                    candidate.url,
-                    candidate_target,
-                    expected_sha256=expected,
-                    opener=opener,
-                    label=label,
-                    cancelled=cancelled,
-                    progress=progress,
-                )
-            except KeyboardInterrupt:
-                raise
-            except WslmanError as exc:
-                failures.append(f"{candidate.label}：{exc}")
-                after = part.stat().st_size if part.is_file() else 0
-                # 断流/超时只要还在推进就同源续传，最多 _MAX_RESUME_ATTEMPTS 次；
-                # 校验不过说明内容不同，直接换源。
-                if exc.code != "CHECK_FAILED" and after > before:
+
+        # 测速是「下载前」的短窗口；这里再看「下载中」的持续速度。首段很快、随后
+        # 被 CDN 限到 KB/s 的源，只有真正开始写盘才暴露。只对还有后备源的候选启用。
+        tracker = {"done": 0.0}
+        slow = threading.Event()
+        stop_watch = threading.Event()
+
+        def report(
+            done: int,
+            total: int | None,
+            tracker: dict[str, float] = tracker,
+            progress: ProgressCallback | None = progress,
+        ) -> None:
+            tracker["done"] = float(done)
+            if progress is not None:
+                progress(done, total)
+
+        def monitor(
+            slow: threading.Event = slow,
+            stop_watch: threading.Event = stop_watch,
+            tracker: dict[str, float] = tracker,
+            speed_grace: float = speed_grace,
+            min_speed: int = min_speed,
+        ) -> None:
+            started = time.monotonic()
+            last_time = started
+            last_done = 0.0
+            while not stop_watch.wait(_SPEED_POLL_S):
+                now = time.monotonic()
+                if now - started < speed_grace:
                     continue
-                if not last_candidate:
-                    # 换源必须从头下：不同来源的 .part 拼在一起会得到错误字节。
-                    part.unlink(missing_ok=True)
-                    meta_path.unlink(missing_ok=True)
-                break
-            return replace(result, source=candidate.ident)
+                if now - last_time < _SPEED_WINDOW_S:
+                    continue
+                done = tracker["done"]
+                # 用最近一个窗口的速度，不用全程均值：首段 10 MB/s、随后限到 10 KB/s
+                # 的源，全程均值会长时间保持「看起来不慢」。
+                speed = (done - last_done) / (now - last_time)
+                last_done = done
+                last_time = now
+                if speed < min_speed:
+                    slow.set()
+                    return
+
+        def local_cancel(slow: threading.Event = slow, cancelled: Callable[[], bool] | None = cancelled) -> bool:
+            return slow.is_set() or (cancelled is not None and cancelled())
+
+        watch = min_speed > 0 and not last_candidate
+        watcher = threading.Thread(target=monitor, name="wslman-speed-watch", daemon=True) if watch else None
+        if watcher is not None:
+            watcher.start()
+        try:
+            for _attempt in range(_MAX_RESUME_ATTEMPTS):
+                if local_cancel():
+                    raise KeyboardInterrupt
+                part = part_path(candidate_target)
+                meta_path = _meta_for(part)
+                kept_part = part
+                before = part.stat().st_size if part.is_file() else 0
+                try:
+                    result = download(
+                        candidate.url,
+                        candidate_target,
+                        expected_sha256=expected,
+                        opener=opener,
+                        label=label,
+                        cancelled=local_cancel if watch or cancelled is not None else None,
+                        progress=report if progress is not None or watch else None,
+                    )
+                except KeyboardInterrupt:
+                    if slow.is_set():
+                        failures.append(f"{candidate.label}：持续低于 {min_speed / 1024:.0f} KB/s，已换源")
+                        part.unlink(missing_ok=True)
+                        meta_path.unlink(missing_ok=True)
+                        break
+                    raise
+                except WslmanError as exc:
+                    failures.append(f"{candidate.label}：{exc}")
+                    after = part.stat().st_size if part.is_file() else 0
+                    # 断流/超时只要还在推进就同源续传，最多 _MAX_RESUME_ATTEMPTS 次；
+                    # 校验不过说明内容不同，直接换源。
+                    if exc.code != "CHECK_FAILED" and after > before:
+                        continue
+                    if not last_candidate:
+                        # 换源必须从头下：不同来源的 .part 拼在一起会得到错误字节。
+                        part.unlink(missing_ok=True)
+                        meta_path.unlink(missing_ok=True)
+                    break
+                return replace(result, source=candidate.ident)
+        finally:
+            stop_watch.set()
+            if watcher is not None:
+                watcher.join(timeout=1.0)
     kept = kept_part.stat().st_size if kept_part.is_file() else 0
     resume = f"；已保留 {kept} 字节，重试会从断点续传" if kept else ""
     raise runtime_error(

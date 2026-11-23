@@ -244,3 +244,42 @@ def test_download_mirrored_honors_candidate_filename_and_verify_flag(
     assert calls == [(candidate.url, expected_path, None)]
     assert result.path == expected_path
     assert result.source == "tuna"
+
+
+def test_download_mirrored_switches_when_selected_source_is_too_slow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """测速选中的源在下载中持续低于下限时换下一个，不把整份文件按 KB/s 拉完。"""
+    import time
+
+    slow = _mirrors.Candidate("slow", "慢源", "https://slow.example.com/u.tar", True)
+    fast = _mirrors.Candidate("fast", "快源", "https://fast.example.com/u.tar", True)
+    seen: list[str] = []
+    monkeypatch.setattr(_source, "_SPEED_POLL_S", 0.01)
+    monkeypatch.setattr(_source, "_SPEED_WINDOW_S", 0.01)
+
+    def fake_download(url: str, path: Path, **kwargs: object) -> _source.DownloadResult:
+        seen.append(url)
+        if "slow" in url:
+            progress = kwargs.get("progress")
+            assert callable(progress)
+            progress(1024, None)
+            cancelled = kwargs.get("cancelled")
+            assert callable(cancelled)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                if cancelled():
+                    raise KeyboardInterrupt
+                time.sleep(0.005)
+            raise AssertionError("速度看门狗没有触发换源")
+        return _source.DownloadResult(path=path, sha256="a" * 64, size=1, verified=False, resumed=False)
+
+    monkeypatch.setattr(_source, "download", fake_download)
+    result = _source.download_mirrored(
+        tmp_path / "u.tar",
+        candidates=(slow, fast),
+        min_speed=1024 * 1024,
+        speed_grace=0.0,
+    )
+    assert result.source == "fast"
+    assert seen == ["https://slow.example.com/u.tar", "https://fast.example.com/u.tar"]

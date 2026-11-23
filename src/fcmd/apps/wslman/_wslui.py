@@ -59,7 +59,10 @@ CACHE_TTL_SECONDS = 6 * 60 * 60
 
 _CACHE_SCHEMA = "wslman/wslui-mirrors/1"
 _PROBE_BYTES = 3 * 1024 * 1024
-_PROBE_TIMEOUT_S = 6.0
+_PROBE_SECONDS = 2.5
+"""测速窗口：到点就停，不要求一定拉满 3 MiB。慢源也能算出真实吞吐，
+不会因为「6 秒内没拉完」被当成 0 而退化成按延迟排序。"""
+_PROBE_TIMEOUT_S = 4.0
 _USER_AGENT = "fcmd-wslman/0.1"
 
 _HOST_LABELS: dict[str, str] = {
@@ -378,7 +381,11 @@ def probe_tcp_latency(url: str, *, timeout: float = 3.0) -> float:
 def _probe_throughput(url: str, *, timeout: float = _PROBE_TIMEOUT_S) -> float:
     request = urllib.request.Request(
         url,
-        headers={"Range": f"bytes=0-{_PROBE_BYTES - 1}", "User-Agent": _USER_AGENT},
+        headers={
+            "Range": f"bytes=0-{_PROBE_BYTES - 1}",
+            "Accept-Encoding": "identity",
+            "User-Agent": _USER_AGENT,
+        },
     )
     start = time.monotonic()
     total = 0
@@ -386,18 +393,22 @@ def _probe_throughput(url: str, *, timeout: float = _PROBE_TIMEOUT_S) -> float:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             read = getattr(response, "read1", response.read)
             while total < _PROBE_BYTES:
+                if time.monotonic() - start >= _PROBE_SECONDS:
+                    break
                 data = read(65536)
                 if not data:
                     break
                 total += len(data)
     except (OSError, urllib.error.URLError):
-        return 0.0
+        # 超时 / 断流前已经读到的字节仍然参与测速：慢源常在第一段之后才被限速，
+        # 直接丢掉会让「已拉到一部分」的源被误判成不可达。
+        pass
     elapsed = time.monotonic() - start
     return total / elapsed if total and elapsed > 0 else 0.0
 
 
 def probe_throughput(url: str, *, timeout: float = _PROBE_TIMEOUT_S) -> float:
-    """Range 拉前 3 MiB 测吞吐（字节/秒）；失败返回 0（测试可注入替身）。"""
+    """Range 拉前 3 MiB 或最多 2.5 秒测吞吐（字节/秒）；失败返回 0（测试可注入替身）。"""
     return _probe_throughput(url, timeout=timeout)
 
 
