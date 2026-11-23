@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.wslman import _initenv, _open, _sshfiles, wslmanw
+from fcmd.apps.wslman import _configfiles, _initenv, _open, wslmanw
 from fcmd.apps.wslman._distro import Distro, DistroView
 from fcmd.apps.wslman._errors import not_found
 from fcmd.apps.wslman._registry import RegistrySnapshot
@@ -118,7 +118,7 @@ def test_settings_mapping_is_json_friendly() -> None:
         "distro_init_tasks": {},
         "distro_package_mirrors": {},
         "distro_env_status": {},
-        "distro_ssh_status": {},
+        "distro_config_status": {},
         "distro_opener_paths": {},
         "openers": {
             "ide": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_IDE)],
@@ -159,22 +159,33 @@ def test_env_status_and_opener_paths_cache_roundtrip() -> None:
     assert wslmanw.env_status_for(cleared, "Missing") is None
 
 
-def test_ssh_status_cache_roundtrip() -> None:
-    """「迁移 SSH 文件」上次扫描状态随设置文件往返，打开配置直接回显。"""
-    snapshot = _sshfiles.build_snapshot(
-        (_sshfiles.SshFile("id_ed25519", 10, "private"),),
-        _sshfiles.SshTarget(dir="/home/me/.ssh", files=(_sshfiles.RemoteFile("id_ed25519", "600", 10),)),
-        _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", "C:/Users/me/.ssh"),
+def test_config_status_cache_roundtrip() -> None:
+    """「迁移配置文件」上次扫描状态随设置文件往返，打开配置直接回显。"""
+    snapshot = _configfiles.build_snapshot(
+        (_configfiles.ConfigFile(".ssh/id_ed25519", 10, "ssh", "private"),),
+        _configfiles.ConfigTarget(
+            home="/home/me",
+            files=(_configfiles.RemoteFile(".ssh/id_ed25519", "600", 10),),
+            dirs={".ssh": "700"},
+        ),
+        _configfiles.ConfigSource(_configfiles.SOURCE_WINDOWS, "", "C:/Users/me"),
         stamp=1700000000.0,
     )
-    settings = wslmanw.with_ssh_status(wslmanw.WslmanwSettings(), "Ubuntu", snapshot)
+    settings = wslmanw.with_config_status(wslmanw.WslmanwSettings(), "Ubuntu", snapshot)
     restored = wslmanw.settings_from_mapping(wslmanw.settings_to_mapping(settings))
+    assert wslmanw.config_status_for(restored, "Ubuntu") == snapshot
+    assert wslmanw.config_status_for(restored, "Missing") is None
+    # 旧调用名与新字段同样可用。
     assert wslmanw.ssh_status_for(restored, "Ubuntu") == snapshot
-    assert wslmanw.ssh_status_for(restored, "Missing") is None
+    # 旧设置文件里的 distro_ssh_status 读入时迁移到新字段，不丢缓存。
+    legacy = wslmanw.settings_from_mapping(
+        {"distro_ssh_status": {"Ubuntu": _configfiles.snapshot_to_mapping(snapshot)}}
+    )
+    assert wslmanw.config_status_for(legacy, "Ubuntu") == snapshot
     # 坏行（不是映射 / 缺标签）按「没有缓存」处理，不影响打开配置。
-    broken = wslmanw.settings_from_mapping({"distro_ssh_status": {"Ubuntu": "nope", "Debian": {}}})
-    assert wslmanw.ssh_status_for(broken, "Ubuntu") is None
-    assert wslmanw.ssh_status_for(broken, "Debian") is None
+    broken = wslmanw.settings_from_mapping({"distro_config_status": {"Ubuntu": "nope", "Debian": {}}})
+    assert wslmanw.config_status_for(broken, "Ubuntu") is None
+    assert wslmanw.config_status_for(broken, "Debian") is None
 
 
 def test_terminal_cwd_roundtrip_and_default(tmp_path: Path) -> None:

@@ -559,10 +559,14 @@ class DistrosMixin:
         self.settings = _owner.w.with_env_status(self.settings, name, status)
         self._persist_settings(self.geometry_text())
 
-    def _save_ssh_status(self, name: str, snapshot: Any) -> None:
-        """持久化「迁移 SSH 文件」上次扫描状态：打开配置直接回显，不再重扫来源。"""
-        self.settings = _owner.w.with_ssh_status(self.settings, name, snapshot)
+    def _save_config_status(self, name: str, snapshot: Any) -> None:
+        """持久化「迁移配置文件」上次扫描状态：打开配置直接回显，不再重扫来源。"""
+        self.settings = _owner.w.with_config_status(self.settings, name, snapshot)
         self._persist_settings(self.geometry_text())
+
+    def _save_ssh_status(self, name: str, snapshot: Any) -> None:
+        """兼容旧调用名：卡片已从 SSH 扩展为配置文件。"""
+        self._save_config_status(name, snapshot)
 
     def _save_opener_paths(self, name: str, found: Mapping[str, str]) -> None:
         """持久化实例内 ``command -v`` 结果：实例停止时智能检测直接复用。"""

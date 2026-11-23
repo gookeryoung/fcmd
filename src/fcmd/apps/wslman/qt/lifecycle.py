@@ -32,7 +32,7 @@ class LifecycleMixin:
         """把界面上「当前活跃项」与 ``self.settings`` 里的缓存合并后落盘。
 
         用 ``replace`` 而不是重新构造 ``WslmanwSettings``：白名单式构造会静默丢掉
-        没列出来的缓存字段（``distro_env_status`` / ``distro_ssh_status`` /
+        没列出来的缓存字段（``distro_env_status`` / ``distro_config_status`` /
         ``distro_opener_paths`` 等），表现为「持久化了但下次打开又没了」。
         """
         _owner.w.save_settings(

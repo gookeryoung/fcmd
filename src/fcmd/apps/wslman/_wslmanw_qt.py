@@ -362,16 +362,20 @@ _INIT_ENV_HINT = "检测与执行都会启动该实例（若尚未运行）；�
 """展开区的说明文字：收进 tooltip，不占版面高度。"""
 
 
-_SSH_HINT = (
-    "从 Windows 的 ~/.ssh 或其它 WSL 实例的 ~/.ssh 读取私钥、公钥、known_hosts 与 config，"
-    "写入当前实例的 ~/.ssh；目录权限 700、私钥 600。实例内已有同名文件时不会静默覆盖：先确认，"
-    "再备份到 ~/.ssh/fcmd-ssh-backup-<时间>/ 后写入。要把当前实例的 SSH 推到别的实例，"
-    "打开目标实例的配置，把来源选成当前实例即可。"
+_CONFIG_HINT = (
+    "从 Windows 宿主家目录或其它 WSL 实例的 $HOME 读取 SSH / Git / Shell 配置，写入当前实例；"
+    "SSH 目录权限 700、私钥 600，其余文件 644。实例内已有同名文件时不会静默覆盖：先确认，"
+    "再备份到 ~/.ssh/fcmd-ssh-backup-<时间>/（SSH）或 ~/.fcmd-config-backup-<时间>/（其它）后写入。"
+    "要把当前实例的配置推到别的实例，打开目标实例的配置，把来源选成当前实例即可。"
 )
-"""迁移 SSH 卡片说明：收进 tooltip 与确认框，不占版面高度。"""
+"""迁移配置文件卡片说明：收进 tooltip 与确认框，不占版面高度。"""
 
-_SSH_LOG_LINES_MAX = 200
+_CONFIG_LOG_LINES_MAX = 200
 """迁移日志缓冲上限（行）。"""
+
+# 旧名保留给外部引用；卡片已从 SSH 扩展为配置文件。
+_SSH_HINT = _CONFIG_HINT
+_SSH_LOG_LINES_MAX = _CONFIG_LOG_LINES_MAX
 
 
 def run_qt(settings_path: Path | None = None) -> None:
@@ -464,13 +468,13 @@ from PySide6.QtWidgets import (  # noqa: F401, E402
     QVBoxLayout,
 )
 
-from fcmd.apps.wslman import _sshfiles  # noqa: F401, E402
+from fcmd.apps.wslman import _configadapt, _configfiles, _sshfiles  # noqa: F401, E402
 from fcmd.gui import icons as _qt_icons  # noqa: F401, E402
 from fcmd.gui.widgets import PathRow, icon_button, set_button_kind  # noqa: F401, E402
 
+from .qt import configfiles as _qt_configfiles  # noqa: E402
 from .qt import initenv as _qt_initenv  # noqa: E402
 from .qt import rows as _qt_rows  # noqa: E402
-from .qt import ssh as _qt_ssh  # noqa: E402
 from .qt import state as _qt_state  # noqa: E402
 
 _DownloadTask = _qt_state._DownloadTask
@@ -479,7 +483,8 @@ _DistroDetailView = _qt_rows._DistroDetailView
 _ImageItemRow = _qt_rows._ImageItemRow
 _ImageDetailView = _qt_rows._ImageDetailView
 _InitEnvSection = _qt_initenv._InitEnvSection
-_SshMigrateSection = _qt_ssh._SshMigrateSection
+_ConfigMigrateSection = _qt_configfiles._ConfigMigrateSection
+_SshMigrateSection = _qt_configfiles._SshMigrateSection
 
 from fcmd.gui.widgets import ItemRow  # noqa: E402, F401
 

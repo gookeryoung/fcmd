@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import threading
 import time
 from dataclasses import replace
@@ -22,7 +23,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
-from fcmd.apps.wslman import _initenv, _open, _sshfiles, _wslmanw_qt, wslmanw
+from fcmd.apps.wslman import _configfiles, _initenv, _open, _wslmanw_qt, wslmanw
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman._config import WslmanConfig, default_path
 from fcmd.apps.wslman._distro import Distro, DistroView
@@ -2857,61 +2858,60 @@ def test_distro_config_embeds_init_env_section(home: Path, monkeypatch: pytest.M
         owner.deleteLater()
 
 
-def test_ssh_migrate_section_scans_confirms_and_writes(
+def _config_target(files: tuple[_configfiles.RemoteFile, ...] = (), **kwargs: Any) -> _configfiles.ConfigTarget:
+    return _configfiles.ConfigTarget(user="me", home="/home/me", files=files, dirs={".ssh": "700"}, **kwargs)
+
+
+def test_config_migrate_section_scans_confirms_and_writes(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """迁移 SSH 卡片：扫描来源 / 实例现状、冲突确认、内容走 stdin、写入后校验权限。"""
-    source = tmp_path / "ssh"
-    source.mkdir()
-    (source / "id_ed25519").write_bytes(b"PRIVATE KEY DATA")
-    (source / "id_ed25519.pub").write_bytes(b"ssh-ed25519 AAAA me")
-    (source / "known_hosts").write_bytes(b"github.com ssh-ed25519 AAAA")
+    """迁移配置文件卡片：按项目扫描、冲突确认、内容走 stdin、写入后校验权限。"""
+    source = tmp_path / "home"
+    (source / ".ssh").mkdir(parents=True)
+    (source / ".ssh" / "id_ed25519").write_bytes(b"PRIVATE KEY DATA")
+    (source / ".ssh" / "id_ed25519.pub").write_bytes(b"ssh-ed25519 AAAA me")
+    (source / ".ssh" / "known_hosts").write_bytes(b"github.com ssh-ed25519 AAAA")
+    (source / ".gitconfig").write_bytes(b"[user]\n\tname = me\n")
     owner = QWidget()
-    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu"))
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"))
     try:
         assert section.collapsed is True
         assert section.details.isHidden() is True
         assert section.migrate_button.isEnabled() is False
-        assert section.source.value() == str(_sshfiles.default_source_dir())
+        assert section.source.value() == str(_configfiles.default_source_dir())
         section.source.set_value(str(source))
 
-        target = _sshfiles.SshTarget(
-            user="me",
-            home="/home/me",
-            dir="/home/me/.ssh",
-            dir_mode="700",
-            files=(_sshfiles.RemoteFile("known_hosts", "644"),),
-        )
+        known_size = (source / ".ssh" / "known_hosts").stat().st_size
+        target = _config_target((_configfiles.RemoteFile(".ssh/known_hosts", "644", known_size),))
         monkeypatch.setattr(section, "refresh", lambda: None)
-        files = _sshfiles.scan_source(source)
-        windows = _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", str(source))
+        files = _configfiles.scan_host(source)
+        windows = _configfiles.ConfigSource(_configfiles.SOURCE_WINDOWS, "", str(source))
         section._scan_done((files, target, windows))
-        assert set(section._boxes) == {"id_ed25519", "id_ed25519.pub", "known_hosts"}
+        assert set(section._boxes) == {".ssh/id_ed25519", ".ssh/id_ed25519.pub", ".ssh/known_hosts", ".gitconfig"}
         assert all(box.isChecked() for box in section._boxes.values())
         assert section.migrate_button.isEnabled() is True
         assert "已有 1 个文件" in section.target_hint.text()
-        assert section.summary.fullText() == "Windows 宿主 3 个文件 · 实例内 1 个文件"
-        # 标签由扫描结果推导：实例里只有不同大小的 known_hosts，算未迁移。
+        assert section.summary.fullText() == "Windows 宿主 4 个文件 · 实例内 1 个文件"
+        # 项目标签按来源文件独立推导：Shell 在 Windows 宿主没有对应位置。
+        assert section._group_tags["ssh"].text() == "SSH 1/3"
+        assert section._group_tags["ssh"].tone() == "warning"
+        assert section._group_tags["git"].text() == "Git 0/1"
+        assert section._group_tags["shell"].text() == "Shell 无文件"
+        assert section._group_boxes["shell"].isEnabled() is False
+        # 整体标签由扫描结果推导：实例里只有 known_hosts 一致，其余文件缺失。
         assert section.state_tag.isHidden() is False
-        assert section.state_tag.text() == "未迁移"
-        assert section.state_tag.tone() == "muted"
+        assert section.state_tag.text() == "部分迁移"
+        assert section.state_tag.tone() == "warning"
 
-        matched = _sshfiles.SshTarget(
-            user="me",
-            home="/home/me",
-            dir="/home/me/.ssh",
-            dir_mode="700",
-            files=tuple(_sshfiles.RemoteFile(item.name, item.mode_text, item.size) for item in files),
-        )
+        matched = _config_target(tuple(_configfiles.RemoteFile(item.path, item.mode_text, item.size) for item in files))
         section._scan_done((files, matched, windows))
         assert section.state_tag.text() == "已完成迁移"
         assert section.state_tag.tone() == "success"
         assert "均已存在" in section.state_tag.toolTip()
+        assert section._group_tags["ssh"].text() == "SSH 3/3"
+        assert section._group_tags["ssh"].tone() == "success"
 
-        partial = _sshfiles.SshTarget(
-            dir="/home/me/.ssh",
-            files=(_sshfiles.RemoteFile("id_ed25519", "644", files[0].size),),
-        )
+        partial = _config_target((_configfiles.RemoteFile(".ssh/id_ed25519", "600", files[0].size),))
         section._scan_done((files, partial, windows))
         assert section.state_tag.text() == "部分迁移"
         assert section.state_tag.tone() == "warning"
@@ -2944,11 +2944,11 @@ def test_ssh_migrate_section_scans_confirms_and_writes(
                 stdin: bytes | None = None,
             ) -> CommandResult:
                 seen.append((list(argv), stdin))
-                mode = "600" if len(seen) == 1 else "644"
+                match = re.search(r'chmod (\d{3}) "\$target"', argv[-1])
                 return CommandResult(
                     argv=tuple(argv),
                     returncode=0,
-                    stdout=f"WSLSSH_WRITTEN={mode}|me\n".encode(),
+                    stdout=f"WSLCFG_WRITTEN={match.group(1) if match else '644'}|me\n".encode(),
                     stderr=b"",
                     duration_ms=1,
                 )
@@ -2960,30 +2960,33 @@ def test_ssh_migrate_section_scans_confirms_and_writes(
         monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
         refreshed: list[bool] = []
         monkeypatch.setattr(section, "refresh", lambda: refreshed.append(True))
-        names = list(section._boxes)
-        assert section._migrate(names, set()) == "已迁移 3 个文件"
-        assert [stdin for _argv, stdin in seen] == [(source / name).read_bytes() for name in names]
+        paths = list(section._boxes)
+        assert section._migrate(paths, set()) == "已迁移 4 个文件"
+        assert [stdin for _argv, stdin in seen] == [(source / Path(*path.split("/"))).read_bytes() for path in paths]
         assert all(argv[:4] == ["wsl.exe", "-d", "Ubuntu", "--exec"] for argv, _stdin in seen)
         assert 'cat > "$tmp"' in seen[0][0][-1]
         assert "PRIVATE KEY DATA" not in seen[0][0][-1]
+        # SSH 仍备份到 ~/.ssh/fcmd-ssh-backup-…，其它项目走 ~/.fcmd-config-backup-…。
+        assert ".ssh/fcmd-ssh-backup-" in seen[0][0][-1]
+        assert "fcmd-config-backup-" in seen[-1][0][-1]
         assert refreshed == []
     finally:
         section.deleteLater()
         owner.deleteLater()
 
 
-def test_ssh_migrate_section_surfaces_write_failures(
+def test_config_migrate_section_surfaces_write_failures(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """覆盖未确认 / 权限不符都要明确报错，不能静默当成功。"""
-    source = tmp_path / "ssh"
-    source.mkdir()
-    (source / "id_ed25519").write_bytes(b"KEY")
+    source = tmp_path / "home"
+    (source / ".ssh").mkdir(parents=True)
+    (source / ".ssh" / "id_ed25519").write_bytes(b"KEY")
     owner = QWidget()
-    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu"))
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"))
     try:
         section.source.set_value(str(source))
-        section._files = {"id_ed25519": _sshfiles.SshFile("id_ed25519", 3, "private")}
+        section._files = {".ssh/id_ed25519": _configfiles.ConfigFile(".ssh/id_ed25519", 3, "ssh", "private")}
 
         class _Runner:
             def __init__(self, result: CommandResult) -> None:
@@ -3016,7 +3019,7 @@ def test_ssh_migrate_section_surfaces_write_failures(
             )
         )
         with pytest.raises(WslmanError) as conflict:
-            section._migrate(["id_ed25519"], set())
+            section._migrate([".ssh/id_ed25519"], set())
         assert conflict.value.code == "RUNTIME_ERROR"
         assert "扫描后才出现" in (conflict.value.hint or "")
 
@@ -3024,13 +3027,13 @@ def test_ssh_migrate_section_surfaces_write_failures(
             CommandResult(
                 argv=("wsl.exe",),
                 returncode=0,
-                stdout=b"WSLSSH_WRITTEN=644|me\n",
+                stdout=b"WSLCFG_WRITTEN=644|me\n",
                 stderr=b"",
                 duration_ms=1,
             )
         )
         with pytest.raises(WslmanError) as wrong_mode:
-            section._migrate(["id_ed25519"], set())
+            section._migrate([".ssh/id_ed25519"], set())
         assert wrong_mode.value.code == "RUNTIME_ERROR"
         assert "644" in wrong_mode.value.message
     finally:
@@ -3038,13 +3041,61 @@ def test_ssh_migrate_section_surfaces_write_failures(
         owner.deleteLater()
 
 
-def test_ssh_migrate_from_another_instance_streams_files(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_migrate_adapts_windows_only_git_config(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows 的 core.sshCommand / credential.helper 不能原样写进实例。"""
+    source = tmp_path / "home"
+    source.mkdir()
+    raw = "[core]\r\n\tsshCommand = C:/Program Files/OpenSSH/ssh.exe\r\n[credential]\r\n\thelper = manager\r\n"
+    (source / ".gitconfig").write_text(raw, encoding="utf-8", newline="")
+    encoded = raw.encode("utf-8")
+    owner = QWidget()
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"))
+    try:
+        section.source.set_value(str(source))
+        section._files = {".gitconfig": _configfiles.ConfigFile(".gitconfig", len(encoded), "git", "config")}
+        seen: list[bytes | None] = []
+
+        class _Runner:
+            def run(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+            ) -> CommandResult:
+                seen.append(stdin)
+                return CommandResult(tuple(argv), 0, b"WSLCFG_WRITTEN=644|me\n", b"", 1)
+
+        class _FakeEnv:
+            runner = _Runner()
+
+        monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+        monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+        assert section._migrate([".gitconfig"], set()) == "已迁移 1 个文件"
+        assert seen and seen[0] is not None
+        text = seen[0].decode("utf-8")
+        assert "sshCommand = ssh" in text
+        assert "sshCommand = C:/Program Files/OpenSSH/ssh.exe" not in text
+        assert "# fcmd: 已注释 Windows 专用配置：helper = manager" in text
+        assert "\r" not in text
+        assert "适配" in section.log.toPlainText()
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_config_migrate_from_another_instance_streams_files(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """跨实例来源：扫描经 wsl.exe 探测，读取走 cat 文件流，内容不进入命令行。"""
     probe_debian = (
-        "WSLSSH_USER=me\nWSLSSH_HOME=/home/me\nWSLSSH_DIR=/home/me/.ssh\nWSLSSH_DIRMODE=700\n"
-        f"WSLSSH_FILE={_b64('id_ed25519')}|600|16\n"
+        "WSLCFG_USER=me\nWSLCFG_HOME=/home/me\n"
+        f"WSLCFG_DIR={_b64('.ssh')}|700\n"
+        f"WSLCFG_FILE={_b64('.ssh/id_ed25519')}|600|16\n"
+        f"WSLCFG_FILE={_b64('.gitconfig')}|644|16\n"
     )
-    probe_ubuntu = "WSLSSH_USER=me\nWSLSSH_HOME=/home/me\nWSLSSH_DIR=/home/me/.ssh\nWSLSSH_DIRMODE=700\n"
+    probe_ubuntu = "WSLCFG_USER=me\nWSLCFG_HOME=/home/me\n"
     calls: list[tuple[list[str], bytes | None]] = []
 
     class _Runner:
@@ -3059,10 +3110,11 @@ def test_ssh_migrate_from_another_instance_streams_files(home: Path, monkeypatch
             calls.append((list(argv), stdin))
             distro = argv[2]
             if argv[4] == "cat":
-                return CommandResult(tuple(argv), 0, b"PRIVATE KEY DATA", b"", 1)
+                data = b"PRIVATE KEY DATA" if "/.ssh/" in argv[-1] else b"[user]\n\tname = me\n"
+                return CommandResult(tuple(argv), 0, data, b"", 1)
             script = argv[-1]
-            if "WSLSSH_WRITTEN=" in script:
-                return CommandResult(tuple(argv), 0, b"WSLSSH_WRITTEN=600|me\n", b"", 1)
+            if "WSLCFG_WRITTEN=" in script:
+                return CommandResult(tuple(argv), 0, b"WSLCFG_WRITTEN=600|me\n", b"", 1)
             text = probe_debian if distro == "Debian" else probe_ubuntu
             return CommandResult(tuple(argv), 0, text.encode(), b"", 1)
 
@@ -3072,28 +3124,28 @@ def test_ssh_migrate_from_another_instance_streams_files(home: Path, monkeypatch
     monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
     monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
     owner = QWidget()
-    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu"), instances=("Debian",))
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"), instances=("Debian",))
     try:
         assert section.source_instance.isHidden() is True
-        section.source_kind.setCurrentIndex(section.source_kind.findData(_sshfiles.SOURCE_WSL))
+        section.source_kind.setCurrentIndex(section.source_kind.findData(_configfiles.SOURCE_WSL))
         assert section.source_instance.isHidden() is False
         assert section.source.isHidden() is True
-        assert "Debian:~/.ssh" in section.source_remote.fullText()
+        assert "Debian:$HOME" in section.source_remote.fullText()
 
         files, target, source = section._scan()
-        assert [item.name for item in files] == ["id_ed25519"]
+        assert [item.path for item in files] == [".ssh/id_ed25519", ".gitconfig"]
         assert files[0].size == 16
-        assert target.dir == "/home/me/.ssh"
-        assert source.display_path() == "Debian:/home/me/.ssh"
+        assert target.home == "/home/me"
+        assert source.display_path() == "Debian:/home/me"
         # 先探测来源实例，再探测当前实例。
         assert [call[0][2] for call in calls] == ["Debian", "Ubuntu"]
 
         section._scan_done((files, target, source))
-        assert section.summary.fullText() == "WSL 实例 · Debian 1 个文件 · 实例内 0 个文件"
-        assert section.source_remote.fullText() == "Debian:/home/me/.ssh"
+        assert section.summary.fullText() == "WSL 实例 · Debian 2 个文件 · 实例内 0 个文件"
+        assert section.source_remote.fullText() == "Debian:/home/me"
 
         calls.clear()
-        assert section._migrate(["id_ed25519"], set()) == "已迁移 1 个文件"
+        assert section._migrate([".ssh/id_ed25519"], set()) == "已迁移 1 个文件"
         read_argv, read_stdin = calls[0]
         assert read_argv == ["wsl.exe", "-d", "Debian", "--exec", "cat", "--", "/home/me/.ssh/id_ed25519"]
         assert read_stdin is None
@@ -3107,7 +3159,7 @@ def test_ssh_migrate_from_another_instance_streams_files(home: Path, monkeypatch
         owner.deleteLater()
 
 
-def test_ssh_migrate_reports_unreachable_source_instance(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_migrate_reports_unreachable_source_instance(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """来源实例读不到时明确报错并提示先启动，不当成「没有文件」。"""
 
     class _Runner:
@@ -3133,9 +3185,9 @@ def test_ssh_migrate_reports_unreachable_source_instance(home: Path, monkeypatch
     monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
     monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
     owner = QWidget()
-    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu"), instances=("Debian",))
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"), instances=("Debian",))
     try:
-        section.source_kind.setCurrentIndex(section.source_kind.findData(_sshfiles.SOURCE_WSL))
+        section.source_kind.setCurrentIndex(section.source_kind.findData(_configfiles.SOURCE_WSL))
         with pytest.raises(WslmanError) as failure:
             section._scan()
         assert "Debian" in failure.value.message
@@ -3145,7 +3197,7 @@ def test_ssh_migrate_reports_unreachable_source_instance(home: Path, monkeypatch
         owner.deleteLater()
 
 
-def test_distro_config_embeds_ssh_migrate_and_confirms_close(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_distro_config_embeds_config_migrate_and_confirms_close(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """迁移卡片默认收起、首次展开扫描；迁移进行中关窗要先确认。"""
     owner = QWidget()
     dialog = _wslmanw_qt._DistroConfigDialog(
@@ -3156,16 +3208,16 @@ def test_distro_config_embeds_ssh_migrate_and_confirms_close(home: Path, monkeyp
     )
     try:
         monkeypatch.setattr(dialog.init_env, "refresh_status", lambda: None)
-        assert isinstance(dialog.ssh_migrate, _wslmanw_qt._SshMigrateSection)
-        assert dialog.ssh_migrate.parent() is dialog
-        assert dialog.ssh_migrate.collapsed is True
-        assert dialog.ssh_migrate._instances == ("Debian",)
-        assert dialog.ssh_migrate.source_instance.itemText(0) == "Debian"
+        assert isinstance(dialog.config_migrate, _wslmanw_qt._ConfigMigrateSection)
+        assert dialog.config_migrate.parent() is dialog
+        assert dialog.config_migrate.collapsed is True
+        assert dialog.config_migrate._instances == ("Debian",)
+        assert dialog.config_migrate.source_instance.itemText(0) == "Debian"
         scans: list[str] = []
-        monkeypatch.setattr(dialog.ssh_migrate, "refresh", lambda: scans.append("scan"))
-        dialog.ssh_migrate.toggle_collapsed(False)
+        monkeypatch.setattr(dialog.config_migrate, "refresh", lambda: scans.append("scan"))
+        dialog.config_migrate.toggle_collapsed(False)
         assert scans == ["scan"]
-        dialog.ssh_migrate.toggle_collapsed(True)
+        dialog.config_migrate.toggle_collapsed(True)
         assert scans == ["scan"]
 
         titles: list[str] = []
@@ -3175,13 +3227,13 @@ def test_distro_config_embeds_ssh_migrate_and_confirms_close(home: Path, monkeyp
             return False
 
         monkeypatch.setattr(_wslmanw_qt, "confirm", _deny)
-        dialog.ssh_migrate._busy = True
+        dialog.config_migrate._busy = True
         dialog.reject()
-        assert titles == ["SSH 迁移仍在进行"]
-        assert dialog.ssh_migrate._closing is False
+        assert titles == ["配置迁移仍在进行"]
+        assert dialog.config_migrate._closing is False
         monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
         dialog.reject()
-        assert dialog.ssh_migrate._closing is True
+        assert dialog.config_migrate._closing is True
     finally:
         dialog.deleteLater()
         owner.deleteLater()
@@ -4271,22 +4323,28 @@ def test_settings_page_detects_once_per_instance(home: Path, monkeypatch: pytest
         window.deleteLater()
 
 
-def _ssh_snapshot() -> Any:
-    """一份可直接回显的 SSH 迁移状态（模拟上次扫描结果）。"""
-    return _sshfiles.build_snapshot(
-        (_sshfiles.SshFile("id_ed25519", 10, "private"),),
-        _sshfiles.SshTarget(dir="/home/me/.ssh", files=(_sshfiles.RemoteFile("id_ed25519", "600", 10),)),
-        _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", r"C:\Users\me\.ssh"),
+def _config_snapshot() -> Any:
+    """一份可直接回显的配置迁移状态（模拟上次扫描结果）。"""
+    return _configfiles.build_snapshot(
+        (_configfiles.ConfigFile(".ssh/id_ed25519", 10, "ssh", "private"),),
+        _configfiles.ConfigTarget(
+            home="/home/me",
+            files=(_configfiles.RemoteFile(".ssh/id_ed25519", "600", 10),),
+            dirs={".ssh": "700"},
+        ),
+        _configfiles.ConfigSource(_configfiles.SOURCE_WINDOWS, "", r"C:\Users\me"),
         stamp=1700000000.0,
     )
 
 
-def test_ssh_migrate_section_shows_cached_status_without_scanning(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_migrate_section_shows_cached_status_without_scanning(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """打开配置直接回显上次扫描状态：不启动实例、不重扫来源。"""
     owner = QWidget()
-    snapshot = _ssh_snapshot()
+    snapshot = _config_snapshot()
     monkeypatch.setattr(_wslmanw_qt, "submit_daemon", lambda *args, **kwargs: pytest.fail("回显缓存不应扫描"))
-    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu", "stopped"), status=snapshot)
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu", "stopped"), status=snapshot)
     try:
         assert section.state_tag.isHidden() is False
         assert section.state_tag.text() == "已完成迁移"
@@ -4296,6 +4354,10 @@ def test_ssh_migrate_section_shows_cached_status_without_scanning(home: Path, mo
         assert section.collapsed_hint.text() == "Windows 宿主 1 个文件"
         assert "上次扫描结果" in section.file_hint.fullText()
         assert "显示上次扫描结果" in section.log.toPlainText()
+        # 项目标签从缓存的计数恢复（不重扫来源）。
+        assert section._group_tags["ssh"].text() == "SSH 1/1"
+        assert section._group_tags["ssh"].tone() == "success"
+        assert section._group_tags["git"].text() == "Git 无文件"
         # 只回显状态，不恢复文件清单：迁移前必须重新扫描确认冲突与权限。
         assert section.migrate_button.isEnabled() is False
         assert section._boxes == {}
@@ -4305,43 +4367,45 @@ def test_ssh_migrate_section_shows_cached_status_without_scanning(home: Path, mo
         owner.deleteLater()
 
 
-def test_ssh_migrate_section_reports_scan_result_for_persisting(home: Path) -> None:
+def test_config_migrate_section_reports_scan_result_for_persisting(home: Path) -> None:
     """每次扫描结束把结果交给回调（窗口据此写进 wslmanw.json）。"""
     owner = QWidget()
     seen: list[Any] = []
-    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu"), on_scanned=seen.append)
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"), on_scanned=seen.append)
     try:
-        source = _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", "/home/me/.ssh-win")
-        files = (_sshfiles.SshFile("config", 5, "config"),)
-        target = _sshfiles.SshTarget(dir="/home/me/.ssh", files=())
+        source = _configfiles.ConfigSource(_configfiles.SOURCE_WINDOWS, "", "/home/me")
+        files = (_configfiles.ConfigFile(".gitconfig", 5, "git", "config"),)
+        target = _configfiles.ConfigTarget(home="/home/me")
         section._scan_done((files, target, source))
         assert len(seen) == 1
         snapshot = seen[0]
         assert snapshot.state.label == "未迁移"
         assert (snapshot.source_count, snapshot.target_count) == (1, 0)
-        assert snapshot.source_path == "/home/me/.ssh-win"
+        assert snapshot.source_path == "/home/me"
         assert snapshot.target_summary
+        assert snapshot.counts["git"].total == 1
     finally:
         section.deleteLater()
         owner.deleteLater()
 
 
-def test_ssh_status_cache_survives_other_settings_saves(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """SSH 迁移状态写盘后不被其它设置保存冲掉（回归：白名单式构造会丢缓存字段）。"""
+def test_config_status_cache_survives_other_settings_saves(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """配置迁移状态写盘后不被其它设置保存冲掉（回归：白名单式构造会丢缓存字段）。"""
     view = _view(_distro("Ubuntu", "stopped"))
     monkeypatch.setattr(cli, "_view", lambda env: view)
     monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        snapshot = _ssh_snapshot()
-        window._save_ssh_status("Ubuntu", snapshot)
+        snapshot = _config_snapshot()
+        window._save_config_status("Ubuntu", snapshot)
         window._save_env_status("Ubuntu", _initenv.EnvStatus(python="3.12.3"))
         window._persist_settings(window.geometry_text())
 
         saved = wslmanw.load_settings()
-        assert wslmanw.ssh_status_for(saved, "Ubuntu") == snapshot
-        assert wslmanw.ssh_status_for(saved, "Debian") is None
+        assert wslmanw.config_status_for(saved, "Ubuntu") == snapshot
+        assert wslmanw.config_status_for(saved, "Debian") is None
+        assert wslmanw.ssh_status_for(saved, "Ubuntu") == snapshot  # 旧调用名仍可用
         cached_env = wslmanw.env_status_for(saved, "Ubuntu")
         assert cached_env is not None and cached_env.python == "3.12.3"
 
@@ -4349,8 +4413,8 @@ def test_ssh_status_cache_survives_other_settings_saves(home: Path, monkeypatch:
         monkeypatch.setattr(_wslmanw_qt, "submit_daemon", lambda *args, **kwargs: pytest.fail("回显缓存不应扫描"))
         dialog = _wslmanw_qt._DistroConfigDialog(window, _distro("Ubuntu", "stopped"), "~")
         try:
-            assert dialog.ssh_migrate.state_tag.text() == "已完成迁移"
-            assert dialog.ssh_migrate.state_tag.isHidden() is False
+            assert dialog.config_migrate.state_tag.text() == "已完成迁移"
+            assert dialog.config_migrate.state_tag.isHidden() is False
         finally:
             dialog.deleteLater()
     finally:

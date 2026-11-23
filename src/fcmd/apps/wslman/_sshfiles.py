@@ -45,6 +45,7 @@ __all__ = [
     "classify",
     "conflicts",
     "default_source_dir",
+    "file_warning",
     "is_migratable_name",
     "kind_label",
     "looks_private",
@@ -437,6 +438,11 @@ def _warning(name: str, kind: str, head: bytes) -> str:
     if kind == "other":
         return "未知类型，确认后再迁移"
     return ""
+
+
+def file_warning(name: str, kind: str, head: bytes) -> str:
+    """单个文件的提示文案（供「迁移配置文件」按项目复用）。"""
+    return _warning(name, kind, head)
 
 
 def scan_source(directory: Path) -> tuple[SshFile, ...]:

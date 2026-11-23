@@ -40,8 +40,8 @@ from fcmd.gui.widgets import FormGrid, button, fit_dialog_to_content, hint_label
 
 from .._wslmanw_qt import (
     WslmanQtWindow,
+    _ConfigMigrateSection,
     _InitEnvSection,
-    _SshMigrateSection,
 )
 
 
@@ -107,17 +107,18 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         )
         outer.addWidget(self.init_env)
 
-        # SSH 迁移单独一张卡：要选来源目录、看冲突，比塞进「初始化环境」的勾选项更清楚。
+        # 配置迁移单独一张卡：要选来源、看项目进度与冲突，比塞进「初始化环境」更清楚。
         # 同样只回显上次扫描结果（不启动实例、不重扫），扫描完成后立即写回缓存。
-        self.ssh_migrate = _SshMigrateSection(
+        self.config_migrate = _ConfigMigrateSection(
             self,
             distro,
             instances=instances,
-            status=w.ssh_status_for(settings, distro.name) if settings is not None else None,
-            on_scanned=lambda snapshot: getattr(owner, "_save_ssh_status", lambda *_: None)(distro.name, snapshot),
+            status=w.config_status_for(settings, distro.name) if settings is not None else None,
+            on_scanned=lambda snapshot: getattr(owner, "_save_config_status", lambda *_: None)(distro.name, snapshot),
             state_provider=self._live_state,
         )
-        outer.addWidget(self.ssh_migrate)
+        self.ssh_migrate = self.config_migrate  # 旧属性名：迁移卡片已从 SSH 扩展为配置文件
+        outer.addWidget(self.config_migrate)
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
@@ -157,12 +158,12 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         """初始化 / 迁移在后台进行时允许关闭，但先说明任务不会中止。"""
         if self.init_env.busy and not _owner.confirm(self, "初始化仍在运行", "命令会在后台继续执行；现在关闭对话框？"):
             return False
-        if self.ssh_migrate.busy and not _owner.confirm(
-            self, "SSH 迁移仍在进行", "写入命令会在后台继续执行；现在关闭对话框？"
+        if self.config_migrate.busy and not _owner.confirm(
+            self, "配置迁移仍在进行", "写入命令会在后台继续执行；现在关闭对话框？"
         ):
             return False
         self.init_env.stop()
-        self.ssh_migrate.stop()
+        self.config_migrate.stop()
         return True
 
     def reject(self) -> None:

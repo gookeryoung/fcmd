@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -266,7 +267,7 @@ def test_path_inputs_share_value_and_chooser(monkeypatch: pytest.MonkeyPatch) ->
         monkeypatch.setattr(field, "_choose_path", lambda: "/tmp/b.txt")
         field._pick()
         assert field.value() == "/tmp/b.txt"
-        assert field.hint.fullText() == "/tmp/b.txt"
+        assert field.hint.fullText() == str(Path("/tmp/b.txt"))
     finally:
         row.deleteLater()
         field.deleteLater()
