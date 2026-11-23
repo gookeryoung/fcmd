@@ -72,7 +72,11 @@ locllmw 原先与其他整窗工具一样，用顶部
 
 - wslmanw 详情/下载/日志（主网格中部，纵向空间优先）；
 - peview、reshack、paramcad 的预览/字段子页；
-- filescan、dynacalc 的多视图切换。
+- dynacalc 的多视图切换。
+
+`filescanw` 原在「不迁移」名单里（同屏多视图），现已按同一 API 迁为
+「扫描 / 结果 / 规则」侧边栏分页：三页都是顶层视图且结果页需要满高表格，
+标签条只会挤压横向空间；表单高的扫描页套 `PageScroll`，结果页不套滚动区。
 
 这些窗口需要时可按同一 API 迁移，不存在私有分支。
 
@@ -86,7 +90,8 @@ locllmw 原先与其他整窗工具一样，用顶部
 
 ## 落地状态与交接
 
-- 已完成：组件、主题样式、5 个窗口迁移、单测与 ADR 口径。
+- 已完成：组件、主题样式、5 个窗口迁移（llmw / wslmanw / 原引擎与环境窗口合并）、
+  filescanw 三页迁移、单测与 ADR 口径。
 - 折叠态：应用图标居中显示，展开按钮固定在侧栏底部且与页按钮同款（整行 / 无文字）；
   点击图标或底部箭头都能展开（`test_collapsed_keeps_icon_and_shows_expand_button`）；
   没有图标时底部箭头依然可用（`test_collapsed_without_icon_keeps_toggle_to_expand`）；

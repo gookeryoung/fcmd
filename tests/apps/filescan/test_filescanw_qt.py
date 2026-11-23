@@ -63,8 +63,14 @@ def _window(**kwargs: object) -> FilescanQtWindow:
 def test_window_builds_with_defaults(home: Path) -> None:
     window = _window()
     try:
-        assert window.tabs.count() == 3
-        assert window.tabs.tabText(0) == "扫描"
+        # 侧边栏分页与 wslmanw / llmw 同构：扫描 / 结果 / 规则，默认停在扫描页。
+        assert window.nav.keys() == ("scan", "results", "rules")
+        assert window.nav.selected() == "scan"
+        assert window.current_page() == "scan"
+        assert window.page_title.text() == "扫描"
+        assert window._scan_page.page_key == "scan"
+        assert window._result_page.page_key == "results"
+        assert window._rules_page.page_key == "rules"
         assert window._whitelist_table.rowCount() >= 1
         assert window._rules_table.rowCount() == len(builtin_ruleset().rules)
         assert window._start_button.isEnabled()
@@ -176,3 +182,48 @@ def test_settings_persisted_on_close(home: Path, sample: Path) -> None:
     raw = json.loads(_guiconfig.config_path(filescanw.SETTINGS_NAME).read_text(encoding="utf-8"))
     assert raw["paths"] == [str(sample)]
     assert raw["geometry"] == "1111x777+11+22"
+
+
+def test_scan_progress_and_result_status_stay_on_their_pages(home: Path, sample: Path) -> None:
+    """状态栏按页隔离：切到结果页后，扫描进度仍写在扫描页，结果摘要写结果页。"""
+    from fcmd.apps.filescan._engine import ScanResult
+
+    window = _window()
+    try:
+        window.show_page("results")
+        window.set_page_status("results", "结果是空的")
+        window._on_progress(3, 10, str(sample))
+        assert window.page_status("scan").startswith("正在扫描 3/10")
+        assert window.page_status("results") == "结果是空的"
+
+        # 扫描完成自动切到结果页，两页各自留下本次结论。
+        window.show_page("scan")
+        window._scan_done((ScanResult(roots=(sample,)), ""))
+        assert window.current_page() == "results"
+        assert "命中" in window.page_status("results")
+        assert window.page_status("scan") == window.page_status("results")
+    finally:
+        window.deleteLater()
+
+
+def test_sidebar_collapsed_persists(home: Path) -> None:
+    """侧边栏折叠状态写进 filescanw.json，旧设置文件（无该字段）仍按展开处理。"""
+    window = _window()
+    try:
+        window.nav.set_collapsed(True)
+    finally:
+        window.deleteLater()
+    saved = filescanw.load_settings()
+    assert saved.sidebar_collapsed is True
+
+
+def test_old_settings_without_sidebar_field_load_unexpanded(home: Path) -> None:
+    path = _guiconfig.config_path(filescanw.SETTINGS_NAME)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"paths": ["F:/data"]}), encoding="utf-8")
+    assert filescanw.load_settings().sidebar_collapsed is False
+    window = _window()
+    try:
+        assert window.nav.is_collapsed() is False
+    finally:
+        window.deleteLater()

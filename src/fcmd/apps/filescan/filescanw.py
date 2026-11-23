@@ -1,6 +1,6 @@
 """filescanw - 目录敏感内容扫描（Qt GUI）。
 
-三个分页（沿用原 llmdownw / 现 llmw 模型页的分页口径，避免表单堆叠）：
+左侧边栏三页（与 wslmanw / llmw 同一套 ``SidebarNav``，避免表单堆叠）：
 
 - **扫描**：多目录列表、递归/深度/符号链接、后缀白名单表格（类型 / 后缀两列，
   每行一个类型，后缀用英文逗号分隔，可新增 / 编辑 / 删除类型（支持多选批量删除）
@@ -117,6 +117,7 @@ class FilescanSettings:
     filter_rule: str = ""
     filter_path: str = ""
     report_format: str = "text"
+    sidebar_collapsed: bool = False
     geometry: str | None = None
 
 
@@ -149,6 +150,7 @@ def settings_to_mapping(settings: FilescanSettings) -> dict[str, Any]:
         "filter_rule": settings.filter_rule,
         "filter_path": settings.filter_path,
         "report_format": settings.report_format,
+        "sidebar_collapsed": settings.sidebar_collapsed,
         "geometry": settings.geometry,
     }
 
@@ -250,6 +252,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
         filter_rule=_str_value(raw, "filter_rule"),
         filter_path=_str_value(raw, "filter_path"),
         report_format=_format_value(raw),
+        sidebar_collapsed=_bool_value(raw, "sidebar_collapsed", False),
         geometry=_guiconfig.valid_geometry(_str_value(raw, "geometry") or None),
     )
 
