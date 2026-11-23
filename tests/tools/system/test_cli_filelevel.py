@@ -1,19 +1,21 @@
 """filelevel 工具测试。
 
 验证 ``fcmd filelevel``：
-- 工具注册（set 子命令）
+- 工具注册（仅 set 子命令）
 - 等级标记先清后加、仅移除括号包裹的标记、批量处理
+- 等级 / 括号配置从 ``${FCMD_HOME}/filelevel.json`` 直接读取
 - 无效等级 → 任务失败汇总 + 退出码 1
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.infras.fs import config_path, default_config
+from fcmd.infras.fs import config_path, default_config, load_filelevel_config
 
 
 @pytest.fixture(autouse=True)
@@ -24,13 +26,23 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return home
 
 
+def _write_config(levels: dict[str, str] | None = None, brackets: dict[str, str] | None = None) -> None:
+    payload = {
+        "schema": "filelevel-config/1",
+        "levels": levels if levels is not None else dict(default_config().levels),
+        "brackets": brackets if brackets is not None else dict(default_config().brackets),
+    }
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
 class TestRegistration:
     """filelevel 注册为多子命令工具。"""
 
     def test_registered(self) -> None:
-        """filelevel 已注册且含 set 子命令。"""
+        """filelevel 已注册且只有 set 子命令（配置直接读本地文件，不提供 config 命令）。"""
         assert "filelevel" in list_tools()
-        assert set(list_subcommands("filelevel")) == {"set", "config"}
+        assert set(list_subcommands("filelevel")) == {"set"}
 
 
 class TestFilelevelRun:
@@ -102,72 +114,6 @@ class TestFilelevelRun:
         assert run_tool("filelevel", ["set", str(tmp_path / "missing.pdf")]) == 0
         assert "文件不存在" in capsys.readouterr().out
 
-    def test_config_shows_defaults_and_path(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """默认只展示：等级映射与配置文件路径都能看到。"""
-        assert run_tool("filelevel", ["config"]) == 0
-        out = capsys.readouterr().out
-        assert str(config_path()) in out
-        assert "1: PUB,NOR" in out
-        assert "括号:" in out
-        assert not config_path().exists()
-
-    def test_config_init_writes_defaults(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """--init 在配置缺失时落一份默认配置。"""
-        assert run_tool("filelevel", ["config", "--init"]) == 0
-        assert config_path().exists()
-        assert "已写入默认配置" in capsys.readouterr().out
-        # 再次 --init 不覆盖已有文件。
-        assert run_tool("filelevel", ["config", "--init"]) == 0
-        assert "已存在" in capsys.readouterr().out
-
-    def test_config_level_override_changes_set_behavior(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """改等级映射后，下一次 set 立即用新标记。"""
-        assert run_tool("filelevel", ["config", "--level", "1=PUBLIC"]) == 0
-        f = tmp_path / "report.pdf"
-        f.write_text("x", encoding="utf-8")
-        assert run_tool("filelevel", ["set", str(f), "--level", "1"]) == 0
-        assert (tmp_path / "report(PUBLIC).pdf").exists()
-        assert "已保存配置" in capsys.readouterr().out
-
-    def test_config_brackets_override_changes_clearing(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """改括号字符集后，新括号包裹的标记也会被清除。"""
-        assert run_tool("filelevel", ["config", "--bracket-left", " ({", "--bracket-right", " )}"]) == 0
-        f = tmp_path / "report{PUB}.pdf"
-        f.write_text("x", encoding="utf-8")
-        assert run_tool("filelevel", ["set", str(f), "--level", "0"]) == 0
-        assert (tmp_path / "report.pdf").exists()
-        assert "已保存配置" in capsys.readouterr().out
-
-    def test_config_reset_restores_defaults(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """--reset 覆盖自定义等级，恢复内置默认值。"""
-        assert run_tool("filelevel", ["config", "--level", "1=SECRET"]) == 0
-        assert run_tool("filelevel", ["config", "--reset"]) == 0
-        from fcmd.infras.jsonio import read_json_file
-
-        raw = read_json_file(config_path())
-        assert raw["levels"] == default_config().levels
-        assert "已重置" in capsys.readouterr().out
-
-    def test_config_rejects_unknown_level(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """只能修改已有等级，越界等级返回失败。"""
-        assert run_tool("filelevel", ["config", "--level", "9=X"]) == 1
-        assert "未定义" in capsys.readouterr().out
-
-    def test_broken_config_falls_back_with_warning(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """配置文件损坏时回落默认值并给提示，不影响 set。"""
-        config_path().parent.mkdir(parents=True, exist_ok=True)
-        config_path().write_text("{not json", encoding="utf-8")
-        assert run_tool("filelevel", ["config"]) == 0
-        assert "内置默认值" in capsys.readouterr().out
-        f = tmp_path / "a.pdf"
-        f.write_text("x", encoding="utf-8")
-        assert run_tool("filelevel", ["set", str(f), "--level", "2"]) == 0
-        assert (tmp_path / "a(INT).pdf").exists()
-
     def test_invalid_level_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """无效等级 → 任务失败汇总 + 退出码 1。"""
         f = tmp_path / "a.pdf"
@@ -175,3 +121,57 @@ class TestFilelevelRun:
         assert run_tool("filelevel", ["set", str(f), "--level", "5"]) == 1
         assert "失败" in capsys.readouterr().out
         assert f.exists()
+
+
+class TestLocalConfig:
+    """配置直接读本地文件，没有 config 子命令。"""
+
+    def test_config_path_uses_fcmd_home(self, _isolated_home: Path) -> None:
+        assert config_path() == _isolated_home / "filelevel.json"
+
+    def test_custom_level_mapping_takes_effect(self, tmp_path: Path) -> None:
+        """手工改等级映射后，下一次 set 立即使用新标记。"""
+        levels = {"0": "", "1": "PUBLIC", "2": "INTERNAL"}
+        _write_config(levels=levels)
+        f = tmp_path / "report.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "1"]) == 0
+        assert (tmp_path / "report(PUBLIC).pdf").exists()
+        assert run_tool("filelevel", ["set", str(tmp_path / "report(PUBLIC).pdf"), "--level", "2"]) == 0
+        assert (tmp_path / "report(INTERNAL).pdf").exists()
+
+    def test_custom_brackets_are_used_when_clearing(self, tmp_path: Path) -> None:
+        """改括号字符集后，新括号包裹的标记也会被清除。"""
+        _write_config(brackets={"left": " ({", "right": " )}"})
+        f = tmp_path / "report{PUB}.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "0"]) == 0
+        assert (tmp_path / "report.pdf").exists()
+
+    def test_broken_config_falls_back_to_defaults(self, tmp_path: Path) -> None:
+        """配置文件损坏时回落默认值，set 仍可正常工作。"""
+        config_path().parent.mkdir(parents=True, exist_ok=True)
+        config_path().write_text("{not json", encoding="utf-8")
+        f = tmp_path / "a.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "2"]) == 0
+        assert (tmp_path / "a(INT).pdf").exists()
+
+    def test_invalid_levels_fall_back_with_warning(self) -> None:
+        """等级缺级 / 非整数时整份回落默认值并给出提示。"""
+        _write_config(levels={"0": "", "1": "PUB", "3": "CON"})
+        config, warnings = load_filelevel_config()
+        assert config.levels == default_config().levels
+        assert any("等级不连续" in warning for warning in warnings)
+
+    def test_missing_config_is_created_with_defaults(self) -> None:
+        """第一次读取时文件不存在 → 按默认值生成；之后直接读它。"""
+        assert not config_path().exists()
+        config, warnings = load_filelevel_config()
+        assert config == default_config()
+        assert warnings == ()
+        assert config_path().exists()
+        raw = json.loads(config_path().read_text(encoding="utf-8"))
+        assert raw["schema"] == "filelevel-config/1"
+        assert raw["levels"] == default_config().levels
+        assert raw["brackets"] == default_config().brackets

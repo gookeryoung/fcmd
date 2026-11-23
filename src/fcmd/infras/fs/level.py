@@ -2,14 +2,14 @@
 
 文件名等级标记（PUB/NOR/INT/CON/CLA）的映射、括号口径与本地配置持久化。
 默认值仍与旧版本一致，但等级映射和括号字符会从
-``${FCMD_HOME:-~/.fcmd}/filelevel.json`` 读取；用户修改该文件（或用
-``fcmd filelevel config``）后，下一次 ``set`` 立即生效，不需要改代码。
+``${FCMD_HOME:-~/.fcmd}/filelevel.json`` 读取；用户手工修改该文件后，
+下一次 ``set`` 立即生效，不需要改代码。
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +27,6 @@ __all__ = [
     "load_filelevel_config",
     "save_filelevel_config",
     "set_file_level",
-    "update_brackets",
-    "update_levels",
 ]
 
 CONFIG_SCHEMA = "filelevel-config/1"
@@ -96,6 +94,13 @@ def config_to_mapping(config: FileLevelConfig) -> dict[str, Any]:
     }
 
 
+def save_filelevel_config(config: FileLevelConfig, path: Path | None = None) -> Path:
+    """原子写入配置文件，返回实际写入路径。"""
+    target = path or config_path()
+    write_json_atomic(target, config_to_mapping(config), sort_keys=False)
+    return target
+
+
 def _normalize_levels(raw: object) -> tuple[dict[str, str], tuple[str, ...]]:  # noqa: PLR0911
     """校验等级映射；非法 / 缺级 / 空标记时整份回落默认值。"""
     if not isinstance(raw, Mapping):
@@ -136,7 +141,12 @@ def load_filelevel_config(path: Path | None = None) -> tuple[FileLevelConfig, tu
     """读取本地配置；文件缺失时返回默认值，坏字段逐项回落并给出提示。"""
     target = path or config_path()
     if not target.exists():
-        return default_config(), ()
+        config = default_config()
+        try:
+            save_filelevel_config(config, target)
+        except OSError as exc:
+            return config, (f"无法生成默认配置文件（{exc}），当前使用内置默认值：{target}",)
+        return config, ()
     try:
         raw = read_json_file(target)
     except (OSError, ValueError) as exc:
@@ -152,43 +162,6 @@ def load_filelevel_config(path: Path | None = None) -> tuple[FileLevelConfig, tu
     warnings.extend(level_warnings)
     warnings.extend(bracket_warnings)
     return FileLevelConfig(levels, brackets), tuple(warnings)
-
-
-def save_filelevel_config(config: FileLevelConfig, path: Path | None = None) -> Path:
-    """原子写入配置文件，返回实际写入路径。"""
-    target = path or config_path()
-    write_json_atomic(target, config_to_mapping(config), sort_keys=False)
-    return target
-
-
-def update_levels(config: FileLevelConfig, overrides: Sequence[str]) -> FileLevelConfig:
-    """按 ``N=NAME`` 修改已有等级；不允许新增 / 删除等级或写入空标记。"""
-    levels = dict(config.levels)
-    for item in overrides:
-        key, separator, name = str(item).partition("=")
-        if not separator:
-            raise ValueError(f"等级格式应为 N=NAME，收到：{item!r}")
-        try:
-            level = int(key.strip())
-        except ValueError as exc:
-            raise ValueError(f"等级编号必须是整数：{item!r}") from exc
-        if level <= 0 or str(level) not in levels:
-            raise ValueError(f"等级 {level} 未定义；只能修改已有等级 {sorted(int(k) for k in levels if k != '0')}")
-        mark = name.strip()
-        if not mark:
-            raise ValueError(f"等级 {level} 的标记不能为空")
-        levels[str(level)] = mark
-    return replace(config, levels=levels)
-
-
-def update_brackets(config: FileLevelConfig, *, left: str = "", right: str = "") -> FileLevelConfig:
-    """修改左右括号字符集；空串表示保持原值。"""
-    brackets = dict(config.brackets)
-    if left:
-        brackets["left"] = left
-    if right:
-        brackets["right"] = right
-    return replace(config, brackets=brackets)
 
 
 def _remove_level_marks(stem: str, marks: list[str], *, left: str, right: str) -> str:
