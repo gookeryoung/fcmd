@@ -2292,6 +2292,24 @@ def test_smart_detect_reuses_cached_paths_without_starting_stopped_instance(
         window.deleteLater()
 
 
+def test_sections_use_live_state_after_instance_started(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """初始化环境 / 外部启动实例后，状态提供者返回 running，后续扫描不再弹启动确认。"""
+    owner = QWidget()
+    submitted: list[Any] = []
+    monkeypatch.setattr(_wslmanw_qt, "submit_daemon", lambda *args, **kwargs: submitted.append(args))
+    monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: pytest.fail("实例已在运行，不应再确认"))
+    init = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu", "stopped"), state_provider=lambda: "running")
+    ssh = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu", "stopped"), state_provider=lambda: "running")
+    try:
+        init.refresh_status()
+        ssh.refresh()
+        assert len(submitted) == 2
+    finally:
+        init.deleteLater()
+        ssh.deleteLater()
+        owner.deleteLater()
+
+
 def test_ssh_scan_prompts_before_starting_stopped_instance(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """SSH 迁移扫描同样不能在实例停止时静默启动。"""
     owner = QWidget()

@@ -373,6 +373,8 @@ def test_parse_detect_and_detect_wsl() -> None:
     assert "for cmd in" in script
     assert "opencode" in script
     assert "command -v" in script
+    # 最后一项没找到时循环退出码为 1，必须显式归零，否则“找到一部分”会被当失败。
+    assert script.rstrip().endswith("exit 0")
 
 
 def test_with_openers_updates_only_the_requested_kind() -> None:

@@ -3579,7 +3579,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
     不做成独立对话框：配置对话框一层里就能看到各项状态并操作，避免多层弹窗。
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - 缓存 / 回调 / 状态提供者都是可选注入点
         self,
         parent: QWidget,
         distro: Distro,
@@ -3587,9 +3587,11 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         *,
         status: _initenv.EnvStatus | None = None,
         on_detected: Any = None,
+        state_provider: Any = None,
     ) -> None:
         super().__init__("初始化环境", parent)
         self._distro = distro
+        self._state_provider = state_provider
         self._selected = None if selected is None else {key for key in selected if key in _initenv.task_keys()}
         """上次保存的勾选（``None`` 表示未保存过，按默认勾选）。"""
         self._on_detected = on_detected
@@ -3790,6 +3792,17 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         """是否有检测 / 初始化任务在跑。"""
         return self._busy
 
+    def _current_state(self) -> str | None:
+        """当前实例状态：优先窗口提供的最新值，避免用打开对话框时的旧快照。"""
+        if callable(self._state_provider):
+            try:
+                state = self._state_provider()
+            except Exception:
+                state = None
+            if state:
+                return str(state)
+        return self._distro.state
+
     def stop(self) -> None:
         """对话框关闭时调用：忽略后续回调；后台命令本身继续执行。"""
         self._closing = True
@@ -3876,7 +3889,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         """后台探测实例环境；实例未运行时先确认，因为它会被 WSL 启动。"""
         if self._busy:
             return
-        if self._distro.state != "running" and not confirm(
+        if self._current_state() != "running" and not confirm(
             self,
             "检测环境",
             f"检测 {self._distro.name} 需要在实例内执行命令，WSL 会启动/唤醒该实例。继续？",
@@ -4010,10 +4023,18 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
     送进目标实例，命令行与日志里只有文件名和权限。
     """
 
-    def __init__(self, parent: QWidget, distro: Distro, *, instances: Sequence[str] = ()) -> None:
+    def __init__(
+        self,
+        parent: QWidget,
+        distro: Distro,
+        *,
+        instances: Sequence[str] = (),
+        state_provider: Any = None,
+    ) -> None:
         super().__init__("迁移 SSH 文件", parent)
         self._distro = distro
         self._instances = tuple(instances)
+        self._state_provider = state_provider
         self._busy = False
         self._closing = False
         self._files: dict[str, _sshfiles.SshFile] = {}
@@ -4152,6 +4173,17 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         """是否有扫描 / 迁移任务在跑。"""
         return self._busy
 
+    def _current_state(self) -> str | None:
+        """当前实例状态：优先窗口提供的最新值，避免用打开对话框时的旧快照。"""
+        if callable(self._state_provider):
+            try:
+                state = self._state_provider()
+            except Exception:
+                state = None
+            if state:
+                return str(state)
+        return self._distro.state
+
     def _on_toggle_clicked(self, _checked: bool = False) -> None:
         self.toggle_collapsed()
 
@@ -4161,7 +4193,7 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         self._collapsed = (not self._collapsed) if collapsed is None else bool(collapsed)
         self._sync_collapsed_view()
         if was_collapsed and not self._collapsed and self._target is None and not self._busy:
-            if self._distro.state == "running":
+            if self._current_state() == "running":
                 self.refresh()
             else:
                 self.file_hint.setText("实例未运行；点「扫描」会先确认再启动实例并检测。")
@@ -4241,7 +4273,7 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         """后台扫描来源（Windows 目录或实例 ~/.ssh）并探测当前实例。"""
         if self._busy:
             return
-        may_start = self._distro.state != "running" or self.source_kind.currentData() == _sshfiles.SOURCE_WSL
+        may_start = self._current_state() != "running" or self.source_kind.currentData() == _sshfiles.SOURCE_WSL
         if may_start and not confirm(
             self,
             "扫描 SSH",
@@ -4586,11 +4618,12 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
             selected,
             status=cached_status,
             on_detected=lambda status: getattr(owner, "_save_env_status", lambda *_: None)(distro.name, status),
+            state_provider=self._live_state,
         )
         outer.addWidget(self.init_env)
 
         # SSH 迁移单独一张卡：要选来源目录、看冲突，比塞进「初始化环境」的勾选项更清楚。
-        self.ssh_migrate = _SshMigrateSection(self, distro, instances=instances)
+        self.ssh_migrate = _SshMigrateSection(self, distro, instances=instances, state_provider=self._live_state)
         outer.addWidget(self.ssh_migrate)
 
         actions = QHBoxLayout()
@@ -4604,6 +4637,21 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         actions.addWidget(save)
         outer.addLayout(actions)
         fit_dialog_to_content(self, min_width=680)
+
+    def _live_state(self) -> str | None:
+        """读取实例当前状态：窗口视图优先，必要时刷新 ``wsl -l -v``（不会启动实例）。"""
+        owner = self.parent()
+        view = getattr(owner, "view", None)
+        if view is None:
+            return None
+        found = view.find(self._distro.name)
+        if found is not None and found.state == "running":
+            return found.state
+        try:
+            fresh = cli._view(cli._build_environment()).find(self._distro.name)
+        except Exception:
+            return found.state if found is not None else None
+        return fresh.state if fresh is not None else (found.state if found is not None else None)
 
     def showEvent(self, event: Any) -> None:
         """显示时按内容收口；不自动检测，避免打开配置就把停止的实例启动。"""

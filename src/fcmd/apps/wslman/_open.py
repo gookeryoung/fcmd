@@ -443,6 +443,8 @@ def detect_script() -> str:
             '  p=$(command -v -- "$cmd" 2>/dev/null)',
             '  [ -n "$p" ] && printf "OPEN=%s|%s\\n" "$cmd" "$p"',
             "done",
+            # 最后一项没找到时循环退出码为 1；显式归零，避免“找到一部分”被当失败。
+            "exit 0",
         )
     )
 

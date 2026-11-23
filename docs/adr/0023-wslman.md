@@ -562,6 +562,8 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
   - 智能检测同样不隐式启动实例：宿主机侧随时可查；实例未运行时只复用
     `wslmanw.json` 的 `distro_opener_paths` 缓存并标注“复用上次结果”，手动点
     「智能检测」若实例停止会先确认再执行 `wsl -d`；成功检测后立即写回缓存。
+    探测脚本最后显式 `exit 0`：循环最后一项没命中时 shell 会返回 1，不能因此把
+    前面已经找到的 PI / OpenCode 等结果整体当成失败。
 - Windows 宿主机：`shutil.which` 预检后按 argv 无窗口启动，`.cmd/.bat` 经
   `cmd.exe /d /s /c` 包装（避免 WinError 193）；WSL 内：先在实例内
   `bash -lc 'command -v <命令>'` 预检，再经终端 `wsl.exe -d <实例> --cd <目录>
