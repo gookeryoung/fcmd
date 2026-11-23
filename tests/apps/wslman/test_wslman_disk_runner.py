@@ -199,6 +199,19 @@ def test_subprocess_runner_extra_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.stderr == b"boom"
 
 
+def test_subprocess_runner_forwards_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """stdin 透传给子进程：迁移 SSH 文件时私钥只走管道，不进命令行。"""
+    seen: dict[str, Any] = {}
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(_runner.subprocess, "run", fake_run)
+    _runner.SubprocessRunner().run(["wsl.exe"], stdin=b"secret")
+    assert seen["input"] == b"secret"
+
+
 def test_probe_without_wsl(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_runner, "find_wsl", lambda: None)
     caps = _runner.probe(_fakes.FakeRunner())

@@ -221,6 +221,9 @@ class LaunchPlan:
     threads_http: int | None = None
     tuning: Tuning = Tuning()
     mmproj: Path | None = None
+    backend: Backend | None = None
+    engine_kind: str = ""
+    launcher: str = ""
 
     @property
     def vision(self) -> bool:
@@ -253,8 +256,8 @@ class LaunchPlan:
         return self.threads_http if self.threads_http is not None else self.tuning.threads_http
 
     def argv(self, backend: Backend | None = None) -> list[str]:
-        """按后端生成启动参数列表。"""
-        return (backend or LlamaCppBackend()).build_argv(self)
+        """按后端生成启动参数列表（计划自带后端优先，兜底 llama.cpp）。"""
+        return (backend or self.backend or LlamaCppBackend()).build_argv(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,6 +288,8 @@ class ServeState:
     started_at: str
     mmproj: str = ""
     vision: bool = False
+    engine_kind: str = ""
+    launcher: str = ""
 
     @property
     def base_url(self) -> str:

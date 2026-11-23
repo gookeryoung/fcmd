@@ -41,6 +41,7 @@ from fcmd.apps.llm import (
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineDirAction, EngineOption
+from fcmd.apps.llm._llmw_qt_vllm import build_vllm_engine_card
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
 from fcmd.gui.page import AppPage
 from fcmd.gui.widgets import (
@@ -82,6 +83,8 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         outer.addWidget(scroll)
         layout.addWidget(self._build_storage())
         layout.addWidget(self._build_engines())
+        self.vllm_section = build_vllm_engine_card(self)
+        layout.addWidget(self.vllm_section)
         layout.addWidget(self._build_paint_engine())
         layout.addWidget(self._build_download())
         layout.addWidget(self._build_convert())
@@ -463,8 +466,10 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self._refresh_engine_source()
 
     def refresh_engine_cards(self) -> None:
-        """刷新 sd.cpp 引擎卡（画图 / 视频 / 音频共用同一份列表与默认 tag）。"""
+        """刷新 sd.cpp 引擎卡与 vLLM 引擎卡（各自独立列表与默认 tag）。"""
         self.paint_engine_card.refresh()
+        if isinstance(self.vllm_section, EngineCard):
+            self.vllm_section.refresh()
 
     def refresh_engines(self) -> None:
         """刷新推理引擎列表（委托共享 EngineCard）。"""

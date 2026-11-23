@@ -209,11 +209,23 @@ def stop_server(
     """停止服务并清理状态文件（进程已退出时也清理残留状态）。"""
     state = llmenv.require_state(name, home)
     if not (alive or process_alive)(state.pid, state.create_time):
+        _cleanup_engine(state)
         llmenv.delete_state(name, home)
         return StopResult(state, False)
     (terminator or _terminate)(state.pid, state.create_time, timeout)
+    _cleanup_engine(state)
     llmenv.delete_state(name, home)
     return StopResult(state, True)
+
+
+def _cleanup_engine(state: ServeState) -> None:
+    """停止后的引擎侧兜底清理（vLLM 在 WSL 内可能残留在服务进程）。"""
+    if getattr(state, "engine_kind", "") != "vllm":
+        return
+    from fcmd.apps.llm import _llmvllm
+
+    with contextlib.suppress(Exception):
+        _llmvllm.stop_engine(state)
 
 
 def make_plan(  # noqa: PLR0913
@@ -289,6 +301,9 @@ def make_plan(  # noqa: PLR0913
 
 BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
 """Windows：允许子进程脱离父进程所在的 Job Object。"""
+
+_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
 def _in_job() -> bool:  # pragma: no cover - Windows ctypes，Linux CI 不执行
@@ -415,6 +430,12 @@ def _engine_exit_error(plan: LaunchPlan, code: int) -> ServeError:
     写死某个版本号（同一架构也可能根本不由 llama.cpp 支持）。
     """
     tail = _tail_text(plan.log, 12)
+    if plan.engine_kind == "vllm":
+        return ServeError(
+            f"vLLM 启动后立即退出（退出码 {format_returncode(code)}）。"
+            f"常见原因：显存不足、模型格式不是 HF safetensors、引擎版本与模型不匹配。"
+            f"日志: {plan.log}\n日志尾部:\n{tail}"
+        )
     missing = _unknown_architecture(tail)
     if missing is not None:
         return ServeError(
@@ -433,6 +454,8 @@ def _engine_exit_error(plan: LaunchPlan, code: int) -> ServeError:
 def _crash_hint(plan: LaunchPlan, code: int) -> str:
     """启动即崩溃且日志为空时提示 MSVC 运行库（旧版 msvcp140 会 c0000005）。"""
     if code not in (_ACCESS_VIOLATION, _ACCESS_VIOLATION - 2**32):
+        return ""
+    if plan.engine_kind:
         return ""
     directory = plan.engine.exe.parent
     # 非 Windows 上找不到 VC Redist 来源，复制自然是空操作；失败只影响提示内容。
@@ -467,12 +490,18 @@ def _launch_once(  # noqa: PLR0913
     """拉起一次引擎进程并等待健康检查通过。"""
     plan.log.parent.mkdir(parents=True, exist_ok=True)
     argv = plan.argv()
+    flags = _creation_flags()
+    if plan.launcher.startswith("wsl:") and os.name == "nt":
+        # wsl.exe 在 DETACHED_PROCESS 下不转发 Linux 子进程的 stdout，
+        # 服务日志会一直停在 0 字节；换成 CREATE_NO_WINDOW：同样不弹控制台，
+        # 但保留输出管道（日志展示与失败诊断都依赖它）。
+        flags = (flags & ~_DETACHED_PROCESS) | _CREATE_NO_WINDOW
     kwargs: dict[str, Any] = {
         "cwd": str(plan.engine.exe.parent),
         # 与服务进程解耦：不继承父进程控制台 / stdin，避免窗口关闭后子进程被 EOF 带走。
         "stdin": subprocess.DEVNULL,
         "stderr": subprocess.STDOUT,
-        "creationflags": _creation_flags(),
+        "creationflags": flags,
     }
     env = llmengine.engine_env(plan.engine)
     if env is not None:
@@ -503,13 +532,15 @@ def _launch_once(  # noqa: PLR0913
                 model=str(plan.model),
                 profile=plan.profile.name,
                 context=plan.context,
-                engine=str(plan.engine.exe),
+                engine=(f"vLLM {plan.engine.tag}" if plan.engine_kind == "vllm" else str(plan.engine.exe)),
                 alias=plan.alias,
                 api_key=plan.api_key,
                 log=str(plan.log),
                 started_at=now_iso(),
                 mmproj=str(plan.mmproj or ""),
                 vision=plan.vision,
+                engine_kind=plan.engine_kind,
+                launcher=plan.launcher,
             )
             llmenv.save_state(state, home)
             return state

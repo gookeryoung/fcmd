@@ -210,6 +210,15 @@ class ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
     def key(self) -> str:
         return self._current
 
+    def set_option_enabled(self, key: str, enabled: bool, tooltip: str = "") -> None:
+        """单独禁用某项（如当前平台不支持的引擎），并补充说明。"""
+        card = self._buttons.get(key)
+        if card is None:
+            return
+        card.setEnabled(enabled)
+        if tooltip:
+            card.setToolTip(tooltip)
+
     def set_key(self, key: str, *, emit: bool = False) -> None:
         card = self._buttons.get(key)
         if card is None:

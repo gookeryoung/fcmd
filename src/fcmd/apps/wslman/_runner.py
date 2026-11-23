@@ -56,11 +56,12 @@ class Runner(Protocol):
         *,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
     ) -> CommandResult: ...
 
 
 class SubprocessRunner:
-    """真实执行器：不经过 shell，捕获原始字节。"""
+    """真实执行器：不经过 shell，捕获原始字节；``stdin`` 用于把文件内容送进子进程。"""
 
     def run(
         self,
@@ -68,6 +69,7 @@ class SubprocessRunner:
         *,
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
     ) -> CommandResult:
         args = list(argv)
         child_env = os.environ.copy()
@@ -82,6 +84,7 @@ class SubprocessRunner:
             check=False,
             env=child_env,
             timeout=timeout,
+            input=stdin,
             creationflags=_CREATE_NO_WINDOW,
         )
         duration_ms = int((time.monotonic() - started) * 1000)

@@ -13,6 +13,12 @@ llmqnt / llmserve / llmdoctor / llmw 等）都从这里解析目录与配置，�
     serve_dir        str     服务状态与日志目录
     paint_dir        str     画图工作目录（状态 / 日志 / 出图）
     sd_engines_root  str     stable-diffusion.cpp 引擎根目录
+    vllm_engines_root str    vLLM 引擎根目录（WSL / Linux 的元数据镜像）
+    infer_engine     str     推理引擎族：``llama.cpp``（默认）/ ``vllm``
+
+vLLM 的 venv 建在 WSL 内 ``~/.fcmd/engines/vllm/<tag>``，这里只保存 Windows
+侧可读的 ``engine.json`` 镜像与 ``current.json``；``infer_engine`` 记录运行页
+选择的引擎族。
 
 画图 / 视频 / 音频共用同一个 sd.cpp 引擎目录与同一个默认引擎（``current.json``），
 不再有按用途区分的引擎 tag。
@@ -30,6 +36,7 @@ llmqnt / llmserve / llmdoctor / llmw 等）都从这里解析目录与配置，�
     服务目录：               FCMD_SERVE_DIR → serve_dir  → ${home}/serve
     画图目录：               FCMD_PAINT_DIR → paint_dir  → ${home}/paint
     SD 引擎目录：            FCMD_SD_ENGINES → sd_engines_root → ${home}/engines/sd.cpp
+    vLLM 引擎目录：          FCMD_VLLM_ENGINES → vllm_engines_root → ${home}/engines/vllm
 
 工作目录概念已移除：``work_dir`` 键、``FCMD_WORK`` 环境变量与 ``work_dir``
 API 都不再存在。
@@ -90,6 +97,7 @@ __all__ = [
     "set_models_dirs",
     "set_option",
     "ui_settings_path",
+    "vllm_engines_root",
 ]
 
 #: 转换等产物的固定子目录名（位于模型目录下）。
@@ -513,3 +521,19 @@ def paint_engines_root(home: Path | None = None) -> Path:
     if isinstance(configured, str) and configured.strip():
         return Path(configured.strip()).expanduser()
     return home_dir(home) / "engines" / "sd.cpp"
+
+
+def vllm_engines_root(home: Path | None = None) -> Path:
+    """vLLM 引擎根目录（FCMD_VLLM_ENGINES → 配置 → 默认）。
+
+    这里只放 Windows 侧可读的 ``engine.json`` 镜像与 ``current.json``；
+    真实 venv 位于 WSL 内 ``~/.fcmd/engines/vllm/<tag>``。
+    """
+    if home is None:
+        override = _env_path("FCMD_VLLM_ENGINES")
+        if override is not None:
+            return override
+    configured = load_config(home).get("vllm_engines_root")
+    if isinstance(configured, str) and configured.strip():
+        return Path(configured.strip()).expanduser()
+    return home_dir(home) / "engines" / "vllm"

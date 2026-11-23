@@ -49,6 +49,7 @@ class FakeRunner:
         )
         self.fallback = fallback
         self.calls: list[tuple[str, ...]] = []
+        self.inputs: list[bytes | None] = []
 
     def run(
         self,
@@ -56,10 +57,12 @@ class FakeRunner:
         *,
         timeout: float | None = None,
         env: Any = None,
+        stdin: bytes | None = None,
     ) -> CommandResult:
         command = tuple(argv)
         key = command[1:]
         self.calls.append(command)
+        self.inputs.append(stdin)
         if key not in self.responses:
             if self.fallback is not None:
                 return self.fallback(command)

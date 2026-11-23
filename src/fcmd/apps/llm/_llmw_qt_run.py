@@ -12,6 +12,7 @@ sd.cpp 的扩散模型与启动参数；引擎安装 / 设为默认统一在设�
 
 from __future__ import annotations
 
+import json
 import shlex
 import time
 from pathlib import Path
@@ -37,9 +38,11 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.apps.llm import (
+    _llmconfig,
     _llmpaint,
     _llmpaint_server,
     _llmtune,
+    _llmvllm,
     _llmw_compat,
     _llmw_models,
     _llmw_recommend,
@@ -458,6 +461,46 @@ def _mode_options() -> list[tuple[str, str, str]]:
     return [(key, _MODE_TITLES[key], _MODE_NOTES[key]) for key in _MODE_PROFILE]
 
 
+def _infer_engine_options(platform: _llmvllm.VllmPlatform) -> list[tuple[str, str, str]]:
+    """文本页的引擎族选项：llama.cpp（GGUF）与 vLLM（HF safetensors）。"""
+    if platform.supported:
+        note = "HF safetensors · WSL2 / Linux"
+    else:
+        note = "当前系统不可用"
+    return [
+        ("llama.cpp", "llama.cpp", "GGUF · 现有引擎，通用"),
+        ("vllm", "vLLM", note),
+    ]
+
+
+def _hf_context(path: Path | None, fallback: int = 32768) -> int:
+    """从 HF ``config.json`` 读取最大位置数作为 vLLM 默认上下文。"""
+    if path is None:
+        return fallback
+    try:
+        data = json.loads((path / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return fallback
+    if not isinstance(data, dict):
+        return fallback
+    for key in ("max_position_embeddings", "n_positions", "seq_length", "model_max_length"):
+        value = data.get(key)
+        if isinstance(value, int) and 0 < value <= 1_048_576:
+            return value
+    return fallback
+
+
+def _parse_ratio(text: str) -> float | None:
+    """解析显存占比；留空返回 ``None``（由 vLLM 用默认值）。"""
+    raw = text.strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ServeError(f"显存占比不是数字: {raw}") from exc
+
+
 def _kv_options() -> list[tuple[str, str, str]]:
     return [
         ("", "档位默认", "跟随档位与调优策略自动选择"),
@@ -489,6 +532,8 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._active_param_key: str | None = None
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
         self._usage = "text"
+        self._vllm_platform = _llmvllm.detect_platform()
+        self._hf_models: list[_llmvllm.HfModel] = []
         self._running_counts: dict[str, int] = dict.fromkeys(_llmw_models.USAGE_KEYS, 0)
         self._paint_busy = False
         self._paint_probe: _llmpaint_server.PaintProbe | None = None
@@ -503,6 +548,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._paint_save_timer.timeout.connect(self._persist_paint)
         self._build()
         self._wire()
+        self._apply_engine_mode()
         self.on_models_changed()
         self._refresh_command_preview()
         self._refresh_action_states()
@@ -543,6 +589,22 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self._service_layouts = {"text": self.text_tab_layout}
 
         self.model_card = Card("选择模型")
+        engine_box = QVBoxLayout()
+        engine_box.setContentsMargins(0, 0, 0, 0)
+        engine_box.setSpacing(4)
+        engine_box.addWidget(QLabel("推理引擎", self.model_card))
+        self.engine_choice = ChoiceGroup(
+            _infer_engine_options(self._vllm_platform),
+            current=self._engine_kind(),
+            columns=2,
+            tones={"vllm": "accent"},
+            parent=self.model_card,
+        )
+        if not self._vllm_platform.supported:
+            self.engine_choice.set_option_enabled("vllm", False, f"vLLM 不可用：{self._vllm_platform.reason}")
+        self.engine_choice.changed.connect(self._on_engine_changed)
+        engine_box.addWidget(self.engine_choice)
+        self.model_card.body.addLayout(engine_box)
         model_row = QHBoxLayout()
         self.model_combo = _ModelCombo(self.model_card)
         self.model_combo.setObjectName("ModelCombo")
@@ -631,6 +693,23 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.wait_edit = QLineEdit("180", self.advanced.content)
         adv_form.add_pair("API Key", self.api_key_edit, "等待就绪（秒）", self.wait_edit)
         self.advanced.body.addWidget(adv_form)
+        # vLLM 专用参数：仅在引擎切到 vLLM 时显示；llama.cpp 下隐藏，避免误导。
+        self.vllm_hint = hint_label(
+            "vLLM 只接受 HF safetensors 模型目录（config.json + *.safetensors）；"
+            "GGUF 请继续用 llama.cpp。服务经 WSL 启动时对 Windows 暴露同一端口。",
+            wrap=True,
+        )
+        self.vllm_hint.setVisible(False)
+        self.advanced.body.addWidget(self.vllm_hint)
+        self.vllm_options = QWidget(self.advanced.content)
+        vllm_form = FormGrid(self.vllm_options)
+        self.gpu_util_edit = QLineEdit("0.90", self.vllm_options)
+        self.gpu_util_edit.setPlaceholderText("0.90")
+        self.max_seqs_edit = QLineEdit("", self.vllm_options)
+        self.max_seqs_edit.setPlaceholderText("默认 256")
+        vllm_form.add_pair("GPU 显存占比", self.gpu_util_edit, "最大并发序列", self.max_seqs_edit)
+        self.vllm_options.setVisible(False)
+        self.advanced.body.addWidget(self.vllm_options)
         form_layout.addWidget(self.advanced)
 
         form_layout.addWidget(QLabel("启动命令预览", form_root))
@@ -681,6 +760,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
             target.removeWidget(self.service_page)
         self._service_layouts[usage].addWidget(self.service_page, 1)
         self._install_param_form(self._param_form_for(usage))
+        self._apply_engine_mode()
 
     def _on_tab_changed(self, index: int) -> None:
         """切换页签：文本换模型候选并同步启动参数；图像只刷新状态。"""
@@ -704,8 +784,83 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.status(f"已切到「{_USAGE_LABELS[usage]}」启动参数")
 
     def _usage_models(self) -> list[ModelEntry]:
-        """当前用途的模型候选：文本页列出全部 LLM（含代码 / 推理）。"""
+        """当前用途的模型候选：文本页列出全部 LLM（含代码 / 推理）。
+
+        vLLM 模式下改列 HF safetensors 目录；GGUF 与 safetensors 不混排，
+        避免把不支持的格式交给对应引擎。
+        """
+        if self._vllm_mode():
+            return [
+                ModelEntry(root=item.root, path=item.path, size=item.size, tags=("vLLM",)) for item in self._hf_models
+            ]
         return list(self.state.models)
+
+    # ------------------------------------------------------------------ #
+    # 推理引擎族（llama.cpp / vLLM）
+    # ------------------------------------------------------------------ #
+    def _engine_kind(self) -> str:
+        """当前生效的引擎族；平台不支持时强制回退 llama.cpp。"""
+        if not self._vllm_platform.supported:
+            return "llama.cpp"
+        try:
+            value = _llmconfig.get_option("infer_engine")
+        except (OSError, ValueError):
+            return "llama.cpp"
+        return "vllm" if value == "vllm" else "llama.cpp"
+
+    def _vllm_mode(self) -> bool:
+        """文本页是否正用 vLLM（图像 / 其它用途仍走各自引擎）。"""
+        return self._usage == "text" and self._engine_kind() == "vllm"
+
+    def _refresh_hf_models(self) -> None:
+        """重扫 HF safetensors 模型（vLLM 模式或引擎切换时调用）。"""
+        self._hf_models = _llmvllm.scan_hf_models() if self._vllm_platform.supported else []
+
+    def _on_engine_changed(self, key: str) -> None:
+        """切换推理引擎族：落盘选择、换模型候选并重建参数预览。"""
+        if key == "vllm" and not self._vllm_platform.supported:
+            self.engine_choice.set_key("llama.cpp")
+            return
+        self._persist_current_params()
+        try:
+            _llmconfig.set_option("infer_engine", key)
+        except (OSError, ValueError) as exc:
+            self.state.log(f"保存推理引擎选择失败: {exc}")
+        self._apply_engine_mode()
+        self._refresh_hf_models()
+        self._populate_model_combo()
+        candidates = self._usage_models()
+        current = self.state.selected_model
+        if current is None or not any(entry.path == current for entry in candidates):
+            if candidates:
+                self.state.select_model(candidates[0].path, update_name=True)
+            else:
+                self.state.selected_model = None
+                self.state.selectionChanged.emit(None, False)
+        self._refresh_command_preview()
+        self._refresh_action_states()
+        self._populate_model_combo()
+        self.state.log(f"推理引擎已切到 {key}")
+
+    def _apply_engine_mode(self) -> None:
+        """按引擎族切换参数表单的可用性：vLLM 隐藏 llama.cpp 专用项。"""
+        vllm = self._engine_kind() == "vllm"
+        for widget in getattr(self, "vllm_options", None), getattr(self, "vllm_hint", None):
+            if widget is not None:
+                widget.setVisible(vllm)
+        llama_only = (
+            self.threads_edit,
+            self.mode_choice,
+            self.kv_choice,
+            self.ubatch_edit,
+            self.parallel_edit,
+            self.threads_http_edit,
+        )
+        for widget in llama_only:
+            widget.setEnabled(not vllm)
+            widget.setToolTip("llama.cpp 专用参数；vLLM 由上方 vLLM 字段控制" if vllm else "")
+        self.fill_params_button.setEnabled(not vllm)
+        self.fill_params_button.setToolTip("vLLM 参数由字段直接生成，无需填入自定义参数" if vllm else "")
 
     def _build_paint_tab(self, layout: QVBoxLayout) -> None:
         """图像页签：与文本一致——顶部选模型 + 启停，下面只配启动参数。
@@ -1111,6 +1266,12 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     def _resolved_model(self) -> Path | None:
         """表单实际使用的模型：显式选择，或按档位量化 / 大小兜底。"""
+        if self._vllm_mode():
+            selected = self.state.selected_model
+            entries = self._usage_models()
+            if selected is not None and any(entry.path == selected for entry in entries):
+                return selected
+            return entries[0].path if entries else None
         profile = PROFILES.get(self._mode_profile(), PROFILES[DEFAULT_PROFILE])
         return pick_model(self.state.selected_model, self.state.models, profile.quant)
 
@@ -1139,6 +1300,8 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
 
     def _param_values(self) -> dict[str, str]:
         """可持久化的表单值（不含模型路径与硬件快照）。"""
+        if self._vllm_mode():
+            return self._vllm_param_values()
         return {
             "name": self._service_name(),
             "profile": self._mode_profile(),
@@ -1184,6 +1347,12 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.state.log(f"已保存启动参数: {self.state.selected_model or '（未选择模型）'}")
 
     def _apply_saved_params(self, saved: dict[str, Any]) -> None:
+        if self._vllm_mode():
+            self._apply_saved_vllm_params(saved)
+            return
+        if saved.get("engine") == "vllm":
+            self._apply_model_recommendation(self.state.selected_model)
+            return
         mode = str(saved.get("mode") or _mode_for_profile(str(saved.get("profile", "balanced"))))
         self.mode_choice.set_key(mode)
         self.host_edit.setText(str(saved.get("host", self.host_edit.text())))
@@ -1200,8 +1369,53 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         self.extra_args_edit.setPlainText(str(saved.get("extra_args", "")))
         self._refresh_command_preview()
 
+    def _vllm_param_values(self) -> dict[str, str]:
+        """vLLM 模式的可持久化字段（与 GGUF 参数分开标记）。"""
+        return {
+            "engine": "vllm",
+            "name": self._service_name(),
+            "host": self.host_edit.text(),
+            "port": self.port_edit.text(),
+            "ctx": self.ctx_edit.text(),
+            "alias": self.alias_edit.text(),
+            "api_key": self.api_key_edit.text(),
+            "wait": self.wait_edit.text(),
+            "extra_args": self.extra_args_edit.toPlainText(),
+            "gpu_util": self.gpu_util_edit.text(),
+            "max_seqs": self.max_seqs_edit.text(),
+        }
+
+    def _apply_saved_vllm_params(self, saved: dict[str, Any]) -> None:
+        """回填 vLLM 参数；旧记录（llama.cpp 参数）不复用，改走默认值。"""
+        if saved.get("engine") != "vllm":
+            self._apply_vllm_defaults(self.state.selected_model)
+            return
+        self.host_edit.setText(str(saved.get("host", self.host_edit.text())))
+        self.port_edit.setText(str(saved.get("port", self.port_edit.text())))
+        self.ctx_edit.setText(str(saved.get("ctx", "")))
+        self.alias_edit.setText(str(saved.get("alias", "")))
+        self.api_key_edit.setText(str(saved.get("api_key", self.api_key_edit.text())))
+        self.wait_edit.setText(str(saved.get("wait", "600")))
+        self.extra_args_edit.setPlainText(str(saved.get("extra_args", "")))
+        self.gpu_util_edit.setText(str(saved.get("gpu_util", "0.90")))
+        self.max_seqs_edit.setText(str(saved.get("max_seqs", "")))
+        self._refresh_command_preview()
+
+    def _apply_vllm_defaults(self, path: Path | None) -> None:
+        """vLLM 模式首次选中模型：上下文取模型配置，等待时间放宽。"""
+        self.alias_edit.setText("")
+        self.ctx_edit.setText(str(_hf_context(path)) if path is not None else "")
+        self.wait_edit.setText("600")
+        self.gpu_util_edit.setText("0.90")
+        self.max_seqs_edit.setText("")
+        self.extra_args_edit.setPlainText("")
+        self._refresh_command_preview()
+
     def _fill_params(self) -> None:
         """把当前表单生成的启动参数填入自定义参数框，与命令预览保持一致。"""
+        if self._vllm_mode():
+            self.status("vLLM 参数由字段直接生成，无需填入")
+            return
         try:
             base = build_plan_from(self._workflow(extra_args=""))
         except ServeError as exc:
@@ -1222,11 +1436,39 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
 
     def build_plan(self) -> LaunchPlan:
         """按当前表单构造启动计划；重复填入的参数不二次追加。"""
+        if self._vllm_mode():
+            return self._build_vllm_plan()
         base = build_plan_from(self._workflow(extra_args=""))
         custom = self._custom_args()
         if custom and custom == startup_args_tail(base.argv()):
             return base
         return build_plan_from(self._workflow())
+
+    def _build_vllm_plan(self) -> LaunchPlan:
+        """vLLM 启动计划：模型目录 + 服务字段 + vLLM 专用参数。"""
+        model = self._resolved_model()
+        if model is None:
+            raise ServeError(
+                "未找到 HF safetensors 模型：请把带 config.json + *.safetensors 的模型目录放入模型目录，"
+                "或在设置页检查存储路径"
+            )
+        engine = _llmvllm.resolve_engine()
+        name = llmbase.validate_name(self._service_name())
+        raw_ctx = self.ctx_edit.text().strip()
+        context = parse_int(raw_ctx, "上下文") if raw_ctx else _hf_context(model)
+        return _llmvllm.make_plan(
+            name,
+            model,
+            engine,
+            host=self.host_edit.text().strip() or DEFAULT_HOST,
+            port=parse_int(self.port_edit.text(), "端口"),
+            context=context,
+            alias=self.alias_edit.text().strip() or model.name,
+            api_key=self.api_key_edit.text().strip(),
+            gpu_memory_utilization=_parse_ratio(self.gpu_util_edit.text()),
+            max_num_seqs=parse_optional_int(self.max_seqs_edit.text(), "最大并发序列"),
+            extra_args=self._custom_args(),
+        )
 
     def profile_context(self) -> tuple[str, int, str]:
         """当前表单下的档位名、上下文与 KV 类型（输入无效时回退档位默认值）。"""
@@ -1356,7 +1598,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         busy = self.state.busy
         selected = self._selected_service_state()
         running = selected is not None and llmserve.process_alive(selected.pid, selected.create_time)
-        has_model = self.state.selected_model is not None or bool(self.state.models)
+        has_model = self.state.selected_model is not None or bool(self._usage_models())
         set_button_text(
             self.model_action_button,
             "停止服务" if running else "启动服务",
@@ -1402,6 +1644,15 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         if hint is None:
             return
         path = self.state.selected_model
+        if self._vllm_mode():
+            if path is None:
+                hint.setText("vLLM · 未找到 HF safetensors 模型目录")
+            else:
+                hint.setText(f"vLLM · {path.name} · {self._vllm_platform.reason}")
+            hint.setProperty("tone", "accent" if path is not None else "muted")
+            hint.style().unpolish(hint)
+            hint.style().polish(hint)
+            return
         if path is None:
             hint.setText("")
             return
@@ -1511,6 +1762,8 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
         saved = (self.state.settings.run_params or {}).get(key)
         if isinstance(saved, dict):
             self._apply_saved_params(saved)
+        elif self._vllm_mode():
+            self._apply_vllm_defaults(selected)
         else:
             self._apply_model_recommendation(selected)
         self._refresh_action_states()
@@ -1559,17 +1812,21 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
             return
         from fcmd.apps.llm._llmw_qt_state import gpu_usage
 
-        try:
-            note = memory_guard(plan, gpu_usage())
-        except ServeError as exc:
-            self.state.log("已取消启动：" + str(exc))
-            self._error("资源不足", str(exc))
-            return
+        if self._vllm_mode():
+            note = "vLLM：显存由 --gpu-memory-utilization 控制，跳过按文件大小的显存预估"
+        else:
+            try:
+                note = memory_guard(plan, gpu_usage())
+            except ServeError as exc:
+                self.state.log("已取消启动：" + str(exc))
+                self._error("资源不足", str(exc))
+                return
         self.state.log(note)
         self._active_param_key = llmenv.path_key(plan.model)
         self._persist_current_params()
         self.state.settings.last_model = str(plan.model)
-        self.state.remember_quant_choice(plan.model)
+        if not self._vllm_mode():
+            self.state.remember_quant_choice(plan.model)
         self.state.persist()
         self.state.log(f"正在启动 {plan.name}，等待 /health（最多 {wait_s}s）…")
         self.status(f"正在启动 {plan.name} · {plan.profile.name} · ctx {plan.context}…")
@@ -1830,11 +2087,15 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
 
     def on_models_changed(self) -> None:
         """扫描完成后刷新模型下拉与服务名；未选择时自动带入一个可启动的模型。"""
+        if self._vllm_mode():
+            self._refresh_hf_models()
         self._populate_model_combo()
-        if self.state.selected_model is None and self.state.models:
+        candidates = self._usage_models()
+        if self.state.selected_model is None and candidates:
             last = self.state.settings.last_model
             last_path = Path(last) if last else None
-            chosen = last_path if last_path is not None and last_path.is_file() else self._resolved_model()
+            eligible = {entry.path for entry in candidates}
+            chosen = last_path if last_path is not None and last_path in eligible else self._resolved_model()
             if chosen is not None:
                 self.state.log(f"未选择模型，自动使用: {chosen}")
                 self.state.select_model(chosen, update_name=True)
@@ -1874,7 +2135,7 @@ class RunPage(AppPage):  # pragma: no cover - Qt 控件
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.save_params_button.setEnabled(not busy)
-        self.fill_params_button.setEnabled(not busy)
+        self.fill_params_button.setEnabled(not busy and not self._vllm_mode())
         self._refresh_action_states()
         self._refresh_paint_actions()
 

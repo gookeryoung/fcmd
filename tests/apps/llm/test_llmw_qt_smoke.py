@@ -40,11 +40,17 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     抛 ServeError 弹出模态错误框（模态框无人点击会让测试永久挂死）。
     模态弹窗整体打桩兜底：任何错误分支都不允许在测试里阻塞主线程。
     """
-    from fcmd.apps.llm import _llmpaint_server
+    from fcmd.apps.llm import _llmpaint_server, _llmvllm
     from fcmd.apps.llm import _llmw_qt_center as center
     from fcmd.apps.llm.llmdown import ModelSearch
 
     monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    # vLLM 平台探测会启动 WSL 发行版；测试里固定为不支持，保证离屏冒烟不触外部环境。
+    monkeypatch.setattr(
+        _llmvllm,
+        "detect_platform",
+        lambda *_args, **_kwargs: _llmvllm.VllmPlatform("none", False, "测试环境不支持 vLLM"),
+    )
     # Windows 默认模型目录是 D:/models（开发者本机路径），测试必须隔离，
     # 否则画图页会扫到真实模型，断言随本机环境漂移。
     monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "models"))
@@ -106,6 +112,78 @@ def test_first_page_is_built_immediately(window: Any) -> None:
     """首屏页面必须已经实例化，不能停在空占位控件上（点击已选中项不会触发切换）。"""
     assert window.stack.currentWidget() is window.page("overview")
     assert window.current_page() == "overview"
+
+
+def test_vllm_section_collapsed_and_disabled_on_unsupported_platform(window: Any) -> None:
+    """不支持的系统上 vLLM 设置区折叠、引擎选项禁用，不能让人以为可用。"""
+    from fcmd.gui.widgets import Collapsible
+
+    window.show_page("settings")
+    settings = window.page("settings")
+    assert isinstance(settings.vllm_section, Collapsible)
+    assert settings.vllm_section.toggle.isChecked() is False
+    window.show_page("run")
+    run = window.page("run")
+    assert run.engine_choice.key() == "llama.cpp"
+    assert run.engine_choice._buttons["vllm"].isEnabled() is False
+
+
+def test_vllm_section_expanded_on_supported_platform(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """支持平台上 vLLM 引擎卡正常展开，安装按钮可用。"""
+    from fcmd.apps.llm import _llmvllm
+    from fcmd.apps.llm._llmw_qt_engine_card import EngineCard
+
+    platform = _llmvllm.VllmPlatform(
+        "wsl",
+        True,
+        "WSL2 · Ubuntu · Python 3.12",
+        (_llmvllm.VllmInterpreter("/usr/bin/python3.12", "3.12.3", "Ubuntu", "/root", "RTX 5090"),),
+    )
+    monkeypatch.setattr(_llmvllm, "detect_platform", lambda *_args, **_kwargs: platform)
+    window.show_page("settings")
+    card = window.page("settings").vllm_section
+    assert isinstance(card, EngineCard)
+    assert card.install_button.isEnabled()
+    # 运行页可能已随窗口预构建并缓存了平台快照；引擎选项文案由纯函数单测覆盖。
+
+
+def test_vllm_mode_lists_hf_models_and_builds_wsl_plan(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """vLLM 模式：运行页只列 HF 目录，启动命令经 wsl.exe 并带上 vLLM 参数。"""
+    from types import SimpleNamespace
+
+    from fcmd.apps.llm import _llmconfig, _llmvllm
+
+    interpreter = _llmvllm.VllmInterpreter("/usr/bin/python3.12", "3.12.3", "Ubuntu", "/root", "RTX 5090")
+    platform = _llmvllm.VllmPlatform("wsl", True, "WSL2 · Ubuntu · Python 3.12", (interpreter,))
+    monkeypatch.setattr(_llmvllm, "detect_platform", lambda *_args, **_kwargs: platform)
+    _llmvllm.install_engine(
+        "0.34.0",
+        interpreter=interpreter,
+        execute=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=""),
+    )
+    model_dir = tmp_path / "models" / "Qwen2.5-0.5B-Instruct"
+    model_dir.mkdir(parents=True)
+    (model_dir / "config.json").write_text('{"max_position_embeddings": 4096}', encoding="utf-8")
+    (model_dir / "model.safetensors").write_bytes(b"\0" * 8)
+    _llmconfig.set_option("infer_engine", "vllm")
+
+    from fcmd.apps.llm._llmw_qt_run import RunPage
+
+    # 窗口可能已缓存不支持平台时构建的运行页；这里按当前桩重新构建一页。
+    run = RunPage(window.state)
+    assert run.engine_choice.key() == "vllm"
+    assert [entry.path for entry in run._usage_models()] == [model_dir]
+    plan = run.build_plan()
+    assert plan.engine_kind == "vllm"
+    argv = plan.argv()
+    assert argv[0] == "wsl.exe"
+    assert argv[1:4] == ["-d", "Ubuntu", "--"]
+    assert argv[4] == "/root/.fcmd/engines/vllm/0.34.0/venv/bin/python"
+    assert argv[argv.index("--model") + 1].startswith("/mnt/c/")
+    assert argv.count("--max-model-len") == 1
+    assert plan.context == 4096
 
 
 def test_status_reflects_scan_result(window: Any) -> None:

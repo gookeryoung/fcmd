@@ -19,10 +19,11 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
-from fcmd.apps.wslman import _initenv, _wslmanw_qt, wslmanw
+from fcmd.apps.wslman import _initenv, _sshfiles, _wslmanw_qt, wslmanw
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman._config import WslmanConfig, default_path
 from fcmd.apps.wslman._distro import Distro, DistroView
+from fcmd.apps.wslman._errors import WslmanError
 from fcmd.apps.wslman._registry import RegistrySnapshot
 from fcmd.apps.wslman._runner import CommandResult
 from fcmd.gui import config as _guiconfig
@@ -549,11 +550,11 @@ def test_settings_persisted(home: Path) -> None:
 
 
 def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
-    """侧边栏复用共享导航：三页登记（日志已移到帮助菜单）、默认停在发行版页。"""
+    """侧边栏复用共享导航：四页登记（日志已移到帮助菜单）、默认停在发行版页。"""
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        assert window.nav.keys() == ("distros", "images", "settings")
+        assert window.nav.keys() == ("distros", "files", "images", "settings")
         assert window.nav.selected() == "distros"
         assert window.current_page() == "distros"
         assert window.page_title.text() == "实例"
@@ -561,6 +562,7 @@ def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
         # 页面本身仍由共享骨架在首次切换时挂进页面栈。
         assert window.distro_list.count() == 0
         assert window.image_list.count() == 0
+        assert window.files_table.rowCount() == 0
         window.nav.set_collapsed(True)
         window._persist_settings("1160x760+0+0")
     finally:
@@ -1605,7 +1607,14 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         calls: list[list[str]] = []
 
         class _FakeRunner:
-            def run(self, argv: Any, *, timeout: float | None = None, env: Any = None) -> CommandResult:
+            def run(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+            ) -> CommandResult:
                 calls.append(list(argv))
                 return CommandResult(argv=tuple(argv), returncode=0, stdout=b"done\n", stderr=b"", duration_ms=1)
 
@@ -1654,7 +1663,14 @@ def test_init_env_section_detect_parses_probe_output(home: Path, monkeypatch: py
         calls: list[list[str]] = []
 
         class _FakeRunner:
-            def run(self, argv: Any, *, timeout: float | None = None, env: Any = None) -> CommandResult:
+            def run(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+            ) -> CommandResult:
                 calls.append(list(argv))
                 return CommandResult(
                     argv=tuple(argv),
@@ -1735,6 +1751,189 @@ def test_distro_config_embeds_init_env_section(home: Path, monkeypatch: pytest.M
         monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
         dialog.reject()
         assert dialog.init_env._closing is True
+    finally:
+        dialog.deleteLater()
+        owner.deleteLater()
+
+
+def test_ssh_migrate_section_scans_confirms_and_writes(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """迁移 SSH 卡片：扫描来源 / 实例现状、冲突确认、内容走 stdin、写入后校验权限。"""
+    source = tmp_path / "ssh"
+    source.mkdir()
+    (source / "id_ed25519").write_bytes(b"PRIVATE KEY DATA")
+    (source / "id_ed25519.pub").write_bytes(b"ssh-ed25519 AAAA me")
+    (source / "known_hosts").write_bytes(b"github.com ssh-ed25519 AAAA")
+    owner = QWidget()
+    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu"))
+    try:
+        assert section.collapsed is True
+        assert section.details.isHidden() is True
+        assert section.migrate_button.isEnabled() is False
+        assert section.source.value() == str(_sshfiles.default_source_dir())
+        section.source.set_value(str(source))
+
+        target = _sshfiles.SshTarget(
+            user="me",
+            home="/home/me",
+            dir="/home/me/.ssh",
+            dir_mode="700",
+            files=(_sshfiles.RemoteFile("known_hosts", "644"),),
+        )
+        monkeypatch.setattr(section, "refresh", lambda: None)
+        section._scan_done((_sshfiles.scan_source(source), target))
+        assert set(section._boxes) == {"id_ed25519", "id_ed25519.pub", "known_hosts"}
+        assert all(box.isChecked() for box in section._boxes.values())
+        assert section.migrate_button.isEnabled() is True
+        assert "已有 1 个文件" in section.target_hint.text()
+        assert section.summary.fullText() == "Windows 侧 3 个文件 · 实例内 1 个文件"
+
+        # 取消覆盖确认：不发起任何写入。
+        scheduled: list[Any] = []
+        monkeypatch.setattr(_wslmanw_qt, "submit_daemon", lambda fn, **kwargs: scheduled.append(fn))
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: False)
+        section._migrate_selected()
+        assert scheduled == []
+
+        # 确认后逐个写入：stdin 带内容，命令行里不出现私钥内容。
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
+        seen: list[tuple[list[str], bytes | None]] = []
+
+        class _Runner:
+            def run(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+            ) -> CommandResult:
+                seen.append((list(argv), stdin))
+                mode = "600" if len(seen) == 1 else "644"
+                return CommandResult(
+                    argv=tuple(argv),
+                    returncode=0,
+                    stdout=f"WSLSSH_WRITTEN={mode}|me\n".encode(),
+                    stderr=b"",
+                    duration_ms=1,
+                )
+
+        class _FakeEnv:
+            runner = _Runner()
+
+        monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+        monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+        refreshed: list[bool] = []
+        monkeypatch.setattr(section, "refresh", lambda: refreshed.append(True))
+        names = list(section._boxes)
+        assert section._migrate(names, set()) == "已迁移 3 个文件"
+        assert [stdin for _argv, stdin in seen] == [(source / name).read_bytes() for name in names]
+        assert all(argv[:4] == ["wsl.exe", "-d", "Ubuntu", "--exec"] for argv, _stdin in seen)
+        assert 'cat > "$tmp"' in seen[0][0][-1]
+        assert "PRIVATE KEY DATA" not in seen[0][0][-1]
+        assert refreshed == []
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_ssh_migrate_section_surfaces_write_failures(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """覆盖未确认 / 权限不符都要明确报错，不能静默当成功。"""
+    source = tmp_path / "ssh"
+    source.mkdir()
+    (source / "id_ed25519").write_bytes(b"KEY")
+    owner = QWidget()
+    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu"))
+    try:
+        section.source.set_value(str(source))
+        section._files = {"id_ed25519": _sshfiles.SshFile("id_ed25519", 3, "private")}
+
+        class _Runner:
+            def __init__(self, result: CommandResult) -> None:
+                self.result = result
+
+            def run(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+            ) -> CommandResult:
+                return self.result
+
+        def _install(result: CommandResult) -> None:
+            class _FakeEnv:
+                runner = _Runner(result)
+
+            monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+            monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+
+        _install(
+            CommandResult(
+                argv=("wsl.exe",),
+                returncode=3,
+                stdout=b"",
+                stderr="目标已存在且未确认覆盖：/home/me/.ssh/id_ed25519".encode(),
+                duration_ms=1,
+            )
+        )
+        with pytest.raises(WslmanError) as conflict:
+            section._migrate(["id_ed25519"], set())
+        assert conflict.value.code == "RUNTIME_ERROR"
+        assert "扫描后才出现" in (conflict.value.hint or "")
+
+        _install(
+            CommandResult(
+                argv=("wsl.exe",),
+                returncode=0,
+                stdout=b"WSLSSH_WRITTEN=644|me\n",
+                stderr=b"",
+                duration_ms=1,
+            )
+        )
+        with pytest.raises(WslmanError) as wrong_mode:
+            section._migrate(["id_ed25519"], set())
+        assert wrong_mode.value.code == "RUNTIME_ERROR"
+        assert "644" in wrong_mode.value.message
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_distro_config_embeds_ssh_migrate_and_confirms_close(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """迁移卡片默认收起、首次展开扫描；迁移进行中关窗要先确认。"""
+    owner = QWidget()
+    dialog = _wslmanw_qt._DistroConfigDialog(owner, _distro("Ubuntu"), "~")  # type: ignore[arg-type]
+    try:
+        monkeypatch.setattr(dialog.init_env, "refresh_status", lambda: None)
+        assert isinstance(dialog.ssh_migrate, _wslmanw_qt._SshMigrateSection)
+        assert dialog.ssh_migrate.parent() is dialog
+        assert dialog.ssh_migrate.collapsed is True
+        scans: list[str] = []
+        monkeypatch.setattr(dialog.ssh_migrate, "refresh", lambda: scans.append("scan"))
+        dialog.ssh_migrate.toggle_collapsed(False)
+        assert scans == ["scan"]
+        dialog.ssh_migrate.toggle_collapsed(True)
+        assert scans == ["scan"]
+
+        titles: list[str] = []
+
+        def _deny(_parent: Any, title: str, _text: str) -> bool:
+            titles.append(title)
+            return False
+
+        monkeypatch.setattr(_wslmanw_qt, "confirm", _deny)
+        dialog.ssh_migrate._busy = True
+        dialog.reject()
+        assert titles == ["SSH 迁移仍在进行"]
+        assert dialog.ssh_migrate._closing is False
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
+        dialog.reject()
+        assert dialog.ssh_migrate._closing is True
     finally:
         dialog.deleteLater()
         owner.deleteLater()
@@ -1876,6 +2075,172 @@ def test_refresh_requested_during_task_runs_after_finish(home: Path, monkeypatch
         assert window._refresh_pending is False
         assert _distro_row(window, 0).default_tag.isHidden() is True
         assert _distro_row(window, 1).default_tag.isHidden() is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+# ---------------------------------------------------------------------- #
+# 文件页：家目录浏览 + 上传下载 / 增删改
+# ---------------------------------------------------------------------- #
+def _wait_files(window: _wslmanw_qt.WslmanQtWindow, timeout: float = 5.0) -> None:
+    """等文件页的目录读取 / 文件任务全部落地。"""
+    deadline = time.monotonic() + timeout
+    app = QApplication.instance()
+    while time.monotonic() < deadline:
+        if app is not None:
+            app.processEvents()
+        if not window._files_loading and not window._files_busy:
+            break
+        time.sleep(0.01)
+    if app is not None:
+        app.processEvents()
+    assert not window._files_loading
+    assert not window._files_busy
+
+
+def _files_row(window: _wslmanw_qt.WslmanQtWindow, name: str) -> int:
+    names = [window.files_table.item(row, 0).text() for row in range(window.files_table.rowCount())]
+    for row, text in enumerate(names):
+        if text == name:
+            return row
+    raise AssertionError(f"文件页没有 {name!r}：{names}")
+
+
+def _enable_files_page(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """把文件页的 WSL 探测与 UNC 根钉到临时目录。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro("Ubuntu", "running")))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    monkeypatch.setattr(_wslmanw_qt._files, "pick_unc_root", lambda name: str(root))
+
+    class _Runner:
+        def run(
+            self,
+            argv: Any,
+            *,
+            timeout: float | None = None,
+            env: Any = None,
+            stdin: bytes | None = None,
+        ) -> CommandResult:
+            return CommandResult(
+                argv=tuple(argv),
+                returncode=0,
+                stdout=b"WSLFILES_USER=me\nWSLFILES_HOME=/home/me\n",
+                stderr=b"",
+                duration_ms=1,
+            )
+
+    monkeypatch.setattr(cli, "_build_environment", lambda *args, **kwargs: SimpleNamespace(runner=_Runner()))
+    monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+
+
+def test_files_page_browses_and_edits_home(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """默认进家目录；双击进入子目录、上级返回；新建 / 上传 / 下载 / 重命名 / 删除可用。"""
+    root = tmp_path / "unc"
+    home_dir = root / "home" / "me"
+    home_dir.mkdir(parents=True)
+    (home_dir / "docs").mkdir()
+    (home_dir / "notes.txt").write_text("hello", encoding="utf-8")
+    source = tmp_path / "local-upload.txt"
+    source.write_text("upload", encoding="utf-8")
+    downloaded = tmp_path / "downloaded.txt"
+    _enable_files_page(monkeypatch, root)
+
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("files")
+        _wait_files(window)
+        assert window.files_distro.currentText() == "Ubuntu"
+        assert window.files_path.text() == "~"
+        assert [window.files_table.item(row, 0).text() for row in range(2)] == ["docs", "notes.txt"]
+        assert window.files_table.item(0, 1).text() == "文件夹"
+        assert window.files_table.item(1, 2).text() == "5 B"
+        assert window.files_status.fullText().startswith("Ubuntu · me")
+
+        # 双击文件夹进入，再回到上级
+        docs_row = _files_row(window, "docs")
+        window.files_table.selectRow(docs_row)
+        assert window.files_rename.isEnabled() is True
+        window._files_open_row(window.files_table.item(docs_row, 0))
+        _wait_files(window)
+        assert window.files_path.text() == "~/docs"
+        window._files_go_up()
+        _wait_files(window)
+        assert window.files_path.text() == "~"
+
+        # 新建文件夹
+        monkeypatch.setattr(_wslmanw_qt.QInputDialog, "getText", lambda *args, **kwargs: ("newdir", True))
+        window._files_new_folder()
+        _wait_files(window)
+        assert (home_dir / "newdir").is_dir()
+        assert _files_row(window, "newdir") >= 0
+
+        # 上传
+        monkeypatch.setattr(
+            _wslmanw_qt.QFileDialog,
+            "getOpenFileNames",
+            lambda *args, **kwargs: ([str(source)], ""),
+        )
+        window._files_upload()
+        _wait_files(window)
+        assert (home_dir / "local-upload.txt").read_text(encoding="utf-8") == "upload"
+
+        # 下载
+        notes_row = _files_row(window, "notes.txt")
+        window.files_table.selectRow(notes_row)
+        monkeypatch.setattr(
+            _wslmanw_qt.QFileDialog,
+            "getSaveFileName",
+            lambda *args, **kwargs: (str(downloaded), ""),
+        )
+        window._files_download()
+        _wait_files(window)
+        assert downloaded.read_text(encoding="utf-8") == "hello"
+
+        # 重命名
+        notes_row = _files_row(window, "notes.txt")
+        window.files_table.selectRow(notes_row)
+        monkeypatch.setattr(_wslmanw_qt.QInputDialog, "getText", lambda *args, **kwargs: ("renamed.txt", True))
+        window._files_rename()
+        _wait_files(window)
+        assert (home_dir / "renamed.txt").exists()
+        assert not (home_dir / "notes.txt").exists()
+
+        # 删除（确认后递归删除文件夹）
+        newdir_row = _files_row(window, "newdir")
+        window.files_table.selectRow(newdir_row)
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
+        window._files_delete()
+        _wait_files(window)
+        assert not (home_dir / "newdir").exists()
+        assert _files_row(window, "renamed.txt") >= 0
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_files_page_reports_unc_failure(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """UNC 不可访问时给可操作提示，表格保持为空，动作按钮不可用。"""
+    _enable_files_page(monkeypatch, tmp_path)
+
+    def boom(name: str) -> str:
+        raise _wslmanw_qt.runtime_error("无法访问 Ubuntu 的文件系统", hint="确认实例已启动")
+
+    monkeypatch.setattr(_wslmanw_qt._files, "pick_unc_root", boom)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("files")
+        _wait_files(window)
+        assert window.files_table.rowCount() == 0
+        assert "无法访问" in window.files_status.fullText()
+        assert window.files_upload.isEnabled() is False
+        assert window.files_mkdir.isEnabled() is False
+        assert window.files_download.isEnabled() is False
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

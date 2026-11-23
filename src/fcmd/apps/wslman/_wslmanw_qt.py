@@ -7,7 +7,7 @@
 
 布局与 llmw 对齐：复用共享 :class:`fcmd.gui.window.QtMainWindow` 的左侧
 :class:`~fcmd.gui.sidebar.SidebarNav` 导航（折叠、``Alt+1..4`` 切换与窗口
-几何记忆都由基座提供），右侧按「实例 / 镜像 / 设置」分页，每页拿满整个
+几何记忆都由基座提供），右侧按「实例 / 文件 / 镜像 / 设置」分页，每页拿满整个
 内容区，不再把详情、下载与配置挤进同一个底部标签页；任务日志不占分页，从
 「帮助 → 任务日志…」打开。实例页用一个
 纵向分栏把列表与详情分开；下载目录 / 下载源 / 校验这类配置统一放设置页，
@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidgetItem,
@@ -52,7 +53,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.wslman import _images, _initenv, _mirrors
+from fcmd.apps.wslman import _files, _images, _initenv, _mirrors, _sshfiles
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman import wslmanw as w
 from fcmd.apps.wslman._config import (
@@ -121,6 +122,7 @@ NAV_TITLE = "WSL"
 
 PAGES: tuple[PageSpec, ...] = (
     PageSpec("distros", "实例", "列表、详情、启动停止、导出与注销", "distros"),
+    PageSpec("files", "文件", "浏览实例文件系统、上传下载与增删改", "folder"),
     PageSpec("images", "镜像", "在线镜像清单、本地安装与清单更新", "disc"),
     PageSpec("settings", "设置", "下载目录、下载源与校验", "settings"),
 )
@@ -198,7 +200,7 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.add_action(self.start_stop_button)
         # 配置放在启停右侧：设为默认、终端默认目录等实例级设置不强制用户先选中再跑工具栏。
         self.config_button = button("配置", kind="ghost")
-        self.config_button.setToolTip(f"配置 {distro.name}：设为默认发行版、终端默认目录")
+        self.config_button.setToolTip(f"配置 {distro.name}：默认发行版、终端目录、初始化环境与 SSH 迁移")
         self.config_button.clicked.connect(lambda: self.configRequested.emit(distro.name))
         self.add_action(self.config_button)
         self._busy = False
@@ -428,7 +430,7 @@ class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
 
 
 class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """WSL 实例管理：侧边栏分页（实例 / 镜像 / 设置）+ 后台任务。
+    """WSL 实例管理：侧边栏分页（实例 / 文件 / 镜像 / 设置）+ 后台任务。
 
     任务日志不占分页：顶部「帮助 → 任务日志…」打开非模态日志窗口，历史来自
     ``_log_lines`` 缓冲，窗口打开时回放、之后按 :attr:`logLine` 实时追加。
@@ -466,6 +468,19 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._filter_timer: QTimer | None = None
         self._buttons: list[QPushButton] = []
         self._button_by_text: dict[str, QPushButton] = {}
+        # 文件页状态：UNC 根按实例缓存；``_files_dir`` / ``_files_home`` 均为
+        # 实例内 POSIX 路径，空串表示尚未加载。``_files_seq`` 用来丢弃用户快速
+        # 切换目录后迟到的旧结果。
+        self._files_roots: dict[str, str] = {}
+        self._files_loaded = ""
+        self._files_root = ""
+        self._files_home = ""
+        self._files_dir = ""
+        self._files_user = ""
+        self._files_entries: tuple[_files.FileEntry, ...] = ()
+        self._files_loading = False
+        self._files_busy = False
+        self._files_seq = 0
         super().__init__(
             title=TITLE,
             config_name=w.SETTINGS_NAME,
@@ -488,6 +503,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         # 会把页内容画到菜单栏上；先 hide，等共享页面栈切换时再 show。
         builders = {
             "distros": self._build_distros_page,
+            "files": self._build_files_page,
             "images": self._build_images_page,
             "settings": self._build_settings_page,
         }
@@ -525,6 +541,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             self._switching_page = False
         if key == "images":
             self._open_images_page()
+        elif key == "files":
+            self._open_files_page()
 
     def _open_images_page(self) -> None:
         """镜像页入口：磁盘缓存秒开（有就画），随后按需后台更新。
@@ -604,6 +622,456 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self.start_button = self._button_by_text["启动"]
         self.stop_button = self._button_by_text["停止"]
         return toolbar
+
+    def _build_files_page(self) -> QWidget:
+        """文件页：实例选择 + 可编辑路径栏 + 只读表格 + 上传下载 / 增删改。
+
+        浏览走 UNC 根，不逐条执行命令；默认进入所选实例的家目录（``~``）。
+        表格整页铺满（与实例 / 镜像页同构），所有 UNC / 文件操作都放到后台线程，
+        避免网络路径卡住界面。
+        """
+        page = PageBody(self, spacing=8)
+        body = page.body
+
+        path_row = QHBoxLayout()
+        path_row.setContentsMargins(0, 0, 0, 0)
+        path_row.setSpacing(6)
+        path_row.addWidget(QLabel("实例"))
+        self.files_distro = QComboBox(page)
+        self.files_distro.setMinimumWidth(160)
+        self.files_distro.setToolTip("选择要浏览的 WSL 实例")
+        self.files_distro.currentIndexChanged.connect(self._on_files_distro_changed)
+        path_row.addWidget(self.files_distro)
+        self.files_up = button("上级", kind="ghost", icon="chevron-up")
+        self.files_up.setToolTip("回到上一级目录")
+        self.files_up.clicked.connect(self._files_go_up)
+        path_row.addWidget(self.files_up)
+        self.files_home = button("家目录", kind="ghost", icon="folder")
+        self.files_home.setToolTip("回到当前实例的家目录（~）")
+        self.files_home.clicked.connect(self._files_go_home)
+        path_row.addWidget(self.files_home)
+        self.files_path = QLineEdit(page)
+        self.files_path.setPlaceholderText("~ 或 /home/me/project；按 Enter 跳转")
+        self.files_path.setToolTip("实例内的 POSIX 路径；~ 表示家目录")
+        self.files_path.returnPressed.connect(self._files_commit_path)
+        path_row.addWidget(self.files_path, 1)
+        self.files_refresh = button("刷新", kind="ghost")
+        self.files_refresh.setToolTip("重新读取当前目录")
+        self.files_refresh.clicked.connect(self._files_refresh_dir)
+        path_row.addWidget(self.files_refresh)
+        body.addLayout(path_row)
+
+        self.files_status = ElidedLabel("选择实例后显示其家目录", parent=page)
+        self.files_status.setObjectName("Hint")
+        self.files_status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        body.addWidget(self.files_status)
+
+        self.files_table = make_table(
+            ("名称", "类型", "大小", "修改时间"),
+            widths=(320, 80, 110, 150),
+            stretch_columns=(0,),
+            parent=page,
+        )
+        self.files_table.setObjectName("FileTable")
+        self.files_table.itemSelectionChanged.connect(self._sync_files_actions)
+        self.files_table.itemDoubleClicked.connect(self._files_open_row)
+        body.addWidget(self.files_table, 1)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
+        self.files_upload = button("上传…", kind="primary", icon="upload")
+        self.files_upload.setToolTip("把 Windows 上的文件复制到当前目录")
+        self.files_upload.clicked.connect(self._files_upload)
+        actions.addWidget(self.files_upload)
+        self.files_download = button("下载…", kind="ghost")
+        self.files_download.setToolTip("把选中的文件复制到 Windows 磁盘")
+        self.files_download.clicked.connect(self._files_download)
+        actions.addWidget(self.files_download)
+        actions.addSpacing(8)
+        self.files_mkdir = button("新建文件夹", kind="ghost")
+        self.files_mkdir.setToolTip("在当前目录下新建文件夹")
+        self.files_mkdir.clicked.connect(self._files_new_folder)
+        actions.addWidget(self.files_mkdir)
+        self.files_rename = button("重命名", kind="ghost")
+        self.files_rename.setToolTip("重命名选中的文件或文件夹")
+        self.files_rename.clicked.connect(self._files_rename)
+        actions.addWidget(self.files_rename)
+        actions.addStretch(1)
+        self.files_delete = button("删除", kind="danger")
+        self.files_delete.setToolTip("删除选中的文件或文件夹（会二次确认）")
+        self.files_delete.clicked.connect(self._files_delete)
+        actions.addWidget(self.files_delete)
+        body.addLayout(actions)
+
+        self._sync_files_actions()
+        return page
+
+    def _open_files_page(self) -> None:
+        """文件页入口：同步实例下拉框；首次进入时读取家目录并列出内容。"""
+        if self._files_loading or self._files_busy:
+            return
+        view = self.view
+        names = [distro.name for distro in view.distros] if view is not None else []
+        if not names:
+            self._files_loaded = ""
+            self._files_root = ""
+            self._files_home = ""
+            self._files_dir = ""
+            self._files_entries = ()
+            if self.files_distro.count():
+                self.files_distro.blockSignals(True)
+                self.files_distro.clear()
+                self.files_distro.blockSignals(False)
+            self.files_path.clear()
+            self._render_files()
+            self._set_files_status("暂无实例：先在「实例」页创建或导入后再浏览文件")
+            self._files_loading = False
+            self._sync_files_actions()
+            return
+        existing = [self.files_distro.itemText(index) for index in range(self.files_distro.count())]
+        if existing != names:
+            previous = self.files_distro.currentText()
+            preferred = self._files_loaded if self._files_loaded in names else previous
+            if preferred not in names:
+                preferred = view.default if view is not None and view.default in names else names[0]
+            self.files_distro.blockSignals(True)
+            self.files_distro.clear()
+            self.files_distro.addItems(names)
+            self.files_distro.setCurrentIndex(max(self.files_distro.findText(preferred), 0))
+            self.files_distro.blockSignals(False)
+        name = self.files_distro.currentText()
+        if name and (self._files_loaded != name or not self._files_dir):
+            self._files_enter(name)
+
+    def _on_files_distro_changed(self, _index: int) -> None:
+        if self._files_busy or self._files_loading:
+            return
+        name = self.files_distro.currentText()
+        if name:
+            self._files_enter(name)
+
+    def _files_enter(self, name: str) -> None:
+        """切到某实例：清空旧目录状态并重新探测家目录。"""
+        self._files_loaded = name
+        self._files_root = ""
+        self._files_home = ""
+        self._files_user = ""
+        self._files_dir = ""
+        self._files_entries = ()
+        self._render_files()
+        self._files_load(name, None)
+
+    def _files_load(self, name: str, path: str | None) -> None:
+        """后台读取目录；``path=None`` 表示先探测家目录再列它。
+
+        探测与列目录合并在同一个任务里，避免「先 wsl 取 HOME，再等 UNC 列目录」
+        的两次跳转；用户快速切目录时用递增序号丢弃迟到的旧结果。
+        """
+        if not name or self._closing:
+            return
+        self._files_seq += 1
+        seq = self._files_seq
+        self._files_loading = True
+        self._sync_files_actions()
+        label = "家目录" if path is None else path
+        self._set_files_status(f"正在读取 {name} 的{label}…")
+        cached_root = self._files_roots.get(name, "")
+        cached_home = self._files_home
+        cached_user = self._files_user
+
+        def work() -> tuple[str, str, str, str, tuple[_files.FileEntry, ...]]:
+            root = cached_root or _files.pick_unc_root(name)
+            user, home = cached_user, cached_home
+            if not home:
+                env = cli._build_environment()
+                wsl_path = cli._require_wsl(env)
+                result = env.runner.run(
+                    [wsl_path, "-d", name, "--exec", "bash", "-lc", _files.home_probe_script()],
+                    timeout=60.0,
+                )
+                text = decode_console(result.stdout + result.stderr)
+                user, detected = _files.parse_home(text)
+                if not detected:
+                    tail = _initenv.tail_lines(text, 3)
+                    raise runtime_error(
+                        f"无法读取 {name} 的家目录（退出码 {result.returncode}）",
+                        hint=tail[-1] if tail else f"确认实例可以启动：wsl -d {name} --exec true",
+                    )
+                home = detected
+            target = _files.normalize_path(path if path is not None else home, home)
+            entries = _files.list_entries(_files.to_local(root, target))
+            return root, user, home, target, entries
+
+        submit_daemon(
+            work,
+            on_done=lambda payload: self._files_loaded_ok(seq, name, payload),
+            on_error=lambda message: self._files_loaded_error(seq, name, message),
+            on_finished=lambda: self._files_load_finished(seq),
+        )
+
+    def _files_loaded_ok(
+        self,
+        seq: int,
+        name: str,
+        payload: tuple[str, str, str, str, tuple[_files.FileEntry, ...]],
+    ) -> None:
+        if self._closing or seq != self._files_seq:
+            return
+        root, user, home, target, entries = payload
+        self._files_roots[name] = root
+        self._files_root = root
+        self._files_home = home
+        self._files_user = user
+        self._files_dir = target
+        self._files_entries = entries
+        self.files_path.setText(_files.display_path(target, home))
+        self._render_files()
+        who = f" · {user}" if user else ""
+        self._set_files_status(f"{name}{who} · {_files.display_path(target, home)} · {len(entries)} 项")
+
+    def _files_loaded_error(self, seq: int, name: str, message: str) -> None:
+        if self._closing or seq != self._files_seq:
+            return
+        # 导航失败时保留上一级已列出的内容与路径栏，只把错误写进状态行；
+        # 首次进入失败时本来就没有内容，表格保持为空。
+        self._set_files_status(f"{name}：{message}")
+        self._log(f"[文件] {message}")
+
+    def _files_load_finished(self, seq: int) -> None:
+        if self._closing or seq != self._files_seq:
+            return
+        self._files_loading = False
+        self._sync_files_actions()
+
+    def _render_files(self) -> None:
+        """按 ``_files_entries`` 重绘表格；选中清空，避免操作落到旧行。"""
+        self.files_table.setRowCount(0)
+        self.files_table.setRowCount(len(self._files_entries))
+        for row, entry in enumerate(self._files_entries):
+            name_item = make_table_item(entry.name)
+            name_item.setToolTip(entry.name)
+            self.files_table.setItem(row, 0, name_item)
+            self.files_table.setItem(row, 1, make_table_item(_files.type_text(entry)))
+            size_item = make_table_item(_files.size_text(entry))
+            size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.files_table.setItem(row, 2, size_item)
+            self.files_table.setItem(row, 3, make_table_item(_files.format_mtime(entry)))
+        self.files_table.clearSelection()
+        self._sync_files_actions()
+
+    def _files_selected(self) -> _files.FileEntry | None:
+        row = self.files_table.currentRow()
+        if 0 <= row < len(self._files_entries):
+            return self._files_entries[row]
+        return None
+
+    def _files_selected_local(self) -> tuple[Path, _files.FileEntry] | None:
+        entry = self._files_selected()
+        if entry is None or not self._files_root or not self._files_dir:
+            return None
+        target = _files.to_local(self._files_root, _files.join_path(self._files_dir, entry.name))
+        return target, entry
+
+    def _sync_files_actions(self) -> None:
+        """按「是否加载完成 / 是否选中 / 是否任务中」同步按钮可用性。"""
+        busy = self._files_busy or self._files_loading
+        loaded = bool(self._files_dir)
+        entry = self._files_selected()
+        self.files_distro.setEnabled(not busy)
+        self.files_path.setEnabled(not busy)
+        self.files_upload.setEnabled(loaded and not busy)
+        self.files_mkdir.setEnabled(loaded and not busy)
+        self.files_refresh.setEnabled(loaded and not busy)
+        self.files_up.setEnabled(loaded and self._files_dir != "/" and not busy)
+        self.files_home.setEnabled(loaded and not busy)
+        self.files_download.setEnabled(entry is not None and not busy)
+        self.files_rename.setEnabled(entry is not None and not busy)
+        self.files_delete.setEnabled(entry is not None and not busy)
+
+    def _set_files_status(self, text: str) -> None:
+        self.files_status.setText(text)
+        self.files_status.setToolTip(text)
+
+    def _files_commit_path(self) -> None:
+        """路径栏回车：按输入跳转（支持 ``~`` 与相对家目录的路径）。"""
+        if self._files_busy or self._files_loading or not self._files_loaded:
+            return
+        text = self.files_path.text().strip()
+        if not text:
+            return
+        try:
+            target = _files.normalize_path(text, self._files_home or "/")
+        except WslmanError as exc:
+            QMessageBox.warning(self, "路径不可用", w._error_text(exc))
+            return
+        self._files_load(self._files_loaded, target)
+
+    def _files_go_up(self) -> None:
+        if self._files_busy or self._files_loading or self._files_dir in {"", "/"}:
+            return
+        self._files_load(self._files_loaded, _files.parent_path(self._files_dir))
+
+    def _files_go_home(self) -> None:
+        if self._files_busy or self._files_loading or not self._files_home:
+            return
+        self._files_load(self._files_loaded, self._files_home)
+
+    def _files_refresh_dir(self) -> None:
+        if self._files_busy or self._files_loading or not self._files_loaded:
+            return
+        self._files_load(self._files_loaded, self._files_dir or None)
+
+    def _files_open_row(self, item: Any) -> None:
+        """双击文件夹进入下一级；双击文件不做动作（下载走底部按钮）。"""
+        row = item.row()
+        if not 0 <= row < len(self._files_entries):
+            return
+        entry = self._files_entries[row]
+        if not entry.is_dir:
+            return
+        self._files_load(self._files_loaded, _files.join_path(self._files_dir, entry.name))
+
+    def _files_run(self, label: str, work: Any) -> None:
+        """在守护线程执行文件操作；失败统一转成可读文案并弹窗。"""
+        if self._files_busy or self._files_loading or self._closing:
+            return
+        self._files_busy = True
+        self._sync_files_actions()
+        self._set_files_status(f"{label}…")
+
+        def runner() -> tuple[bool, str]:
+            try:
+                return True, work()
+            except Exception as exc:  # 后台任务统一转成界面文案
+                return False, w._error_text(exc)
+
+        submit_daemon(
+            runner,
+            on_done=lambda payload: self._files_task_done(label, payload),
+            on_finished=self._files_task_finished,
+        )
+
+    def _files_task_done(self, label: str, payload: tuple[bool, str]) -> None:
+        if self._closing:
+            return
+        ok, message = payload
+        if not ok:
+            self._set_files_status(f"{label}失败：{message}")
+            QMessageBox.critical(self, label, message)
+            return
+        self._set_files_status(f"{label}完成：{message}")
+        self._log(f"[文件] {message}")
+        if self._files_loaded and self._files_dir:
+            self._files_load(self._files_loaded, self._files_dir)
+
+    def _files_task_finished(self) -> None:
+        if self._closing:
+            return
+        self._files_busy = False
+        self._sync_files_actions()
+
+    def _files_new_folder(self) -> None:
+        if self._files_busy or self._files_loading or not self._files_dir:
+            return
+        name, accepted = QInputDialog.getText(self, "新建文件夹", "文件夹名称：")
+        if not accepted:
+            return
+        try:
+            clean = _files.check_name(name)
+        except WslmanError as exc:
+            QMessageBox.warning(self, "名称不可用", w._error_text(exc))
+            return
+        root, directory = self._files_root, self._files_dir
+        home = self._files_home
+
+        def work() -> str:
+            target = _files.create_dir(_files.to_local(root, directory), clean)
+            return f"已在 {_files.display_path(directory, home)} 新建 {target.name}"
+
+        self._files_run("新建文件夹", work)
+
+    def _files_rename(self) -> None:
+        selected = self._files_selected_local()
+        if selected is None:
+            return
+        path, entry = selected
+        new_name, accepted = QInputDialog.getText(self, "重命名", f"{entry.name} 的新名称：", text=entry.name)
+        if not accepted:
+            return
+        try:
+            clean = _files.check_name(new_name)
+        except WslmanError as exc:
+            QMessageBox.warning(self, "名称不可用", w._error_text(exc))
+            return
+        if clean == entry.name:
+            return
+
+        def work() -> str:
+            target = _files.rename_entry(path, clean)
+            return f"{entry.name} → {target.name}"
+
+        self._files_run("重命名", work)
+
+    def _files_delete(self) -> None:
+        selected = self._files_selected_local()
+        if selected is None:
+            return
+        path, entry = selected
+        kind = "文件夹" if entry.is_dir else "文件"
+        suffix = "（含其中全部内容）" if entry.is_dir else ""
+        if not confirm(self, "删除确认", f"删除{kind} {entry.name}{suffix}？此操作不可恢复。"):
+            return
+        root = self._files_root
+
+        def work() -> str:
+            _files.delete_entry(path, _files.to_local(root, "/"))
+            return f"已删除{kind} {entry.name}"
+
+        self._files_run("删除", work)
+
+    def _files_upload(self) -> None:
+        if self._files_busy or self._files_loading or not self._files_dir:
+            return
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            f"上传到 {self.files_path.text() or self._files_dir}",
+            "",
+            "所有文件 (*.*)",
+        )
+        if not paths:
+            return
+        root, directory = self._files_root, self._files_dir
+        home = self._files_home
+
+        def work() -> str:
+            copied = _files.upload_files([Path(path) for path in paths], _files.to_local(root, directory))
+            return f"已上传 {len(copied)} 个文件到 {_files.display_path(directory, home)}"
+
+        self._files_run("上传", work)
+
+    def _files_download(self) -> None:
+        selected = self._files_selected_local()
+        if selected is None:
+            return
+        path, entry = selected
+        if entry.is_dir:
+            QMessageBox.information(
+                self,
+                "暂不支持下载文件夹",
+                "文件夹下载暂不支持；请进入文件夹后选择具体文件。",
+            )
+            return
+        target, _ = QFileDialog.getSaveFileName(self, f"下载 {entry.name}", str(Path.home() / entry.name))
+
+        if not target:
+            return
+
+        def work() -> str:
+            saved = _files.download_file(path, Path(target), overwrite=True)
+            return f"已下载到 {saved}"
+
+        self._files_run("下载", work)
 
     def _build_images_page(self) -> QWidget:
         """镜像页：筛选条（含手动更新）+ 搜索行 + 单行状态 + 行卡列表 + 下载动作。
@@ -1039,6 +1507,9 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         """轮询结果：名单没变就只刷新行内状态，不重建列表（选中与滚动位置不动）。"""
         previous = self.view
         self.view = view
+        # 文件页可见时同步实例下拉框：首次进入通常列表还没回来，名单到位后补一次。
+        if self.current_page() == "files":
+            self._open_files_page()
         names = [distro.name for distro in view.distros]
         if previous is None or names != [distro.name for distro in previous.distros]:
             self._refresh_rows()
@@ -2325,6 +2796,369 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             self.refresh_status()
 
 
+_SSH_HINT = (
+    "从 Windows 的 ~/.ssh 读取私钥、公钥、known_hosts 与 config，写入实例的 ~/.ssh；"
+    "目录权限 700、私钥 600。实例内已有同名文件时不会静默覆盖：先确认，再备份到 "
+    "~/.ssh/fcmd-ssh-backup-<时间>/ 后写入。"
+)
+"""迁移 SSH 卡片说明：收进 tooltip 与确认框，不占版面高度。"""
+
+_SSH_LOG_LINES_MAX = 200
+"""迁移日志缓冲上限（行）。"""
+
+
+class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
+    """迁移 SSH 文件卡片：扫描 Windows 侧目录、预览冲突、备份后写入实例。
+
+    与「初始化环境」并列放在实例配置对话框里：初始化负责在实例内生成密钥，
+    本卡片负责把 Windows 上已经在用的密钥、known_hosts、config 带进去，两者
+    互不替代。文件内容通过 stdin 送进实例，命令行与日志里只有文件名和权限。
+    """
+
+    def __init__(self, parent: QWidget, distro: Distro) -> None:
+        super().__init__("迁移 SSH 文件", parent)
+        self._distro = distro
+        self._busy = False
+        self._closing = False
+        self._files: dict[str, _sshfiles.SshFile] = {}
+        self._target: _sshfiles.SshTarget | None = None
+        self._boxes: dict[str, QCheckBox] = {}
+        self._log_lines: list[str] = []
+        self._refresh_after_run = False
+        self._bridge = EventBridge(self)
+        self._bridge.event.connect(self._append_log)
+        self.destroyed.connect(self._on_destroyed)
+        self.setToolTip(_SSH_HINT)
+
+        self._collapsed = True
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(6)
+        self.collapsed_hint = hint_label("尚未扫描 Windows 侧的 ~/.ssh。", wrap=False)
+        header.addWidget(self.collapsed_hint)
+        self.summary = ElidedLabel("", parent=self)
+        self.summary.setObjectName("Hint")
+        self.summary.setToolTip(_SSH_HINT)
+        self.summary.setVisible(False)
+        header.addWidget(self.summary, 1)
+        self.toggle_button = icon_button("", tooltip="展开详情")
+        self.toggle_button.setIconSize(QSize(16, 16))
+        _qt_icons.set_icon(self.toggle_button, "chevron-down", tone="muted")
+        self.toggle_button.setAccessibleName("展开详情")
+        self.toggle_button.clicked.connect(self._on_toggle_clicked)
+        header.addWidget(self.toggle_button)
+        self.body.addLayout(header)
+
+        self.details = QWidget(self)
+        details = QVBoxLayout(self.details)
+        details.setContentsMargins(0, 0, 0, 0)
+        details.setSpacing(4)
+
+        source_row = QHBoxLayout()
+        source_row.setContentsMargins(0, 0, 0, 0)
+        source_row.setSpacing(6)
+        source_row.addWidget(hint_label("Windows 侧目录", wrap=False))
+        self.source = PathRow(
+            value=str(_sshfiles.default_source_dir()),
+            placeholder=r"%USERPROFILE%\.ssh",
+            directory=True,
+            parent=self,
+        )
+        source_row.addWidget(self.source, 1)
+        details.addLayout(source_row)
+
+        self.file_hint = ElidedLabel("点「扫描」读取来源目录并检测实例。", parent=self)
+        self.file_hint.setObjectName("Hint")
+        details.addWidget(self.file_hint)
+
+        self.files_box = QWidget(self)
+        self.files_layout = QVBoxLayout(self.files_box)
+        self.files_layout.setContentsMargins(0, 0, 0, 0)
+        self.files_layout.setSpacing(2)
+        details.addWidget(self.files_box)
+
+        # 实例侧现状（含同名文件与权限过宽的提示）直接铺开，不用再点一层。
+        self.target_hint = hint_label("尚未检测实例的 ~/.ssh。")
+        self.target_hint.setWordWrap(True)
+        details.addWidget(self.target_hint)
+
+        self.log = QPlainTextEdit(self)
+        self.log.setReadOnly(True)
+        self.log.setPlaceholderText("迁移日志…")
+        self.log.setMinimumHeight(56)
+        self.log.setMaximumHeight(72)
+        details.addWidget(self.log)
+
+        self.body.addWidget(self.details)
+        self.details.setVisible(False)
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
+        self.select_all = button("全选", kind="ghost")
+        self.select_all.clicked.connect(lambda: self._set_all(True))
+        actions.addWidget(self.select_all)
+        self.select_none = button("全不选", kind="ghost")
+        self.select_none.clicked.connect(lambda: self._set_all(False))
+        actions.addWidget(self.select_none)
+        actions.addStretch(1)
+        self.scan_button = button("扫描")
+        self.scan_button.clicked.connect(self.refresh)
+        actions.addWidget(self.scan_button)
+        self.migrate_button = button("迁移所选文件", kind="primary")
+        self.migrate_button.clicked.connect(self._migrate_selected)
+        self.migrate_button.setEnabled(False)
+        actions.addWidget(self.migrate_button)
+        self.body.addLayout(actions)
+
+        self._sync_collapsed_view()
+
+    @property
+    def collapsed(self) -> bool:
+        """是否收起（默认收起，展开时才发起扫描）。"""
+        return self._collapsed
+
+    @property
+    def busy(self) -> bool:
+        """是否有扫描 / 迁移任务在跑。"""
+        return self._busy
+
+    def _on_toggle_clicked(self, _checked: bool = False) -> None:
+        self.toggle_collapsed()
+
+    def toggle_collapsed(self, collapsed: bool | None = None) -> None:
+        """展开 / 收起；首次展开自动扫描一次（来源目录与实例现状）。"""
+        was_collapsed = self._collapsed
+        self._collapsed = (not self._collapsed) if collapsed is None else bool(collapsed)
+        self._sync_collapsed_view()
+        if was_collapsed and not self._collapsed and self._target is None and not self._busy:
+            self.refresh()
+        window = self.window()
+        if window is not self and isinstance(window, QDialog):
+            QTimer.singleShot(0, lambda w=window: w.adjustSize())
+
+    def _sync_collapsed_view(self) -> None:
+        self.collapsed_hint.setVisible(self._collapsed)
+        self.summary.setVisible(not self._collapsed)
+        self.details.setVisible(not self._collapsed)
+        _qt_icons.set_icon(self.toggle_button, "chevron-up" if not self._collapsed else "chevron-down", tone="muted")
+        self.toggle_button.setToolTip("收起详情" if not self._collapsed else "展开详情")
+        self.toggle_button.setAccessibleName(self.toggle_button.toolTip())
+
+    def stop(self) -> None:
+        """对话框关闭时调用：忽略后续回调；后台命令本身继续执行。"""
+        self._closing = True
+
+    def _on_destroyed(self) -> None:
+        self._closing = True
+
+    # ------------------------------------------------------------------ #
+    # 扫描 / 选择
+    # ------------------------------------------------------------------ #
+    def _source_dir(self) -> Path:
+        text = self.source.value()
+        return Path(text) if text else _sshfiles.default_source_dir()
+
+    def refresh(self) -> None:
+        """后台扫描 Windows 侧目录并探测实例 ~/.ssh；失败只写日志与提示。"""
+        if self._busy:
+            return
+        self._set_busy(True)
+        self.file_hint.setText("正在扫描…")
+        submit_daemon(
+            self._scan,
+            on_done=self._scan_done,
+            on_error=self._scan_error,
+            on_finished=self._scan_finished,
+        )
+
+    def _scan(self) -> tuple[tuple[_sshfiles.SshFile, ...], _sshfiles.SshTarget]:
+        files = _sshfiles.scan_source(self._source_dir())
+        env = cli._build_environment()
+        wsl_path = cli._require_wsl(env)
+        result = env.runner.run(
+            [wsl_path, "-d", self._distro.name, "--exec", "bash", "-lc", _sshfiles.probe_script()],
+            timeout=180.0,
+        )
+        text = decode_console(result.stdout + result.stderr)
+        target = _sshfiles.parse_probe(text)
+        if result.returncode != 0 and not target.user:
+            raise runtime_error(
+                f"检测 {self._distro.name} 的 ~/.ssh 失败（退出码 {result.returncode}）",
+                hint=_initenv.tail_lines(text, 3)[-1] if text.strip() else "确认实例可启动，或运行 fcmd wslman doctor",
+            )
+        return files, target
+
+    def _scan_done(self, result: tuple[tuple[_sshfiles.SshFile, ...], _sshfiles.SshTarget]) -> None:
+        if self._closing:
+            return
+        files, target = result
+        self._files = {item.name: item for item in files}
+        self._target = target
+        self._rebuild_files()
+        names = "、".join(item.name for item in files)
+        self.file_hint.setText(f"找到 {len(files)} 个文件：{names}" if files else "来源目录没有可迁移的普通文件")
+        self.target_hint.setText(_sshfiles.target_summary(target))
+        self.summary.setText(f"Windows 侧 {len(files)} 个文件 · 实例内 {len(target.files)} 个文件")
+        self._append_log(f"扫描完成：来源 {self._source_dir()}（{len(files)} 个文件）")
+        self._append_log(_sshfiles.target_summary(target))
+        self._sync_actions()
+        self._sync_collapsed_view()
+
+    def _scan_error(self, message: str) -> None:
+        if self._closing:
+            return
+        self.file_hint.setText("扫描失败，检查目录后重试")
+        self.summary.setText("扫描失败")
+        self.collapsed_hint.setText("扫描失败，展开后可重试。")
+        self.target_hint.setText("")
+        self._append_log(f"扫描失败：{message}")
+
+    def _scan_finished(self) -> None:
+        if not self._closing:
+            self._set_busy(False)
+
+    def _rebuild_files(self) -> None:
+        while self.files_layout.count():
+            item = self.files_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._boxes.clear()
+        for entry in self._files.values():
+            box = QCheckBox(f"{entry.name}  ·  {entry.kind_label}  ·  {entry.size_text}", self.files_box)
+            tip = f"写入 ~/.ssh/{entry.name}，权限 {entry.mode_text}"
+            if entry.warning:
+                tip += f"\n注意：{entry.warning}"
+            box.setToolTip(tip)
+            box.setChecked(entry.checked_by_default)
+            box.stateChanged.connect(self._sync_actions)
+            self.files_layout.addWidget(box)
+            self._boxes[entry.name] = box
+
+    def _set_all(self, checked: bool) -> None:
+        if self._busy:
+            return
+        for box in self._boxes.values():
+            box.setChecked(checked)
+        self._sync_actions()
+
+    def _checked_names(self) -> list[str]:
+        return [name for name, box in self._boxes.items() if box.isChecked() and box.isEnabled()]
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.scan_button.setEnabled(not busy)
+        for box in self._boxes.values():
+            box.setEnabled(not busy)
+        self._sync_actions()
+
+    def _sync_actions(self) -> None:
+        checked = self._checked_names()
+        self.migrate_button.setEnabled(not self._busy and self._target is not None and bool(checked))
+        if not checked:
+            self.migrate_button.setToolTip("先扫描并勾选要迁移的文件")
+        elif self._target is None:
+            self.migrate_button.setToolTip("先扫描确认实例现状")
+        else:
+            self.migrate_button.setToolTip("")
+        self.select_all.setEnabled(not self._busy)
+        self.select_none.setEnabled(not self._busy)
+
+    def _append_log(self, text: str) -> None:
+        for line in str(text).splitlines():
+            if line.strip():
+                self._log_lines.append(line)
+        if len(self._log_lines) > _SSH_LOG_LINES_MAX:
+            del self._log_lines[: len(self._log_lines) - _SSH_LOG_LINES_MAX]
+        self.log.setPlainText("\n".join(self._log_lines))
+        self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+
+    # ------------------------------------------------------------------ #
+    # 迁移
+    # ------------------------------------------------------------------ #
+    def _migrate_selected(self) -> None:
+        names = self._checked_names()
+        if not names:
+            QMessageBox.information(self, "未选择文件", "请先勾选要迁移的 SSH 文件。")
+            return
+        if self._target is None:
+            QMessageBox.information(self, "尚未扫描", "先点「扫描」确认来源目录与实例现状。")
+            return
+        overwrite = set(_sshfiles.conflicts(names, self._target))
+        if overwrite:
+            listing = "\n".join(f"· {name}" for name in names if name in overwrite)
+            text = (
+                "实例内已存在以下文件，迁移会先把原文件备份到 "
+                f"~/.ssh/{_sshfiles.backup_name(time.time())}/ 再覆盖：\n\n{listing}\n\n继续？"
+            )
+            if not confirm(self, "覆盖实例内已有 SSH 文件", text):
+                return
+        self._set_busy(True)
+        self._refresh_after_run = False
+        self._append_log("开始迁移：" + "、".join(names))
+        submit_daemon(
+            lambda: self._migrate(names, overwrite),
+            on_done=self._migrate_done,
+            on_error=self._migrate_error,
+            on_finished=self._migrate_finished,
+        )
+
+    def _migrate(self, names: Sequence[str], overwrite: set[str]) -> str:
+        """逐个文件写入：内容走 stdin，命令行只带文件名、权限与备份目录。"""
+        env = cli._build_environment()
+        wsl_path = cli._require_wsl(env)
+        source = self._source_dir()
+        backup = _sshfiles.backup_name(time.time())
+        for name in names:
+            entry = self._files.get(name)
+            if entry is None:
+                raise runtime_error(f"来源文件已变化：{name}", hint="重新扫描后再迁移")
+            data = _sshfiles.read_source(source / name)
+            script = _sshfiles.write_script(name, entry.mode, overwrite=name in overwrite, backup=backup)
+            self._bridge.event.emit(f"[{name}] 写入 ~/.ssh（权限 {entry.mode_text}）…")
+            result = env.runner.run(
+                [wsl_path, "-d", self._distro.name, "--exec", "bash", "-lc", script],
+                timeout=120.0,
+                stdin=data,
+            )
+            text = decode_console(result.stdout + result.stderr).strip()
+            for line in _initenv.tail_lines(text):
+                self._bridge.event.emit(line)
+            if result.returncode != 0:
+                tail = _initenv.tail_lines(text, 3)
+                hint = tail[-1] if tail else "查看日志，或在实例内手动检查 ~/.ssh"
+                if result.returncode == 3:
+                    hint = "目标文件在扫描后才出现；重新扫描并确认覆盖后再试"
+                raise runtime_error(f"{name} 迁移失败（退出码 {result.returncode}）", hint=hint)
+            mode, owner = _sshfiles.parse_write_result(text)
+            if mode != entry.mode_text:
+                raise runtime_error(
+                    f"{name} 写入后权限为 {mode or '未知'}（期望 {entry.mode_text}）",
+                    hint="确认实例的 ~/.ssh 位于 Linux 文件系统（不要落在 /mnt/c），再重新迁移",
+                )
+            self._bridge.event.emit(f"[{name}] 完成（{owner or '未知用户'} · {mode}）")
+        return f"已迁移 {len(names)} 个文件"
+
+    def _migrate_done(self, message: str) -> None:
+        self._refresh_after_run = True
+        self._append_log(message)
+        self.summary.setText("迁移完成，正在刷新…")
+
+    def _migrate_error(self, message: str) -> None:
+        self._refresh_after_run = True
+        self._append_log(f"迁移失败：{message}")
+        self.summary.setText("迁移失败")
+        QMessageBox.critical(self, "迁移失败", message)
+
+    def _migrate_finished(self) -> None:
+        if self._closing:
+            return
+        self._set_busy(False)
+        if self._refresh_after_run:
+            self.refresh()
+
+
 class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
     """实例配置：设为默认发行版、终端默认目录，以及就地完成的环境初始化卡片。"""
 
@@ -2373,6 +3207,10 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         self.init_env = _InitEnvSection(self, distro, selected)
         outer.addWidget(self.init_env)
 
+        # SSH 迁移单独一张卡：要选来源目录、看冲突，比塞进「初始化环境」的勾选项更清楚。
+        self.ssh_migrate = _SshMigrateSection(self, distro)
+        outer.addWidget(self.ssh_migrate)
+
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.addStretch(1)
@@ -2396,10 +3234,15 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
             self.init_env.refresh_status()
 
     def _close_allowed(self) -> bool:
-        """初始化在后台进行时允许关闭，但先说明任务不会中止。"""
+        """初始化 / 迁移在后台进行时允许关闭，但先说明任务不会中止。"""
         if self.init_env.busy and not confirm(self, "初始化仍在运行", "命令会在后台继续执行；现在关闭对话框？"):
             return False
+        if self.ssh_migrate.busy and not confirm(
+            self, "SSH 迁移仍在进行", "写入命令会在后台继续执行；现在关闭对话框？"
+        ):
+            return False
         self.init_env.stop()
+        self.ssh_migrate.stop()
         return True
 
     def reject(self) -> None:
