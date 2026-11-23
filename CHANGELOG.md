@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `wslmanw`「初始化环境」在 uv 之后新增独立项目「安装 auto-uv-env」：走官方安装脚本
+  （域名不可达时回退 GitHub），把 shell 集成幂等写进 rc，进入含 `pyproject.toml`
+  的目录时自动用 uv 创建 / 激活 `.venv`；探测与状态区同步显示其版本。
 - 修复 fspack 打包后的 GUI / 工具入口：窗口骨架显式持有 ``QMenu``（PySide6 6.11
   会回收 ``addMenu(str)`` 的返回值，reshackw / pptmakew / pevieww / envw /
   filesyncw / paramcadw / parameshw / regexvalidatew / renamerw 启动即崩）；

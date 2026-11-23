@@ -2304,6 +2304,7 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
                 ssh_public_key=public_key,
                 python="3.12.3",
                 uv="0.5.14",
+                auto_uv_env="1.1.5",
                 node="20.11.0",
                 nvm="yes",
                 bun="1.2.0",
@@ -2356,7 +2357,7 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert section.status_tags["python"].isHidden() is False
         assert section.status_tags["python"].text() == "已初始化"
         assert section.status_tags["python"].tone() == "success"
-        for key in ("mirror", "ssh", "uv", "node", "bun", "rust"):
+        for key in ("mirror", "ssh", "uv", "auto_uv_env", "node", "bun", "rust"):
             assert section.checks[key].isEnabled() is True
             assert section.checks[key].isChecked() is True
             assert section.status_tags[key].isHidden() is False
@@ -2364,7 +2365,9 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
             assert section.status_tags[key].tone() == "danger"
         section._set_all(False)
         assert section.checks["python"].isChecked() is True
-        assert not any(section.checks[key].isChecked() for key in ("mirror", "ssh", "uv", "node", "bun", "rust"))
+        assert not any(
+            section.checks[key].isChecked() for key in ("mirror", "ssh", "uv", "auto_uv_env", "node", "bun", "rust")
+        )
 
         section._apply_status(_initenv.EnvStatus())
         assert section.copy_key.isEnabled() is False
@@ -2707,6 +2710,7 @@ def test_init_env_package_mirror_mismatch_reruns_config_only(home: Path, monkeyp
                 ssh_public_key="ssh-ed25519 AAAA",
                 python="3.12.3",
                 uv="0.5.14",
+                auto_uv_env="1.1.5",
                 node="20.11.0",
                 nvm="yes",
                 bun="1.2.0",

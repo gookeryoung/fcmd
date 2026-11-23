@@ -10,9 +10,10 @@ from fcmd.apps.wslman import _initenv
 def test_tasks_cover_required_items() -> None:
     keys = [task.key for task in _initenv.TASKS]
     # uv / Bun 各自独立成项：没有 uv 不能让「Python」显示未初始化。
-    assert keys == ["mirror", "ssh", "python", "uv", "node", "bun", "rust"]
+    assert keys == ["mirror", "ssh", "python", "uv", "auto_uv_env", "node", "bun", "rust"]
     assert _initenv.task_by_key("python") is not None
     assert _initenv.task_by_key("uv") is not None
+    assert _initenv.task_by_key("auto_uv_env") is not None
     assert _initenv.task_by_key("bun") is not None
     assert _initenv.task_by_key("missing") is None
 
@@ -23,6 +24,7 @@ def test_short_label_covers_all_tasks_and_falls_back() -> None:
         "SSH 密钥",
         "Python",
         "uv",
+        "auto-uv-env",
         "Node.js",
         "Bun",
         "Rust",
@@ -70,6 +72,11 @@ def test_language_scripts_use_domestic_mirrors() -> None:
     # pip / uv 不再写死清华：按系统源映射，中科大源必须命中中科大 PyPI。
     assert "mirrors.ustc.edu.cn) index='https://mirrors.ustc.edu.cn/pypi/simple'" in python_steps[1].script
     assert "mirrors.ustc.edu.cn) index='https://mirrors.ustc.edu.cn/pypi/simple'" in uv_steps[1].script
+    auto_steps = _initenv.steps_for(["auto_uv_env"])
+    assert "auto-uv-env.ashwch.com/install.sh" in auto_steps[1].script
+    assert "raw.githubusercontent.com/ashwch/auto-uv-env" in auto_steps[1].script
+    assert "auto-uv-env --version" in auto_steps[1].script
+    assert "# >>> fcmd auto-uv-env >>>" in auto_steps[1].script
     # 自动检测先让 apt 报告启用的 URI，避免注释 / 备份 / disabled 源里的旧域名被误判。
     assert "apt-get indextargets --format '$(URI)'" in python_steps[1].script
     assert "!/Enabled:[[:space:]]*no/" in python_steps[1].script
@@ -203,6 +210,7 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
             f"WSLMAN_SSH_PUB={encoded}",
             "WSLMAN_PYTHON=3.12.3",
             "WSLMAN_UV=0.5.14",
+            "WSLMAN_AUTO_UV_ENV=1.1.5",
             "WSLMAN_NODE=20.11.0",
             "WSLMAN_NVM=yes",
             "WSLMAN_BUN=1.2.0",
@@ -222,6 +230,7 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
     assert status.ssh_public_key == public_key
     assert status.python == "3.12.3"
     assert status.uv == "0.5.14"
+    assert status.auto_uv_env == "1.1.5"
     assert status.node == "20.11.0"
     assert status.nvm == "yes"
     assert status.bun == "1.2.0"
@@ -257,6 +266,7 @@ def test_present_and_default_checked() -> None:
         ssh_public_key="ssh-ed25519 AAAA",
         python="3.12.3",
         uv="0.5.14",
+        auto_uv_env="1.1.5",
         node="20.11.0",
         nvm="yes",
         bun="1.2.0",
@@ -271,6 +281,8 @@ def test_present_and_default_checked() -> None:
     assert _initenv.default_checked("python", kali) is False
     assert _initenv.present("uv", kali) is False
     assert _initenv.default_checked("uv", kali) is True
+    assert _initenv.present("auto_uv_env", kali) is False
+    assert _initenv.default_checked("auto_uv_env", kali) is True
     # 只装了 node（非 nvm）也不能算「已初始化」：还没走 nvm 方案。
     assert _initenv.present("node", _initenv.EnvStatus(node="20.11.0")) is False
     assert _initenv.present("node", _initenv.EnvStatus(node="20.11.0", nvm="yes")) is True
@@ -301,12 +313,13 @@ def test_status_rows_and_summary_reflect_state() -> None:
     assert rows["SSH 密钥"][1] is True
     assert rows["Python"] == ("3.12.3", True)
     assert rows["uv"] == ("0.5.14", True)
+    assert rows["auto-uv-env"] == ("未安装", False)
     assert rows["Node.js（nvm）"] == ("未安装", False)
     assert rows["Bun"] == ("未安装", False)
     assert rows["Rust"] == ("未安装", False)
     assert rows["pip / uv 镜像"] == ("未配置", False)
     assert rows["npm / bun 镜像"] == ("未配置", False)
-    assert len(rows) == 9
+    assert len(rows) == 10
 
     summary = _initenv.summary_text(status)
     assert "镜像源 ✗" in summary
@@ -332,10 +345,10 @@ def test_status_rows_distinguish_nvm_and_merge_mirrors() -> None:
     assert "20.11.0 / bun 1.2.0" in _initenv.summary_text(status)
 
     nvm_status = _initenv.EnvStatus(node="20.11.0", nvm="yes")
-    assert _initenv.status_rows(nvm_status)[4] == ("Node.js（nvm）", "20.11.0（nvm）", True)
+    assert _initenv.status_rows(nvm_status)[5] == ("Node.js（nvm）", "20.11.0（nvm）", True)
 
     split = _initenv.EnvStatus(pip_index="https://a/simple", uv_index="https://b/simple")
-    assert _initenv.status_rows(split)[7] == ("pip / uv 镜像", "https://a/simple · https://b/simple", True)
+    assert _initenv.status_rows(split)[8] == ("pip / uv 镜像", "https://a/simple · https://b/simple", True)
 
 
 def test_ssh_key_short_truncates() -> None:

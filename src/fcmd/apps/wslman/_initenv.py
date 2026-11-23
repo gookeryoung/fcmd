@@ -82,6 +82,10 @@ _NVM_GIT = "https://gitee.com/mirrors/nvm.git"
 _NVM_GIT_FALLBACK = "https://github.com/nvm-sh/nvm.git"
 """国内加速用的固定镜像地址：nvm 源码走 gitee，node 二进制与 bun 走 npmmirror。"""
 
+_AUTO_UV_ENV_INSTALL = "https://auto-uv-env.ashwch.com/install.sh"
+_AUTO_UV_ENV_INSTALL_FALLBACK = "https://raw.githubusercontent.com/ashwch/auto-uv-env/main/docs/install.sh"
+"""auto-uv-env 官方安装脚本；域名不可达时回退 GitHub 上的同版本脚本。"""
+
 PROBE_PREFIX = "WSLMAN_"
 """探测脚本每条结果行的前缀；以它过滤 ``bash -lc`` 读到的 profile 横幅。"""
 
@@ -117,6 +121,7 @@ class EnvStatus:
     ssh_public_key: str = ""
     python: str = ""
     uv: str = ""
+    auto_uv_env: str = ""
     node: str = ""
     nvm: str = ""
     bun: str = ""
@@ -325,6 +330,60 @@ def _rust_script() -> str:
     )
 
 
+def _auto_uv_env_rc_lines() -> tuple[str, ...]:
+    """把 auto-uv-env 的 shell 集成幂等写进 rc 文件。
+
+    官方安装脚本会自己追加一段 ``# auto-uv-env``；这里只在完全没配置时补
+    ``~/.local/share/auto-uv-env/env``，避免重复 source 两遍 hook。
+    """
+    return (
+        "add_auto_uv_env_rc() {",
+        '    file="$1"',
+        '    [ -e "$file" ] || touch "$file"',
+        '    if grep -qF "auto-uv-env" "$file" 2>/dev/null; then',
+        "        return 0",
+        "    fi",
+        "    cat >> \"$file\" <<'FCMD_AUTO_UV_ENV'",
+        "# >>> fcmd auto-uv-env >>>",
+        '[ -f "$HOME/.local/share/auto-uv-env/env" ] && . "$HOME/.local/share/auto-uv-env/env"',
+        "# <<< fcmd auto-uv-env <<<",
+        "FCMD_AUTO_UV_ENV",
+        "}",
+        'add_auto_uv_env_rc "$HOME/.bashrc"',
+        'add_auto_uv_env_rc "$HOME/.profile"',
+        'if [ -e "$HOME/.zshrc" ]; then add_auto_uv_env_rc "$HOME/.zshrc"; fi',
+    )
+
+
+def _auto_uv_env_script() -> str:
+    """安装 auto-uv-env：uv 就绪后装，官方脚本不可达时回退 GitHub raw。
+
+    auto-uv-env 负责在进入含 ``pyproject.toml`` 的目录时用 uv 自动建 / 激活
+    ``.venv``；这里只装二进制与 shell 集成，不修改 ``uv.toml``。
+    """
+    return "\n".join(
+        (
+            "set -e",
+            'export PATH="$HOME/.local/bin:$PATH"',
+            "if command -v auto-uv-env >/dev/null 2>&1; then",
+            '    echo "auto-uv-env 已安装：$(auto-uv-env --version 2>/dev/null)"',
+            "else",
+            '    echo "安装 auto-uv-env（uv 已就绪）…"',
+            '    tmp="$(mktemp)"',
+            f'    if ! curl -fsSL {_AUTO_UV_ENV_INSTALL} -o "$tmp" 2>/dev/null; then',
+            '        echo "官方安装地址不可用，回退 GitHub…"',
+            f'        curl -fsSL {_AUTO_UV_ENV_INSTALL_FALLBACK} -o "$tmp"',
+            "    fi",
+            '    sh "$tmp"',
+            '    rm -f "$tmp"',
+            "fi",
+            'mkdir -p "$HOME/.local/bin"',
+            *_auto_uv_env_rc_lines(),
+            'echo "auto-uv-env 已就绪：$(auto-uv-env --version 2>/dev/null)"',
+        )
+    )
+
+
 TASKS: tuple[InitTask, ...] = (
     InitTask(
         "mirror",
@@ -359,6 +418,16 @@ TASKS: tuple[InitTask, ...] = (
         (
             InitStep("安装 Python 软件包", _apt_script("python3", "python3-pip", "python3-venv"), root=True),
             InitStep("安装 uv 并配置镜像", uv_script()),
+        ),
+    ),
+    InitTask(
+        "auto_uv_env",
+        "安装 auto-uv-env",
+        "在 uv 之后安装 auto-uv-env：进入含 pyproject.toml 的目录时自动用 uv 创建并激活 .venv；"
+        "官方安装脚本不可达时回退 GitHub，并把 shell 集成写入 rc 文件。",
+        (
+            InitStep("安装 auto-uv-env 依赖", _apt_script("curl", "ca-certificates", "tar"), root=True),
+            InitStep("安装 auto-uv-env", _auto_uv_env_script()),
         ),
     ),
     InitTask(
@@ -401,6 +470,7 @@ _TASK_SHORT: dict[str, str] = {
     "ssh": "SSH 密钥",
     "python": "Python",
     "uv": "uv",
+    "auto_uv_env": "auto-uv-env",
     "node": "Node.js",
     "bun": "Bun",
     "rust": "Rust",
@@ -472,6 +542,9 @@ def probe_script() -> str:
             'uv_bin="$(command -v uv 2>/dev/null)"',
             '[ -z "$uv_bin" ] && [ -x "$HOME/.local/bin/uv" ] && uv_bin="$HOME/.local/bin/uv"',
             'printf "WSLMAN_UV=%s\\n" "$([ -n "$uv_bin" ] && "$uv_bin" --version 2>/dev/null | awk \'{print $2}\')"',
+            'auto_uv_bin="$(command -v auto-uv-env 2>/dev/null)"',
+            '[ -z "$auto_uv_bin" ] && [ -x "$HOME/.local/bin/auto-uv-env" ] && auto_uv_bin="$HOME/.local/bin/auto-uv-env"',
+            'printf "WSLMAN_AUTO_UV_ENV=%s\\n" "$([ -n "$auto_uv_bin" ] && "$auto_uv_bin" --version 2>/dev/null | awk \'{print $2}\')"',
             'node_bin="$(command -v node 2>/dev/null)"',
             '[ -z "$node_bin" ] && [ -x "$HOME/.local/bin/node" ] && node_bin="$HOME/.local/bin/node"',
             'printf "WSLMAN_NODE=%s\\n" "$([ -n "$node_bin" ] && "$node_bin" --version 2>/dev/null | sed \'s/^v//\')"',
@@ -516,6 +589,7 @@ def parse_status(text: str) -> EnvStatus:
         ssh_public_key=_decode_key(values.get("SSH_PUB", "")),
         python=values.get("PYTHON", ""),
         uv=values.get("UV", ""),
+        auto_uv_env=values.get("AUTO_UV_ENV", ""),
         node=values.get("NODE", ""),
         nvm=values.get("NVM", ""),
         bun=values.get("BUN", ""),
@@ -535,6 +609,7 @@ _STATUS_FIELDS: tuple[str, ...] = (
     "ssh_public_key",
     "python",
     "uv",
+    "auto_uv_env",
     "node",
     "nvm",
     "bun",
@@ -577,6 +652,8 @@ def present(key: str, status: EnvStatus) -> bool:  # noqa: PLR0911 - 每个初�
         return bool(status.python)
     if key == "uv":
         return bool(status.uv)
+    if key == "auto_uv_env":
+        return bool(status.auto_uv_env)
     if key == "node":
         return bool(status.node) and status.nvm == "yes"
     if key == "bun":
@@ -628,6 +705,7 @@ def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
         ("SSH 密钥", ssh_key_short(status.ssh_public_key) if status.ssh_ready else "未生成", status.ssh_ready),
         ("Python", status.python or "未安装", bool(status.python)),
         ("uv", status.uv or "未安装", bool(status.uv)),
+        ("auto-uv-env", status.auto_uv_env or "未安装", bool(status.auto_uv_env)),
         ("Node.js（nvm）", node_value, node_ready),
         ("Bun", status.bun or "未安装", bool(status.bun)),
         ("Rust", status.rust or "未安装", bool(status.rust)),
@@ -647,6 +725,8 @@ def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
 def summary_text(status: EnvStatus) -> str:
     """一行摘要：``镜像源 ✓ · SSH ✗ · Python 3.12.3 / uv 0.5.14 · Node.js …``。"""
     python = f"{status.python} / uv {status.uv}" if status.python and status.uv else (status.python or "✗")
+    if status.auto_uv_env:
+        python = f"{python} / auto-uv-env {status.auto_uv_env}"
     node = f"{status.node} / bun {status.bun}" if status.node and status.bun else (status.node or "✗")
     parts = [
         f"镜像源 {'✓' if status.mirror else '✗'}",

@@ -443,7 +443,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   显示「已备份」胶囊（tooltip 写清判定来源），镜像行的「已备份」胶囊与筛选也立即生效，
   不必等下次拉清单。
 - 实例配置对话框内嵌「初始化环境」卡片（纯逻辑在 `_initenv.py`）：
-  勾选国内系统源 / SSH 密钥 / Python / uv / Node.js / Bun / Rust（**7 个独立项目**，每个只看
+  勾选国内系统源 / SSH 密钥 / Python / uv / auto-uv-env / Node.js / Bun / Rust（**8 个独立项目**，每个只看
   自己那个工具是否就绪：Python 只看 `python3`，Kali、Ubuntu 这类自带 python3 的发行版直接显示
   已初始化，不会因为没装 uv 被误判；`uv` / `Bun` 各自成项，没装就单独出现在待初始化列表里；
   Node.js 按 `node` + nvm 判定，apt 装的旧 `nodejs` 不算就绪），探测与安装都走
@@ -459,7 +459,10 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   配置的独立步骤（不重装 uv、不碰系统源），不会因为两项已初始化就跳过源更新；
   uv 用 `pip install --user` 装
   （不走 astral.sh / GitHub Releases），其 Python 下载走 npmmirror 的
-  python-build-standalone；Node.js 用 nvm 装 LTS（nvm 源码
+  python-build-standalone；auto-uv-env 排在 uv 之后单独成项，走官方安装脚本
+  （域名不可达时回退 GitHub `docs/install.sh`），把 shell 集成幂等写进
+  `~/.bashrc` / `~/.profile` / `~/.zshrc`，进入含 `pyproject.toml` 的目录时自动用
+  uv 建 / 激活 `.venv`；Node.js 用 nvm 装 LTS（nvm 源码
   clone 自 gitee 镜像、`NVM_NODEJS_ORG_MIRROR` 指 npmmirror），不再用 apt 里版本较旧的
   `nodejs`；Bun 用 `npm i -g bun` 装（二进制随 `@oven/bun-linux-x64` 从 npmmirror 分发，
   不走 GitHub Releases），Bun 项自带 nvm 引导，单独勾选也能装成；Rust 沿用 rsproxy。
@@ -477,8 +480,8 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   「检测环境」「复制 SSH 公钥」「开始初始化」三个动作固定在卡片内，
   不随详情收起，收起态下也能直接操作；全选 / 全不选也放在这条常显动作行。
   展开后复用标题行显示一行摘要（收起行与摘要行互斥，不额外占高），正文是
-  左右两栏（左：7 个勾选项；右：状态值一行一项，9 项：系统镜像源 / SSH 密钥 / Python /
-  uv / Node.js（nvm）/ Bun / Rust / pip&uv 镜像 / npm&bun 镜像）+ 日志
+  左右两栏（左：8 个勾选项；右：状态值一行一项，10 项：系统镜像源 / SSH 密钥 / Python /
+  uv / auto-uv-env / Node.js（nvm）/ Bun / Rust / pip&uv 镜像 / npm&bun 镜像）+ 日志
   （经 `EventBridge` 增量回填），状态值单行省略、完整内容进 tooltip，说明文字
   收在卡片 tooltip 里，展开高度只随内容增长。每个实例的勾选与软件包源分别写入 `wslmanw.json`
   的 `distro_init_tasks` / `distro_package_mirrors`，下次打开沿用；展开 / 收起后下个事件循环再 `adjustSize`，
