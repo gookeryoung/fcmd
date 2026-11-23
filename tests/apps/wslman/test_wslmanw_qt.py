@@ -558,7 +558,7 @@ def test_image_row_shows_wslui_mirror_sources(home: Path, monkeypatch: pytest.Mo
 
 
 def test_auto_download_uses_fastest_wslui_source(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """自动策略先对 WSLUI 源测速，按最快顺序交给下载器；落盘名带实例名便于重扫。"""
+    """自动策略先对全部候选测速，WSLUI 最快的排前面，官方源仍作为兜底。"""
     from types import SimpleNamespace
 
     from fcmd.apps.wslman import _source
@@ -574,14 +574,18 @@ def test_auto_download_uses_fastest_wslui_source(home: Path, monkeypatch: pytest
         fast = _wslmanw_qt._wslui.WsluiSource("https://fast/rootfs.tar.xz", "fast", "tar.xz")
         catalog = _wslmanw_qt._wslui.WsluiCatalog((_wslmanw_qt._wslui.WsluiDistro("Ubuntu", "24.04", (slow, fast)),))
         window._apply_images((_catalog((entry,)), (entry,), catalog))
-        monkeypatch.setattr(_wslmanw_qt._wslui, "rank_sources", lambda sources: (fast, slow))
+
+        def fake_rank(candidates: Any, **_kwargs: Any) -> Any:
+            return tuple(sorted(candidates, key=lambda candidate: 0 if "fast" in candidate.url else 1))
+
+        monkeypatch.setattr(_wslmanw_qt._mirrors, "rank_candidates", fake_rank)
         seen: list[tuple[str, ...]] = []
 
         def fake_download(target: Any, *, candidates: Any, **_kwargs: Any) -> Any:
             seen.append(tuple(candidate.url for candidate in candidates))
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b"x")
-            return SimpleNamespace(size=1, source=candidates[0].ident, sha256="x")
+            return SimpleNamespace(size=1, source=candidates[0].ident, sha256="x", path=target)
 
         monkeypatch.setattr(_source, "download_mirrored", fake_download)
         monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_refresh_image_states", lambda self: None)
@@ -594,9 +598,10 @@ def test_auto_download_uses_fastest_wslui_source(home: Path, monkeypatch: pytest
             ),
         )
         window._download_payload(entry)
-        assert seen == [("https://fast/rootfs.tar.xz", "https://slow/rootfs.tar.xz")]
+        assert seen == [("https://fast/rootfs.tar.xz", "https://slow/rootfs.tar.xz", "https://e/ubuntu-24.04.wsl")]
         assert any("来源 fast" in line for line in window._log_lines)
         assert any("Ubuntu-24.04-x86_64.tar.xz" in line for line in window._log_lines)
+        assert any("自动测速择优" in line for line in window._log_lines)
     finally:
         window._downloads.clear()
         window._poll.stop()  # type: ignore[union-attr]

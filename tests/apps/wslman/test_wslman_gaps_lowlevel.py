@@ -360,3 +360,11 @@ def test_https_redirect_handler_rejects_plain_http() -> None:
 
     assert excinfo.value.code == 302
     assert "只允许 HTTPS 重定向" in str(excinfo.value)
+
+
+def test_rank_candidates_orders_by_measured_speed() -> None:
+    slow = _mirrors.Candidate("slow", "慢", "https://slow.example.com/u.tar", True)
+    fast = _mirrors.Candidate("fast", "快", "https://fast.example.com/u.tar", True)
+    ranked = _mirrors.rank_candidates((slow, fast), probe=lambda url: 2.0 if "fast" in url else 1.0)
+    assert [candidate.ident for candidate in ranked] == ["fast", "slow"]
+    assert _mirrors.rank_candidates((slow,)) == (slow,)

@@ -15,9 +15,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-__all__ = ["MIRRORS", "Candidate", "candidates", "identifiers", "label", "trusted_ids"]
+__all__ = [
+    "MIRRORS",
+    "Candidate",
+    "candidates",
+    "identifiers",
+    "label",
+    "rank_candidates",
+    "trusted_ids",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +75,17 @@ class Candidate:
     trusted: bool
     """是否可标为可信来源；镜像只有在有官方 sha256 可校验时才为 ``True``。"""
 
+    filename: str = ""
+    """该候选自己的落盘文件名；不同来源可能是不同制品（``.wsl`` / ``.tar.xz``），
+    只有同字节的源才共用调用方给的目标文件名。"""
+
+    sha256: str | None = None
+    """该候选自己的摘要；为空时沿用调用方的 ``expected_sha256``。"""
+
+    verify: bool = True
+    """``False`` 表示候选是另一份制品（例如 WSLUI 的 lxc rootfs），不能拿官方
+    sha256 校验，下载后按未校验处理。"""
+
     def to_data(self) -> dict[str, object]:
         return {"id": self.ident, "label": self.label, "url": self.url, "trusted": self.trusted}
 
@@ -96,6 +116,20 @@ def _rewrite(mirror: Mirror, url: str) -> str | None:
         if url.startswith(prefix):
             return f"{mirror.base.rstrip('/')}/{relative}{url[len(prefix) :]}"
     return None
+
+
+def rank_candidates(
+    candidates: Sequence[Candidate],
+    *,
+    probe: Callable[[str], float] | None = None,
+    latency: Callable[[str], float] | None = None,
+) -> tuple[Candidate, ...]:
+    """并发测速后按从快到慢排序；探测实现与 WSLUI 源共用一套（见 ``_wslui``）。"""
+    if len(candidates) <= 1:
+        return tuple(candidates)
+    from fcmd.apps.wslman._wslui import rank_items
+
+    return rank_items(candidates, probe=probe, latency=latency)
 
 
 def candidates(url: str, *, policy: str = AUTO, verifiable: bool = True) -> tuple[Candidate, ...]:

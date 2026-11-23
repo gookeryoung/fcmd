@@ -118,3 +118,48 @@ def test_load_catalog_caches_and_falls_back(tmp_path: Path, monkeypatch: pytest.
     stale = _wslui.load_catalog(force=True)
     assert stale.from_cache is True and stale.stale is True
     assert stale.warnings
+
+
+def test_match_sources_falls_back_to_name_only_for_unversioned_entries() -> None:
+    catalog = _wslui.WsluiCatalog(
+        (
+            _wslui.WsluiDistro("Debian", "13", (_wslui.WsluiSource("https://mirror/debian.tar.xz", "tuna", "tar.xz"),)),
+            _wslui.WsluiDistro("Kali", "current", (_wslui.WsluiSource("https://mirror/kali.tar.xz", "nju", "tar.xz"),)),
+            _wslui.WsluiDistro(
+                "AlmaLinux", "10", (_wslui.WsluiSource("https://mirror/alma10.tar.xz", "bfsu", "tar.xz"),)
+            ),
+        )
+    )
+    debian = _images.ImageEntry(
+        "Debian",
+        "Debian GNU/Linux",
+        ("manifest",),
+        (_images.ImageDownload("x86_64", "https://salsa.debian.org/Debian_WSL_AMD64_v1.26.0.0.wsl"),),
+    )
+    assert [source.mirror for source in _wslui.match_sources(catalog, debian)] == ["tuna"]
+    kali = _images.ImageEntry(
+        "kali-linux",
+        "Kali Linux Rolling",
+        ("manifest",),
+        (_images.ImageDownload("x86_64", "https://kali.download/kali-linux.wsl"),),
+    )
+    assert [source.mirror for source in _wslui.match_sources(catalog, kali)] == ["nju"]
+    # 带数字版本时不做前缀降级，避免 AlmaLinux-8 拿到 10 的镜像源。
+    alma8 = _images.ImageEntry(
+        "AlmaLinux-8",
+        "AlmaLinux OS 8",
+        ("manifest",),
+        (_images.ImageDownload("x86_64", "https://github.com/AlmaLinux-8.wsl"),),
+    )
+    assert _wslui.match_sources(catalog, alma8) == ()
+
+
+def test_wslui_candidates_carry_own_filename_and_skip_official_sha() -> None:
+    catalog = _wslui.WsluiCatalog(_wslui.parse_catalog(SAMPLE))
+    entry = _entry()
+    candidates = _wslui.wslui_candidates(entry, catalog, arch="x86_64")
+    assert [candidate.ident for candidate in candidates] == ["tsinghua", "ustc"]
+    assert candidates[0].filename == "Ubuntu-24.04-x86_64.wsl"
+    assert candidates[0].trusted is False
+    assert candidates[0].verify is False
+    assert candidates[0].sha256 is None

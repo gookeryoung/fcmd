@@ -214,3 +214,33 @@ def test_download_mirrored_switches_source_and_drops_part_on_check_failure(
     assert result.path == target
     assert not part.exists()
     assert not meta.exists()
+
+
+def test_download_mirrored_honors_candidate_filename_and_verify_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """不同格式的候选各写各的文件；``verify=False`` 时不拿官方 sha256 校验。"""
+    sentinel = tmp_path / "sentinel.tar"
+    candidate = _mirrors.Candidate(
+        "tuna",
+        "清华 TUNA",
+        "https://mirror.example.com/rootfs.tar.xz",
+        False,
+        filename="Ubuntu-24.04-x86_64.tar.xz",
+        verify=False,
+    )
+    calls: list[tuple[str, Path, str | None]] = []
+
+    def fake_download(url: str, path: Path, **kwargs: object) -> _source.DownloadResult:
+        digest = kwargs.get("expected_sha256")
+        calls.append((url, path, digest if isinstance(digest, str) else None))
+        path.write_bytes(b"x")
+        return _source.DownloadResult(path=path, sha256="b" * 64, size=1, verified=False, resumed=False)
+
+    monkeypatch.setattr(_source, "download", fake_download)
+    result = _source.download_mirrored(sentinel, candidates=(candidate,), expected_sha256="a" * 64)
+
+    expected_path = tmp_path / "Ubuntu-24.04-x86_64.tar.xz"
+    assert calls == [(candidate.url, expected_path, None)]
+    assert result.path == expected_path
+    assert result.source == "tuna"

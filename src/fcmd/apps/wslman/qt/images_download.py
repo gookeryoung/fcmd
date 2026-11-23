@@ -182,13 +182,29 @@ class ImagesDownloadMixin:
         self._refresh_distro_images()
 
     def _mirror_note(self, entry: ImageEntry) -> tuple[str, str]:
-        """镜像行副标题后的「可用镜像源」文本与 tooltip。"""
+        """镜像行副标题后的「可用镜像源」文本与 tooltip。
+
+        列出该镜像的全部候选：WSLUI 清单里的多个源、可用官方 sha256 校验的国内镜像，
+        以及官方源兜底；自动下载时会对这些候选测速择优。
+        """
         sources = _owner._wslui.match_sources(self._wslui_catalog, entry)
+        labels: list[str] = list(_owner._wslui.mirror_labels(sources)) if sources else []
+        lines: list[str] = []
         if sources:
-            labels = _owner._wslui.mirror_labels(sources)
-            return f"镜像源：{' / '.join(labels)}", _owner._wslui.mirror_tooltip(sources)
+            lines.extend(_owner._wslui.mirror_tooltip(sources).splitlines())
+        for download in entry.downloads:
+            if not download.sha256:
+                continue
+            for candidate in _owner._mirrors.candidates(download.url, policy=_owner._mirrors.AUTO, verifiable=True):
+                if candidate.ident == _owner._mirrors.OFFICIAL:
+                    continue
+                if candidate.label not in labels:
+                    labels.append(candidate.label)
+                    lines.append(f"{candidate.label} · {candidate.url}")
         if entry.downloads:
-            return "镜像源：官方源", "未在 WSLUI 镜像清单中找到该发行版，使用官方下载地址"
+            labels.append(_owner._mirrors.label(_owner._mirrors.OFFICIAL))
+            lines.append(f"{_owner._mirrors.label(_owner._mirrors.OFFICIAL)} · {entry.downloads[0].url}")
+            return f"镜像源：{' / '.join(labels)}", "\n".join(lines)
         return "镜像源：wsl --install（无直链）", "该条目只有系统安装来源，没有可直接下载的镜像源"
 
     def _render_images(self) -> None:

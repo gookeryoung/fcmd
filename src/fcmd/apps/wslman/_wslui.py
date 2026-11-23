@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from fcmd.apps.wslman._mirrors import Candidate
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.infras.system import fcmd_home
 
@@ -48,7 +49,9 @@ __all__ = [
     "parse_catalog",
     "probe_tcp_latency",
     "probe_throughput",
+    "rank_items",
     "rank_sources",
+    "wslui_candidates",
 ]
 
 INSTALL_INFO_URL = "https://api1.wslui.com/desktop/v1/helper/install"
@@ -291,11 +294,43 @@ def match_sources(catalog: WsluiCatalog | None, entry: ImageEntry) -> tuple[Wslu
             score = 3
         elif name_key and version_key and any(key.startswith(name_key) and version_key in key for key in entry_keys):
             score = 2
+        elif name_key and version_key and any(key == name_key for key in entry_keys):
+            # 条目本身不带版本（如 ``Debian`` / ``archlinux``）时按发行版名匹配；
+            # 带版本号的条目（如 ``AlmaLinux-8``）不会走到这里，避免拿错版本。
+            score = 2
+        elif (
+            name_key
+            and any(key.startswith(name_key) for key in entry_keys)
+            and not any(any(ch.isdigit() for ch in key) for key in entry_keys)
+        ):
+            # 名字前缀也认（``kali-linux`` 对 ``Kali`` / ``Ubuntu`` 对 ``Ubuntu``），
+            # 但官方条目带数字版本时不降级匹配，避免把 ``AlmaLinux-8`` 指向别的版本。
+            score = 2
         elif dkey and any(key.startswith(dkey) for key in entry_keys):
             score = 1
         if score > best[0]:
             best = (score, distro.sources)
     return best[1]
+
+
+def wslui_candidates(entry: ImageEntry, catalog: WsluiCatalog | None, *, arch: str = "x86_64") -> tuple[Candidate, ...]:
+    """把匹配到的 WSLUI 源转成下载候选：每个源带自己的落盘名，且不能拿官方 sha256 校验。
+
+    WSLUI 常提供与官方不同格式的制品（``lxc`` 的 ``tar.xz``），所以 ``verify=False``；
+    下载器只在该候选上跳过官方摘要，不会把未校验的字节标成已验证。
+    """
+    sources = match_sources(catalog, entry)
+    return tuple(
+        Candidate(
+            source.mirror or source.host or "wslui",
+            source.label,
+            source.url,
+            False,
+            filename=download_filename(entry, source, arch),
+            verify=False,
+        )
+        for source in sources
+    )
 
 
 def mirror_labels(sources: Sequence[WsluiSource]) -> tuple[str, ...]:
@@ -367,6 +402,32 @@ def probe_throughput(url: str, *, timeout: float = _PROBE_TIMEOUT_S) -> float:
     return _probe_throughput(url, timeout=timeout)
 
 
+def rank_items(
+    items: Sequence[Any],
+    *,
+    probe: Callable[[str], float] | None = None,
+    latency: Callable[[str], float] | None = None,
+) -> tuple[Any, ...]:
+    """并发测速后按最快到最慢排序；全部失败时回退 TCP 延迟。
+
+    ``items`` 只需带 ``url`` 属性，因此 WSLUI 源与国内镜像候选可以共用同一套
+    探测逻辑（:func:`fcmd.apps.wslman._mirrors.rank_candidates`）。
+    """
+    if len(items) <= 1:
+        return tuple(items)
+    probe = probe or probe_throughput
+    latency = latency or probe_tcp_latency
+    with ThreadPoolExecutor(max_workers=min(6, len(items)), thread_name_prefix="wslui-probe") as pool:
+        measured = list(pool.map(lambda item: (item, probe(item.url)), items))
+    if any(speed > 0 for _item, speed in measured):
+        measured.sort(key=lambda pair: pair[1], reverse=True)
+        return tuple(item for item, _speed in measured)
+    with ThreadPoolExecutor(max_workers=min(6, len(items)), thread_name_prefix="wslui-latency") as pool:
+        timed = list(pool.map(lambda item: (item, latency(item.url)), items))
+    timed.sort(key=lambda pair: pair[1])
+    return tuple(item for item, _latency in timed)
+
+
 def rank_sources(
     sources: Sequence[WsluiSource],
     *,
@@ -374,16 +435,4 @@ def rank_sources(
     latency: Callable[[str], float] | None = None,
 ) -> tuple[WsluiSource, ...]:
     """并发测速后按最快到最慢排序；全部失败时回退 TCP 延迟。"""
-    if len(sources) <= 1:
-        return tuple(sources)
-    probe = probe or probe_throughput
-    latency = latency or probe_tcp_latency
-    with ThreadPoolExecutor(max_workers=min(6, len(sources)), thread_name_prefix="wslui-probe") as pool:
-        measured = list(pool.map(lambda source: (source, probe(source.url)), sources))
-    if any(speed > 0 for _source, speed in measured):
-        measured.sort(key=lambda item: item[1], reverse=True)
-        return tuple(source for source, _speed in measured)
-    with ThreadPoolExecutor(max_workers=min(6, len(sources)), thread_name_prefix="wslui-latency") as pool:
-        timed = list(pool.map(lambda source: (source, latency(source.url)), sources))
-    timed.sort(key=lambda item: item[1])
-    return tuple(source for source, _latency in timed)
+    return rank_items(sources, probe=probe, latency=latency)  # type: ignore[return-value]

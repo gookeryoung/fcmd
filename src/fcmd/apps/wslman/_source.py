@@ -584,25 +584,33 @@ def download_mirrored(  # noqa: PLR0913
     opener: _Opener | None = None,
     progress: ProgressCallback | None = None,
 ) -> DownloadResult:
-    """按候选顺序下载：国内镜像优先，失败或校验不过就换下一个，官方源兜底。
+    """按候选顺序下载：自动测速后的最快源优先，失败或校验不过就换下一个。
 
-    候选来自 :func:`fcmd.apps.wslman._mirrors.candidates`，每个候选都用同一个官方
-    sha256 校验，所以「换了源」不会降低可信度；``source`` 记录实际用的那个。
+    候选来自 :func:`fcmd.apps.wslman._mirrors.candidates` /
+    :func:`fcmd.apps.wslman._wslui.wslui_candidates`。每个候选可以带自己的落盘名
+    （``filename``，不同格式的制品不会写进同一个文件）、自己的摘要（``sha256``）与
+    ``verify`` 标记：WSLUI 的 ``tar.xz`` 与官方 ``.wsl`` 不是同一份字节，不拿官方
+    sha256 校验它。``source`` 记录实际用的那个候选。
     """
-    part = part_path(Path(target))
-    meta_path = _meta_for(part)
+    sentinel = Path(target)
+    kept_part = sentinel
     failures: list[str] = []
     for index, candidate in enumerate(candidates):
         last_candidate = index == len(candidates) - 1
+        candidate_target = sentinel.parent / candidate.filename if candidate.filename else sentinel
+        expected = candidate.sha256 or (expected_sha256 if candidate.verify else None)
         for _attempt in range(_MAX_RESUME_ATTEMPTS):
             if cancelled is not None and cancelled():
                 raise KeyboardInterrupt
+            part = part_path(candidate_target)
+            meta_path = _meta_for(part)
+            kept_part = part
             before = part.stat().st_size if part.is_file() else 0
             try:
                 result = download(
                     candidate.url,
-                    target,
-                    expected_sha256=expected_sha256,
+                    candidate_target,
+                    expected_sha256=expected,
                     opener=opener,
                     label=label,
                     cancelled=cancelled,
@@ -623,7 +631,7 @@ def download_mirrored(  # noqa: PLR0913
                     meta_path.unlink(missing_ok=True)
                 break
             return replace(result, source=candidate.ident)
-    kept = part.stat().st_size if part.is_file() else 0
+    kept = kept_part.stat().st_size if kept_part.is_file() else 0
     resume = f"；已保留 {kept} 字节，重试会从断点续传" if kept else ""
     raise runtime_error(
         "所有下载源均失败：" + "；".join(failures),

@@ -226,43 +226,38 @@ class ImagesManageMixin:
             self.set_page_status("images", f"{name} 取消中…")
 
     def _launch_download(self, task: _owner._DownloadTask) -> None:
-        """启动一项下载；设置项在主线程读好，工作线程只碰纯数据。"""
+        """启动一项下载；设置项在主线程读好，工作线程只碰纯数据。
+
+        每个镜像的候选来自三处并合并去重：WSLUI 镜像清单（同一发行版通常有多个源）、
+        国内镜像改写（需官方 sha256 才能用）、官方源兜底。``自动`` 策略下先对所有候选
+        并发测速，按快慢依次尝试；每个候选带自己的落盘名与摘要口径，换源不会把不同
+        格式的制品写进同一个文件。
+        """
         entry = task.entry
         expected = self.expected_sha.text().strip() or None
         mirror_index = self.mirror.currentIndex()
-        mirror_policy = self.mirror_ids[mirror_index] if mirror_index >= 0 else "auto"
+        policy = self.mirror_ids[mirror_index] if mirror_index >= 0 else _owner._mirrors.AUTO
         directory = self._download_dir_path()
-        wslui_sources = _owner._wslui.match_sources(self._wslui_catalog, entry)
+        wslui_catalog = self._wslui_catalog
+        download = _owner.w.pick_download(entry) if entry.downloads else None
+        arch = download.arch if download is not None else "x86_64"
 
         def work(cancel: threading.Event) -> str:
             env = _owner.cli._build_environment()
-            if mirror_policy == _owner._mirrors.AUTO and wslui_sources:
-                ranked = _owner._wslui.rank_sources(wslui_sources)
-                arch = _owner.w.pick_download(entry).arch if entry.downloads else "x86_64"
-                target = directory / _owner._wslui.download_filename(entry, ranked[0], arch)
-                if target.exists():
-                    raise _owner.invalid_argument(f"目标文件已存在：{target}", hint="换一个目录或先删除旧文件")
-                check = _owner.cli._preflight_for(env, target, None, estimated=True)
-                if not check.ok:
-                    raise _owner.runtime_error(f"目标卷空间不足：{check.detail}", hint="换一个目录")
-                from fcmd.apps.wslman import _source
-
-                candidates = tuple(
-                    _owner._mirrors.Candidate(source.mirror, source.label, source.url, False) for source in ranked
+            auto = policy == _owner._mirrors.AUTO
+            # WSLUI 的 lxc rootfs 与官方 .wsl 不是同一份字节：用户显式给了 sha256 时
+            # 只走可校验的官方 / 国内镜像，避免把未校验的字节当成校验通过。
+            wslui = _owner._wslui.wslui_candidates(entry, wslui_catalog, arch=arch) if auto and expected is None else ()
+            if download is not None:
+                filename = _owner.w.image_filename(entry.name, download)
+                digest = expected or download.sha256
+                official = tuple(
+                    _owner._mirrors.Candidate(c.ident, c.label, c.url, c.trusted, filename=filename, sha256=digest)
+                    for c in _owner._mirrors.candidates(download.url, policy=policy, verifiable=bool(digest))
                 )
-                result_data = _source.download_mirrored(
-                    target,
-                    candidates=candidates,
-                    expected_sha256=None,
-                    cancelled=cancel.is_set,
-                    progress=lambda done, total: self._progress_bridge.progress.emit((entry.name, done, total)),
-                )
-                used = next((source for source in ranked if source.mirror == result_data.source), ranked[0])
-                return (
-                    f"已下载 {target}（{_owner.format_bytes(result_data.size)}，来源 {used.label}，自动测速择优）；"
-                    "点行内「安装」导入 WSL"
-                )
-            if not entry.downloads:
+            else:
+                official = ()
+            if not wslui and not official:
                 # 只有 CLI / Store 来源：没有归档可下载，直接走 wsl --install。
                 _owner.cli._run_step(
                     env,
@@ -273,30 +268,39 @@ class ImagesManageMixin:
                 )
                 return f"已通过 wsl --install 安装 {entry.name}；用「打开终端」启动"
 
-            from fcmd.apps.wslman import _source
-
-            download = _owner.w.pick_download(entry)
-            target = directory / _owner.w.image_filename(entry.name, download)
-            if target.exists():
-                raise _owner.invalid_argument(f"目标文件已存在：{target}", hint="换一个目录或先删除旧文件")
-            check = _owner.cli._preflight_for(env, target, None, estimated=True)
+            candidates = (*wslui, *official)
+            if auto and len(candidates) > 1:
+                candidates = _owner._mirrors.rank_candidates(candidates)
+            primary = (
+                directory / candidates[0].filename if candidates[0].filename else directory / f"{entry.name}-{arch}.tar"
+            )
+            if primary.exists():
+                raise _owner.invalid_argument(f"目标文件已存在：{primary}", hint="换一个目录或先删除旧文件")
+            check = _owner.cli._preflight_for(env, primary, None, estimated=True)
             if not check.ok:
                 raise _owner.runtime_error(f"目标卷空间不足：{check.detail}", hint="换一个目录")
+
+            from fcmd.apps.wslman import _source
+
             result_data = _source.download_mirrored(
-                target,
-                candidates=_owner._mirrors.candidates(
-                    download.url,
-                    policy=mirror_policy,
-                    verifiable=bool(expected or download.sha256),
-                ),
-                expected_sha256=expected or download.sha256,
+                primary,
+                candidates=candidates,
+                expected_sha256=expected or (download.sha256 if download is not None else None),
                 cancelled=cancel.is_set,
                 progress=lambda done, total: self._progress_bridge.progress.emit((entry.name, done, total)),
             )
+            used = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if candidate.ident == result_data.source and candidate.filename == result_data.path.name
+                ),
+                next((candidate for candidate in candidates if candidate.ident == result_data.source), candidates[0]),
+            )
+            mode = "，自动测速择优" if auto else ""
             return (
-                f"已下载 {target}（{_owner.format_bytes(result_data.size)}，"
-                f"来源 {_owner._mirrors.label(result_data.source)}，sha256 {result_data.sha256}）；"
-                "点行内「安装」导入 WSL"
+                f"已下载 {result_data.path}（{_owner.format_bytes(result_data.size)}，"
+                f"来源 {used.label}{mode}）；点行内「安装」导入 WSL"
             )
 
         def runner(cancel: threading.Event) -> tuple[str, str]:
