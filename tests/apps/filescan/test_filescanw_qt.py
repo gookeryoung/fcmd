@@ -75,7 +75,10 @@ def test_window_builds_with_defaults(home: Path) -> None:
         assert window._whitelist_table.rowCount() >= 1
         assert window._rules_table.rowCount() == len(builtin_ruleset().rules)
         assert window._start_button.isEnabled()
-        assert not window._cancel_button.isEnabled()
+        assert window._start_button.text() == "开始扫描"
+        # 取消收进同一个按钮：扫描页不再有独立的取消按钮 / 页内进度条。
+        assert not hasattr(window, "_cancel_button")
+        assert not hasattr(window, "_progress")
         assert window.status_text().startswith("规则")
     finally:
         window.deleteLater()
@@ -196,6 +199,9 @@ def test_scan_progress_and_result_status_stay_on_their_pages(home: Path, sample:
         window._on_progress(3, 10, str(sample))
         assert window.page_status("scan").startswith("正在扫描 3/10")
         assert window.page_status("results") == "结果是空的"
+        # 进度同时进状态栏右侧进度条（参考 wslmanw），而不是扫描页里的控件。
+        assert window.status_bar.loading_bar.is_running()
+        assert window.status_bar.loading_bar.text_label.text().startswith("扫描 30%")
 
         # 扫描完成自动切到结果页，两页各自留下本次结论。
         window.show_page("scan")
@@ -289,7 +295,9 @@ def test_settings_page_holds_options_whitelist_and_cache(home: Path, sample: Pat
         scan_titles = [card.title() for card in window._scan_page.findChildren(Card)]
         assert scan_titles == ["扫描目录", "开始扫描"]
         assert window._scan_page.isAncestorOf(window._start_button)
-        assert window._scan_page.isAncestorOf(window._progress)
+        from fcmd.gui.widgets import ProgressBar
+
+        assert window._scan_page.findChildren(ProgressBar) == []
         assert "白名单" in window._options_note.text()
 
         # 在设置页改了选项，切回扫描页时摘要随之更新。
@@ -299,6 +307,32 @@ def test_settings_page_holds_options_whitelist_and_cache(home: Path, sample: Pat
         window.show_page("scan")
         assert "深度 3" in window._options_note.text()
         assert "并发 7" in window._options_note.text()
+    finally:
+        window.deleteLater()
+
+
+def test_scan_button_toggles_between_start_and_stop(home: Path, sample: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """同一按钮在空闲 / 扫描中切换：点击先开扫，再点就是停止。"""
+    window = _window()
+    try:
+        calls: list[str] = []
+        monkeypatch.setattr(window, "_start_scan", lambda: calls.append("start"))
+        window._toggle_scan()
+        assert calls == ["start"]
+
+        monkeypatch.setattr(window, "_cancel_scan", lambda: calls.append("stop"))
+        window._worker_running = True
+        window._toggle_scan()
+        assert calls == ["start", "stop"]
+
+        window._set_scan_running(True)
+        assert window._start_button.text() == "停止扫描"
+        assert window._start_button.objectName() == "Danger"
+
+        window._set_scan_running(False)
+        assert window._start_button.text() == "开始扫描"
+        assert window._start_button.objectName() == "Primary"
+        assert window._start_button.isEnabled()
     finally:
         window.deleteLater()
 
@@ -328,5 +362,23 @@ def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> No
         assert options.include_exts == (".txt",)
         assert window._use_cache.isChecked() is False
         assert window._current_settings().use_cache is False
+    finally:
+        window.deleteLater()
+
+
+def test_scan_dirs_remove_without_confirmation(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """扫描目录移除只清列表、随时能加回，因此不再弹确认框。"""
+    from fcmd.gui.widgets import storage as storage_module
+
+    def _no_confirm(*_args: object, **_kwargs: object) -> bool:
+        pytest.fail("扫描目录移除不应弹确认框")
+
+    monkeypatch.setattr(storage_module, "confirm", _no_confirm)
+    window = _window()
+    try:
+        first, second = tmp_path / "scan-a", tmp_path / "scan-b"
+        window._dirs_card.set_roots([first, second])
+        window._dirs_card._remove(str(second))
+        assert window._dirs_card.roots() == [first]
     finally:
         window.deleteLater()

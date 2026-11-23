@@ -295,3 +295,18 @@ def test_scan_status_text_hint_survives_full_cache_reuse() -> None:
     text = filescanw.scan_status_text(_status_result(stats))
     assert "缓存复用 3" in text
     assert "未发现命中" in text
+
+
+def test_scan_progress_text_matches_status_bar_style() -> None:
+    """状态栏进度按文件数给百分比 / 已扫 / 速度 / 剩余，与 wslmanw 下载口径对齐。"""
+    text = filescanw.scan_progress_text(420, 1000, 12.0)
+    assert text.startswith("扫描 42% · 420 / 1000 个文件")
+    assert "12 个/s" in text
+    assert "剩余" in text
+
+
+def test_scan_progress_text_without_total_or_rate() -> None:
+    """总量未知时只给已扫数；速度未采样到时不追加速度与剩余。"""
+    assert filescanw.scan_progress_text(7, 0) == "扫描 7 个文件"
+    assert filescanw.scan_progress_text(0, 0) == "扫描 0 个文件"
+    assert "个/s" not in filescanw.scan_progress_text(3, 10)

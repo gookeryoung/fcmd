@@ -2,8 +2,9 @@
 
 左侧边栏四页（与 wslmanw / llmw 同一套 ``SidebarNav``，避免表单堆叠）：
 
-- **扫描**：多目录列表（共享 ``StorageCard``）+ 开始 / 取消、进度条与一行当前选项
-  摘要（递归 / 深度 / 并发 / 白名单后缀数 / 缓存开关），只放「扫什么 + 开始」。
+- **扫描**：多目录列表（共享 ``StorageCard``）+ 开始 / 停止（同一按钮切换）与
+  一行当前选项摘要（递归 / 深度 / 并发 / 白名单后缀数 / 缓存开关）；扫描进度
+  与其他长任务一样写在窗口状态栏右侧，不再占扫描页高度。
 - **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
   可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出
   敏感原文）。
@@ -71,6 +72,7 @@ __all__ = [
     "parse_whitelist_text",
     "run_gui",
     "save_settings",
+    "scan_progress_text",
     "scan_status_text",
     "settings_from_mapping",
     "settings_to_mapping",
@@ -391,6 +393,28 @@ def validate_exts(exts: Iterable[str]) -> tuple[tuple[str, ...], tuple[str, ...]
 def parse_and_validate_ext_line(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """按英文/中文逗号拆分一行后缀并校验，返回 ``(有效后缀, 非法条目)``。"""
     return validate_exts(_EXT_SEPARATORS.split(text))
+
+
+def scan_progress_text(done: int, total: int, rate: float = 0.0) -> str:
+    """状态栏右侧的扫描进度短文案，口径参考 wslmanw 的下载 / 导出进度。
+
+    进度按文件数计：``扫描 42% · 420 / 1000 个文件 · 12 个/s · 剩余 48s``。
+    总量未知时只给已扫数；速度未采样到（刚开始 / 已停止）时省略速度与剩余。
+    """
+    from fcmd.infras.download import format_eta
+
+    scanned = max(0, done)
+    files = max(0, total)
+    if files > 0:
+        percent = max(0, min(100, int(scanned * 100 / files)))
+        parts = [f"扫描 {percent}%", f"{scanned} / {files} 个文件"]
+    else:
+        parts = [f"扫描 {scanned} 个文件"]
+    if rate > 0:
+        parts.append(f"{rate:.0f} 个/s")
+        if files > scanned:
+            parts.append(f"剩余 {format_eta((files - scanned) / rate)}")
+    return " · ".join(parts)
 
 
 def scan_status_text(result: ScanResult) -> str:

@@ -473,6 +473,9 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
 
     ``labels`` / ``metas`` 可按下标覆盖卡片标题与副标题（如「左目录 / 右目录」），
     达到 ``max_count`` 后不再显示「添加」卡片。
+
+    ``confirm_remove=False`` 时移除目录不弹确认框：适合「移除只清列表、随时能再加回」
+    的宿主（如 filescanw 扫描目录），避免每次点「移除」都多一次模态确认。
     """
 
     changed = Signal(object)
@@ -489,6 +492,7 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
         primary_label: str = "主目录",
         dialog_title: str = "添加目录",
         remove_title: str = "移除目录",
+        confirm_remove: bool = True,
         note: str = "",
         min_count: int = 1,
         max_count: int = 0,
@@ -515,6 +519,7 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
         self._open_path = open_path or (lambda path: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
         self._dialog_title = dialog_title
         self._remove_title = remove_title
+        self._confirm_remove = confirm_remove
         if hint:
             # 添加入口只保留网格末尾的虚线卡片（Steam 式），不再在标题行重复放按钮。
             self.body.addWidget(hint_label(hint, wrap=False))
@@ -605,7 +610,9 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
         if len(self._roots.roots) <= self._roots.min_count:
             self.message.emit("至少要保留一个目录")
             return
-        if not confirm(self, self._remove_title, f"从列表移除以下目录？\n{path}\n\n磁盘文件不会被删除。"):
+        if self._confirm_remove and not confirm(
+            self, self._remove_title, f"从列表移除以下目录？\n{path}\n\n磁盘文件不会被删除。"
+        ):
             return
         if not self._roots.remove(path):
             self.message.emit(f"目录不在列表中：{path}")

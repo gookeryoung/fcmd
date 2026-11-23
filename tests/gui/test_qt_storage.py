@@ -204,3 +204,22 @@ def test_path_pair_card_reads_swaps_and_emits() -> None:
         assert seen[-1] == ("A", "B")
     finally:
         card.deleteLater()
+
+
+def test_storage_card_remove_can_skip_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``confirm_remove=False``：移除只清列表，不弹确认框（filescanw 扫描目录）。"""
+    from fcmd.gui.widgets import storage as storage_module
+
+    def _no_confirm(*_args: object, **_kwargs: object) -> bool:
+        pytest.fail("confirm_remove=False 时不应弹确认框")
+
+    monkeypatch.setattr(storage_module, "confirm", _no_confirm)
+    app = QApplication.instance() or QApplication([])
+    card = StorageCard([Path("D:/scan-a"), Path("E:/scan-b")], show_primary=False, min_count=0, confirm_remove=False)
+    try:
+        app.processEvents()
+        card._remove(str(Path("E:/scan-b")))
+        app.processEvents()
+        assert card.roots() == [Path("D:/scan-a")]
+    finally:
+        card.deleteLater()

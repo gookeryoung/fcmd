@@ -5,8 +5,9 @@
 基座提供），右侧按 **扫描 / 结果 / 规则 / 设置** 四页分页，每页拿满整个内容区，
 不再用顶部标签条挤压横向空间。分页按「动作 / 结果 / 规则 / 配置」分层：
 
-- **扫描**（扫描目录 + 开始 / 取消 / 进度 + 当前选项只读摘要）：只放「扫什么 +
-  开始」，动作不再和表单抢高度；
+- **扫描**（扫描目录 + 开始 / 停止 + 当前选项只读摘要）：只放「扫什么 + 开始」，
+  扫描中同一按钮切成「停止扫描」，进度写到状态栏右侧（参考 wslmanw），不再占
+  扫描页高度；
 - **结果**（按文件聚合命中、规则 / 路径筛选、打码导出）：表格吃满页面高度，
   扫描结束自动切到本页；
 - **规则**（规则表、表达式校验与规则集导入导出）；
@@ -16,8 +17,8 @@
 每个页面是 :class:`~fcmd.gui.page.AppPage` 子类，状态栏文字按页隔离：扫描进度
 写到扫描页，筛选 / 导出结果写到结果页，规则增删改写到规则页，白名单 / 缓存 / 配置
 操作写到设置页，切页后各自恢复。
-扫描在 ``QThreadPool`` 中执行，进度经信号回投主线程，取消走 :class:`CancelToken`，
-关窗时置位取消并等待线程池收尾。
+扫描在 ``QThreadPool`` 中执行，进度经信号回投主线程；开始后按钮切换为「停止扫描」，
+点击置位 :class:`CancelToken`，关窗时同样置位取消并等待线程池收尾。
 
 扫描参数、规则集、设置与报告格式全部复用 :mod:`fcmd.apps.filescan` 的纯逻辑；
 本模块只做控件编排与信号连接。窗口设置继续写
@@ -88,7 +89,6 @@ from fcmd.gui.widgets import (
     Card,
     FormGrid,
     PageScroll,
-    ProgressBar,
     StorageCard,
     button,
     confirm,
@@ -98,6 +98,7 @@ from fcmd.gui.widgets import (
 )
 from fcmd.gui.window import QtMainWindow
 from fcmd.gui.workers import submit
+from fcmd.infras.download import SpeedMeter
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -109,7 +110,7 @@ NAV_TITLE = "敏感扫描"
 DEFAULT_SIZE = (1120, 760)
 
 PAGES: tuple[PageSpec, ...] = (
-    PageSpec("scan", "扫描", "扫描目录、开始 / 取消与当前选项摘要", "scan"),
+    PageSpec("scan", "扫描", "扫描目录、开始 / 停止与当前选项摘要", "scan"),
     PageSpec("results", "结果", "按文件聚合的命中、筛选与打码导出", "search"),
     PageSpec("rules", "规则", "规则表、启停、组合表达式与规则集导入导出", "check-square"),
     PageSpec("settings", "设置", "扫描范围、后缀白名单与缓存 / 配置", "settings"),
@@ -364,6 +365,8 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._token: CancelToken | None = None
         self._bridge: _ScanProgress | None = None
         self._worker_running = False
+        # 扫描进度按文件数计速（个/s），与状态栏右侧进度条同一套采样口径。
+        self._scan_meter = SpeedMeter(smoothing=0.5)
         self._paths: list[str] = list(self.settings.paths)
         self._whitelist_notice = ""
         super().__init__(
@@ -414,7 +417,8 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         # 扫描目录复用与 wslmanw「工作目录」/ llmw「存储」同一套 StorageCard
         # （Steam 式磁盘卡网格 + 添加 / 移除 / 打开）。扫描没有「主目录」概念，
         # 所以 show_primary=False：不显示主目录胶囊，也不出「设为主目录」按钮；
-        # min_count=0 允许清空（未配置目录时点扫描会提示先添加）。
+        # min_count=0 允许清空（未配置目录时点扫描会提示先添加）；移除只清列表、
+        # 随时能再加回，故 confirm_remove=False 不弹确认。
         self._dirs_card = StorageCard(
             [Path(item) for item in self._paths],
             title="扫描目录",
@@ -422,6 +426,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             add_text="添加目录",
             dialog_title="添加扫描目录",
             remove_title="移除扫描目录",
+            confirm_remove=False,
             min_count=0,
             show_primary=False,
             parent=page,
@@ -434,22 +439,16 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._dirs_card.add_title_action(clear_button)
         body.addWidget(self._dirs_card)
 
-        # 动作卡：开始 / 取消 + 进度条 + 当前选项摘要。选项与白名单挪到设置页，
-        # 这里只留「看一眼就能开扫」的动作与当前口径，扫描页不再纵向堆表单。
+        # 动作卡：开始 / 停止（同一按钮切换）+ 当前选项摘要。进度写到状态栏右侧
+        # （参考 wslmanw 的下载 / 导出口径），扫描页不再放进度条或第二个取消按钮。
         action_card = Card("开始扫描")
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(6)
         self._start_button = button("开始扫描", kind="primary", icon="scan")
-        self._start_button.clicked.connect(self._start_scan)
+        self._start_button.clicked.connect(self._toggle_scan)
         actions.addWidget(self._start_button)
-        self._cancel_button = button("取消")
-        self._cancel_button.setEnabled(False)
-        self._cancel_button.clicked.connect(self._cancel_scan)
-        actions.addWidget(self._cancel_button)
-        actions.addWidget(QLabel("进度", action_card))
-        self._progress = ProgressBar(parent=action_card)
-        actions.addWidget(self._progress, 1)
+        actions.addStretch(1)
         action_card.body.addLayout(actions)
         self._options_note = hint_label("")
         action_card.body.addWidget(self._options_note)
@@ -1003,6 +1002,25 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             context_chars=max(0, self._context_chars.value()),
         )
 
+    def _toggle_scan(self) -> None:
+        """开始扫描按钮的切换态：空闲时开扫，扫描中再点就是停止。"""
+        if self._worker_running:
+            self._cancel_scan()
+        else:
+            self._start_scan()
+
+    def _set_scan_running(self, running: bool) -> None:
+        """按钮在「开始扫描 ↔ 停止扫描」之间切换，配色 / 图标一起跟着动。"""
+        if running:
+            self._start_button.set_kind("danger")
+            self._start_button.set_text("停止扫描", tone="danger")
+            self._start_button.setToolTip("停止当前扫描；已完成的部分会保留")
+        else:
+            self._start_button.setEnabled(True)
+            self._start_button.set_kind("primary")
+            self._start_button.set_text("开始扫描", tone="on_accent")
+            self._start_button.setToolTip("")
+
     def _start_scan(self) -> None:
         if self._worker_running:
             return
@@ -1028,10 +1046,10 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._bridge = _ScanProgress(self)
         self._bridge.progress.connect(self._on_progress)
         self._worker_running = True
-        self._progress.setValue(0)
+        self._scan_meter.reset()
         self.set_page_status("scan", "正在扫描…")
-        self._start_button.setEnabled(False)
-        self._cancel_button.setEnabled(True)
+        self._set_scan_running(True)
+        self.show_progress("扫描准备中…", 0, None)
         submit(
             _scan_worker,
             [Path(item) for item in self._paths],
@@ -1047,8 +1065,10 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         )
 
     def _on_progress(self, done: int, total: int, path: str) -> None:
-        self._progress.setValue(round(100.0 * done / max(total, 1)))
+        """左侧状态栏写当前文件，右侧进度条按文件数给百分比 / 速度 / 剩余。"""
+        rate = self._scan_meter.update(done)
         self.set_page_status("scan", f"正在扫描 {done}/{total}：{path}")
+        self.show_progress(fw.scan_progress_text(done, total, rate), done, total or None)
 
     def _scan_done(self, payload: object) -> None:
         if not isinstance(payload, tuple) or len(payload) != 2:
@@ -1058,7 +1078,6 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         self.result = result
         self._render_result(result)
-        self._progress.setValue(100)
         message = fw.scan_status_text(result)
         summary = f"缓存降级：{cache_note}｜{message}" if cache_note else message
         # 扫描页保留本次结论（切回来还能看到），结果页显示同一份摘要。
@@ -1069,18 +1088,21 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _scan_error(self, message: str) -> None:
         self.result = None
-        self._progress.setValue(0)
         self.set_page_status("scan", f"扫描失败：{message}")
 
     def _scan_finished(self) -> None:
         self._worker_running = False
-        self._start_button.setEnabled(True)
-        self._cancel_button.setEnabled(False)
+        self._set_scan_running(False)
+        self.show_progress("", 0, None)
 
     def _cancel_scan(self) -> None:
-        if self._token is not None:
-            self._token.cancel()
-            self.set_page_status("scan", "正在取消，等待进行中的文件结束…")
+        if self._token is None:
+            return
+        self._token.cancel()
+        # 停止请求已下发：按钮先禁用，等线程池收尾后 _scan_finished 恢复成「开始扫描」。
+        self._start_button.set_text("停止中…", tone="danger")
+        self._start_button.setEnabled(False)
+        self.set_page_status("scan", "正在停止，等待进行中的文件结束…")
 
     def _render_result(self, result: ScanResult) -> None:
         self._tree.clear()
