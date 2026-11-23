@@ -194,13 +194,17 @@ def check_name(name: str) -> str:
 
 
 def to_local(root: str, posix_path: str) -> Path:
-    """POSIX 路径 → Windows 本地路径（UNC 根下）。
+    """POSIX 路径 → 本地路径（UNC 根下）。
 
-    用 :class:`PureWindowsPath` 拼接，测试在非 Windows 平台也能验证映射结果；
-    平台适配只发生在最后转成 :class:`Path`。
+    UNC / 盘符根用 :class:`PureWindowsPath` 拼接（生产环境永远是 Windows 根）；
+    测试或非 Windows 环境传入 POSIX 根时按本地分隔符拼接，避免拼出带反斜杠的
+    文件名导致 ``iterdir`` 找不到目录。
     """
     parts = [part for part in normalize_path(posix_path, "/").split("/") if part]
-    return Path(str(PureWindowsPath(root, *parts)))
+    windows_root = PureWindowsPath(root)
+    if windows_root.drive or "\\" in root:
+        return Path(str(windows_root.joinpath(*parts)))
+    return Path(root).joinpath(*parts)
 
 
 def to_posix(root: str, local: Path | str) -> str:

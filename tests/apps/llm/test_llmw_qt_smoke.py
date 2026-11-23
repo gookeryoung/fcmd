@@ -181,7 +181,13 @@ def test_vllm_mode_lists_hf_models_and_builds_wsl_plan(
     assert argv[0] == "wsl.exe"
     assert argv[1:4] == ["-d", "Ubuntu", "--"]
     assert argv[4] == "/root/.fcmd/engines/vllm/0.34.0/venv/bin/python"
-    assert argv[argv.index("--model") + 1].startswith("/mnt/c/")
+    model_arg = argv[argv.index("--model") + 1]
+    # wsl_path 只转换 Windows 盘符路径；Linux runner 没有 C:，路径原样透传
+    # （wsl.exe 分支只会在 Windows 运行时出现）。
+    if os.name == "nt":
+        assert model_arg.startswith("/mnt/c/")
+    else:
+        assert model_arg == str(model_dir)
     assert argv.count("--max-model-len") == 1
     assert plan.context == 4096
 

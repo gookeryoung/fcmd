@@ -340,9 +340,12 @@ def windows_candidates(key: str, env: Mapping[str, str] | None = None) -> tuple[
     ]
     candidates: list[Path] = []
     for relative in _WINDOWS_INSTALLS.get(key, ()):
+        # 按段拼接：Windows 上仍是反斜杠，POSIX（测试 / CI）下落成本地分隔符，
+        # 避免把 ``npm\x.cmd`` 当成一个带反斜杠的文件名。
+        parts = tuple(part for part in relative.split("\\") if part)
         for root in roots:
             if root:
-                candidates.append(Path(root) / relative)
+                candidates.append(Path(root, *parts))
     return tuple(candidates)
 
 
