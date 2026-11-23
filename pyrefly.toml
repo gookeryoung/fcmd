@@ -1,7 +1,7 @@
 preset           = "strict"
 # mcp/ 与 test_mcp_adapter.py 依赖可选 mcp SDK，pyrefly.toml search-path 不覆盖 .venv；
 # 运行时已通过 try/except 处理，这里整体排除避免误报
-project-excludes = [".venv/**", "template/**", "assets/**", "src/fcmd/mcp/**", "src/fcmd/cli/mcp_adapter.py", "tests/cli/test_mcp_adapter.py", "src/fcmd/gui/app.py", "src/fcmd/gui/compat.py", "src/fcmd/gui/icons.py", "src/fcmd/gui/ime.py", "src/fcmd/gui/layout.py", "src/fcmd/gui/logdialog.py", "src/fcmd/gui/page.py", "src/fcmd/gui/shell.py", "src/fcmd/gui/sidebar.py", "src/fcmd/gui/statusbar.py", "src/fcmd/gui/style.py", "src/fcmd/gui/theme_menu.py", "src/fcmd/gui/toolwindow.py", "src/fcmd/gui/window.py", "src/fcmd/gui/workers.py", "src/fcmd/gui/widgets/**", "src/fcmd/apps/llm/_llmw_qt_*.py", "src/fcmd/*/*/_*w_qt.py", "src/fcmd/*/*/_*_qt.py", "src/fcmd/apps/cmder/_cmder_qt*.py"]
+project-excludes = [".venv/**", "template/**", "assets/**", "src/fcmd/mcp/**", "src/fcmd/cli/mcp_adapter.py", "tests/cli/test_mcp_adapter.py", "src/fcmd/gui/app.py", "src/fcmd/gui/compat.py", "src/fcmd/gui/icons.py", "src/fcmd/gui/ime.py", "src/fcmd/gui/layout.py", "src/fcmd/gui/logdialog.py", "src/fcmd/gui/page.py", "src/fcmd/gui/shell.py", "src/fcmd/gui/sidebar.py", "src/fcmd/gui/statusbar.py", "src/fcmd/gui/theme_menu.py", "src/fcmd/gui/toolwindow.py", "src/fcmd/gui/window.py", "src/fcmd/gui/workers.py", "src/fcmd/gui/widgets/**", "src/fcmd/apps/llm/_llmw_qt_*.py", "src/fcmd/*/*/_*w_qt.py", "src/fcmd/*/*/_*_qt.py", "src/fcmd/apps/cmder/_cmder_qt*.py"]
 project-includes = ["**/*.ipynb", "**/*.py*"]
 python-version   = "3.10"
 search-path      = ["src", "."]

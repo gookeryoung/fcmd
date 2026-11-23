@@ -7,7 +7,8 @@
 
 ### 变更
 
-- 补完 P4/P5 收尾：`gui/style.py` 拆为 `gui/style/{qss,tokens,state,apply}.py`；
+- 补完 P4/P5 收尾：`gui/style.py` 拆为 `gui/style/{qss,tokens,state,apply}.py`，`gui/theme.py` 拆为
+  `gui/theme/{palette,fonts,builtin,registry}.py`；
   `filescanw` / `filesyncw` / `pevieww` / `renamerw` / `reshackw` / `wslmanw` /
   `pptmakew` / `paramcadw` / `parameshw` / `cmderw` / `llmw` / `mirrortoolw`
   的设置读写迁移到 `gui.settings.SettingsStore`；

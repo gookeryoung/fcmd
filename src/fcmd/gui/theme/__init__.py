@@ -1,0 +1,90 @@
+"""GUI 主题包：数据结构、内置主题、字体与持久化。
+
+保留 ``fcmd.gui.theme`` 的旧导入路径。
+"""
+
+from __future__ import annotations
+
+from .builtin import DEFAULT_THEME_NAME, THEME_ALIASES, THEMES
+from .fonts import (
+    CJK_TEXT_SAMPLE,
+    LATIN_FONT_CANDIDATES,
+    MONO_FONT_CANDIDATES,
+    UI_FONT_CANDIDATES,
+    font_renders_cjk,
+    pick_font_family,
+    ui_font_families,
+)
+from .palette import (
+    FONTS,
+    GEOMETRY_RULES,
+    METRIC_KEYS,
+    METRICS,
+    PALETTE,
+    PALETTE_TOKENS,
+    SPACING,
+    THEME_APP_KEY,
+    THEME_APPS_KEY,
+    THEME_FONT_KEYS,
+    THEME_OVERRIDES_KEY,
+    FontScale,
+    GeometryRules,
+    Metrics,
+    Palette,
+    Spacing,
+    Theme,
+)
+from .registry import (
+    apply_theme_overrides,
+    is_dark_palette,
+    load_theme,
+    merge_theme_overrides,
+    missing_palette_tokens,
+    read_theme_name,
+    relative_luminance,
+    resolve_theme,
+    save_theme,
+    theme_config_path,
+    theme_names,
+)
+
+__all__ = [
+    "CJK_TEXT_SAMPLE",
+    "DEFAULT_THEME_NAME",
+    "FONTS",
+    "GEOMETRY_RULES",
+    "LATIN_FONT_CANDIDATES",
+    "METRICS",
+    "METRIC_KEYS",
+    "MONO_FONT_CANDIDATES",
+    "PALETTE",
+    "PALETTE_TOKENS",
+    "SPACING",
+    "THEMES",
+    "THEME_ALIASES",
+    "THEME_APPS_KEY",
+    "THEME_APP_KEY",
+    "THEME_FONT_KEYS",
+    "THEME_OVERRIDES_KEY",
+    "UI_FONT_CANDIDATES",
+    "FontScale",
+    "GeometryRules",
+    "Metrics",
+    "Palette",
+    "Spacing",
+    "Theme",
+    "apply_theme_overrides",
+    "font_renders_cjk",
+    "is_dark_palette",
+    "load_theme",
+    "merge_theme_overrides",
+    "missing_palette_tokens",
+    "pick_font_family",
+    "read_theme_name",
+    "relative_luminance",
+    "resolve_theme",
+    "save_theme",
+    "theme_config_path",
+    "theme_names",
+    "ui_font_families",
+]
