@@ -2150,8 +2150,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         )
 
     def _status_worker(self) -> Any:
-        """轮询只读视图，但仍按当前工作目录剔除已失效的实例。"""
-        view, _relocated, _removed = w.reconcile_distros(cli._view(cli._build_environment()), self.settings)
+        """轮询只读视图，但仍剔除注册表 BasePath 下磁盘文件已不存在的实例。"""
+        view, _removed, _orphans = w.reconcile_distros(cli._view(cli._build_environment()))
         return view
 
     def _on_status(self, view: Any) -> None:
@@ -2250,17 +2250,17 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
 
     def _load(self, _cancel: threading.Event) -> str:
         env = cli._build_environment()
-        view, relocated, removed = w.reconcile_distros(cli._view(env), self.settings)
+        view, removed, orphans = w.reconcile_distros(cli._view(env), self.settings)
         sizes: dict[str, tuple[int | None, bool]] = {}
         for distro in view.distros:
             sizes[distro.name] = distro_disk_bytes(distro.base_path, distro.version)
         self.view = view
         self.sizes = sizes
         message = f"已加载 {len(view.distros)} 个实例"
-        if relocated:
-            message += f"；{len(relocated)} 个 BasePath 不可用，已按工作目录重新定位"
         if removed:
             message += f"；{len(removed)} 个实例磁盘文件已不存在，已移出列表"
+        if orphans:
+            message += f"；{len(orphans)} 个同名残余磁盘未注册，启动前需重新导入"
         return message
 
     def _selected(self) -> Distro | None:

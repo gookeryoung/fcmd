@@ -2857,21 +2857,16 @@ def test_reload_button_while_busy_runs_full_reload_after_finish(home: Path, monk
         window.deleteLater()
 
 
-def test_refresh_rescans_work_dirs_when_registry_base_path_is_stale(
+def test_refresh_removes_stale_instance_even_if_disk_exists_elsewhere(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """注册表 BasePath 失效（手工搬家）时，刷新重扫工作目录并采用实际磁盘位置。"""
+    """注册表 BasePath 失效时，扫描到的同名磁盘不能直接当已注册实例展示。"""
     monkeypatch.setattr(wslmanw, "has_distro_files", _REAL_HAS_DISTRO_FILES)
     stale = home / "wsl" / "install" / "Ubuntu"
     moved = home / "other" / "install" / "Ubuntu"
     moved.mkdir(parents=True)
     (moved / "ext4.vhdx").write_bytes(b"x" * 16)
     monkeypatch.setattr(cli, "_view", lambda env: _view(replace(_distro("Ubuntu", "stopped"), base_path=str(stale))))
-    monkeypatch.setattr(
-        _wslmanw_qt,
-        "distro_disk_bytes",
-        lambda base, version: (8192, False) if str(base) == str(moved) else (2048, False),
-    )
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
@@ -2883,11 +2878,11 @@ def test_refresh_rescans_work_dirs_when_registry_base_path_is_stale(
         window._button_by_text["刷新"].click()
         _wait_idle(window)
 
-        row = _distro_row(window, 0)
-        assert row.distro.base_path == str(moved)
-        assert row.work_dir == home / "other"
-        metrics = row.metrics_label
-        assert metrics is not None and metrics.text() == "8.0 KiB"
+        # WSL 启动仍走注册表旧路径；扫描位置只能提示为残余磁盘，不能变成可用行。
+        assert window.distro_list.count() == 0
+        status = window.page_status("distros")
+        assert "已移出列表" in status
+        assert "同名残余磁盘" in status
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

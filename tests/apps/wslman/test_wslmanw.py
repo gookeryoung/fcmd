@@ -606,8 +606,8 @@ def test_scan_install_dirs_finds_moved_instances(tmp_path: Path) -> None:
     assert wslmanw.has_distro_files(None) is False
 
 
-def test_reconcile_distros_relocates_or_removes_stale_entries(tmp_path: Path) -> None:
-    """刷新对比：搬家的实例改用扫描位置，目录已删的实例从列表剔除。"""
+def test_reconcile_distros_removes_stale_entries_and_reports_orphans(tmp_path: Path) -> None:
+    """刷新对比：BasePath 失效的实例一律移出；同名残余磁盘只提示、不当成已注册实例。"""
     root = tmp_path / "wsl"
     moved = root / "install" / "Ubuntu"
     moved.mkdir(parents=True)
@@ -624,14 +624,13 @@ def test_reconcile_distros_relocates_or_removes_stale_entries(tmp_path: Path) ->
     missing = Distro("Debian", "stopped", "Stopped", 2, False, base_path=str(root / "old" / "Debian"))
     view = DistroView((stale_ubuntu, missing), "Ubuntu", (), snapshot)
 
-    reconciled, relocated, removed = wslmanw.reconcile_distros(view, settings)
-    assert relocated == ("Ubuntu",)
-    assert removed == ("Debian",)
-    assert [item.name for item in reconciled.distros] == ["Ubuntu"]
-    assert reconciled.distros[0].base_path == str(moved)
-    assert reconciled.default == "Ubuntu"
-    assert any("扫描到新位置" in warning for warning in reconciled.warnings)
+    reconciled, removed, orphans = wslmanw.reconcile_distros(view, settings)
+    assert removed == ("Ubuntu", "Debian")
+    assert orphans == {"Ubuntu": moved}
+    assert reconciled.distros == ()
+    assert reconciled.default is None
     assert any("已从实例列表移除" in warning for warning in reconciled.warnings)
+    assert any("同名残余磁盘" in warning and str(moved) in warning for warning in reconciled.warnings)
 
 
 def test_reconcile_distros_keeps_unknown_base_path(tmp_path: Path) -> None:
@@ -645,10 +644,10 @@ def test_reconcile_distros_keeps_unknown_base_path(tmp_path: Path) -> None:
     )
     distro = Distro("Ubuntu", "running", "Running", 2, True, base_path=None)
     view = DistroView((distro,), "Ubuntu", (), snapshot)
-    reconciled, relocated, removed = wslmanw.reconcile_distros(view, wslmanw.WslmanwSettings())
+    reconciled, removed, orphans = wslmanw.reconcile_distros(view, wslmanw.WslmanwSettings())
     assert reconciled is view
-    assert relocated == ()
     assert removed == ()
+    assert orphans == {}
 
 
 def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
