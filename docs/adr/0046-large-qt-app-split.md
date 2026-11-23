@@ -140,7 +140,8 @@ MAX_DIR_LEVELS = {"apps": 3, "default": 2}
 - P0：`tests/test_layout.py` 按根目录限层（`apps` 3 层、其他 2 层），新增
   `apps/*/qt/` 扁平守卫；`apps/wslman/qt/__init__.py` 与 `apps/llm/qt/__init__.py`
   建立空骨架（不含业务代码）；ADR 0003 同步登记例外。
-- P1–P5：未实施，按「分期」逐页迁移。
+- P1：wslman 对话框已迁至 `apps/wslman/qt/dialogs.py`（`_wslmanw_qt.py` 保留同名 re-export）；`qt/state.py` 与页面迁移待办。
+- P2–P5：未实施，按「分期」逐页迁移。
 
 ## 交接
 

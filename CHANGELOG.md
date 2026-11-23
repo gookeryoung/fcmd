@@ -7,6 +7,8 @@
 
 ### 变更
 
+- 推进 ADR 0046：wslman 六个对话框迁至 `apps/wslman/qt/dialogs.py`，
+  `_wslmanw_qt.py` 保留同名 re-export；布局守卫支持 `apps/<app>/qt/` 三层。
 - 补完 P4/P5 收尾：`gui/style.py` 拆为 `gui/style/{qss,tokens,state,apply}.py`，`gui/theme.py` 拆为
   `gui/theme/{palette,fonts,builtin,registry}.py`；
   `filescanw` / `filesyncw` / `pevieww` / `renamerw` / `reshackw` / `wslmanw` /
