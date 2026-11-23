@@ -12,6 +12,7 @@
 - :mod:`fcmd.gui.widgets.rows`：可展开行卡、行列表与展开态 mixin；
 - :mod:`fcmd.gui.widgets.cards`：卡片、滚动页、折叠区、互斥选项卡片；
 - :mod:`fcmd.gui.widgets.forms`：表单网格与路径输入行；
+- :mod:`fcmd.gui.widgets.layouts`：动作条用的流式布局（宽度不足自动换行）；
 - :mod:`fcmd.gui.widgets.metrics`：指标网格、分段负载条、加载条与进度行；
 - :mod:`fcmd.gui.widgets.log`：只读日志区 + 工具条；
 - :mod:`fcmd.gui.widgets.storage`：通用磁盘 / 目录卡片网格（Steam 式多根目录管理）；
@@ -47,6 +48,7 @@ from fcmd.gui.widgets.cards import (
     fit_dialog_to_content,
 )
 from fcmd.gui.widgets.forms import FormGrid, PathField, PathRow
+from fcmd.gui.widgets.layouts import FlowLayout
 from fcmd.gui.widgets.log import LogView
 from fcmd.gui.widgets.metrics import (
     KeyValueGrid,
@@ -92,6 +94,7 @@ __all__ = [
     "DiskLocation",
     "DiskTile",
     "ElidedLabel",
+    "FlowLayout",
     "FormGrid",
     "HintLabel",
     "ItemRow",

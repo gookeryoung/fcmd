@@ -18,7 +18,6 @@ import os
 import re
 import shlex
 import shutil
-import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -558,9 +557,16 @@ def probe_script(opener: Opener, *, dir: str, unc: str, distro: str, home: str) 
 
 
 def wrap_windows_argv(argv: Sequence[str]) -> tuple[str, ...]:
-    """``.cmd`` / ``.bat`` 需要经 ``cmd.exe /c`` 启动，Popen 才能执行。"""
+    """``.cmd`` / ``.bat`` 需要经 ``cmd.exe /c`` 启动，Popen 才能执行。
+
+    不要把整条命令用 ``subprocess.list2cmdline`` 拼成一个参数：Python 会把带空格
+    路径两侧的引号转义成 ``\"``，而 ``cmd.exe`` 不认这种转义，会把整个路径当成
+    一条不存在的命令（实测 ``trae-cn.CMD`` 直接退出 1，IDE 永远不弹窗）。这里保留
+    参数列表形式，只把第一项换成 ``cmd.exe``，由 Popen 按 Windows 规则给单个参数
+    加引号；不要加 ``/s``：它会把带空格路径的首个引号对拆掉，同样会解析失败。
+    """
     if not argv:
         raise invalid_argument("命令模板为空", hint="填写可执行命令")
     if argv[0].casefold().endswith((".cmd", ".bat")):
-        return ("cmd.exe", "/d", "/s", "/c", subprocess.list2cmdline(list(argv)))
+        return ("cmd.exe", "/d", "/c", *argv)
     return tuple(argv)

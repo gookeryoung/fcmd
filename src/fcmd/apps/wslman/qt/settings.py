@@ -106,7 +106,13 @@ class SettingsMixin:
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(6)
             combo = _owner.QComboBox(row)
-            combo.setMinimumWidth(220)
+            # 不给固定大宽度：窄窗口下这一行还要放状态胶囊与三个按钮，固定 220px
+            # 会把卡片最小宽度撑出视口（内容被右边界裁掉）。让下拉框吃剩余宽度，
+            # 长条目靠 tooltip 与下拉列表查看。
+            combo.setMinimumWidth(120)
+            combo.setSizePolicy(_owner.QSizePolicy.Policy.Expanding, _owner.QSizePolicy.Policy.Fixed)
+            combo.setSizeAdjustPolicy(_owner.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(10)
             combo.setToolTip(f"文件页「用 {_owner._open.KIND_LABELS[kind]} 打开」使用的条目")
             combo.currentIndexChanged.connect(lambda _index, item=kind: self._on_opener_selected(item))
             row_layout.addWidget(combo, 1)

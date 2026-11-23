@@ -423,13 +423,13 @@ class FilesMixin:
                     f"没有找到 {exe}",
                     hint=f"确认 {opener.name} 已安装并加入 PATH；或在「设置 → 打开方式」把命令模板改成完整路径",
                 )
-            _owner.spawn_detached(_owner._open.wrap_windows_argv(argv))
+            _owner.spawn_gui(_owner._open.wrap_windows_argv(argv))
         except (_owner.WslmanError, _owner.LaunchError, OSError) as exc:
             message = _owner.w._error_text(exc)
             self._set_files_status(f"{label}失败：{message}")
             _owner.QMessageBox.critical(self, label, message)
             return
-        self._set_files_status(f"{label}：{opener.name} 正在打开 {distro}:{directory}")
+        self._set_files_status(f"{label}：已启动 {opener.name}（{distro}:{directory}）")
         self._log(f"[文件] 用 {opener.name} 打开 {distro}:{directory}")
 
     def _files_open_done(self, label: str, payload: tuple[bool, str]) -> None:

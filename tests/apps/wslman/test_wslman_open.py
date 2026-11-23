@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -122,8 +121,9 @@ def test_probe_script_quotes_executable() -> None:
 
 def test_wrap_windows_argv_routes_cmd_through_cmd_exe() -> None:
     wrapped = _open.wrap_windows_argv(("code.cmd", "--remote", "wsl+U", UNC))
-    assert wrapped[:4] == ("cmd.exe", "/d", "/s", "/c")
-    assert wrapped[4] == subprocess.list2cmdline(["code.cmd", "--remote", "wsl+U", UNC])
+    # 参数保持列表：Popen 只给带空格的单个参数加引号；不能预先用 list2cmdline
+    # 拼成一个字符串（cmd.exe 不认 Python 的 ``\"`` 转义），也不能加 /s。
+    assert wrapped == ("cmd.exe", "/d", "/c", "code.cmd", "--remote", "wsl+U", UNC)
     assert _open.wrap_windows_argv(("code.exe", "--x")) == ("code.exe", "--x")
     with pytest.raises(WslmanError):
         _open.wrap_windows_argv(())

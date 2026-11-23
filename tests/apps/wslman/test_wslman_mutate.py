@@ -222,6 +222,42 @@ def test_spawn_detached_reports_missing_program(monkeypatch: pytest.MonkeyPatch)
     assert excinfo.value.hint is not None
 
 
+def test_spawn_gui_does_not_hide_ide_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GUI 启动不能带 ``startupinfo`` / SW_HIDE：否则 IDE 窗口创建了但一直隐藏。"""
+    recorded: dict[str, object] = {}
+
+    class _FakeProcess:
+        pid = 1357
+
+    def fake_popen(argv: object, **kwargs: object) -> _FakeProcess:
+        recorded["argv"] = argv
+        recorded.update(kwargs)
+        return _FakeProcess()
+
+    monkeypatch.setattr(_terminal.subprocess, "Popen", fake_popen)
+    argv = ["trae-cn", "--remote", "wsl+Ubuntu", "/root/fcmd"]
+    assert _terminal.spawn_gui(argv) == 1357
+    assert recorded["argv"] == argv
+    # 关键：不传 startupinfo，也不设 DETACHED_PROCESS；只保留 CREATE_NO_WINDOW
+    # 抑制 .cmd 包装的控制台。
+    assert "startupinfo" not in recorded
+    assert recorded["creationflags"] == getattr(_terminal.subprocess, "CREATE_NO_WINDOW", 0)
+    assert recorded["stdin"] is _terminal.subprocess.DEVNULL
+    assert recorded["stdout"] is _terminal.subprocess.DEVNULL
+    assert recorded["stderr"] is _terminal.subprocess.DEVNULL
+
+
+def test_spawn_gui_reports_missing_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("not found")
+
+    monkeypatch.setattr(_terminal.subprocess, "Popen", boom)
+    with pytest.raises(LaunchError) as excinfo:
+        _terminal.spawn_gui(["missing-ide.exe"])
+    assert "missing-ide.exe" in str(excinfo.value)
+    assert excinfo.value.hint is not None
+
+
 def test_subprocess_launcher_runs_and_reports_pid() -> None:
     launcher = _terminal.SubprocessLauncher()
     command = TerminalCommand(

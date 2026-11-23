@@ -51,11 +51,14 @@ class DistrosMixin:
         body.addWidget(self.distro_list, 1)
         return page
 
-    def _build_distro_actions(self, page: QWidget) -> _owner.QHBoxLayout:
-        """实例动作行：按「终端 / 启停 → 导出 → 危险操作」分组。"""
-        toolbar = _owner.QHBoxLayout()
-        toolbar.setContentsMargins(0, 0, 0, 0)
-        toolbar.setSpacing(4)
+    def _build_distro_actions(self, page: QWidget) -> _owner.FlowLayout:
+        """实例动作行：按「终端 / 启停 → 导出 → 危险操作」分组。
+
+        用流式布局而不是 ``QHBoxLayout``：窗口收到最小宽度时按钮整组换行，
+        不会被压窄到文字被截断（``打开终端`` / ``修复注册`` 这类四字按钮尤其明显）。
+        每组是一个带分隔线的小行，换行只发生在组之间。
+        """
+        toolbar = _owner.FlowLayout(h_spacing=6, v_spacing=4)
         groups: tuple[tuple[tuple[str, Any, str], ...], ...] = (
             (
                 ("打开终端", self._open_selected, "primary"),
@@ -72,17 +75,21 @@ class DistrosMixin:
             ),
         )
         for index, group in enumerate(groups):
+            row = _owner.QWidget(page)
+            row_layout = _owner.QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(4)
             if index:
-                separator = _owner.QLabel("│", page)
+                separator = _owner.QLabel("│", row)
                 separator.setObjectName("Hint")
-                toolbar.addWidget(separator)
+                row_layout.addWidget(separator)
             for text, handler, kind in group:
                 widget = _owner.button(text, kind=kind)
                 widget.clicked.connect(handler)
-                toolbar.addWidget(widget)
+                row_layout.addWidget(widget)
                 self._buttons.append(widget)
                 self._button_by_text[text] = widget
-        toolbar.addStretch(1)
+            toolbar.addWidget(row)
         self.start_button = self._button_by_text["启动"]
         self.restart_button = self._button_by_text["重启"]
         self.stop_button = self._button_by_text["停止"]

@@ -1055,6 +1055,45 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
         window.deleteLater()
 
 
+def test_min_width_keeps_action_text_and_settings_inside_page(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """窗口收到最小宽度：实例动作按钮不被压扁，设置页内容不超出视口。
+
+    回归：动作行原先用 ``QHBoxLayout``，10 个按钮挤在一行时每个只剩 ~59px，
+    「打开终端 / 修复注册 / 删除实例 / 关闭全部」都被截断；设置页的打开方式
+    下拉框固定 220px，把卡片最小宽度撑出滚动视口，右侧内容被裁掉。
+    """
+    from fcmd.gui.widgets import PageScroll
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro("Ubuntu-24.04")))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show()
+        window.resize(wslmanw.MIN_WIDTH, wslmanw.MIN_HEIGHT)
+        QApplication.processEvents()
+
+        squeezed = [
+            item.text() for item in window._buttons if item.isVisible() and item.width() < item.sizeHint().width()
+        ]
+        assert squeezed == []
+
+        window.show_page("settings")
+        QApplication.processEvents()
+        settings_page = window.page("settings")
+        assert settings_page is not None
+        scroll = settings_page.findChild(PageScroll)
+        assert scroll is not None
+        # 内容不宽于视口：否则横向滚动条被关掉后，右侧文字会被窗口裁掉。
+        assert scroll.widget().minimumSizeHint().width() <= scroll.viewport().width()
+        assert scroll.widget().width() <= scroll.viewport().width()
+    finally:
+        window.hide()
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_settings_page_has_no_config_file_card(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """简化后不再展示「配置文件」卡片与单独的下载 / 备份目录。"""
     from fcmd.gui.widgets import Card
@@ -3546,7 +3585,7 @@ def test_files_page_opens_ide_with_wsl_remote_path(home: Path, monkeypatch: pyte
     root = tmp_path / "unc"
     _prepare_openers_page(monkeypatch, root)
     spawned: list[tuple[str, ...]] = []
-    monkeypatch.setattr(_wslmanw_qt, "spawn_detached", lambda argv: spawned.append(tuple(argv)) or 1)
+    monkeypatch.setattr(_wslmanw_qt, "spawn_gui", lambda argv: spawned.append(tuple(argv)) or 1)
     monkeypatch.setattr(_wslmanw_qt.shutil, "which", lambda name: r"C:\tools\code.exe")
     window = _open_window(home, monkeypatch, root)
     try:
@@ -3564,7 +3603,7 @@ def test_files_page_opens_workbuddy_with_unc_path(home: Path, monkeypatch: pytes
     root = tmp_path / "unc"
     _prepare_openers_page(monkeypatch, root)
     spawned: list[tuple[str, ...]] = []
-    monkeypatch.setattr(_wslmanw_qt, "spawn_detached", lambda argv: spawned.append(tuple(argv)) or 1)
+    monkeypatch.setattr(_wslmanw_qt, "spawn_gui", lambda argv: spawned.append(tuple(argv)) or 1)
     monkeypatch.setattr(_wslmanw_qt.shutil, "which", lambda name: r"C:\tools\workbuddy.exe")
     window = _open_window(home, monkeypatch, root)
     try:

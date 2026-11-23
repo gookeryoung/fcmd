@@ -56,13 +56,20 @@ from fcmd.apps.wslman._decode import decode_console
 from fcmd.apps.wslman._disk import distro_disk_bytes, distro_export_bytes, format_bytes
 from fcmd.apps.wslman._distro import state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
-from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command, spawn_detached
+from fcmd.apps.wslman._terminal import (
+    LaunchError,
+    SubprocessLauncher,
+    build_command,
+    spawn_detached,
+    spawn_gui,
+)
 from fcmd.gui.geometry import format_geometry
 from fcmd.gui.page import PageBody, PageSpec
 from fcmd.gui.widgets import (
     Card,
     DiskGrid,
     ElidedLabel,
+    FlowLayout,
     FormGrid,
     PageScroll,
     RowDetailMixin,
@@ -376,6 +383,7 @@ _REEXPORTS = (
     DiskGrid,
     ElidedLabel,
     EventBridge,
+    FlowLayout,
     FormGrid,
     LaunchError,
     PageBody,
@@ -432,6 +440,7 @@ _REEXPORTS = (
     set_button_text,
     shutil,
     spawn_detached,
+    spawn_gui,
     submit,
     submit_daemon,
     threading,

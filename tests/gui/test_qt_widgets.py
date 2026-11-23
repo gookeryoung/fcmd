@@ -39,6 +39,7 @@ from fcmd.gui.widgets import (
     DiskGrid,
     DiskLocation,
     DiskTile,
+    FlowLayout,
     ItemRow,
     LoadingBar,
     LogView,
@@ -194,6 +195,25 @@ def test_card_body_accepts_widgets() -> None:
     assert card.body.count() == 1
     grid.set_value("cpu", "10 %")
     assert grid.value("cpu") == "10 %"
+
+
+def test_flow_layout_wraps_buttons_without_squeezing_text() -> None:
+    """窄宽度下动作按钮整组换行，而不是把每个按钮压到文字被截断。"""
+    container = QWidget()
+    layout = FlowLayout(container, h_spacing=4, v_spacing=4)
+    buttons = [button(text) for text in ("打开终端", "启动", "重启", "停止", "刷新", "修复注册")]
+    for widget in buttons:
+        layout.addWidget(widget)
+    container.resize(220, 200)
+    container.show()
+    QApplication.processEvents()
+    try:
+        assert len({widget.y() for widget in buttons}) > 1
+        for widget in buttons:
+            assert widget.width() >= widget.sizeHint().width(), widget.text()
+        assert layout.heightForWidth(container.width()) > buttons[0].height()
+    finally:
+        container.deleteLater()
 
 
 def test_path_row_commits_on_editing_finished() -> None:

@@ -22,6 +22,7 @@ __all__ = [
     "build_command",
     "find_wt",
     "spawn_detached",
+    "spawn_gui",
     "uses_windows_path",
 ]
 
@@ -116,6 +117,33 @@ def spawn_detached(argv: Sequence[str]) -> int:
         raise LaunchError(
             f"启动 {argv[0]} 失败：{exc}",
             hint="确认 wsl.exe 可用；若 WSL 未启用请以管理员运行 wsl --install",
+        ) from exc
+    return process.pid
+
+
+def spawn_gui(argv: Sequence[str]) -> int:
+    """启动面向用户的 GUI 程序（IDE / 编辑器），返回 pid；不等退出。
+
+    与 :func:`spawn_detached` 的关键区别：**不能**设置
+    ``STARTUPINFO.wShowWindow = SW_HIDE``。IDE 的 CLI（``code`` / ``trae-cn`` …）
+    会把新窗口请求转给已有实例或新拉起的 Electron 主进程，而继承的 SW_HIDE 会让
+    新窗口一直处于隐藏状态：进程都在、日志也有，但用户看不到窗口，界面状态停在
+    「正在打开」。这里只保留 ``CREATE_NO_WINDOW``：它仅抑制 ``.cmd`` 包装出来的
+    控制台，对 GUI 程序的窗口显示没有影响。
+    """
+    try:
+        process = subprocess.Popen(
+            list(argv),
+            creationflags=_CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError as exc:
+        raise LaunchError(
+            f"启动 {argv[0]} 失败：{exc}",
+            hint="确认程序已安装；或在「设置 → 打开方式」把命令模板改成完整路径",
         ) from exc
     return process.pid
 
