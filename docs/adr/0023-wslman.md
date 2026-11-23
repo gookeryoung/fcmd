@@ -552,6 +552,10 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
     因此分条维护）；默认选中 VSCode / OpenCode；内置项可编辑 / 删除，也可自行添加。
     WSL 内探测在 `bash -lc` 之外显式补 `~/.opencode/bin`、`~/.bun/bin`、`~/.local/bin`
     等用户级 bin 目录，避免安装脚本只写 `~/.bashrc` 时已装工具被漏掉。
+  - 设置兼容：老 `wslmanw.json` 的 `openers` 列表若仍含任一内置条目，读入时把新版本
+    新增的内置预设补到末尾（TRAE CN / QODER CN / DSH / Windows 变体不会因老设置
+    永久缺席）；显式删除记录在 `openers.hidden`，迁移时跳过。显式空列表或只有自定义
+    条目时不自动补，尊重用户“删光了”的选择。
 - Windows 宿主机：`shutil.which` 预检后按 argv 无窗口启动，`.cmd/.bat` 经
   `cmd.exe /d /s /c` 包装（避免 WinError 193）；WSL 内：先在实例内
   `bash -lc 'command -v <命令>'` 预检，再经终端 `wsl.exe -d <实例> --cd <目录>

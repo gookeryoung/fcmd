@@ -120,6 +120,7 @@ def test_settings_mapping_is_json_friendly() -> None:
             "ide": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_IDE)],
             "agent": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_AGENT)],
             "selected": {"ide": "vscode", "agent": "opencode"},
+            "hidden": {},
         },
     }
 

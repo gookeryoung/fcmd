@@ -140,6 +140,61 @@ def test_settings_default_openers_when_field_missing() -> None:
     assert selected.key == "vscode"
 
 
+def test_old_saved_openers_gain_new_builtins_but_keep_edits() -> None:
+    """旧设置已保存的列表要补上新版内置预设（TRAE CN / QODER CN / DSH 等）。"""
+    edited = _open.Opener(
+        "vscode",
+        "VSCode",
+        _open.KIND_IDE,
+        _open.HOST_WINDOWS,
+        'my-code "{dir}"',
+        True,
+        "note",
+        _open.ORIGIN_USER,
+    )
+    custom = _open.Opener("mine", "Mine", _open.KIND_IDE, _open.HOST_WINDOWS, 'x "{dir}"')
+    settings = wslmanw.settings_from_mapping(
+        {
+            "openers": {
+                "ide": [_open.to_mapping(edited), _open.to_mapping(custom)],
+                "agent": [
+                    _open.to_mapping(_open.Opener("opencode", "OpenCode", _open.KIND_AGENT, _open.HOST_WSL, "opencode"))
+                ],
+                "selected": {"ide": "vscode", "agent": "opencode"},
+            }
+        }
+    )
+    ide_keys = [item.key for item in settings.ide_openers]
+    agent_keys = [item.key for item in settings.agent_openers]
+    assert ide_keys[:2] == ["vscode", "mine"]
+    for key in ("trae", "trae-cn", "qoder", "qoder-cn", "workbuddy"):
+        assert key in ide_keys
+    for key in ("pi", "deepseek-harness", "opencode-windows", "deepseek-harness-windows"):
+        assert key in agent_keys
+    assert next(item for item in settings.ide_openers if item.key == "vscode").command == 'my-code "{dir}"'
+
+
+def test_hidden_builtins_are_not_reintroduced_by_migration() -> None:
+    """用户显式删除的内置条目记录在 hidden，后续迁移不能又加回来。"""
+    settings = wslmanw.settings_from_mapping(
+        {
+            "openers": {
+                "ide": [_open.to_mapping(_open.default_openers(_open.KIND_IDE)[0])],
+                "hidden": {"ide": ["trae-cn"]},
+            }
+        }
+    )
+    keys = [item.key for item in settings.ide_openers]
+    assert "trae-cn" not in keys
+    assert "qoder-cn" in keys
+
+    remaining = tuple(item for item in settings.ide_openers if item.key != "qoder-cn")
+    updated = wslmanw.with_openers(settings, _open.KIND_IDE, remaining, "vscode", ["qoder-cn"])
+    restored = wslmanw.settings_from_mapping(wslmanw.settings_to_mapping(updated))
+    assert wslmanw.hidden_openers(restored, _open.KIND_IDE) == ("trae-cn", "qoder-cn")
+    assert "qoder-cn" not in [item.key for item in restored.ide_openers]
+
+
 def test_settings_explicit_empty_list_means_user_deleted_everything() -> None:
     settings = wslmanw.settings_from_mapping(
         {"openers": {"ide": [], "agent": [], "selected": {"ide": "gone", "agent": 3}}}

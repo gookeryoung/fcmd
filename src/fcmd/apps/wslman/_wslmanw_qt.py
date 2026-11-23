@@ -1765,9 +1765,16 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         for kind in _open.KINDS:
             self._reload_opener_combo(kind)
 
-    def _store_openers(self, kind: str, openers: Sequence[_open.Opener], selected: str) -> None:
+    def _store_openers(
+        self,
+        kind: str,
+        openers: Sequence[_open.Opener],
+        selected: str,
+        *,
+        hidden: Sequence[str] | None = None,
+    ) -> None:
         """写回内存设置并立即落盘，避免关窗前异常导致选择丢失。"""
-        self.settings = w.with_openers(self.settings, kind, openers, selected)
+        self.settings = w.with_openers(self.settings, kind, openers, selected, hidden)
         self._reload_opener_combo(kind)
         self._sync_opener_actions()
         self._sync_files_actions()
@@ -1818,7 +1825,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         ):
             return
         openers = tuple(item for item in w.openers_for(self.settings, kind) if item.key != current.key)
-        self._store_openers(kind, openers, "")
+        hidden = (*w.hidden_openers(self.settings, kind), current.key) if current.builtin else None
+        self._store_openers(kind, openers, "", hidden=hidden)
 
     def _build_work_card(self) -> Card:
         """「工作目录」卡片：llmw 同款多磁盘卡，可添加 / 移除多个目录并指定默认。

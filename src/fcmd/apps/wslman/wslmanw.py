@@ -50,6 +50,7 @@ __all__ = [
     "export_progress_text",
     "filter_images",
     "has_distro_files",
+    "hidden_openers",
     "image_counts",
     "image_details",
     "image_filename",
@@ -266,6 +267,8 @@ class WslmanwSettings:
     """当前选用的 IDE 条目 key。"""
     agent_opener: str = "opencode"
     """当前选用的 AI Agent 条目 key。"""
+    hidden_openers: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    """用户显式删除的内置打开方式 key（按 IDE / Agent 分类），防止新版本迁移时又加回来。"""
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -288,6 +291,7 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
             "ide": [_open.to_mapping(item) for item in settings.ide_openers],
             "agent": [_open.to_mapping(item) for item in settings.agent_openers],
             "selected": {"ide": settings.ide_opener, "agent": settings.agent_opener},
+            "hidden": {kind: list(keys) for kind, keys in settings.hidden_openers.items() if keys},
         },
     }
 
@@ -298,8 +302,9 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
     collapsed = raw.get("sidebar_collapsed")
     openers = raw.get("openers")
     openers_map = openers if isinstance(openers, Mapping) else {}
-    ide_openers = _openers(openers_map.get("ide"), _open.KIND_IDE)
-    agent_openers = _openers(openers_map.get("agent"), _open.KIND_AGENT)
+    hidden = _hidden_openers(openers_map.get("hidden"))
+    ide_openers = _openers(openers_map.get("ide"), _open.KIND_IDE, hidden.get(_open.KIND_IDE, ()))
+    agent_openers = _openers(openers_map.get("agent"), _open.KIND_AGENT, hidden.get(_open.KIND_AGENT, ()))
     selected = openers_map.get("selected")
     selected_map = selected if isinstance(selected, Mapping) else {}
     work_dir, work_dirs = _work_dirs(_str(raw, "work_dir"), raw.get("work_dirs"))
@@ -322,14 +327,47 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         agent_openers=agent_openers,
         ide_opener=_selected_key(selected_map.get("ide"), ide_openers, kind=_open.KIND_IDE),
         agent_opener=_selected_key(selected_map.get("agent"), agent_openers, kind=_open.KIND_AGENT),
+        hidden_openers=hidden,
     )
 
 
-def _openers(raw: Any, kind: str) -> tuple[_open.Opener, ...]:
-    """缺字段（旧设置文件）回落内置预设；显式空列表表示用户删光了。"""
+def _hidden_openers(raw: Any) -> dict[str, tuple[str, ...]]:
+    """解析已删除的内置条目 key；只接受已知分类与字符串列表。"""
+    if not isinstance(raw, Mapping):
+        return {}
+    hidden: dict[str, tuple[str, ...]] = {}
+    for kind in _open.KINDS:
+        values = raw.get(kind)
+        if not isinstance(values, list):
+            continue
+        keys = tuple(dict.fromkeys(item.strip() for item in values if isinstance(item, str) and item.strip()))
+        if keys:
+            hidden[kind] = keys
+    return hidden
+
+
+def _openers(raw: Any, kind: str, hidden: Sequence[str] = ()) -> tuple[_open.Opener, ...]:
+    """缺字段（旧设置文件）回落内置预设；显式空列表表示用户删光了。
+
+    旧设置里的列表如果还保留任意内置条目，就把新版本新增的内置预设补到末尾：
+    TRAE CN / QODER CN / DSH 这类后加的预设不该因为老设置文件而永久缺席。
+    用户显式删除过的 key 记录在 ``hidden``，迁移时跳过，避免删了又自己回来。
+    """
     if not isinstance(raw, list):
         return _open.default_openers(kind)
-    return _open.parse_mappings(raw, kind)
+    parsed = _open.parse_mappings(raw, kind)
+    if not parsed or not any(item.builtin for item in parsed):
+        return parsed
+    existing = {item.key for item in parsed}
+    hidden_set = set(hidden)
+    return (
+        *parsed,
+        *(
+            blueprint
+            for blueprint in _open.default_openers(kind)
+            if blueprint.key not in existing and blueprint.key not in hidden_set
+        ),
+    )
 
 
 def _selected_key(raw: Any, openers: Sequence[_open.Opener], *, kind: str) -> str:
@@ -347,6 +385,11 @@ def openers_for(settings: WslmanwSettings, kind: str) -> tuple[_open.Opener, ...
     return settings.ide_openers if kind == _open.KIND_IDE else settings.agent_openers
 
 
+def hidden_openers(settings: WslmanwSettings, kind: str) -> tuple[str, ...]:
+    """用户显式删除过的内置条目 key；设置页删除时写入，迁移新增预设时跳过。"""
+    return settings.hidden_openers.get(kind, ())
+
+
 def selected_opener(settings: WslmanwSettings, kind: str) -> _open.Opener | None:
     """当前选用的条目；设置里的 key 失效时回落到第一个，列表为空时返回 ``None``。"""
     openers = openers_for(settings, kind)
@@ -359,13 +402,24 @@ def with_openers(
     kind: str,
     openers: Sequence[_open.Opener],
     selected: str,
+    hidden: Sequence[str] | None = None,
 ) -> WslmanwSettings:
-    """写回某一类的条目与选中项；选中项失效时回落到第一个（列表为空则留空）。"""
+    """写回某一类的条目与选中项；选中项失效时回落到第一个（列表为空则留空）。
+
+    ``hidden`` 为该分类显式删除的内置 key；``None`` 表示保持原记录不变。
+    """
     items = tuple(openers)
     key = _selected_key(selected, items, kind=kind)
+    hidden_map = dict(settings.hidden_openers)
+    if hidden is not None:
+        keys = tuple(dict.fromkeys((*hidden_map.get(kind, ()), *(item.strip() for item in hidden if item.strip()))))
+        if keys:
+            hidden_map[kind] = keys
+        else:
+            hidden_map.pop(kind, None)
     if kind == _open.KIND_IDE:
-        return replace(settings, ide_openers=items, ide_opener=key)
-    return replace(settings, agent_openers=items, agent_opener=key)
+        return replace(settings, ide_openers=items, ide_opener=key, hidden_openers=hidden_map)
+    return replace(settings, agent_openers=items, agent_opener=key, hidden_openers=hidden_map)
 
 
 def _choice(raw: Mapping[str, Any], key: str, options: Sequence[tuple[str, str]], default: str) -> str:
