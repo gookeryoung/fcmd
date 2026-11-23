@@ -60,6 +60,18 @@ def _view(*distros: Distro) -> DistroView:
     return DistroView(distros=distros, default=distros[0].name if distros else None, warnings=(), registry=snapshot)
 
 
+_REAL_HAS_DISTRO_FILES = wslmanw.has_distro_files
+
+
+@pytest.fixture(autouse=True)
+def _assume_fake_distro_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    """大多数窗口用例用 ``C:\\WSL\\...`` 假路径构造 view；默认按磁盘文件存在处理。
+
+    专门验证失效实例剔除的用例再恢复 :func:`wslmanw.has_distro_files` 的真实实现。
+    """
+    monkeypatch.setattr(wslmanw, "has_distro_files", bool)
+
+
 @pytest.fixture()
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     base = tmp_path / "home"
@@ -357,6 +369,25 @@ def test_status_refresh_updates_rows_in_place(home: Path, monkeypatch: pytest.Mo
         assert row.state_tag.text() == "运行中"
         assert row.start_stop_button.text() == "停止"
         assert window.distro_list.currentRow() == 0
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_status_refresh_skips_unchanged_rows(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """轮询结果与当前行完全一致时不碰行内控件，避免每 3 秒闪一下。"""
+    view = _view(_distro("Ubuntu", "stopped"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        row = _distro_row(window, 0)
+        calls: list[tuple[object, ...]] = []
+        monkeypatch.setattr(row, "update_distro", lambda *args: calls.append(args))
+
+        window._on_status(view)
+        assert calls == []
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
@@ -2830,6 +2861,7 @@ def test_refresh_rescans_work_dirs_when_registry_base_path_is_stale(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """注册表 BasePath 失效（手工搬家）时，刷新重扫工作目录并采用实际磁盘位置。"""
+    monkeypatch.setattr(wslmanw, "has_distro_files", _REAL_HAS_DISTRO_FILES)
     stale = home / "wsl" / "install" / "Ubuntu"
     moved = home / "other" / "install" / "Ubuntu"
     moved.mkdir(parents=True)
@@ -2856,6 +2888,32 @@ def test_refresh_rescans_work_dirs_when_registry_base_path_is_stale(
         assert row.work_dir == home / "other"
         metrics = row.metrics_label
         assert metrics is not None and metrics.text() == "8.0 KiB"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_refresh_removes_instance_when_disk_files_are_gone(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """工作目录被移除 / 磁盘文件被删后，刷新不能继续保留无法启动的实例。"""
+    monkeypatch.setattr(wslmanw, "has_distro_files", _REAL_HAS_DISTRO_FILES)
+    current = home / "wsl" / "install" / "Ubuntu"
+    current.mkdir(parents=True)
+    (current / "ext4.vhdx").write_bytes(b"x" * 16)
+    monkeypatch.setattr(cli, "_view", lambda env: _view(replace(_distro("Ubuntu", "stopped"), base_path=str(current))))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        assert window.distro_list.count() == 1
+
+        # 目录被移除：磁盘文件与安装目录都不在了。
+        (current / "ext4.vhdx").unlink()
+        current.rmdir()
+        window._button_by_text["刷新"].click()
+        _wait_idle(window)
+
+        assert window.distro_list.count() == 0
+        assert "已移出列表" in window.page_status("distros")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

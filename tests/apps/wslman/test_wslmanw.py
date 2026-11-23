@@ -13,8 +13,9 @@ from pathlib import Path
 import pytest
 
 from fcmd.apps.wslman import _open, wslmanw
-from fcmd.apps.wslman._distro import Distro
+from fcmd.apps.wslman._distro import Distro, DistroView
 from fcmd.apps.wslman._errors import not_found
+from fcmd.apps.wslman._registry import RegistrySnapshot
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
@@ -603,6 +604,51 @@ def test_scan_install_dirs_finds_moved_instances(tmp_path: Path) -> None:
     assert wslmanw.has_distro_files(str(ubuntu)) is True
     assert wslmanw.has_distro_files(str(empty)) is False
     assert wslmanw.has_distro_files(None) is False
+
+
+def test_reconcile_distros_relocates_or_removes_stale_entries(tmp_path: Path) -> None:
+    """刷新对比：搬家的实例改用扫描位置，目录已删的实例从列表剔除。"""
+    root = tmp_path / "wsl"
+    moved = root / "install" / "Ubuntu"
+    moved.mkdir(parents=True)
+    (moved / "ext4.vhdx").write_bytes(b"x")
+    settings = wslmanw.with_work_dirs(wslmanw.WslmanwSettings(), [root], root)
+    snapshot = RegistrySnapshot(
+        available=False,
+        default_distribution=None,
+        default_version=None,
+        distros=(),
+        error=None,
+    )
+    stale_ubuntu = Distro("Ubuntu", "stopped", "Stopped", 2, False, base_path=str(root / "old" / "Ubuntu"))
+    missing = Distro("Debian", "stopped", "Stopped", 2, False, base_path=str(root / "old" / "Debian"))
+    view = DistroView((stale_ubuntu, missing), "Ubuntu", (), snapshot)
+
+    reconciled, relocated, removed = wslmanw.reconcile_distros(view, settings)
+    assert relocated == ("Ubuntu",)
+    assert removed == ("Debian",)
+    assert [item.name for item in reconciled.distros] == ["Ubuntu"]
+    assert reconciled.distros[0].base_path == str(moved)
+    assert reconciled.default == "Ubuntu"
+    assert any("扫描到新位置" in warning for warning in reconciled.warnings)
+    assert any("已从实例列表移除" in warning for warning in reconciled.warnings)
+
+
+def test_reconcile_distros_keeps_unknown_base_path(tmp_path: Path) -> None:
+    """注册表不可读导致 BasePath 为空时不能误删，仍可启动的实例保持原样。"""
+    snapshot = RegistrySnapshot(
+        available=False,
+        default_distribution=None,
+        default_version=None,
+        distros=(),
+        error=None,
+    )
+    distro = Distro("Ubuntu", "running", "Running", 2, True, base_path=None)
+    view = DistroView((distro,), "Ubuntu", (), snapshot)
+    reconciled, relocated, removed = wslmanw.reconcile_distros(view, wslmanw.WslmanwSettings())
+    assert reconciled is view
+    assert relocated == ()
+    assert removed == ()
 
 
 def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

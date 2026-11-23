@@ -875,6 +875,22 @@ def test_set_button_text_updates_icon_and_tone() -> None:
         widget.deleteLater()
 
 
+def test_set_button_text_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """轮询重复写同一文案 / 色调时不重建图标，避免整行按钮周期性重绘。"""
+    from fcmd.gui import icons as _gui_icons
+
+    widget = button("停止", kind="danger")
+    calls: list[str] = []
+    monkeypatch.setattr(_gui_icons, "set_icon", lambda _widget, name, **_kwargs: calls.append(name))
+    try:
+        set_button_text(widget, "停止", tone="danger")
+        assert calls == []
+        set_button_text(widget, "停止", tone="muted")
+        assert calls == ["stop"]
+    finally:
+        widget.deleteLater()
+
+
 def test_fit_dialog_to_content_removes_bottom_blank() -> None:
     """对话框按内容高度贴合：不写死大尺寸，也不留下底部空白。"""
     from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout

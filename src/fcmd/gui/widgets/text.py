@@ -70,7 +70,10 @@ class StatusTag(QLabel):  # pragma: no cover - Qt 控件
         self.style().polish(self)
 
     def set_status(self, text: str, tone: str | None = None) -> None:
-        """一次写入文案与可选语义色（状态刷新最常用）。"""
+        """一次写入文案与可选语义色（状态刷新最常用）；完全没变时不重绘。"""
+        normalized = None if tone is None else (tone if tone in _STATUS_TONES else "muted")
+        if self.text() == text and (normalized is None or self.tone() == normalized):
+            return
         self.setText(text)
         if tone is not None:
             self.set_tone(tone)
@@ -153,7 +156,9 @@ class ElidedLabel(QLabel):  # pragma: no cover - Qt 控件
         self._refresh()
 
     def setText(self, text: str) -> None:
-        """设置完整文本（显示内容按当前宽度省略）。"""
+        """设置完整文本（显示内容按当前宽度省略）；文本未变不重绘。"""
+        if self._full_text == text:
+            return
         self._full_text = text
         self._refresh()
 
@@ -173,5 +178,8 @@ class ElidedLabel(QLabel):  # pragma: no cover - Qt 控件
             super().setToolTip("")
             return
         shown = self.fontMetrics().elidedText(self._full_text, self._elide_mode, available)
-        super().setText(shown)
-        super().setToolTip(self._full_text if shown != self._full_text else "")
+        if super().text() != shown:
+            super().setText(shown)
+        tooltip = self._full_text if shown != self._full_text else ""
+        if super().toolTip() != tooltip:
+            super().setToolTip(tooltip)

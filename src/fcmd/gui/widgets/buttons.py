@@ -36,13 +36,21 @@ def set_button_text(widget: QPushButton, text: str, *, tone: str | None = None) 
     """
     from PySide6.QtGui import QIcon
 
-    from fcmd.gui.icons import ICON_NAME_PROPERTY, icon_for_text, set_icon
+    from fcmd.gui.icons import ICON_NAME_PROPERTY, ICON_TONE_PROPERTY, icon_for_text, set_icon
 
-    widget.setText(text)
     name = icon_for_text(text)
+    mapped = tone if tone is not None else widget.property("fcmdIconTone")
+    mapped = mapped if isinstance(mapped, str) and mapped else "text"
+    # 轮询会反复调用到这里：文案 / 图标 / 色调都没变时直接返回，避免每 3 秒
+    # 重新生成一次位图图标并触发按钮重绘（实例列表会看起来在闪）。
+    if widget.text() == text:
+        if name and widget.property(ICON_NAME_PROPERTY) == name and widget.property(ICON_TONE_PROPERTY) == mapped:
+            return
+        if not name and widget.property(ICON_NAME_PROPERTY) in (None, ""):
+            return
+    widget.setText(text)
     if name:
-        mapped = tone if tone is not None else widget.property("fcmdIconTone")
-        set_icon(widget, name, tone=mapped if isinstance(mapped, str) and mapped else "text")
+        set_icon(widget, name, tone=mapped)
         return
     widget.setIcon(QIcon())
     widget.setProperty(ICON_NAME_PROPERTY, None)

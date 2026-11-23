@@ -261,12 +261,16 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     # 内容插槽
     # ------------------------------------------------------------------ #
     def set_title(self, text: str) -> None:
-        """换标题文字（同时同步 tooltip，轮询就地刷新行时用）。"""
+        """换标题文字（同时同步 tooltip，轮询就地刷新行时用）；文字未变不重绘。"""
+        if self.title_label.fullText() == text:
+            return
         self.title_label.setText(text)
         self.title_label.setToolTip(text)
 
     def set_subtitle(self, text: str) -> None:
         """换副标题（版本 / 占用、架构 / 来源等）；空串时收起这一行。"""
+        if self.sub_label.text() == text and self.sub_label.isHidden() == bool(text):
+            return
         self.sub_label.setText(text)
         self.sub_label.setToolTip(text)
         self.sub_label.setVisible(bool(text))
@@ -430,8 +434,9 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.metrics_label.setFixedWidth(self._metrics_lane_width())
             self.add_action(self.metrics_label)  # 内部会重置对齐缓存并重新套用
             return self.metrics_label
-        self.metrics_label.setText(text)
-        self.metrics_label.setToolTip(text)
+        if self.metrics_label.text() != text:
+            self.metrics_label.setText(text)
+            self.metrics_label.setToolTip(text)
         return self.metrics_label
 
     def _metrics_lane_width(self) -> int:

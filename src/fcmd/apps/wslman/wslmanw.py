@@ -22,7 +22,7 @@ import fcmd
 from fcmd.apps.wslman import _images, _initenv, _mirrors, _open
 from fcmd.apps.wslman._config import work_root
 from fcmd.apps.wslman._disk import format_bytes
-from fcmd.apps.wslman._distro import Distro, state_label
+from fcmd.apps.wslman._distro import Distro, DistroView, state_label
 from fcmd.apps.wslman._errors import WslmanError
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _geometry
@@ -65,6 +65,7 @@ __all__ = [
     "main",
     "openers_for",
     "pick_download",
+    "reconcile_distros",
     "resolve_geometry",
     "same_dir",
     "save_settings",
@@ -561,6 +562,56 @@ def scan_install_dirs(settings: WslmanwSettings) -> dict[str, Path]:
                 continue
             found.setdefault(child.name.casefold(), child)
     return found
+
+
+def reconcile_distros(
+    view: DistroView,
+    settings: WslmanwSettings,
+) -> tuple[DistroView, tuple[str, ...], tuple[str, ...]]:
+    """按工作目录修复 / 剔除无法启动的实例。
+
+    返回 ``(新视图, 重定位的实例名, 移除的实例名)``：
+
+    - ``BasePath`` 下已经没有 ``ext4.vhdx`` / ``rootfs``：先扫描已配置工作目录，
+      找到同名实例则改用实际位置；找不到则从列表移除（注册表 / ``wsl`` 里的
+      残留登记不会因此被改写）。
+    - ``BasePath`` 为空（注册表不可读）时保持原样，避免误删仍可启动的实例。
+    """
+    stale = [distro for distro in view.distros if distro.base_path and not has_distro_files(distro.base_path)]
+    if not stale:
+        return view, (), ()
+
+    found = scan_install_dirs(settings)
+    distros: list[Distro] = []
+    relocated: list[str] = []
+    removed: list[str] = []
+    for distro in view.distros:
+        current = distro
+        if current.base_path and not has_distro_files(current.base_path):
+            candidate = found.get(current.name.casefold())
+            if candidate is None:
+                removed.append(current.name)
+                continue
+            current = replace(current, base_path=str(candidate))
+            relocated.append(current.name)
+        distros.append(current)
+
+    if not relocated and not removed:
+        return view, (), ()
+
+    warnings = list(view.warnings)
+    warnings.extend(f"{name} 的 BasePath 不可用，已按工作目录扫描到新位置" for name in relocated)
+    warnings.extend(
+        f"{name} 的磁盘文件已不存在，已从实例列表移除（注册表 / wsl 中的残留登记需另行清理）" for name in removed
+    )
+    default = view.default
+    if default and not any(item.name == default for item in distros):
+        default = distros[0].name if distros else None
+    return (
+        replace(view, distros=tuple(distros), default=default, warnings=tuple(warnings)),
+        tuple(relocated),
+        tuple(removed),
+    )
 
 
 def legacy_dir_note(settings: WslmanwSettings) -> str:

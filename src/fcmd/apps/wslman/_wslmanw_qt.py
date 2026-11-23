@@ -27,7 +27,7 @@ import contextlib
 import shutil
 import threading
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1963,7 +1963,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             return
         self._log(f"[{label}] {message}")
         if not quiet:
-            self._set_task_status(f"{label}完成")
+            # 刷新结果可能包含重定位 / 剔除实例的说明，直接回显比一句「刷新完成」有用。
+            self._set_task_status(message if label == "刷新" and message else f"{label}完成")
         if label == "刷新":
             self._refresh_rows()
         else:
@@ -2148,9 +2149,10 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             on_error=self._on_status_error,
         )
 
-    @staticmethod
-    def _status_worker() -> Any:
-        return cli._view(cli._build_environment())
+    def _status_worker(self) -> Any:
+        """轮询只读视图，但仍按当前工作目录剔除已失效的实例。"""
+        view, _relocated, _removed = w.reconcile_distros(cli._view(cli._build_environment()), self.settings)
+        return view
 
     def _on_status(self, view: Any) -> None:
         self._status_busy = False
@@ -2185,7 +2187,9 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             if distro is None:
                 continue
             size, estimated = self.sizes.get(distro.name, (None, False))
-            row.update_distro(distro, size, estimated)
+            # 轮询会每 3 秒走一遍；数据完全没变时不碰行内控件，避免列表反复重绘。
+            if row.distro != distro or row.size != size or row.estimated != estimated:
+                row.update_distro(distro, size, estimated)
             row.set_busy(self._busy)
             if row.is_expanded():
                 self.distro_detail_view.render(distro, size, estimated)
@@ -2246,8 +2250,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
 
     def _load(self, _cancel: threading.Event) -> str:
         env = cli._build_environment()
-        view = cli._view(env)
-        view, relocated = self._resolve_scanned_bases(view)
+        view, relocated, removed = w.reconcile_distros(cli._view(env), self.settings)
         sizes: dict[str, tuple[int | None, bool]] = {}
         for distro in view.distros:
             sizes[distro.name] = distro_disk_bytes(distro.base_path, distro.version)
@@ -2255,35 +2258,10 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self.sizes = sizes
         message = f"已加载 {len(view.distros)} 个实例"
         if relocated:
-            message += f"；{relocated} 个 BasePath 不可用，已按工作目录重新定位"
+            message += f"；{len(relocated)} 个 BasePath 不可用，已按工作目录重新定位"
+        if removed:
+            message += f"；{len(removed)} 个实例磁盘文件已不存在，已移出列表"
         return message
-
-    def _resolve_scanned_bases(self, view: Any) -> tuple[Any, int]:
-        """注册表 BasePath 失效时，扫描工作目录的 ``install/<实例>`` 补全位置。
-
-        外部移动目录（包括手工搬家）后注册表可能还指向旧路径；刷新时重扫工作目录
-        才能让列表展示实际位置与占用，而不是继续沿用旧列表。
-        """
-        missing = [distro for distro in view.distros if not w.has_distro_files(distro.base_path)]
-        if not missing:
-            return view, 0
-        found = w.scan_install_dirs(self.settings)
-        if not found:
-            return view, 0
-        relocated: list[str] = []
-        distros: list[Distro] = []
-        for distro in view.distros:
-            current = distro
-            if not w.has_distro_files(current.base_path):
-                candidate = found.get(current.name.casefold())
-                if candidate is not None:
-                    current = replace(current, base_path=str(candidate))
-                    relocated.append(current.name)
-            distros.append(current)
-        if not relocated:
-            return view, 0
-        warnings = (*view.warnings, *(f"{name} 的 BasePath 不可用，已按工作目录扫描到新位置" for name in relocated))
-        return replace(view, distros=tuple(distros), warnings=warnings), len(relocated)
 
     def _selected(self) -> Distro | None:
         row = self._selected_row()
