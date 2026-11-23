@@ -1,6 +1,6 @@
 # 0046 大型 Qt 应用拆分：wslman / llmw 的页面化与窗口瘦身（立项）
 
-- 状态：立项（P0 未实施，本文确定分期 / 边界 / 验收，不动运行代码）
+- 状态：P0 已落地（`apps/<app>/qt/` 布局例外 + 骨架 + 守卫）；P1–P5 待办
 - 日期：2026-11-26
 - 关联：[0003](0003-package-layout.md)（布局不变量）、[0034](0034-qt-full-gui-migration.md)（Qt 迁移）、
   [0038](0038-shared-qt-widget-boundaries.md)（共享控件边界）、[0042](0042-shared-gui-shell-and-theme.md)（窗口外壳 / 页面基类）
@@ -134,6 +134,13 @@ MAX_DIR_LEVELS = {"apps": 3, "default": 2}
 3. wslmanw / llmw 的命令、设置文件、窗口标题与默认尺寸不变；
 4. 页面级测试覆盖至少：列表刷新、详情切换、对话框确认/取消、设置 roundtrip；
 5. `make flow`、启动基准、`_manifest_data` 一致性全绿。
+
+## 落地状态
+
+- P0：`tests/test_layout.py` 按根目录限层（`apps` 3 层、其他 2 层），新增
+  `apps/*/qt/` 扁平守卫；`apps/wslman/qt/__init__.py` 与 `apps/llm/qt/__init__.py`
+  建立空骨架（不含业务代码）；ADR 0003 同步登记例外。
+- P1–P5：未实施，按「分期」逐页迁移。
 
 ## 交接
 

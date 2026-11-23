@@ -16,7 +16,11 @@ PACKAGE = Path(__file__).resolve().parent.parent / "src" / "fcmd"
 MAX_DIR_LEVELS = 2
 """模块相对 ``src/fcmd`` 允许的最大目录层数（``<包>/[<子包>/]<模块>.py``）。"""
 
+APP_MAX_DIR_LEVELS = 3
+"""``apps/<app>/qt/<module>.py`` 允许第 3 层（ADR 0046 D1）；其他层保持 2。"""
+
 TOOLS = PACKAGE / "tools"
+APPS = PACKAGE / "apps"
 
 TESTS = Path(__file__).resolve().parent
 
@@ -37,14 +41,15 @@ def _iter_tool_modules() -> list[Path]:
     return modules
 
 
-def test_module_depth_within_two_levels() -> None:
-    """模块不得深于 ``fcmd/<包>/<子包>/<模块>.py``。"""
-    deepest = sorted(
-        str(p.relative_to(PACKAGE))
-        for p in PACKAGE.rglob("*.py")
-        if len(p.relative_to(PACKAGE).parts) > MAX_DIR_LEVELS + 1
-    )
-    assert not deepest, f"模块目录超过 {MAX_DIR_LEVELS} 层: {deepest}"
+def test_module_depth_within_levels() -> None:
+    """模块深度按根目录限层：``apps`` 允许 3 层，其余 2 层（ADR 0046 D1）。"""
+    deepest: list[str] = []
+    for p in PACKAGE.rglob("*.py"):
+        relative = p.relative_to(PACKAGE)
+        limit = APP_MAX_DIR_LEVELS if relative.parts[0] == "apps" else MAX_DIR_LEVELS
+        if len(relative.parts) > limit + 1:
+            deepest.append(str(relative))
+    assert not deepest, f"模块目录超过限层（apps={APP_MAX_DIR_LEVELS}，其他={MAX_DIR_LEVELS}）: {sorted(deepest)}"
 
 
 def test_directories_are_not_empty() -> None:
@@ -69,6 +74,18 @@ def test_tool_names_are_unique() -> None:
     duplicates = sorted({name for name in names if names.count(name) > 1})
     assert names, "tools 下没有发现任何工具模块"
     assert not duplicates, f"工具名重复: {duplicates}"
+
+
+def test_app_qt_packages_are_flat() -> None:
+    """``apps/<app>/qt/`` 内不再嵌套子目录（ADR 0046 D1）。"""
+    nested = sorted(
+        str(p.relative_to(PACKAGE))
+        for p in APPS.glob("*/qt")
+        if p.is_dir()
+        for p in p.iterdir()
+        if p.is_dir() and p.name != "__pycache__"
+    )
+    assert not nested, f"apps/*/qt 内嵌套了子目录: {nested}"
 
 
 def test_domains_are_flat() -> None:
