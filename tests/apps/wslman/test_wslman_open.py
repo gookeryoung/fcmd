@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -122,7 +123,9 @@ def test_settings_default_openers_when_field_missing() -> None:
     assert settings.agent_openers == _open.default_openers(_open.KIND_AGENT)
     assert settings.ide_opener == "vscode"
     assert settings.agent_opener == "opencode"
-    assert wslmanw.selected_opener(settings, _open.KIND_IDE).key == "vscode"
+    selected = wslmanw.selected_opener(settings, _open.KIND_IDE)
+    assert selected is not None
+    assert selected.key == "vscode"
 
 
 def test_settings_explicit_empty_list_means_user_deleted_everything() -> None:
@@ -169,7 +172,7 @@ def test_origin_roundtrip_and_legacy_mappings() -> None:
     assert parsed["mine"].origin == _open.ORIGIN_USER
 
 
-def test_detect_host_prefers_path_then_common_install_dirs(tmp_path) -> None:
+def test_detect_host_prefers_path_then_common_install_dirs(tmp_path: Path) -> None:
     """宿主机检测：PATH 优先，其次 LOCALAPPDATA / Program Files 下的常见位置。"""
     from_path = _open.detect_host("vscode", env={}, which=lambda _name: r"C:\tools\code.cmd")
     assert from_path.found is True
@@ -195,7 +198,7 @@ def test_detect_host_prefers_path_then_common_install_dirs(tmp_path) -> None:
     assert missing.host == _open.HOST_WINDOWS
 
 
-def test_windows_candidates_cover_common_roots(tmp_path) -> None:
+def test_windows_candidates_cover_common_roots(tmp_path: Path) -> None:
     env = {
         "LOCALAPPDATA": str(tmp_path / "local"),
         "APPDATA": str(tmp_path / "roaming"),

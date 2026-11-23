@@ -1121,8 +1121,9 @@ def test_settings_page_persists_work_dir_and_mirror(
             item for item in window.work_grid.findChildren(_wslmanw_qt.QPushButton) if item.objectName() == "DiskAdd"
         )
         add.click()
-        assert window.settings.work_dir == str(home / "wsl")
-        assert [Path(item) for item in window.settings.work_dirs] == [home / "wsl", chosen]
+        settings = cast(wslmanw.WslmanwSettings, window.settings)
+        assert settings.work_dir == str(home / "wsl")
+        assert [Path(item) for item in settings.work_dirs] == [home / "wsl", chosen]
         window.mirror.setCurrentIndex(window.mirror_ids.index("ustc"))
     finally:
         window._poll.stop()  # type: ignore[union-attr]
@@ -2884,10 +2885,11 @@ def test_files_page_opens_workbuddy_with_unc_path(home: Path, monkeypatch: pytes
     monkeypatch.setattr(_wslmanw_qt.shutil, "which", lambda name: r"C:\tools\workbuddy.exe")
     window = _open_window(home, monkeypatch, root)
     try:
-        window.settings = wslmanw.with_openers(
-            window.settings,
+        settings = cast(wslmanw.WslmanwSettings, window.settings)
+        cast(Any, window).settings = wslmanw.with_openers(
+            settings,
             _open.KIND_IDE,
-            wslmanw.openers_for(window.settings, _open.KIND_IDE),
+            wslmanw.openers_for(settings, _open.KIND_IDE),
             "workbuddy",
         )
         window._sync_files_actions()
@@ -2978,7 +2980,9 @@ def test_files_page_prompts_when_no_opener_configured(
     _prepare_openers_page(monkeypatch, root)
     window = _open_window(home, monkeypatch, root)
     try:
-        window.settings = wslmanw.with_openers(window.settings, _open.KIND_IDE, (), "")
+        cast(Any, window).settings = wslmanw.with_openers(
+            cast(wslmanw.WslmanwSettings, window.settings), _open.KIND_IDE, (), ""
+        )
         window._sync_files_actions()
         assert window.files_open_ide.isEnabled() is False
         prompts: list[Any] = []
@@ -2999,7 +3003,8 @@ def test_smart_detect_fills_builtins_but_keeps_user_edits(
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        openers = wslmanw.openers_for(window.settings, _open.KIND_IDE)
+        settings = cast(wslmanw.WslmanwSettings, window.settings)
+        openers = wslmanw.openers_for(settings, _open.KIND_IDE)
         edited = _open.Opener(
             "vscode",
             "VSCode",
@@ -3010,7 +3015,7 @@ def test_smart_detect_fills_builtins_but_keeps_user_edits(
             "note",
             _open.ORIGIN_USER,
         )
-        window.settings = wslmanw.with_openers(window.settings, _open.KIND_IDE, (edited, *openers[1:]), "trae")
+        cast(Any, window).settings = wslmanw.with_openers(settings, _open.KIND_IDE, (edited, *openers[1:]), "trae")
         host = {
             "vscode": _open.Detection(
                 "vscode", _open.HOST_WINDOWS, r"C:\code.cmd", r'C:\code.cmd --remote wsl+{distro} "{dir}"'
@@ -3021,7 +3026,10 @@ def test_smart_detect_fills_builtins_but_keeps_user_edits(
         }
         window._apply_detections((host, {}), log=False)
 
-        saved = {item.key: item for item in wslmanw.openers_for(window.settings, _open.KIND_IDE)}
+        saved = {
+            item.key: item
+            for item in wslmanw.openers_for(cast(wslmanw.WslmanwSettings, window.settings), _open.KIND_IDE)
+        }
         assert saved["vscode"].command == 'my-code "{dir}"'
         assert saved["vscode"].origin == _open.ORIGIN_USER
         assert saved["trae"].command == r'C:\trae.exe --remote wsl+{distro} "{dir}"'
@@ -3051,8 +3059,9 @@ def test_smart_detect_tags_reflect_host_and_wsl_state(
         assert window.opener_tags[_open.KIND_AGENT].text() == "WSL 实例内已安装"
         assert "/usr/bin/opencode" in window.opener_tags[_open.KIND_AGENT].toolTip()
 
-        openers = wslmanw.openers_for(window.settings, _open.KIND_IDE)
-        window.settings = wslmanw.with_openers(window.settings, _open.KIND_IDE, openers, "trae")
+        settings = cast(wslmanw.WslmanwSettings, window.settings)
+        openers = wslmanw.openers_for(settings, _open.KIND_IDE)
+        cast(Any, window).settings = wslmanw.with_openers(settings, _open.KIND_IDE, openers, "trae")
         window._reload_opener_combo(_open.KIND_IDE)
         assert window.opener_tags[_open.KIND_IDE].text() == "未安装"
 
@@ -3061,7 +3070,7 @@ def test_smart_detect_tags_reflect_host_and_wsl_state(
             {"vscode": _open.Detection("vscode", _open.HOST_WINDOWS)},
             {"vscode": _open.Detection("vscode", _open.HOST_WSL, "/usr/bin/code", "code")},
         )
-        window.settings = wslmanw.with_openers(window.settings, _open.KIND_IDE, openers, "vscode")
+        cast(Any, window).settings = wslmanw.with_openers(settings, _open.KIND_IDE, openers, "vscode")
         window._reload_opener_combo(_open.KIND_IDE)
         tag = window.opener_tags[_open.KIND_IDE]
         assert tag.text() == "仅WSL 内已安装"
@@ -3089,7 +3098,9 @@ def test_settings_page_detects_once_per_instance(home: Path, monkeypatch: pytest
         assert calls == [False]
         assert window._opener_detections == {}
 
-        window._opener_detections["Ubuntu"] = ({}, {})
+        empty_host: dict[str, _open.Detection] = {}
+        empty_wsl: dict[str, _open.Detection] = {}
+        window._opener_detections["Ubuntu"] = (empty_host, empty_wsl)
         window.show_page("settings")
         assert calls == [False]
     finally:
