@@ -1727,7 +1727,7 @@ def test_download_queue_respects_limit_and_queues_extra(home: Path, monkeypatch:
         _wait_idle(window)
         entries = [_image_entry(name) for name in ("Ubuntu", "Debian", "Kali")]
         window._apply_images((_catalog(tuple(entries)), tuple(entries)))
-        window.settings = wslmanw.with_max_downloads(window.settings, 2)
+        cast(Any, window).settings = wslmanw.with_max_downloads(cast(wslmanw.WslmanwSettings, window.settings), 2)
         launched: list[str] = []
         monkeypatch.setattr(
             _wslmanw_qt.WslmanQtWindow,
@@ -1756,9 +1756,7 @@ def test_download_queue_respects_limit_and_queues_extra(home: Path, monkeypatch:
         window.deleteLater()
 
 
-def test_download_failure_releases_slot_without_stopping_others(
-    home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_download_failure_releases_slot_without_stopping_others(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """单项失败 / 取消只释放自己的槽位，排队的下一项继续启动。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
@@ -1767,7 +1765,7 @@ def test_download_failure_releases_slot_without_stopping_others(
         _wait_idle(window)
         entries = [_image_entry(name) for name in ("Ubuntu", "Debian")]
         window._apply_images((_catalog(tuple(entries)), tuple(entries)))
-        window.settings = wslmanw.with_max_downloads(window.settings, 1)
+        cast(Any, window).settings = wslmanw.with_max_downloads(cast(wslmanw.WslmanwSettings, window.settings), 1)
         launched: list[str] = []
         monkeypatch.setattr(
             _wslmanw_qt.WslmanQtWindow,
@@ -1794,9 +1792,7 @@ def test_download_failure_releases_slot_without_stopping_others(
         window.deleteLater()
 
 
-def test_heavy_task_does_not_turn_download_rows_into_cancel(
-    home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heavy_task_does_not_turn_download_rows_into_cancel(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """安装 / 迁移等重操作只禁用无下载的行，不会把整列误标成「正在下载」。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
@@ -1809,6 +1805,7 @@ def test_heavy_task_does_not_turn_download_rows_into_cancel(
         window._set_buttons(False)
 
         row = _image_row(window, 0)
+        assert row.download_button is not None
         assert row.download_button.text() == "下载"
         assert not row.download_button.isEnabled()
 
@@ -2699,9 +2696,7 @@ def test_refresh_requested_during_task_runs_after_finish(home: Path, monkeypatch
         window.deleteLater()
 
 
-def test_reload_button_rereads_registry_and_recomputes_work_dir(
-    home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_reload_button_rereads_registry_and_recomputes_work_dir(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """「更新列表」走完整刷新：重读注册信息，并按当前工作目录重算行内归属。"""
     installed = str(home / "wsl" / "install" / "Ubuntu")
     monkeypatch.setattr(cli, "_view", lambda env: _view(replace(_distro(), base_path=installed)))
@@ -2721,7 +2716,9 @@ def test_reload_button_rereads_registry_and_recomputes_work_dir(
         assert _distro_row(window, 0).work_dir == home / "wsl"
 
         other = home / "other"
-        window.settings = wslmanw.with_work_dirs(window.settings, [other, home / "wsl"], other)
+        cast(Any, window).settings = wslmanw.with_work_dirs(
+            cast(wslmanw.WslmanwSettings, window.settings), [other, home / "wsl"], other
+        )
         window._on_reload_distros()
         _wait_idle(window)
 
@@ -2764,9 +2761,7 @@ def test_work_dir_change_during_busy_defers_row_rebuild(home: Path, monkeypatch:
     try:
         _wait_idle(window)
         rebuilt: list[str] = []
-        monkeypatch.setattr(
-            _wslmanw_qt.WslmanQtWindow, "_refresh_rows", lambda self: rebuilt.append("rows")
-        )
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_refresh_rows", lambda self: rebuilt.append("rows"))
         other = home / "other"
         window._busy = True
         window._store_work_dirs([other, home / "wsl"], other, "默认工作目录已切换")

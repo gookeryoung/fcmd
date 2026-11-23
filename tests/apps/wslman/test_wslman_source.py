@@ -83,10 +83,10 @@ class _FakeResponse:
         self.closed = True
 
 
-def _opener(response: _FakeResponse | BaseException) -> tuple[Any, list[urllib.request.Request]]:
+def _opener(response: _FakeResponse | _BlockingResponse | BaseException) -> tuple[Any, list[urllib.request.Request]]:
     requests: list[urllib.request.Request] = []
 
-    def open_(request: urllib.request.Request, timeout: float) -> _FakeResponse:
+    def open_(request: urllib.request.Request, timeout: float) -> _FakeResponse | _BlockingResponse:
         requests.append(request)
         if isinstance(response, BaseException):
             raise response
@@ -349,7 +349,7 @@ def test_download_cancel_interrupts_blocked_connect(tmp_path: Path) -> None:
     """连接阶段卡住时同样能被取消：不必等 ``opener.open`` 的超时。"""
     cancel = threading.Event()
 
-    def slow_open(_request: urllib.request.Request, _timeout: float) -> _FakeResponse:
+    def slow_open(request: urllib.request.Request, timeout: float) -> _FakeResponse:
         cancel.wait(5)
         return _FakeResponse(b"", headers={"Content-Length": "0"})
 

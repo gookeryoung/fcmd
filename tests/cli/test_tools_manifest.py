@@ -524,7 +524,13 @@ def test_seed_main_module_alias_without_file(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_seed_main_module_alias_ignores_find_spec_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "__main__", SimpleNamespace(__file__="entry.py"))
-    monkeypatch.setattr(_discovery.importlib.util, "find_spec", lambda name: (_ for _ in ()).throw(ValueError("bad")))
+
+    def fail(_name: str) -> object:
+        raise ValueError("bad")
+
+    # 只替换 _discovery 自己的 importlib 引用：改全局 importlib.util.find_spec
+    # 会波及同进程的 coverage，导致它在 tracing 时抛错、worker 崩溃。
+    monkeypatch.setattr(_discovery, "importlib", SimpleNamespace(util=SimpleNamespace(find_spec=fail)))
 
     _discovery._seed_main_module_alias("fcmd.tools.not-registered")
 
