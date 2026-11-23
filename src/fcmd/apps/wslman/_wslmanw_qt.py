@@ -204,6 +204,7 @@ class WslmanQtWindow(
         self.launcher = SubprocessLauncher()
         self.view: Any = None
         self.sizes: dict[str, tuple[int | None, bool]] = {}
+        self.backups: frozenset[str] = frozenset()
         self._rows: list[tuple[str, ...]] = []
         self.image_entries: tuple[ImageEntry, ...] = ()
         self._wslui_catalog: Any = None

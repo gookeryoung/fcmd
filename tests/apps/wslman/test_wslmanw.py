@@ -934,3 +934,16 @@ def test_mark_downloaded_skips_installed_and_missing_dir(tmp_path: Path) -> None
     empty = wslmanw.mark_downloaded((plain,), tmp_path / "nope")
     assert empty[0].downloaded is False
     assert empty[0].archive == ""
+
+
+def test_backup_names_scans_all_work_dirs(tmp_path: Path) -> None:
+    """「已备份」按工作目录的 backup 子目录判定，不依赖 CLI 的 backups.dir。"""
+    first = tmp_path / "a" / "backup"
+    second = tmp_path / "b" / "backup"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    (first / "Ubuntu.tar").write_bytes(b"x")
+    (second / "Kali.tar.gz").write_bytes(b"x")
+    (second / "notes.txt").write_bytes(b"x")
+    (second / "Debian.tgz").write_bytes(b"x")
+    assert wslmanw.backup_names((first, second, tmp_path / "missing")) == frozenset({"ubuntu", "kali", "debian"})

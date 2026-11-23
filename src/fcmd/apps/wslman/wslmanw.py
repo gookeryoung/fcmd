@@ -41,6 +41,7 @@ __all__ = [
     "SETTINGS_NAME",
     "WslmanwSettings",
     "action_states",
+    "backup_names",
     "config_path",
     "derived_dirs",
     "detail_fields",
@@ -677,6 +678,33 @@ def derived_dirs(settings: WslmanwSettings) -> dict[str, Path]:
     """按默认工作目录推演下载 / 安装 / 备份子目录（不再读单独的目录配置）。"""
     root = work_dir_path(settings)
     return {"download": root / "download", "install": root / "install", "backup": root / "backup"}
+
+
+_BACKUP_SUFFIXES = (".tar.gz", ".tgz", ".tar")
+
+
+def backup_names(directories: Sequence[Path]) -> frozenset[str]:
+    """扫描备份目录里的 ``<名称>.tar`` / ``.tar.gz`` / ``.tgz``，返回小写发行版名。
+
+    备份动作落盘在默认工作目录的 ``backup`` 子目录；这里接受多个目录，既覆盖默认
+    目录，也覆盖其他已配置工作目录里留存的旧备份。读不了 / 不存在的目录直接跳过，
+    不能因为一个目录不可读就把全部「已备份」状态抹掉。
+    """
+    names: set[str] = set()
+    for directory in directories:
+        try:
+            entries = tuple(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.is_file():
+                continue
+            lowered = entry.name.casefold()
+            for suffix in _BACKUP_SUFFIXES:
+                if lowered.endswith(suffix):
+                    names.add(entry.name[: -len(suffix)].casefold())
+                    break
+    return frozenset(names)
 
 
 def with_work_dirs(

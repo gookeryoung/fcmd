@@ -338,12 +338,17 @@ class DistrosMixin:
             sizes[distro.name] = _owner.distro_disk_bytes(base, distro.version)
         self.view = view
         self.sizes = sizes
+        self.backups = _owner.w.backup_names(self._backup_dirs())
         message = f"已加载 {len(view.distros)} 个实例"
         if needs_repair:
             message += f"；{len(needs_repair)} 个实例需修复注册"
         if orphans:
             message += f"（{len(orphans)} 个已找到残余磁盘，可点「修复注册」）"
         return message
+
+    def _backup_dirs(self) -> tuple[Path, ...]:
+        """实例页判断「已备份」的目录：所有已配置工作目录下的 ``backup`` 子目录。"""
+        return tuple(root / "backup" for root in _owner.w.work_dir_paths(self.settings))
 
     def _selected(self) -> Distro | None:
         row = self._selected_row()
@@ -370,6 +375,7 @@ class DistrosMixin:
             row = _owner._DistroItemRow(
                 distro, size, estimated, _owner.w.work_dir_of(self.settings, base), self.distro_list
             )
+            row.set_backed_up(distro.name.casefold() in self.backups)
             row.toggleRequested.connect(self._on_distro_toggle)
             row.startStopRequested.connect(self._toggle_distro_state)
             row.configRequested.connect(self._configure_distro)

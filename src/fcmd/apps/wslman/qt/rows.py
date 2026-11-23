@@ -32,11 +32,16 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.size = size
         self.estimated = estimated
         self.work_dir = work_dir
+        self.backed_up = False
         self.state_tag = _owner.StatusTag("", tone="muted", parent=self.header)
         self.add_tag(self.state_tag)
         self.repair_tag = _owner.StatusTag("需修复", tone="warning", parent=self.header)
         self.repair_tag.setToolTip("注册表 BasePath 下找不到磁盘文件；先点「修复注册」再启动")
         self.add_tag(self.repair_tag)
+        self.backup_tag = _owner.StatusTag("已备份", tone="accent", parent=self.header)
+        self.backup_tag.setToolTip("备份目录里有该实例的导出包（<实例名>.tar / .tar.gz）；可在实例页「备份」")
+        self.backup_tag.setVisible(False)
+        self.add_tag(self.backup_tag)
         self.default_tag = _owner.StatusTag("默认", tone="accent", parent=self.header)
         self.add_tag(self.default_tag)
         # 发行版图标：按实例名挑对应发行版，识别不出回落通用图标（不留空、不显示问号）。
@@ -92,7 +97,15 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
             lines.append("工作目录：未在已配置目录")
         else:
             lines.append(f"工作目录：{self.work_dir}")
+        if self.backed_up:
+            lines.append("备份：备份目录里有该实例的导出包")
         return "\n".join(lines)
+
+    def set_backed_up(self, backed_up: bool) -> None:
+        """就地刷新「已备份」胶囊（轻量状态轮询不重建行）。"""
+        self.backed_up = backed_up
+        self.backup_tag.setVisible(backed_up)
+        self.setToolTip(self._row_tooltip())
 
     def update_distro(self, distro: Distro, size: int | None, estimated: bool) -> None:
         """就地刷新状态 / 占用 / 默认标记与启停按钮（轮询不重建行）。"""
@@ -107,6 +120,7 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.set_metrics(_owner.format_bytes(size, estimated=estimated))
         self.state_tag.set_status(_owner.state_label(distro), _owner._state_tone(distro.state))
         self.repair_tag.setVisible(distro.needs_repair)
+        self.backup_tag.setVisible(self.backed_up)
         self.default_tag.setVisible(distro.default)
         self._apply_action_state()
 

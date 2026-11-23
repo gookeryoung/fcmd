@@ -150,13 +150,22 @@ class ImagesDownloadMixin:
         return catalog, self._mark_local(catalog.entries, env), wslui
 
     def _mark_local(self, entries: Any, env: Any) -> tuple[ImageEntry, ...]:
-        """标注本地状态：已安装 / 已备份（``wsl`` 侧）+ 已下载（下载目录里的归档）。"""
+        """标注本地状态：已安装 / 已备份（``wsl`` 侧）+ 已下载（下载目录里的归档）。
+
+        「已备份」按 GUI 的备份目录判定：所有已配置工作目录下的 ``backup`` 子目录。
+        不能用 CLI 配置里的 ``backups.dir``——那和 GUI 的「备份」按钮写的路径不是
+        同一份配置，否则镜像页的「已备份」会永远为空。
+        """
         marked = _owner._images.mark_local_state(
             entries,
             installed=_owner.cli._installed_names(env),
-            backups=_owner.cli._backup_names(env),
+            backups=self._local_backup_names(),
         )
         return _owner.w.mark_downloaded(marked, self._download_dir_path())
+
+    def _local_backup_names(self) -> tuple[str, ...]:
+        """GUI 备份目录里的实例名（扫描全部已配置工作目录，兼容迁移后遗留的旧备份）。"""
+        return tuple(_owner.w.backup_names(tuple(root / "backup" for root in _owner.w.work_dir_paths(self.settings))))
 
     def _images_error(self, message: str) -> None:
         kept = "；列表仍是上一次的结果" if self.image_entries else ""

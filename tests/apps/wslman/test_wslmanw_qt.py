@@ -4366,3 +4366,32 @@ def test_backup_action_keeps_existing_file_unless_confirmed(home: Path, monkeypa
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
+
+
+def test_instance_and_image_backup_tags_use_gui_backup_dir(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """「已备份」以 GUI 工作目录的 backup 子目录为准：实例行有标签，镜像页也能命中。"""
+    view = _view(_distro("Ubuntu", "stopped"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        backup_dir = window._backup_dir_path()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        (backup_dir / "Ubuntu.tar").write_bytes(b"tar")
+
+        assert window._local_backup_names() == ("ubuntu",)
+        window._load(threading.Event())
+        window._refresh_rows()
+        row = window.distro_list.itemWidget(window.distro_list.item(0))
+        assert isinstance(row, _wslmanw_qt._DistroItemRow)
+        assert row.backup_tag.isHidden() is False
+        assert row.backup_tag.text() == "已备份"
+        assert "备份" in row.backup_tag.toolTip()
+
+        entry = _image_entry("Ubuntu")
+        marked = _wslmanw_qt._images.mark_local_state((entry,), installed=(), backups=window._local_backup_names())
+        assert marked[0].backed_up is True
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
