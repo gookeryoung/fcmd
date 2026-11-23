@@ -105,6 +105,38 @@ def reset_discovery_state() -> None:
     _TOOLS_DISCOVERED = False
 
 
+def _alias_running_main_module() -> None:
+    """把 fspack / ``python -m`` 以 ``__main__`` 执行的工具模块别名回真实模块名。
+
+    发现阶段会导入同包的其他模块，它们可能 ``from fcmd.apps.llm import llmenv``
+    等反向导入当前入口；如果不先把 ``__main__`` 映射到真实模块名，入口会被重新
+    执行并重复注册（llmenv / llmmodel / llmserve 的 fspack exe 即因此崩溃）。
+    """
+    main_mod = sys.modules.get("__main__")
+    main_file = getattr(main_mod, "__file__", None)
+    if main_mod is None or not main_file:
+        return
+    root = Path(__file__).resolve().parents[1]
+    try:
+        relative = Path(main_file).resolve().relative_to(root)
+    except (OSError, ValueError):
+        return
+    parts = list(relative.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    if not parts:
+        return
+    module_path = ".".join(["fcmd", *parts])
+    if module_path in sys.modules:
+        return
+    try:
+        spec = importlib.util.find_spec(module_path)
+    except (ImportError, AttributeError, ValueError):
+        return
+    if spec is not None and spec.origin and _same_file(main_file, spec.origin):
+        sys.modules[module_path] = main_mod
+
+
 def ensure_tools_discovered() -> None:
     """首次调用时扫描工具根包，发现工具模块并填充注册表。
 
@@ -125,6 +157,7 @@ def ensure_tools_discovered() -> None:
     if _TOOLS_DISCOVERED:
         return
     _TOOLS_DISCOVERED = True
+    _alias_running_main_module()
 
     _scan_root("fcmd.tools")
     _scan_root("fcmd.apps")
@@ -172,7 +205,16 @@ def _register_app(module_path: str) -> None:
         return
     tool_name = getattr(pkg, "__tool_name__", None)
     if tool_name is not None:
-        _register_tool(module_path, tool_name)
+        # 一包一应用的入口约定是 ``<包>.app``。显式导入它触发 ``@fcmd.tool``；
+        # 包门面刻意保持惰性，否则 fspack 的 runpy 入口会把同一模块注册两次。
+        entry = f"{module_path}.app"
+        _seed_main_module_alias(entry)
+        try:
+            importlib.import_module(entry)
+        except (ImportError, OSError):
+            _register_tool(module_path, tool_name)
+        else:
+            _register_tool(entry, tool_name)
         return
     for _finder, name, ispkg in pkgutil.iter_modules(pkg.__path__):
         if ispkg or name.startswith("_") or name == "main":
@@ -254,12 +296,16 @@ def _seed_main_module_alias(module_path: str) -> None:
         return
     if spec is None or not spec.origin:
         return
-    try:
-        same = Path(main_file).samefile(spec.origin)
-    except OSError:
-        same = os.path.normcase(str(Path(main_file).resolve())) == os.path.normcase(str(Path(spec.origin).resolve()))
-    if same:
+    if _same_file(main_file, spec.origin):
         sys.modules[module_path] = main_mod
+
+
+def _same_file(left: str, right: str) -> bool:
+    """比较两个源码路径（``samefile`` 失败时回退规范化字符串）。"""
+    try:
+        return Path(left).samefile(Path(right))
+    except OSError:
+        return os.path.normcase(str(Path(left).resolve())) == os.path.normcase(str(Path(right).resolve()))
 
 
 def resolve_tool(name: str) -> str | None:

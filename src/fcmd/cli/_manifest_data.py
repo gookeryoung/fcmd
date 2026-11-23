@@ -41,7 +41,7 @@ TOOLS: dict[str, ToolEntry] = {
     "casetool": ToolEntry("casetool", "python", "fcmd.tools.text.casetool"),
     "checksum": ToolEntry("checksum", "python", "fcmd.tools.system.checksum"),
     "clr": ToolEntry("clr", "python", "fcmd.tools.system.clr"),
-    "cmderw": ToolEntry("cmderw", "python", "fcmd.apps.cmder"),
+    "cmderw": ToolEntry("cmderw", "python", "fcmd.apps.cmder.app"),
     "codetool": ToolEntry("codetool", "python", "fcmd.tools.crypto.codetool"),
     "colortool": ToolEntry("colortool", "python", "fcmd.tools.text.colortool"),
     "convtool": ToolEntry("convtool", "python", "fcmd.tools.crypto.convtool"),
@@ -530,7 +530,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "8de0c1ce0bc60ad12784672ee5060551"
+DIGEST = "0238511db33c1a01b9d3445e31a282be"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 115

@@ -229,3 +229,20 @@ def test_import_fcmd_does_not_load_heavy_libs() -> None:
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_fspack_runpy_entry_tolerates_cross_import() -> None:
+    """fspack 入口被同包模块反向导入时不得重复注册。
+
+    ``llmenv`` 被 ``llmengine`` / ``llmconvert`` 等模块 ``from ... import llmenv``；
+    runpy 以 ``__main__`` 执行入口后，发现阶段导入这些模块会再次执行入口。修复前
+    抛「工具 llmenv 的子命令 show 已注册」，exe 退出 1。
+    """
+    code = (
+        "import runpy, sys; sys.argv=['llmenv', '--help']; "
+        "runpy.run_module('fcmd.apps.llm.llmenv', run_name='__main__', alter_sys=True)"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "已注册" not in result.stderr
+    assert "llmenv" in result.stdout

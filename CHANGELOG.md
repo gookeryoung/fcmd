@@ -7,6 +7,13 @@
 
 ### 变更
 
+- 修复 fspack 打包后的 GUI / 工具入口：窗口骨架显式持有 ``QMenu``（PySide6 6.11
+  会回收 ``addMenu(str)`` 的返回值，reshackw / pptmakew / pevieww / envw /
+  filesyncw / paramcadw / parameshw / regexvalidatew / renamerw 启动即崩）；
+  wslmanw 与 8 个 ``llm*`` CLI 模块补 ``__main__`` 守卫（此前 exe 静默退出 0）；
+  cmder 包门面改惰性加载并在发现前别名 ``__main__``，修复 cmderw / llmenv /
+  llmmodel / llmserve 的重复注册。新增全窗口菜单归属、入口守卫与 runpy
+  子进程回归测试。
 - 修复自动下载选到「测速快、下载慢」的源：测速窗口改为最多 2.5 秒且超时前
   已读字节仍计入吞吐；下载中持续 8 秒均速低于 512 KB/s 且还有后备源时自动
   换源（丢掉该源 `.part`），不再出现 RLCPlus-9 这类条目整份文件按 KB/s 拉完。

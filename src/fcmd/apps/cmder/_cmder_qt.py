@@ -220,7 +220,17 @@ class CmderQtWindow(QMainWindow):
 
     def _build_menus(self) -> None:
         menubar = self.menuBar()
-        file_menu = menubar.addMenu("文件")
+        # 显式以窗口为父并保留引用：PySide6 6.11 的 ``addMenu(str)`` 返回值在
+        # 局部变量离开作用域后会被回收，菜单项随后整体失效。
+        self.menus: list[QMenu] = []
+
+        def add_menu(title: str) -> QMenu:
+            menu = QMenu(title, self)
+            menubar.addMenu(menu)
+            self.menus.append(menu)
+            return menu
+
+        file_menu = add_menu("文件")
         self._add(file_menu, "新建目录…", self.new_folder, "F7")
         self._add(file_menu, "重命名…", self.rename_selected, "F2")
         self._add(file_menu, "删除到回收站", self.delete_selected, "F8")
@@ -229,7 +239,7 @@ class CmderQtWindow(QMainWindow):
         file_menu.addSeparator()
         self._add(file_menu, "退出", self.close, "Ctrl+Q")
 
-        select_menu = menubar.addMenu("选中")
+        select_menu = add_menu("选中")
         self._add(select_menu, "全选", self.select_all, "Ctrl+A")
         self._add(select_menu, "反选", self.invert_selection)
         self._add(select_menu, "按掩码选择…", self.select_by_mask, "Num+")
@@ -251,7 +261,7 @@ class CmderQtWindow(QMainWindow):
         self._add(select_menu, "合并分卷", self.merge_selected)
         self._add(select_menu, "查找重复文件…", self.find_duplicates)
 
-        view_menu = menubar.addMenu("视图")
+        view_menu = add_menu("视图")
         self._add(view_menu, "刷新", self.refresh_both, "Ctrl+R")
         self._add(view_menu, "简要列表", lambda: self.set_view_mode("brief"), "Ctrl+F1")
         self._add(view_menu, "详细列表", lambda: self.set_view_mode("detailed"), "Ctrl+F2")
@@ -277,7 +287,7 @@ class CmderQtWindow(QMainWindow):
         self.theme_menu = ThemeMenu(self, self.theme)
         self.theme_menu.attach(view_menu.addMenu("主题"))
 
-        tools_menu = menubar.addMenu("工具")
+        tools_menu = add_menu("工具")
         self._add(tools_menu, "搜索…", self.open_search, "Ctrl+F")
         self._add(tools_menu, "搜索压缩包…", self.open_archive_search)
         self._add(tools_menu, "书签…", self.open_bookmarks, "Ctrl+D")
@@ -286,13 +296,13 @@ class CmderQtWindow(QMainWindow):
         self._add(tools_menu, "比较两个文本文件", self.compare_text_files)
         self._add(tools_menu, "打开方式…", self.open_with_selected)
 
-        config_menu = menubar.addMenu("配置")
+        config_menu = add_menu("配置")
         self._add(config_menu, "颜色规则…", self.open_color_rules)
         self._add(config_menu, "定义过滤器…", self.open_filter_definition)
         self._add(config_menu, "用户命令…", self.open_user_commands)
         self._add(config_menu, "压缩选项…", self.show_archive_options)
 
-        help_menu = menubar.addMenu("帮助")
+        help_menu = add_menu("帮助")
         self._add(help_menu, "关于", self._show_about)
         self._build_toolbar()
 

@@ -1546,3 +1546,37 @@ class TestOpenExternally:
         monkeypatch.setattr(cmderw.subprocess, "Popen", lambda args, **_kwargs: calls.append(args))
         open_externally(tmp_path / "a.txt")
         assert calls == [[command, str(tmp_path / "a.txt")]]
+
+
+def test_cmder_package_import_keeps_app_lazy() -> None:
+    """包门面不预加载 ``app``：否则 fspack 的 runpy 入口会把 cmderw 注册两次。"""
+    import subprocess
+    import sys
+
+    code = "import sys, fcmd.apps.cmder; print('fcmd.apps.cmder.app' in sys.modules)"
+    proc = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "False"
+
+
+def test_cmderw_discovery_uses_app_entry_module() -> None:
+    """一包一应用按 ``<包>.app`` 注册；``run_tool`` 与实际入口模块保持一致。"""
+    from fcmd.cli._discovery import _TOOL_MODULES, ensure_tools_discovered
+
+    ensure_tools_discovered()
+    assert _TOOL_MODULES["cmderw"] == "fcmd.apps.cmder.app"
+
+
+def test_fspack_runpy_entry_does_not_register_cmderw_twice() -> None:
+    """模拟 fspack 包装器：runpy 以 ``__main__`` 执行入口时不得因重复注册崩溃。"""
+    import subprocess
+    import sys
+
+    code = (
+        "import runpy, sys; sys.argv=['cmderw', '--help']; "
+        "runpy.run_module('fcmd.apps.cmder.app', run_name='__main__', alter_sys=True)"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True, timeout=90)
+    assert proc.returncode == 0, proc.stderr
+    assert "已注册" not in proc.stderr
+    assert "usage: cmderw" in proc.stdout

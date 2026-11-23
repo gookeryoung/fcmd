@@ -1083,3 +1083,7 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
 @fcmd.main("llmconvert")
 def main() -> None:
     pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
+
+
+if __name__ == "__main__":  # pragma: no cover - fspack / python -m 入口
+    main()

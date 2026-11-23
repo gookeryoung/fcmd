@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -369,25 +370,34 @@ class QtMainWindow(LogChannelMixin, WindowShellMixin, QMainWindow):  # pragma: n
     # 菜单 / 主题
     # ------------------------------------------------------------------ #
     def _build_menu(self) -> None:
-        """文件 / 视图 / 帮助三组菜单：退出、主题切换、关于。"""
-        file_menu = self.menuBar().addMenu("文件")
+        """文件 / 视图 / 帮助三组菜单：退出、主题切换、关于。
+
+        菜单显式以窗口为父并在 ``self`` 上保留引用：PySide6 6.11 的
+        ``QMenuBar.addMenu(str)`` 返回的 QMenu 包装器会在局部变量离开作用域后
+        被回收成 ``Internal C++ object (QMenu) already deleted``，子类随后按标题
+        取菜单补项即崩溃（reshackw / pptmakew / pevieww 等）。
+        """
+        self.file_menu = QMenu("文件", self)
+        self.menuBar().addMenu(self.file_menu)
         quit_action = QAction("退出", self)
         quit_action.setShortcut("Ctrl+Q")
         quit_action.triggered.connect(self.close)
-        file_menu.addAction(quit_action)
+        self.file_menu.addAction(quit_action)
 
-        view_menu = self.menuBar().addMenu("视图")
+        self.view_menu = QMenu("视图", self)
+        self.menuBar().addMenu(self.view_menu)
         self.sidebar_action = QAction("折叠侧边栏", self)
         self.sidebar_action.setCheckable(True)
         self.sidebar_action.setChecked(self.nav.is_collapsed())
         self.sidebar_action.setShortcut(QKeySequence("Ctrl+Shift+B"))
         self.sidebar_action.triggered.connect(self.nav.set_collapsed)
-        view_menu.addAction(self.sidebar_action)
-        view_menu.addSeparator()
-        self._attach_theme_menu(view_menu.addMenu("主题"))
+        self.view_menu.addAction(self.sidebar_action)
+        self.view_menu.addSeparator()
+        self._attach_theme_menu(self.view_menu.addMenu("主题"))
 
         # 子窗口可在「关于」之前插入自己的帮助项（如 llmw 的「服务日志…」）。
-        self.help_menu = self.menuBar().addMenu("帮助")
+        self.help_menu = QMenu("帮助", self)
+        self.menuBar().addMenu(self.help_menu)
         self.about_action = QAction("关于", self)
         self.about_action.triggered.connect(self._show_about)
         self.help_menu.addAction(self.about_action)

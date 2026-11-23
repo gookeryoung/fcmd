@@ -188,7 +188,7 @@ def test_probe_throughput_keeps_partial_bytes_on_timeout(monkeypatch: pytest.Mon
         def __init__(self) -> None:
             self.calls = 0
 
-        def __enter__(self) -> "FakeResponse":
+        def __enter__(self) -> FakeResponse:
             return self
 
         def __exit__(self, *_exc: object) -> None:

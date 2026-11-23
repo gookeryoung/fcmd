@@ -550,3 +550,7 @@ def vram_cmd(model: Path, ctx: int = PROFILES[DEFAULT_PROFILE].context, kv: str 
 @fcmd.main("llmmodel")
 def main() -> None:
     pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
+
+
+if __name__ == "__main__":  # pragma: no cover - fspack / python -m 入口
+    main()

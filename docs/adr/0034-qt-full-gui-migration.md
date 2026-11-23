@@ -192,6 +192,29 @@ Qt 使用原生 `windows` 平台插件。每个窗口独立进程，冷启动口
 | D2 | 应用迁完即删除 Tk 窗口代码，不留双份实现 | locllmw 的 `--ui tk` 与 cmderw 的 Tk 实现均已删除；仓库不再包含 Tk 窗口 |
 | D3 | 现有窗口测试**只改写断言 Tk 内部实现**的用例 | 改为对 Qt 的等价行为断言；纯逻辑、设置、geometry 记忆等测试不动，不放宽条件、不删用例 |
 
+## 打包入口约束（fspack）
+
+fspack 的 exe 包装器以 ``runpy.run_module(<入口模块>, run_name="__main__", alter_sys=True)``
+执行工具模块，与「`fcmd <tool>` 先发现再调用」不是同一条路径，GUI / 工具入口必须满足：
+
+- **菜单显式持有**：``QMenuBar.addMenu(str)`` 的返回值在 PySide6 6.11 会被回收成
+  「Internal C++ object (QMenu) already deleted」。窗口骨架统一改成
+  ``QMenu(title, self)`` + ``menuBar().addMenu(menu)``，并在 ``self.file_menu`` /
+  ``view_menu`` / ``help_menu`` 上保留引用；子类按标题补菜单（reshackw / pptmakew /
+  pevieww / envw / filesyncw / paramcadw / parameshw / regexvalidatew / renamerw）
+  才不会再启动即崩。
+- **`__main__` 守卫**：模块声明了 ``@fcmd.main`` 就必须有
+  ``if __name__ == "__main__": main()``；否则 runpy 只执行 import 与装饰器，exe
+  静默退出 0（wslmanw 与 8 个 ``llm*`` CLI 入口的根因）。
+- **入口模块只注册一次**：一包一应用（``__tool_name__``）的入口是 ``<包>.app``。
+  包 ``__init__`` 保持惰性，发现逻辑显式导入 ``<包>.app``；发现开始前把
+  ``__main__`` 按 ``__file__`` 别名回真实模块名，避免同包其它模块反向导入入口时
+  重复注册（cmderw / llmenv / llmmodel / llmserve）。
+
+回归：``tests/gui/test_qt_window_smoke.py`` 构造全部窗口并断言菜单归属；
+``tests/cli/test_entry.py`` 与 ``tests/apps/cmder/test_cli_cmder.py`` 用子进程复现
+fspack 的 runpy 入口。
+
 ## 交接
 
 - 新增窗口：继承 `QtToolWindow`（单页）或 `QtMainWindow`（分页），不要各自复制菜单 / 状态栏 / 几何逻辑。

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QMainWindow, QMenu, QMessageBox, QVBoxLayout, QWidget
 
 from fcmd.gui.logdialog import LogChannelMixin
 from fcmd.gui.shell import WindowShellMixin, WindowSpec
@@ -103,17 +103,25 @@ class QtToolWindow(LogChannelMixin, WindowShellMixin, QMainWindow):  # pragma: n
     # 菜单 / 主题
     # ------------------------------------------------------------------ #
     def _build_menu(self) -> None:
-        """文件 / 视图 / 帮助三组菜单，与分页窗口保持同一位置与快捷键。"""
-        file_menu = self.menuBar().addMenu("文件")
+        """文件 / 视图 / 帮助三组菜单，与分页窗口保持同一位置与快捷键。
+
+        与 :meth:`fcmd.gui.window.QtMainWindow._build_menu` 同一口径：菜单显式以
+        窗口为父并保留引用，避开 PySide6 6.11 回收 ``addMenu(str)`` 返回对象导致
+        子类补菜单时崩溃。
+        """
+        self.file_menu = QMenu("文件", self)
+        self.menuBar().addMenu(self.file_menu)
         quit_action = QAction("退出", self)
         quit_action.setShortcut("Ctrl+Q")
         quit_action.triggered.connect(self.close)
-        file_menu.addAction(quit_action)
+        self.file_menu.addAction(quit_action)
 
-        view_menu = self.menuBar().addMenu("视图")
-        self._attach_theme_menu(view_menu.addMenu("主题"))
+        self.view_menu = QMenu("视图", self)
+        self.menuBar().addMenu(self.view_menu)
+        self._attach_theme_menu(self.view_menu.addMenu("主题"))
 
-        self.help_menu = self.menuBar().addMenu("帮助")
+        self.help_menu = QMenu("帮助", self)
+        self.menuBar().addMenu(self.help_menu)
         self.about_action = QAction("关于", self)
         self.about_action.triggered.connect(self._show_about)
         self.help_menu.addAction(self.about_action)

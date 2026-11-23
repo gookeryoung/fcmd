@@ -1530,3 +1530,9 @@ def launch_cmd() -> None:
 def main() -> None:
     """``wslmanw`` 命令入口。"""
     launch_cmd()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    # fspack 打包包装器经 runpy.run_module 执行本模块；缺这个守卫时 exe 静默
+    # 退出 0（只执行了 import 与装饰器，没有调用入口）。
+    main()

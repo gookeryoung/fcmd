@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ast
+import gc
 import inspect
 import os
 import textwrap
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from fcmd.gui.app import create_application
 from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.window import QtMainWindow
 
 # (模块, 类名)；构造参数一律用默认值，等价于用户首次 / 常规启动。
 WINDOWS: tuple[tuple[str, str], ...] = (
@@ -130,6 +132,16 @@ def test_window_constructs_and_initializes(app: QApplication, module_name: str, 
         if isinstance(window, QtToolWindow):
             assert window.body is not None
             assert window.status_text()
+        if isinstance(window, (QtToolWindow, QtMainWindow)):
+            # 菜单必须由窗口持有（PySide6 6.11 的 addMenu(str) 返回值会被回收，
+            # 子类随后按标题补菜单会拿到已删除的 QMenu）。
+            for attr in ("file_menu", "view_menu", "help_menu"):
+                menu = getattr(window, attr)
+                assert menu.parent() is window
+                assert window.menuBar().actions()[0].menu() is window.file_menu
+                assert menu.actions() or attr == "view_menu"
+            gc.collect()
+            assert window.file_menu.actions()
 
         reads, writes = _self_members(cls)
         # 只在方法里惰性赋值、构造期不访问的成员由 writes 豁免。
@@ -139,3 +151,21 @@ def test_window_constructs_and_initializes(app: QApplication, module_name: str, 
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+def test_gui_entry_modules_call_main_under_main_guard() -> None:
+    """所有带 ``@fcmd.main`` 的模块都要有 ``__main__`` 守卫。
+
+    fspack 的 exe 包装器通过 ``runpy.run_module(..., run_name="__main__")`` 执行
+    入口模块；缺少守卫时只跑 import 与装饰器、然后静默退出 0（曾影响 wslmanw
+    与 8 个 llm* CLI 入口）。
+    """
+    import fcmd
+
+    root = Path(fcmd.__file__).resolve().parent
+    missing: list[str] = []
+    for path in sorted((root / "apps").rglob("*.py")) + sorted((root / "tools").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "@fcmd.main" in text and '__name__ == "__main__"' not in text:
+            missing.append(str(path.relative_to(root)))
+    assert missing == [], f"缺少 __main__ 守卫：{missing}"
