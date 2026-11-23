@@ -166,7 +166,9 @@ def run_gui(settings_path: Path | None = None) -> None:
     try:
         from fcmd.apps.reshack._reshackw_qt import run_qt
     except ImportError as exc:  # pragma: no cover - 安装完整时不会触发
-        raise SystemExit("未安装 Qt 前端：pip install 'PySide6-Essentials'") from exc
+        from fcmd.gui.compat import qt_import_failure
+
+        raise SystemExit(qt_import_failure(exc)) from exc
 
     run_qt(settings_path)
 

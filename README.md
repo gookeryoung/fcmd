@@ -44,6 +44,14 @@ pip install fcmd          # 或 uv add fcmd
 
 要求 Python ≥ 3.10（Python 3.10 使用 PySide2，3.11+ 使用 PySide6）。
 
+Linux 上 PySide6 的 wheel 自带 Qt 库，但仍依赖发行版的图形系统库；Kali / 容器等精简装法常缺库，
+表现是窗口工具报「Qt 前端已安装但加载失败」。按提示补装即可（Debian / Ubuntu / Kali）：
+
+```bash
+sudo apt install libegl1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+  libxcb-keysyms1 libxcb-render-util0 libxcb-render0 libxcb-util1 libwayland-cursor0
+```
+
 ## 快速上手
 
 ### Python API

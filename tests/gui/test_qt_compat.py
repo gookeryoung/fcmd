@@ -34,3 +34,23 @@ def test_binding_version_reports_missing_binding(monkeypatch: pytest.MonkeyPatch
     """绑定模块不可导入时返回「未安装」，不抛异常。"""
     monkeypatch.setattr(compat, "_binding_name", lambda: "PySide9")
     assert compat.binding_version() == "未安装"
+
+
+def test_qt_import_failure_reports_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """绑定找不到时提示装 pip 包，不附带系统库说明。"""
+    monkeypatch.setattr(compat, "_binding_name", lambda: "PySide9")
+    message = compat.qt_import_failure(ImportError("No module named 'PySide9'"))
+    assert message == "未安装 Qt 前端：pip install 'PySide6-Essentials'"
+
+
+def test_qt_import_failure_reports_load_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """绑定已安装但加载失败时保留底层错误，并给出 Linux 系统库命令。"""
+    monkeypatch.setattr(compat, "_binding_name", lambda: "PySide6")
+    fake_importlib = SimpleNamespace(util=SimpleNamespace(find_spec=lambda _name: object()))
+    monkeypatch.setattr(compat, "importlib", fake_importlib)
+    message = compat.qt_import_failure(
+        ImportError("libEGL.so.1: cannot open shared object file: No such file or directory")
+    )
+    assert "Qt 前端已安装但加载失败：libEGL.so.1" in message
+    assert "sudo apt install" in message
+    assert "libegl1" in message

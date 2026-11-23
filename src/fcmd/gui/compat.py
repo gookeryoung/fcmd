@@ -17,9 +17,16 @@ import importlib.util
 import sys
 from types import ModuleType
 
-__all__ = ["binding_version", "install"]
+__all__ = ["binding_version", "install", "qt_import_failure"]
 
 _FINDER: _PySide2Finder | None = None
+
+# Linux 上 PySide6-Essentials 的 wheel 自带 Qt 库，但仍依赖这些系统库；缺失时导入
+# 只会抛 ``libEGL.so.1: cannot open shared object file`` 之类的 ImportError。
+_LINUX_QT_PACKAGES = (
+    "libegl1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 "
+    "libxcb-render-util0 libxcb-render0 libxcb-util1 libwayland-cursor0"
+)
 
 
 class _PySide2Finder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
@@ -67,6 +74,25 @@ def binding_version() -> str:
         return "未安装"
     version = str(getattr(module, "__version__", "") or "")
     return f"{name} {version}".rstrip()
+
+
+def qt_import_failure(exc: ImportError) -> str:
+    """导入 Qt 窗口模块失败时的提示文案。
+
+    区分两种失败：绑定未安装（``pip install 'PySide6-Essentials'``）与绑定已安装但
+    加载失败（Linux 缺系统库）。后者若仍报「未安装」会误导用户去重装 pip 包，
+    因此把底层错误附在文案里。
+    """
+    if importlib.util.find_spec(_binding_name()) is None:
+        return "未安装 Qt 前端：pip install 'PySide6-Essentials'"
+    detail = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+    return "\n".join(
+        (
+            f"Qt 前端已安装但加载失败：{detail}",
+            "Windows / macOS：pip install --force-reinstall 'PySide6-Essentials'",
+            f"Linux 需补装系统库：sudo apt install {_LINUX_QT_PACKAGES}",
+        )
+    )
 
 
 def install() -> None:
