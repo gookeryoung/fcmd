@@ -2265,7 +2265,9 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
     try:
         assert set(section.checks) == {task.key for task in _initenv.TASKS}
         assert set(section.status_tags) == {task.key for task in _initenv.TASKS}
-        assert all(box.isChecked() for box in section.checks.values())
+        assert all(box.isChecked() for key, box in section.checks.items() if key not in _initenv.OPTIONAL_KEYS)
+        # 可选大包（Noto CJK / Emoji）默认不勾。
+        assert not any(box.isChecked() for key, box in section.checks.items() if key in _initenv.OPTIONAL_KEYS)
         assert all(box.isEnabled() for box in section.checks.values())
         assert all(tag.isHidden() for tag in section.status_tags.values())
         # 默认收起：只显示已初始化情况与展开按钮；勾选 / 状态 / 日志隐藏。
@@ -2311,6 +2313,8 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
                 rust="1.80.0",
                 gui_libs="ok",
                 cjk_font="Noto Sans CJK SC",
+                noto_cjk="yes",
+                emoji_font="yes",
                 pip_index="https://pypi.tuna.tsinghua.edu.cn/simple",
                 uv_index="https://pypi.tuna.tsinghua.edu.cn/simple",
                 npm_registry="https://registry.npmmirror.com/",
@@ -2719,6 +2723,8 @@ def test_init_env_package_mirror_mismatch_reruns_config_only(home: Path, monkeyp
                 rust="1.80.0",
                 gui_libs="ok",
                 cjk_font="Noto Sans CJK SC",
+                noto_cjk="yes",
+                emoji_font="yes",
                 pip_index="https://pypi.tuna.tsinghua.edu.cn/simple",
                 uv_index="https://pypi.tuna.tsinghua.edu.cn/simple",
                 npm_registry="https://registry.npmmirror.com/",

@@ -493,6 +493,8 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         if needs_source:
             labels.insert(0, "软件包源")
         self._append_log("开始初始化：" + "、".join(labels))
+        if self._status is not None and not self._status.mirror and set(keys) & {"fonts", "noto", "emoji"}:
+            self._append_log("提示：未检测到国内镜像源，字体包下载可能较慢；可先勾选「运行国内源配置脚本」。")
         _owner.submit_daemon(
             lambda: self._execute(steps),
             on_done=self._run_done,

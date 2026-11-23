@@ -33,10 +33,14 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 from fcmd.apps.wslman._initenv_display import (
-    CJK_FONT_PACKAGES,
-    DISPLAY_PACKAGES,
-    font_cache_script,
+    OPTIONAL_KEYS,
+    display_present,
+    display_status_rows,
+    display_summary_parts,
     probe_lines,
+)
+from fcmd.apps.wslman._initenv_display import (
+    init_tasks as _display_tasks,
 )
 from fcmd.apps.wslman._initenv_pkg import (
     PACKAGE_MIRROR_AUTO,
@@ -136,6 +140,10 @@ class EnvStatus:
     """``ok`` 表示显示依赖库齐全；否则为缺失的库名（空格分隔）。"""
     cjk_font: str = ""
     """探测到的中文字体族名；空串表示未安装。"""
+    noto_cjk: str = ""
+    """``yes`` 表示已装 Noto CJK 完整字体。"""
+    emoji_font: str = ""
+    """``yes`` 表示已装 Noto Color Emoji。"""
     pip_index: str = ""
     uv_index: str = ""
     npm_registry: str = ""
@@ -163,9 +171,10 @@ def _apt_script(*packages: str) -> str:
             "fi",
             'echo "需要安装：$missing"',
             "if ! find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -newermt '-1 hour' -print -quit | grep -q .; then",
-            "    apt-get update -o Acquire::Retries=3",
+            "    apt-get update -o Acquire::Retries=3 -o Acquire::Languages=none",
             "fi",
-            "apt-get install -y --no-install-recommends -o Acquire::Retries=3 $missing",
+            "apt-get install -y --no-install-recommends -o Acquire::Retries=3 "
+            "-o Acquire::Languages=none -o Dpkg::Use-Pty=0 $missing",
         )
     )
 
@@ -468,22 +477,7 @@ TASKS: tuple[InitTask, ...] = (
             InitStep("安装 Rust 工具链", _rust_script()),
         ),
     ),
-    InitTask(
-        "gui",
-        "安装显示依赖库",
-        "补装 Qt / GTK 窗口在 WSLg 下显示所需的 EGL、XCB、Wayland 与字体配置库；"
-        "PySide6 的 wheel 自带 Qt 库，但缺这些系统库时窗口会报「Qt 前端已安装但加载失败」。",
-        (InitStep("安装显示依赖库", _apt_script(*DISPLAY_PACKAGES), root=True),),
-    ),
-    InitTask(
-        "fonts",
-        "安装中文字体",
-        "安装 fontconfig、Noto CJK 中文字体与彩色 Emoji，并刷新字体缓存，避免窗口中文显示成方块。",
-        (
-            InitStep("安装中文字体", _apt_script(*CJK_FONT_PACKAGES), root=True),
-            InitStep("刷新字体缓存", font_cache_script()),
-        ),
-    ),
+    *_display_tasks(apt_script=_apt_script, step=InitStep, task=InitTask),
 )
 
 
@@ -502,6 +496,8 @@ _TASK_SHORT: dict[str, str] = {
     "rust": "Rust",
     "gui": "显示库",
     "fonts": "字体",
+    "noto": "Noto",
+    "emoji": "Emoji",
 }
 
 
@@ -625,6 +621,8 @@ def parse_status(text: str) -> EnvStatus:
         rust=values.get("RUST", ""),
         gui_libs=values.get("GUI_LIBS", ""),
         cjk_font=values.get("CJK_FONT", ""),
+        noto_cjk=values.get("NOTO_CJK", ""),
+        emoji_font=values.get("EMOJI_FONT", ""),
         pip_index=values.get("PIP_INDEX", ""),
         uv_index=values.get("UV_INDEX", ""),
         npm_registry=values.get("NPM_REGISTRY", ""),
@@ -647,6 +645,8 @@ _STATUS_FIELDS: tuple[str, ...] = (
     "rust",
     "gui_libs",
     "cjk_font",
+    "noto_cjk",
+    "emoji_font",
     "pip_index",
     "uv_index",
     "npm_registry",
@@ -693,15 +693,17 @@ def present(key: str, status: EnvStatus) -> bool:  # noqa: PLR0911 - 每个初�
         return bool(status.bun)
     if key == "rust":
         return bool(status.rust)
-    if key == "gui":
-        return status.gui_libs == "ok"
-    if key == "fonts":
-        return bool(status.cjk_font)
-    return False
+    display = display_present(key, status)
+    return display if display is not None else False
 
 
 def default_checked(key: str, status: EnvStatus) -> bool:
-    """默认勾选尚未完成的项目；探测失败（全空）时等于全选。"""
+    """默认勾选尚未完成的项目；探测失败（全空）时等于全选。
+
+    ``noto`` / ``emoji`` 是可选大包，即使未安装也默认不勾，避免首跑多下载几十 MB。
+    """
+    if key in OPTIONAL_KEYS:
+        return False
     return not present(key, status)
 
 
@@ -726,17 +728,6 @@ def _pair_value(primary: str, secondary: str) -> str:
     if primary and secondary and primary.rstrip("/") != secondary.rstrip("/"):
         return f"{primary} · {secondary}"
     return primary or secondary or "未配置"
-
-
-def _gui_libs_value(value: str) -> str:
-    """显示依赖库的状态文案：齐全 / 未检测 / 缺 N 个库（前缀若干库名）。"""
-    if value == "ok":
-        return "已就绪"
-    if not value:
-        return "未检测"
-    missing = value.split()
-    shown = " ".join(missing[:3]) + (" …" if len(missing) > 3 else "")
-    return f"缺 {len(missing)} 个：{shown}"
 
 
 def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
@@ -767,8 +758,7 @@ def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
             _pair_value(status.npm_registry, status.bun_registry),
             bool(status.npm_registry) and bool(status.bun_registry),
         ),
-        ("显示依赖库", _gui_libs_value(status.gui_libs), status.gui_libs == "ok"),
-        ("中文字体", status.cjk_font or "未安装", bool(status.cjk_font)),
+        *display_status_rows(status),
     )
 
 
@@ -784,7 +774,6 @@ def summary_text(status: EnvStatus) -> str:
         f"Python {python}",
         f"Node.js {node}",
         f"Rust {status.rust or '✗'}",
-        f"显示库 {'✓' if status.gui_libs == 'ok' else '✗'}",
-        f"字体 {'✓' if status.cjk_font else '✗'}",
+        *display_summary_parts(status),
     ]
     return " · ".join(parts)

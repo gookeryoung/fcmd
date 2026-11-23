@@ -10,13 +10,28 @@ from fcmd.apps.wslman import _initenv
 def test_tasks_cover_required_items() -> None:
     keys = [task.key for task in _initenv.TASKS]
     # uv / Bun 各自独立成项：没有 uv 不能让「Python」显示未初始化。
-    assert keys == ["mirror", "ssh", "python", "uv", "auto_uv_env", "node", "bun", "rust", "gui", "fonts"]
+    assert keys == [
+        "mirror",
+        "ssh",
+        "python",
+        "uv",
+        "auto_uv_env",
+        "node",
+        "bun",
+        "rust",
+        "gui",
+        "fonts",
+        "noto",
+        "emoji",
+    ]
     assert _initenv.task_by_key("python") is not None
     assert _initenv.task_by_key("uv") is not None
     assert _initenv.task_by_key("auto_uv_env") is not None
     assert _initenv.task_by_key("bun") is not None
     assert _initenv.task_by_key("gui") is not None
     assert _initenv.task_by_key("fonts") is not None
+    assert _initenv.task_by_key("noto") is not None
+    assert _initenv.task_by_key("emoji") is not None
     assert _initenv.task_by_key("missing") is None
 
 
@@ -32,6 +47,8 @@ def test_short_label_covers_all_tasks_and_falls_back() -> None:
         "Rust",
         "显示库",
         "字体",
+        "Noto",
+        "Emoji",
     )
     assert _initenv.short_label("unknown") == "unknown"
 
@@ -198,6 +215,9 @@ def test_probe_script_is_read_only_and_prefixed() -> None:
     assert "mirrors.aliyun.com" in script
     assert "apt-get indextargets --format '$(URI)'" in script
     assert "id_ed25519.pub" in script
+    assert "WSLMAN_NOTO_CJK" in script
+    # Emoji 按字体族名判定；``fc-list family`` 会被当成家族名模式，必须写 ``fc-list : family``。
+    assert "fc-list : family" in script
     assert "apt-get install" not in script
 
 
@@ -221,6 +241,8 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
             "WSLMAN_RUST=1.80.0",
             "WSLMAN_GUI_LIBS=ok",
             "WSLMAN_CJK_FONT=Noto Sans CJK SC",
+            "WSLMAN_NOTO_CJK=yes",
+            "WSLMAN_EMOJI_FONT=yes",
             "WSLMAN_PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple",
             "WSLMAN_UV_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple",
             "WSLMAN_NPM_REGISTRY=https://registry.npmmirror.com/",
@@ -243,6 +265,8 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
     assert status.rust == "1.80.0"
     assert status.gui_libs == "ok"
     assert status.cjk_font == "Noto Sans CJK SC"
+    assert status.noto_cjk == "yes"
+    assert status.emoji_font == "yes"
     assert status.pip_index.endswith("/simple")
     assert status.uv_index.endswith("/simple")
     assert status.npm_registry.endswith("/")
@@ -264,7 +288,13 @@ def test_parse_status_empty_input_and_empty_value() -> None:
 
 def test_present_and_default_checked() -> None:
     empty = _initenv.EnvStatus()
-    assert all(_initenv.default_checked(task.key, empty) for task in _initenv.TASKS)
+    assert all(
+        _initenv.default_checked(task.key, empty) for task in _initenv.TASKS if task.key not in _initenv.OPTIONAL_KEYS
+    )
+    # 可选大包（Noto CJK / Emoji）默认不勾。
+    assert not any(
+        _initenv.default_checked(task.key, empty) for task in _initenv.TASKS if task.key in _initenv.OPTIONAL_KEYS
+    )
     assert not any(_initenv.present(task.key, empty) for task in _initenv.TASKS)
     assert _initenv.present("unknown", empty) is False
     assert _initenv.default_checked("unknown", empty) is True
@@ -281,6 +311,8 @@ def test_present_and_default_checked() -> None:
         rust="1.80.0",
         gui_libs="ok",
         cjk_font="Noto Sans CJK SC",
+        noto_cjk="yes",
+        emoji_font="yes",
     )
     assert all(_initenv.present(task.key, ready) for task in _initenv.TASKS)
     assert not any(_initenv.default_checked(task.key, ready) for task in _initenv.TASKS)
@@ -331,7 +363,8 @@ def test_status_rows_and_summary_reflect_state() -> None:
     assert rows["npm / bun 镜像"] == ("未配置", False)
     assert rows["显示依赖库"] == ("未检测", False)
     assert rows["中文字体"] == ("未安装", False)
-    assert len(rows) == 12
+    assert rows["可选字体"] == ("Noto CJK ✗ · Emoji ✗", False)
+    assert len(rows) == 13
 
     summary = _initenv.summary_text(status)
     assert "镜像源 ✗" in summary
@@ -356,6 +389,10 @@ def test_display_libs_and_fonts_detect_and_report() -> None:
     rows = {label: (value, ok) for label, value, ok in _initenv.status_rows(ready)}
     assert rows["显示依赖库"] == ("已就绪", True)
     assert rows["中文字体"] == ("Noto Sans CJK SC", True)
+    # 可选大包即使未装也默认不勾，不会让首跑多下几十 MB。
+    assert _initenv.default_checked("noto", ready) is False
+    assert _initenv.default_checked("emoji", ready) is False
+    assert _initenv.default_checked("noto", _initenv.EnvStatus()) is False
 
     no_font = _initenv.parse_status("WSLMAN_GUI_LIBS=ok\nWSLMAN_CJK_FONT=\n")
     assert _initenv.present("fonts", no_font) is False
@@ -363,7 +400,7 @@ def test_display_libs_and_fonts_detect_and_report() -> None:
 
 
 def test_display_and_font_tasks_install_expected_packages() -> None:
-    """显示库与中文字体各是一条 root apt 步骤；字体额外刷新缓存。"""
+    """默认字体走轻量微米黑；Noto CJK / Emoji 拆成可选；缓存用系统级增量扫描。"""
     gui_steps = _initenv.steps_for(["gui"])
     assert len(gui_steps) == 1
     assert gui_steps[0].root is True
@@ -373,10 +410,23 @@ def test_display_and_font_tasks_install_expected_packages() -> None:
     font_steps = _initenv.steps_for(["fonts"])
     assert [step.label for step in font_steps] == ["安装中文字体", "刷新字体缓存"]
     assert font_steps[0].root is True
-    assert "fonts-noto-cjk" in font_steps[0].script
-    assert "fonts-noto-color-emoji" in font_steps[0].script
-    assert "fc-cache -f" in font_steps[1].script
-    assert font_steps[1].root is False
+    assert "fonts-wqy-microhei" in font_steps[0].script
+    assert "fonts-noto-cjk" not in font_steps[0].script
+    # 系统缓存增量刷新（-s），不再全量 -f，也不必以普通用户重复建缓存。
+    assert "fc-cache -s" in font_steps[1].script
+    assert "fc-cache -f" not in font_steps[1].script
+    assert font_steps[1].root is True
+    # apt 少拉翻译索引；无 TTY 时不让 dpkg 开伪终端。
+    assert "Acquire::Languages=none" in font_steps[0].script
+    assert "Dpkg::Use-Pty=0" in font_steps[0].script
+
+    noto_steps = _initenv.steps_for(["noto"])
+    assert "fonts-noto-cjk" in noto_steps[0].script
+    assert noto_steps[0].root is True
+
+    emoji_steps = _initenv.steps_for(["emoji"])
+    assert "fonts-noto-color-emoji" in emoji_steps[0].script
+    assert emoji_steps[0].root is True
 
 
 def test_status_rows_distinguish_nvm_and_merge_mirrors() -> None:

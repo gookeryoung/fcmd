@@ -9,8 +9,11 @@
 
 - `wslmanw`「初始化环境」新增「安装显示依赖库」与「安装中文字体」两个独立项目：
   用 APT 补装 WSLg 下跑 Qt / GTK 窗口所需的 EGL / GL / XCB / Wayland / fontconfig
-  系统库，以及 `fonts-noto-cjk` + 彩色 Emoji 并刷新字体缓存；探测分别用
-  `ldconfig -p` 与 `fc-list :lang=zh` 判定，状态区缺库时列出具体库名。
+  系统库；中文字体默认改走轻量的 `fonts-wqy-microhei`（下载约 1.8 MB，原 Noto CJK
+  方案约 57 MB），完整字形（`fonts-noto-cjk`）与彩色 Emoji 拆成可选项目、默认不勾。
+  字体缓存改为 root 增量 `fc-cache -s`，不再重复 `fc-cache -f` 全量扫描；APT 增加
+  `Acquire::Languages=none` / `Dpkg::Use-Pty=0`，未配国内源时日志提示下载可能较慢。
+  探测分别用 `ldconfig -p`、`fc-list :lang=zh`、字体族名判定，状态区缺库时列出库名。
 - 修复 Qt 窗口入口在缺系统库（如 Kali 缺 `libEGL.so.1`）时误报「未安装 Qt 前端」：
   `fcmd.gui.compat.qt_import_failure` 区分「绑定未安装」与「已安装但加载失败」，
   后者的提示附带底层错误与 Linux `apt install` 命令。
