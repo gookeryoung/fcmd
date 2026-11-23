@@ -1,18 +1,20 @@
 """filesyncw 的 Qt 主窗口与入口。
 
-界面分三段：文件夹对（左右目录 + 交换）、比较与同步选项（模式、过滤、预演）、
-结果区（比较结果表 + 日志，垂直分栏可拖动）。比较 / 同步仍在后台线程执行，
-进度与结果经信号桥回投 GUI 线程，与后台队列事件语义一致。
+左侧边栏分页（与 filescanw / wslmanw 同一套 ``SidebarNav``），比较与结果分开：
+
+- **比较**：文件夹对 + 比较方式 + 包含 / 排除 / 跳过隐藏文件，底部执行比较；
+- **结果**：差异表 + 同步方式 / 预演 / 执行同步（比较完成后自动切到本页）。
 
 布局口径：文件夹对复用公共 ``StoragePairCard`` — 左右各一张磁盘卡（容量 / 更改 /
-打开，与 filescanw 扫描目录同源），交换按钮纵向居中固定在最右侧；结果表
-「相对路径」列吸收剩余宽度（长路径省略、悬停看全路径），日志与结果表按 3:1
-分栏并各自保留最小高度，窗口变矮时优先压缩日志。
+打开，与 filescanw 扫描目录同源），「交换左右」放在两张卡中间；结果页表格吃满
+页面高度，「相对路径」列吸收剩余宽度（长路径省略、悬停看全路径）。日志统一走
+「帮助 → 任务日志…」。
 """
 
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -69,14 +71,16 @@ from fcmd.apps.filesync.filesyncw import (
 )
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.app import run_window
-from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.page import AppPage, PageSpec
 from fcmd.gui.widgets import (
     Card,
+    PageScroll,
     StoragePairCard,
     button,
     confirm,
     make_table,
 )
+from fcmd.gui.window import QtMainWindow
 from fcmd.gui.workers import EventBridge, submit
 
 __all__ = ["FilesyncWindow", "run_qt"]
@@ -135,8 +139,40 @@ def _work_sync(  # noqa: PLR0913, PLR0917 - 参数与界面选项一一对应
     bridge.event.emit(("sync_done", (result, plan, report)))
 
 
-class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """文件夹比较与同步主窗口。"""
+PAGES: tuple[PageSpec, ...] = (
+    PageSpec("compare", "比较", "左右目录、比较方式与过滤；执行比较", "search"),
+    PageSpec("results", "结果", "差异表、同步方式与执行同步", "check-square"),
+)
+"""侧边栏页顺序：比较与结果分开，与 filescanw / wslmanw 同一套分页。"""
+
+
+class _FilesyncPage(AppPage):  # pragma: no cover - Qt 控件
+    """filesync 的页面骨架：滚动表单页 / 满高结果页 + 页面级状态栏。"""
+
+    def __init__(
+        self,
+        state: object,
+        key: str,
+        *,
+        scroll: bool = True,
+        margins: tuple[int, int, int, int] = (0, 0, 4, 8),
+        spacing: int = 8,
+    ) -> None:
+        super().__init__(state, spacing=0)
+        self.PAGE_KEY = key
+        if scroll:
+            self.scroll: PageScroll | None = PageScroll(self, margins=margins)
+            self.body.addWidget(self.scroll, 1)
+            self.content = self.scroll.body
+            self.content.setSpacing(spacing)
+        else:
+            self.scroll = None
+            self.body.setContentsMargins(*margins)
+            self.content = self.body
+
+
+class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+    """文件夹比较与同步主窗口：侧边栏分页（比较 / 结果）+ 状态栏 + 任务日志。"""
 
     log_hint = "汇总比较结果、同步计划与逐项动作；复制、清空、导出见日志工具条。"
 
@@ -145,8 +181,8 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         return f"[{time.strftime('%H:%M:%S')}] {message}"
 
     def __init__(self, settings_path: Path | None = None) -> None:
+        self._own_settings_path = settings_path
         self._settings = load_settings(settings_path)
-        self._settings_override = settings_path
         self._busy = False
         self._result: CompareResult | None = None
         self._plan: SyncPlan | None = None
@@ -154,101 +190,115 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         super().__init__(
             title=f"filesync - 文件夹比较与同步 v{__version__}",
             config_name="filesyncw",
+            nav_title="文件夹同步",
             default_size=DEFAULT_SIZE,
             min_size=(MIN_WIDTH, MIN_HEIGHT),
             on_close=self._confirm_close,
             persist=self._persist,
+            sidebar_collapsed=self._settings.sidebar_collapsed,
+            settings_path=settings_path,
         )
-        if settings_path is not None:
-            self._settings_path = settings_path
-            self._raw_settings = _guiconfig.read_settings(settings_path) or {}
-        self._build()
+        # 两页都先建好：设置回填与比较完成后的表格渲染都要立即读写控件。
+        self._compare_page = self._build_compare_page()
+        self._results_page = self._build_results_page()
+        self.add_pages(
+            PAGES,
+            {
+                "compare": lambda: self._compare_page,
+                "results": lambda: self._results_page,
+            },
+        )
+        self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
         self._install_menu_actions()
+        self.set_page_status("compare", "就绪")
+        self.set_page_status("results", "还没有比较结果")
+        self.log("选择左右目录后点击「比较」，确认结果与计划再执行「同步」。")
 
     # ------------------------------------------------------------------ #
     # 构建
     # ------------------------------------------------------------------ #
-    def _build(self) -> None:
-        """文件夹对 / 选项 / 结果与日志。"""
-        self.add(self._build_folders_card())
-        self.add(self._build_options_card())
-        self.add(self._build_results_card(), 1)
-        self.log("选择左右目录后点击「比较」，确认结果与计划再执行「同步」。")
+    def _build_compare_page(self) -> _FilesyncPage:
+        """比较页：文件夹对 + 比较方式与过滤 + 执行比较。"""
+        page = _FilesyncPage(self, "compare", scroll=True)
+        body = page.content
 
-    def _build_folders_card(self) -> Card:
-        """文件夹对：左右各一张磁盘卡（容量 / 更改 / 打开），最右侧「交换左右」。
-
-        外观与 filescanw 的扫描目录同源（共享 ``StorageCard`` 的 ``DiskTile``），
-        只是槽位固定为左右两个；未选择时卡片显示占位文案。
-        """
-        card = StoragePairCard(
+        # 文件夹对沿用 filescanw 的磁盘卡外观；交换按钮放在左右两卡中间。
+        self._pair_card = StoragePairCard(
             self._settings.left,
             self._settings.right,
             title="文件夹对",
             change_text="更改",
             dialog_title="选择文件夹",
-            parent=self,
+            parent=page,
         )
-        self._pair_card = card
-        return card
+        body.addWidget(self._pair_card)
 
-    def _build_options_card(self) -> Card:
-        """比较 / 同步模式、过滤与三个动作。"""
-        card = Card("比较与同步", self)
+        options = Card("比较方式", page)
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(6)
-        self._compare = QComboBox(card)
+        self._compare = QComboBox(options)
         self._compare.addItems(list(COMPARE_CHOICES))
         self._compare.setCurrentText(mode_label(self._settings.compare_mode, COMPARE_MODE_TEXT))
-        self._sync = QComboBox(card)
-        self._sync.addItems(list(SYNC_CHOICES))
-        self._sync.setCurrentText(mode_label(self._settings.sync_mode, SYNC_MODE_TEXT))
-        self._sync.currentTextChanged.connect(self._on_sync_mode_change)
-        self._skip_hidden = QCheckBox("跳过隐藏文件", card)
+        self._skip_hidden = QCheckBox("跳过隐藏文件", options)
         self._skip_hidden.setChecked(self._settings.skip_hidden)
-        self._show_equal = QCheckBox("显示相同项", card)
-        self._show_equal.setChecked(self._settings.show_equal)
-        self._show_equal.toggled.connect(self._render_result)
-        self._include = QLineEdit(self._settings.include, card)
+        self._include = QLineEdit(self._settings.include, options)
         self._include.setPlaceholderText("包含模式（分号分隔，如 *.py;*.md）")
-        self._exclude = QLineEdit(self._settings.exclude, card)
+        self._exclude = QLineEdit(self._settings.exclude, options)
         self._exclude.setPlaceholderText("排除模式（分号分隔）")
 
-        grid.addWidget(QLabel("比较：", card), 0, 0)
+        grid.addWidget(QLabel("比较：", options), 0, 0)
         grid.addWidget(self._compare, 0, 1)
-        grid.addWidget(QLabel("同步：", card), 0, 2)
-        grid.addWidget(self._sync, 0, 3)
-        grid.addWidget(self._skip_hidden, 0, 4)
-        grid.addWidget(self._show_equal, 0, 5)
-        grid.addWidget(QLabel("包含：", card), 1, 0)
-        grid.addWidget(self._include, 1, 1, 1, 3)
-        grid.addWidget(QLabel("排除：", card), 1, 4)
-        grid.addWidget(self._exclude, 1, 5)
+        grid.addWidget(self._skip_hidden, 0, 2)
+        grid.addWidget(QLabel("包含：", options), 1, 0)
+        grid.addWidget(self._include, 1, 1)
+        grid.addWidget(QLabel("排除：", options), 1, 2)
+        grid.addWidget(self._exclude, 1, 3)
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
-        grid.setColumnStretch(5, 1)
+        options.body.addLayout(grid)
+        body.addWidget(options)
 
+        actions_card = Card("执行比较", page)
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
-        self._compare_button = button("比较", kind="primary")
+        self._compare_button = button("比较", kind="primary", icon="search")
         self._compare_button.clicked.connect(self._start_compare)
-        self._sync_button = button("同步")
-        self._sync_button.clicked.connect(self._start_sync)
-        self._dry_run = QCheckBox("预演（不写入）", card)
-        self._dry_run.setChecked(True)
         actions.addWidget(self._compare_button)
-        actions.addWidget(self._sync_button)
-        actions.addWidget(self._dry_run)
         actions.addStretch(1)
-        grid.addLayout(actions, 2, 0, 1, 6)
-        card.body.addLayout(grid)
-        return card
+        actions_card.body.addLayout(actions)
+        body.addWidget(actions_card)
+        body.addStretch(1)
+        return page
 
-    def _build_results_card(self) -> Card:
-        """比较结果表（日志统一走「帮助 → 任务日志…」）。"""
-        results = Card("比较结果", self)
+    def _build_results_page(self) -> _FilesyncPage:
+        """结果页：差异表吃满高度，同步方式 / 预演 / 执行同步在表格上方。"""
+        page = _FilesyncPage(self, "results", scroll=False, spacing=6)
+        body = page.content
+        results = Card("比较结果", page)
+
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(8)
+        self._show_equal = QCheckBox("显示相同项", results)
+        self._show_equal.setChecked(self._settings.show_equal)
+        toolbar.addWidget(self._show_equal)
+        toolbar.addStretch(1)
+        toolbar.addWidget(QLabel("同步：", results))
+        self._sync = QComboBox(results)
+        self._sync.addItems(list(SYNC_CHOICES))
+        self._sync.setCurrentText(mode_label(self._settings.sync_mode, SYNC_MODE_TEXT))
+        self._sync.currentTextChanged.connect(self._on_sync_mode_change)
+        toolbar.addWidget(self._sync)
+        self._dry_run = QCheckBox("预演（不写入）", results)
+        self._dry_run.setChecked(True)
+        toolbar.addWidget(self._dry_run)
+        self._sync_button = button("同步", icon="transfer")
+        self._sync_button.clicked.connect(self._start_sync)
+        toolbar.addWidget(self._sync_button)
+        results.body.addLayout(toolbar)
+
         self._table = make_table(
             ("状态", "相对路径", "计划动作", "左侧大小", "右侧大小"),
             widths=(90, 460, 130, 110, 110),
@@ -256,30 +306,29 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             parent=results,
         )
         self._table.setMinimumHeight(200)
-        results.body.addWidget(self._table)
-        return results
+        results.body.addWidget(self._table, 1)
+        self._show_equal.toggled.connect(self._render_result)
+        body.addWidget(results, 1)
+        return page
 
     def _install_menu_actions(self) -> None:
         """在帮助菜单「关于」之前插入「载入配置… / 保存配置…」。"""
-        help_menu = self._menu("帮助")
-        actions = help_menu.actions()
+        actions = self.help_menu.actions()
         # 应用自己的帮助项排在公共「任务日志…」之前，最后仍以「关于」收尾。
         anchor = self.log_action or (actions[-1] if actions else None)
         load_action = self._make_action("载入配置…", self._load_profile)
         save_action = self._make_action("保存配置…", self._save_profile)
         if anchor is not None:
-            help_menu.insertAction(anchor, load_action)
-            help_menu.insertAction(anchor, save_action)
+            self.help_menu.insertAction(anchor, load_action)
+            self.help_menu.insertAction(anchor, save_action)
         else:
-            help_menu.addAction(load_action)
-            help_menu.addAction(save_action)
+            self.help_menu.addAction(load_action)
+            self.help_menu.addAction(save_action)
 
     def _menu(self, title: str) -> QMenu:
-        """按标题取出骨架菜单。"""
-        for action in self.menuBar().actions():
-            menu = action.menu()
-            if menu is not None and action.text() == title:
-                return menu
+        """按标题取出骨架菜单（目前只有帮助菜单需要补项）。"""
+        if title == "帮助":
+            return self.help_menu
         raise LookupError(f"缺少菜单：{title}")
 
     def _make_action(self, text: str, handler: Any) -> QAction:
@@ -298,7 +347,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 交互
     # ------------------------------------------------------------------ #
     def _swap(self) -> None:
-        """交换左右目录（组件内完成，左右字段沿用原绑定）。"""
+        """交换左右目录（组件内完成，中间按钮直接调 ``swap()``）。"""
         self._pair_card.swap()
 
     def _on_sync_mode_change(self, *_args: str) -> None:
@@ -354,7 +403,8 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         left, right, options = target
         self.clear_log()
         self._set_busy(True)
-        self.set_status("正在比较…")
+        self.set_page_status("compare", "正在比较…")
+        self.set_page_status("results", "正在比较…")
         self.log("正在比较…")
         bridge = self._new_bridge()
         submit(_work_compare, left, right, options, self._sync_mode(), bridge, on_error=self._on_worker_error)
@@ -378,7 +428,8 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
                 return
         self.clear_log()
         self._set_busy(True)
-        self.set_status("正在同步…")
+        self.set_page_status("results", "正在同步…")
+        self.set_page_status("compare", "正在同步…")
         self.log("正在同步…")
         bridge = self._new_bridge()
         submit(
@@ -414,18 +465,23 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             result, plan = payload
             self._apply_result(result, plan)
             self.log(f"比较完成：{self._summary(result, plan)}")
-            self.set_status("比较完成")
+            self.set_page_status("compare", "比较完成")
+            self.set_page_status("results", "比较完成")
+            self.show_page("results")
             self._finish()
         elif kind == "sync_done" and isinstance(payload, tuple):
             result, plan, report = payload
             self._apply_result(result, plan)
             self.log(format_sync_report(report))
-            self.set_status("同步完成（有失败）" if report.errors else "同步完成")
+            text = "同步完成（有失败）" if report.errors else "同步完成"
+            self.set_page_status("results", text)
+            self.set_page_status("compare", text)
             self._finish()
         elif kind == "error" and payload is not None:
             message = str(payload)
             self.log(f"错误：{message}")
-            self.set_status("操作失败")
+            self.set_page_status("results", "操作失败")
+            self.set_page_status("compare", "操作失败")
             self._finish()
             QMessageBox.critical(self, "操作失败", message)
 
@@ -542,6 +598,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             skip_hidden=self._skip_hidden.isChecked(),
             show_equal=self._show_equal.isChecked(),
             geometry=geometry,
+            sidebar_collapsed=self._settings.sidebar_collapsed,
         )
 
     def _confirm_close(self) -> bool:
@@ -551,8 +608,13 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         return confirm(self, "退出", "任务正在运行，确定退出？")
 
     def _persist(self, geometry: str) -> None:
-        """关闭时写回目录、模式、过滤与窗口 geometry。"""
-        save_settings(self._current_settings(geometry), self._settings_path)
+        """关闭时写回目录、模式、过滤、侧边栏折叠状态与窗口 geometry。"""
+        save_settings(self._current_settings(geometry), self._own_settings_path)
+
+    def _persist_sidebar_collapsed(self, collapsed: bool) -> None:
+        """侧边栏折叠状态随窗口设置落盘（与 filescanw / wslmanw 同一口径）。"""
+        self._settings = replace(self._settings, sidebar_collapsed=collapsed)
+        self._persist(self.geometry_text())
 
 
 def run_qt(settings_path: Path | None = None) -> None:

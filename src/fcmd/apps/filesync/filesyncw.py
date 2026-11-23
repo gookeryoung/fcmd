@@ -7,7 +7,7 @@
 转换与 geometry 计算，CI 无显示环境也能单测。
 
 菜单「帮助 → 载入配置 / 保存配置」可把当前左右目录与选项存成 JSON 复用；
-窗口设置（目录、比较 / 同步模式、过滤、窗口位置）保存在
+窗口设置（目录、比较 / 同步模式、过滤、侧边栏折叠状态、窗口位置）保存在
 ``${FCMD_HOME:-~/.fcmd}/ui/filesyncw.json``，下次启动自动恢复。
 
 示例
@@ -91,6 +91,7 @@ class FilesyncSettings:
     skip_hidden: bool = False
     show_equal: bool = False
     geometry: str | None = None
+    sidebar_collapsed: bool = False
 
 
 def settings_to_mapping(settings: FilesyncSettings) -> dict[str, Any]:
@@ -105,6 +106,7 @@ def settings_to_mapping(settings: FilesyncSettings) -> dict[str, Any]:
         "skip_hidden": settings.skip_hidden,
         "show_equal": settings.show_equal,
         "geometry": settings.geometry,
+        "sidebar_collapsed": settings.sidebar_collapsed,
     }
 
 
@@ -133,7 +135,7 @@ def settings_from_mapping(
             settings.sync_mode = normalize_sync_mode(sync_mode)
         except ValueError:
             settings.sync_mode = SYNC_TWO_WAY
-    for name in ("skip_hidden", "show_equal"):
+    for name in ("skip_hidden", "show_equal", "sidebar_collapsed"):
         value = raw.get(name)
         if isinstance(value, bool):
             setattr(settings, name, value)

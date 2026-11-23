@@ -68,6 +68,7 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
         "skip_hidden": "yes",
         "show_equal": True,
         "geometry": "not-a-geometry",
+        "sidebar_collapsed": "yes",
     }
     settings = filesyncw.settings_from_mapping(raw)
     assert settings.left == ""
@@ -79,6 +80,7 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
     assert settings.skip_hidden is False
     assert settings.show_equal is True
     assert settings.geometry is None
+    assert settings.sidebar_collapsed is False
 
 
 def test_settings_from_mapping_keeps_base_and_normalizes_modes() -> None:
@@ -95,10 +97,11 @@ def test_settings_from_mapping_keeps_base_and_normalizes_modes() -> None:
 
 
 def test_settings_mapping_roundtrip() -> None:
-    settings = filesyncw.FilesyncSettings(left="L", right="R", skip_hidden=True)
+    settings = filesyncw.FilesyncSettings(left="L", right="R", skip_hidden=True, sidebar_collapsed=True)
     mapping = filesyncw.settings_to_mapping(settings)
     assert mapping["left"] == "L"
     assert mapping["skip_hidden"] is True
+    assert mapping["sidebar_collapsed"] is True
     assert filesyncw.settings_from_mapping(mapping) == settings
 
 

@@ -77,6 +77,53 @@ def test_window_builds_with_defaults(home: Path) -> None:
         window.deleteLater()
 
 
+def test_sidebar_separates_compare_and_results(home: Path) -> None:
+    """侧边栏两页：比较页只放目录与比较选项，结果页放差异表与同步动作。"""
+    window = FilesyncWindow()
+    try:
+        assert window.nav.keys() == ("compare", "results")
+        assert window.nav.selected() == "compare"
+        assert window.current_page() == "compare"
+        assert window.page_title.text() == "比较"
+        # 比较页：文件夹对、比较方式、比较按钮都在 compare 页里。
+        for widget in (
+            window._pair_card,
+            window._compare,
+            window._compare_button,
+            window._skip_hidden,
+            window._include,
+        ):
+            assert window._compare_page.isAncestorOf(widget), widget.objectName()
+        # 结果页：差异表、同步方式、预演与同步按钮。
+        for widget in (window._table, window._sync, window._dry_run, window._sync_button, window._show_equal):
+            assert window._results_page.isAncestorOf(widget), widget.objectName()
+        assert window.status_text() == "就绪"
+
+        window.show_page("results")
+        assert window.current_page() == "results"
+        assert window.status_text() == "还没有比较结果"
+    finally:
+        window.deleteLater()
+
+
+def test_compare_done_switches_to_results_page(home: Path, trees: tuple[Path, Path]) -> None:
+    """比较完成后自动进入结果页，两页状态各自保留「比较完成」。"""
+    left, right = trees
+    window = FilesyncWindow()
+    try:
+        _prepare(window, left, right)
+        bridge = EventBridge()
+        bridge.event.connect(window._on_event)
+        _work_compare(left, right, window._collect_options(), SYNC_TWO_WAY, bridge)
+        assert window.current_page() == "results"
+        assert window.page_title.text() == "结果"
+        assert window.page_status("compare") == "比较完成"
+        assert window.status_text() == "比较完成"
+        assert window._table.rowCount() == 3
+    finally:
+        window.deleteLater()
+
+
 def test_settings_restored(home: Path) -> None:
     """启动时回填目录、模式、过滤与复选项。"""
     path = config_path()
@@ -138,8 +185,9 @@ def test_folder_pair_uses_storage_pair_card(home: Path) -> None:
         card.set_sides("L", "R")
         window.show()
         QApplication.processEvents()
+        # 交换按钮在左右两张卡中间，不再贴最右侧。
         assert card.left_tile.geometry().right() < card.swap_button.geometry().left()
-        assert card.right_tile.geometry().right() < card.swap_button.geometry().left()
+        assert card.swap_button.geometry().right() < card.right_tile.geometry().left()
 
         seen: list[tuple[str, str]] = []
         card.changed.connect(lambda left, right: seen.append((left, right)))
@@ -272,6 +320,25 @@ def test_close_persists_settings(home: Path, tmp_path: Path) -> None:
     assert raw["include"] == "*.py"
     assert raw["skip_hidden"] is True
     assert isinstance(raw["geometry"], str) and "x" in raw["geometry"]
+
+
+def test_close_persists_sidebar_collapsed(home: Path) -> None:
+    """折叠 / 展开侧边栏随窗口设置落盘，下次启动恢复。"""
+    window = FilesyncWindow()
+    try:
+        window.show()
+        window.nav.set_collapsed(True)
+        window.close()
+    finally:
+        window.deleteLater()
+    raw = json.loads(config_path().read_text(encoding="utf-8"))
+    assert raw["sidebar_collapsed"] is True
+
+    restored = FilesyncWindow()
+    try:
+        assert restored.nav.is_collapsed()
+    finally:
+        restored.deleteLater()
 
 
 def test_worker_error_reports_status(home: Path, trees: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:

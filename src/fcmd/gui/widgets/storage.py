@@ -307,11 +307,11 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
 
 
 class StoragePairCard(Card):  # pragma: no cover - Qt 控件
-    """左右成对目录卡：沿用 :class:`DiskTile` 的磁盘卡外观，最右侧固定「交换」。
+    """左右成对目录卡：沿用 :class:`DiskTile` 的磁盘卡外观，中间固定「交换」。
 
     与 :class:`StorageCard` 同源（磁盘卡网格 + 容量展示 + 「更改 / 打开」），区别是
     槽位固定为左右两个：左侧 / 右侧各一张卡，未选择时显示占位文案而不是空卡；
-    ：attr:`swap_button` 纵向居中固定在最右侧，交换不触发目录对话框。
+    :attr:`swap_button` 垂直居中放在两张卡中间，交换不触发目录对话框。
 
     ``changed`` 在任一槽位更改或交换后发出 ``(left, right)``（空串表示未选择），
     ``swapped`` 只在交换后发出；调用方用 :meth:`sides` / :meth:`set_sides`
@@ -339,19 +339,14 @@ class StoragePairCard(Card):  # pragma: no cover - Qt 控件
         self._labels = (left_label, right_label)
         self._change_text = change_text
         self._dialog_title = dialog_title
-        self._tiles_host = QWidget(self)
-        self._tiles_layout = QGridLayout(self._tiles_host)
+        self._tiles: list[DiskTile] = []
+        self._tiles_layout = QGridLayout()
         self._tiles_layout.setContentsMargins(0, 0, 0, 0)
         self._tiles_layout.setHorizontalSpacing(8)
         self._tiles_layout.setVerticalSpacing(8)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        row.addWidget(self._tiles_host, 1)
         self.swap_button = button(swap_text, icon="transfer", tooltip="交换左右两个目录")
         self.swap_button.clicked.connect(self.swap)
-        row.addWidget(self.swap_button, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.body.addLayout(row)
+        self.body.addLayout(self._tiles_layout)
         self._refresh()
 
     @property
@@ -385,11 +380,9 @@ class StoragePairCard(Card):  # pragma: no cover - Qt 控件
     # 内部
     # ------------------------------------------------------------------ #
     def _tile(self, index: int) -> DiskTile:
-        item = self._tiles_layout.itemAt(index)
-        widget = item.widget() if item is not None else None
-        if not isinstance(widget, DiskTile):
+        if not 0 <= index < len(self._tiles):
             raise LookupError(f"槽位 {index} 还没有磁盘卡")
-        return widget
+        return self._tiles[index]
 
     def _locations(self) -> list[DiskLocation]:
         locations: list[DiskLocation] = []
@@ -409,23 +402,29 @@ class StoragePairCard(Card):  # pragma: no cover - Qt 控件
         return locations
 
     def _refresh(self) -> None:
+        """重建左右两张卡；交换按钮固定在中间列（不重建）。"""
         while self._tiles_layout.count():
             item = self._tiles_layout.takeAt(0)
             widget = item.widget() if item is not None else None
-            if widget is not None:
+            if widget is not None and widget is not self.swap_button:
                 widget.deleteLater()
+        self._tiles = []
         for index, location in enumerate(self._locations()):
             tile = DiskTile(
                 location,
                 can_remove=False,
                 change_text=self._change_text,
                 show_primary=False,
-                parent=self._tiles_host,
+                parent=self,
             )
             tile.changeRequested.connect(lambda _path, index=index: self._change(index))
             tile.openRequested.connect(self._open)
-            self._tiles_layout.addWidget(tile, 0, index)
-            self._tiles_layout.setColumnStretch(index, 1)
+            column = 0 if index == 0 else 2
+            self._tiles_layout.addWidget(tile, 0, column)
+            self._tiles_layout.setColumnStretch(column, 1)
+            self._tiles.append(tile)
+        self._tiles_layout.setColumnStretch(1, 0)
+        self._tiles_layout.addWidget(self.swap_button, 0, 1, Qt.AlignmentFlag.AlignVCenter)
 
     def _change(self, index: int) -> None:
         start = self._sides[index] or str(Path.home())
