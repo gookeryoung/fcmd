@@ -2,17 +2,20 @@
 
 布局与 wslmanw / llmw 对齐：复用共享 :class:`fcmd.gui.window.QtMainWindow` 的左侧
 :class:`~fcmd.gui.sidebar.SidebarNav` 导航（折叠、``Ctrl+Tab`` 与窗口几何记忆都由
-基座提供），右侧按 **扫描 / 结果 / 规则** 三页分页，每页拿满整个内容区，不再用
-顶部标签条挤压横向空间：
+基座提供），右侧按 **扫描 / 结果 / 规则 / 设置** 四页分页，每页拿满整个内容区，
+不再用顶部标签条挤压横向空间。分页按「动作 / 结果 / 规则 / 配置」分层：
 
-- **扫描**（目录、选项、后缀白名单、配置导入导出、缓存）：表单很高，页面内套
-  :class:`~fcmd.gui.widgets.PageScroll`，窗口压矮时滚动而不是裁掉底部按钮；
+- **扫描**（扫描目录 + 开始 / 取消 / 进度 + 当前选项只读摘要）：只放「扫什么 +
+  开始」，动作不再和表单抢高度；
 - **结果**（按文件聚合命中、规则 / 路径筛选、打码导出）：表格吃满页面高度，
   扫描结束自动切到本页；
-- **规则**（规则表、表达式校验与规则集导入导出）。
+- **规则**（规则表、表达式校验与规则集导入导出）；
+- **设置**（扫描范围表单、后缀白名单、缓存 / 配置导入导出）：三张卡片纵向排布
+  并套 :class:`~fcmd.gui.widgets.PageScroll`，窗口压矮时滚动而不是裁掉底部动作行。
 
 每个页面是 :class:`~fcmd.gui.page.AppPage` 子类，状态栏文字按页隔离：扫描进度
-写到扫描页，筛选 / 导出结果写到结果页，规则增删改写到规则页，切页后各自恢复。
+写到扫描页，筛选 / 导出结果写到结果页，规则增删改写到规则页，白名单 / 缓存 / 配置
+操作写到设置页，切页后各自恢复。
 扫描在 ``QThreadPool`` 中执行，进度经信号回投主线程，取消走 :class:`CancelToken`，
 关窗时置位取消并等待线程池收尾。
 
@@ -83,6 +86,7 @@ from fcmd.apps.filescan._rules import (
 from fcmd.gui.page import AppPage, PageSpec
 from fcmd.gui.widgets import (
     Card,
+    FormGrid,
     PageScroll,
     ProgressBar,
     StorageCard,
@@ -105,9 +109,10 @@ NAV_TITLE = "敏感扫描"
 DEFAULT_SIZE = (1120, 760)
 
 PAGES: tuple[PageSpec, ...] = (
-    PageSpec("scan", "扫描", "目录、扫描选项、后缀白名单与扫描启动", "scan"),
+    PageSpec("scan", "扫描", "扫描目录、开始 / 取消与当前选项摘要", "scan"),
     PageSpec("results", "结果", "按文件聚合的命中、筛选与打码导出", "search"),
     PageSpec("rules", "规则", "规则表、启停、组合表达式与规则集导入导出", "check-square"),
+    PageSpec("settings", "设置", "扫描范围、后缀白名单与缓存 / 配置", "settings"),
 )
 """侧边栏页顺序与提示：与 wslmanw / llmw 同一套 ``SidebarNav`` 分页。"""
 
@@ -349,7 +354,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
 
 
 class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """敏感内容扫描窗口：侧边栏分页（扫描 / 结果 / 规则）+ 状态栏 + 任务日志。"""
+    """敏感内容扫描窗口：侧边栏分页（扫描 / 结果 / 规则 / 设置）+ 状态栏 + 任务日志。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
         self._own_settings_path = settings_path
@@ -372,8 +377,10 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             sidebar_collapsed=self.settings.sidebar_collapsed,
             settings_path=settings_path,
         )
-        # 三页都先建好再登记：扫描页要立即填目录 / 白名单，结果与规则页虽然首屏
+        # 四页都先建好再登记：扫描页要立即填目录 / 白名单，结果与规则页虽然首屏
         # 不可见，也必须在读设置时就能回填（切页只是把已建好的页挂上去）。
+        # 设置页先建：扫描页的「当前选项」摘要要读设置页里的控件。
+        self._settings_page = self._build_settings_page()
         self._scan_page = self._build_scan_page()
         self._result_page = self._build_result_page()
         self._rules_page = self._build_rules_page()
@@ -383,6 +390,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 "scan": lambda: self._scan_page,
                 "results": lambda: self._result_page,
                 "rules": lambda: self._rules_page,
+                "settings": lambda: self._settings_page,
             },
         )
         self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
@@ -393,6 +401,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             index = self._filter_rule.findText(self.settings.filter_rule)
             if index >= 0:
                 self._filter_rule.setCurrentIndex(index)
+        self._refresh_options_note()
         self.set_page_status("scan", self._whitelist_notice or self._summary_text())
 
     # ------------------------------------------------------------------ #
@@ -425,7 +434,43 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._dirs_card.add_title_action(clear_button)
         body.addWidget(self._dirs_card)
 
-        options = Card("扫描选项")
+        # 动作卡：开始 / 取消 + 进度条 + 当前选项摘要。选项与白名单挪到设置页，
+        # 这里只留「看一眼就能开扫」的动作与当前口径，扫描页不再纵向堆表单。
+        action_card = Card("开始扫描")
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
+        self._start_button = button("开始扫描", kind="primary", icon="scan")
+        self._start_button.clicked.connect(self._start_scan)
+        actions.addWidget(self._start_button)
+        self._cancel_button = button("取消")
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.clicked.connect(self._cancel_scan)
+        actions.addWidget(self._cancel_button)
+        actions.addWidget(QLabel("进度", action_card))
+        self._progress = ProgressBar(parent=action_card)
+        actions.addWidget(self._progress, 1)
+        action_card.body.addLayout(actions)
+        self._options_note = hint_label("")
+        action_card.body.addWidget(self._options_note)
+        body.addWidget(action_card)
+        body.addStretch(1)
+        return page
+
+    @staticmethod
+    def _spin(parent: QWidget, minimum: int, maximum: int, value: int) -> QSpinBox:
+        widget = QSpinBox(parent)
+        widget.setRange(minimum, maximum)
+        widget.setValue(max(minimum, min(maximum, value)))
+        widget.setMaximumWidth(160)
+        return widget
+
+    def _build_settings_page(self) -> _FilescanPage:
+        """设置页：扫描范围 / 后缀白名单 / 缓存与配置，三张卡片纵向排布。"""
+        page = _FilescanPage(self, "settings", scroll=True, margins=(0, 0, 4, 8))
+        body = page.content
+
+        options = Card("扫描范围")
         checks = QHBoxLayout()
         checks.setContentsMargins(0, 0, 0, 0)
         checks.setSpacing(16)
@@ -442,18 +487,13 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         checks.addStretch(1)
         options.body.addLayout(checks)
 
-        form = QGridLayout()
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setHorizontalSpacing(8)
-        form.setVerticalSpacing(6)
-        form.setColumnStretch(1, 1)
-        form.setColumnStretch(3, 1)
-        self._max_depth = self._spin(options, 0, 64, self.settings.max_depth)
-        self._min_size = self._spin(options, 0, 2_000_000_000, self.settings.min_size)
-        self._max_size = self._spin(options, 0, 2_000_000_000, self.settings.max_size)
-        self._max_file_bytes = self._spin(options, 1, 1_073_741_824, self.settings.max_file_bytes)
-        self._workers = self._spin(options, 1, 64, self.settings.workers)
-        self._context_chars = self._spin(options, 0, 400, self.settings.context_chars)
+        form = FormGrid(options)
+        self._max_depth = self._spin(form, 0, 64, self.settings.max_depth)
+        self._min_size = self._spin(form, 0, 2_000_000_000, self.settings.min_size)
+        self._max_size = self._spin(form, 0, 2_000_000_000, self.settings.max_size)
+        self._max_file_bytes = self._spin(form, 1, 1_073_741_824, self.settings.max_file_bytes)
+        self._workers = self._spin(form, 1, 64, self.settings.workers)
+        self._context_chars = self._spin(form, 0, 400, self.settings.context_chars)
         self._include_ext = QLineEdit(self.settings.include_ext, options)
         self._exclude_ext = QLineEdit(self.settings.exclude_ext, options)
         self._force_ext = QLineEdit(self.settings.force_ext, options)
@@ -461,28 +501,19 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._modified_before = QLineEdit(self.settings.modified_before, options)
         self._modified_after.setPlaceholderText("YYYY-MM-DD HH:MM:SS，可空")
         self._modified_before.setPlaceholderText("YYYY-MM-DD HH:MM:SS，可空")
-        rows: tuple[tuple[str, QWidget, str, QWidget], ...] = (
-            ("深度(0=不限)", self._max_depth, "后缀包含", self._include_ext),
-            ("最小字节", self._min_size, "后缀排除", self._exclude_ext),
-            ("最大字节(0=不限)", self._max_size, "强制后缀", self._force_ext),
-            ("单文件上限", self._max_file_bytes, "并发数", self._workers),
-            ("上下文长度", self._context_chars, "修改时间≥", self._modified_after),
-            ("修改时间≤", self._modified_before, "", None),
-        )
-        for index, (left_label, left_widget, right_label, right_widget) in enumerate(rows):
-            form.addWidget(QLabel(left_label), index, 0, Qt.AlignmentFlag.AlignRight)
-            form.addWidget(left_widget, index, 1)
-            if right_widget is not None:
-                form.addWidget(QLabel(right_label), index, 2, Qt.AlignmentFlag.AlignRight)
-                form.addWidget(right_widget, index, 3)
-        options.body.addLayout(form)
-        options.body.addWidget(hint_label("白名单外强制扫描（如 .pdf）"))
+        form.add_pair("深度(0=不限)", self._max_depth, "后缀包含", self._include_ext)
+        form.add_pair("最小字节", self._min_size, "后缀排除", self._exclude_ext)
+        form.add_pair("最大字节(0=不限)", self._max_size, "强制后缀", self._force_ext)
+        form.add_pair("单文件上限", self._max_file_bytes, "并发数", self._workers)
+        form.add_pair("上下文长度", self._context_chars, "修改时间≥", self._modified_after)
+        form.add_pair("修改时间≤", self._modified_before)
+        options.body.addWidget(form)
+        options.body.addWidget(hint_label("白名单外强制扫描（如 .pdf）；大小 / 时间过滤属「范围外」，从不读取"))
+        body.addWidget(options)
 
-        options.body.addWidget(
-            hint_label(
-                "后缀白名单（每行一个类型；双击行编辑，后缀用英文逗号【,】分隔；"
-                "可新增类型，Ctrl / Shift 多选后批量删除）"
-            )
+        whitelist = Card("后缀白名单")
+        whitelist.body.addWidget(
+            hint_label("每行一个类型；双击行编辑，后缀用英文逗号【,】分隔；可新增类型，Ctrl / Shift 多选后批量删除")
         )
         whitelist_row = QHBoxLayout()
         whitelist_row.setContentsMargins(0, 0, 0, 0)
@@ -491,7 +522,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             ("类型", "后缀（用 , 分隔）"),
             widths=(140, 560),
             stretch_columns=(1,),
-            parent=options,
+            parent=whitelist,
         )
         self._whitelist_table.setMinimumHeight(150)
         self._whitelist_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -511,21 +542,21 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             whitelist_buttons.addWidget(widget)
         whitelist_buttons.addStretch(1)
         whitelist_row.addLayout(whitelist_buttons)
-        options.body.addLayout(whitelist_row)
-        body.addWidget(options)
+        whitelist.body.addLayout(whitelist_row)
+        body.addWidget(whitelist)
 
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(6)
-        self._start_button = button("开始扫描", kind="primary")
-        self._start_button.clicked.connect(self._start_scan)
-        actions.addWidget(self._start_button)
-        self._cancel_button = button("取消")
-        self._cancel_button.setEnabled(False)
-        self._cancel_button.clicked.connect(self._cancel_scan)
-        actions.addWidget(self._cancel_button)
-        self._progress = ProgressBar(parent=self)
-        actions.addWidget(self._progress, 1)
+        cache = Card("缓存与配置")
+        cache.body.addWidget(
+            hint_label("缓存按「路径 + 大小 + 修改时间 + 规则/选项指纹」复用上次结果；配置可整份导入导出。")
+        )
+        cache_row = QHBoxLayout()
+        cache_row.setContentsMargins(0, 0, 0, 0)
+        cache_row.setSpacing(6)
+        self._use_cache = QCheckBox("使用缓存", cache)
+        self._use_cache.setChecked(self.settings.use_cache)
+        self._use_cache.setToolTip("关闭后每次都完整读盘，不复用上次结果")
+        cache_row.addWidget(self._use_cache)
+        cache_row.addStretch(1)
         for text, handler in (
             ("导入配置…", self._import_config),
             ("导出配置…", self._export_config),
@@ -533,21 +564,11 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         ):
             widget = button(text)
             widget.clicked.connect(handler)
-            actions.addWidget(widget)
-        self._use_cache = QCheckBox("使用缓存", self)
-        self._use_cache.setChecked(self.settings.use_cache)
-        actions.addWidget(self._use_cache)
-        body.addLayout(actions)
+            cache_row.addWidget(widget)
+        cache.body.addLayout(cache_row)
+        body.addWidget(cache)
         body.addStretch(1)
         return page
-
-    @staticmethod
-    def _spin(parent: QWidget, minimum: int, maximum: int, value: int) -> QSpinBox:
-        widget = QSpinBox(parent)
-        widget.setRange(minimum, maximum)
-        widget.setValue(max(minimum, min(maximum, value)))
-        widget.setMaximumWidth(160)
-        return widget
 
     def _build_result_page(self) -> _FilescanPage:
         page = _FilescanPage(self, "results", scroll=False, spacing=6)
@@ -680,6 +701,15 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             f"目录 {len(self._paths)} 个；单文件上限 {format_size(self._max_file_bytes.value())}"
         )
 
+    def _refresh_options_note(self) -> None:
+        """扫描页动作卡里的只读摘要：选项 / 白名单 / 缓存在设置页修改。"""
+        depth = "不限" if self._max_depth.value() <= 0 else str(self._max_depth.value())
+        self._options_note.setText(
+            f"当前：{'递归' if self._recursive.isChecked() else '不递归'} · 深度 {depth} · "
+            f"并发 {self._workers.value()} · 白名单 {len(self._whitelist_exts())} 个后缀 · "
+            f"缓存{'开' if self._use_cache.isChecked() else '关'}；选项 / 白名单 / 缓存都在「设置」页修改"
+        )
+
     def _sync_ruleset(self, ruleset: RuleSet, *, message: str) -> None:
         self.ruleset = ruleset
         self._refresh_rules()
@@ -759,17 +789,17 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _reset_whitelist(self) -> None:
         self._refresh_whitelist_table(list(fw.group_whitelist(DEFAULT_SCAN_EXTENSIONS)))
-        self.set_page_status("scan", self._summary_text())
+        self.set_page_status("settings", "后缀白名单已恢复默认分组")
 
     def _delete_whitelist_row(self) -> None:
         rows = self._whitelist_rows()
         selected = {index.row() for index in self._whitelist_table.selectedIndexes()}
         targets = [rows[index] for index in sorted(selected) if 0 <= index < len(rows)]
         if not targets:
-            self.set_page_status("scan", "请先在白名单表格中选择要删除的类型（可按住 Ctrl / Shift 多选）")
+            self.set_page_status("settings", "请先在白名单表格中选择要删除的类型（可按住 Ctrl / Shift 多选）")
             return
         if len(rows) - len(targets) < 1:
-            self.set_page_status("scan", "白名单至少保留一个类型，请先新增其他类型")
+            self.set_page_status("settings", "白名单至少保留一个类型，请先新增其他类型")
             return
         total_exts = sum(len(exts) for _, exts in targets)
         if len(targets) == 1:
@@ -784,14 +814,14 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         kept = [row for index, row in enumerate(rows) if index not in selected]
         self._refresh_whitelist_table(kept)
         if len(targets) == 1:
-            self.set_page_status("scan", f"已删除类型「{targets[0][0]}」")
+            self.set_page_status("settings", f"已删除类型「{targets[0][0]}」")
         else:
-            self.set_page_status("scan", f"已删除 {len(targets)} 个类型（共 {total_exts} 个后缀）")
+            self.set_page_status("settings", f"已删除 {len(targets)} 个类型（共 {total_exts} 个后缀）")
 
     def _edit_whitelist_row(self) -> None:
         row = self._whitelist_table.currentRow()
         if row < 0:
-            self.set_page_status("scan", "请先在白名单表格中选择一行")
+            self.set_page_status("settings", "请先在白名单表格中选择一行")
             return
         self._whitelist_dialog(row)
 
@@ -822,7 +852,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             new_rows.append((new_label, valid))
         self._refresh_whitelist_table(new_rows)
         self.set_page_status(
-            "scan", f"已保存类型「{new_label}」：{len(valid)} 个后缀，共 {len(self._whitelist_exts())} 个"
+            "settings", f"已保存类型「{new_label}」：{len(valid)} 个后缀，共 {len(self._whitelist_exts())} 个"
         )
 
     # ------------------------------------------------------------------ #
@@ -1141,7 +1171,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         if error:
             QMessageBox.warning(self, "清理缓存失败", error)
             return
-        self.set_page_status("scan", f"扫描缓存已清理（{removed} 条）")
+        self.set_page_status("settings", f"扫描缓存已清理（{removed} 条）")
 
     def _import_config(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(self, "导入扫描配置", "", "JSON (*.json);;全部文件 (*.*)")
@@ -1160,7 +1190,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 "\n".join(loaded.warnings),
             )
         self.set_page_status(
-            "scan", f"已导入配置：{chosen}（目录 {len(loaded.roots)} 个，规则 {len(self.ruleset.rules)} 条）"
+            "settings", f"已导入配置：{chosen}（目录 {len(loaded.roots)} 个，规则 {len(self.ruleset.rules)} 条）"
         )
 
     def _apply_config(self, config: ScanConfig) -> None:
@@ -1220,7 +1250,7 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         except OSError as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
             return
-        self.set_page_status("scan", f"扫描配置已导出到 {chosen}（含规则集与扫描选项）")
+        self.set_page_status("settings", f"扫描配置已导出到 {chosen}（含规则集与扫描选项）")
 
     # ------------------------------------------------------------------ #
     # 生命周期
@@ -1270,9 +1300,11 @@ class FilescanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         return True
 
     def show_page(self, key: str) -> None:
-        """切页：进入结果页时把路径筛选条件自动套用一次（与旧标签页口径一致）。"""
+        """切页：结果页自动套用路径筛选；扫描页刷新「当前选项」摘要。"""
         super().show_page(key)
-        if key == "results" and self.result is not None and self._filter_path.text().strip():
+        if key == "scan":
+            self._refresh_options_note()
+        elif key == "results" and self.result is not None and self._filter_path.text().strip():
             self._apply_filter()
 
 

@@ -63,14 +63,15 @@ def _window(**kwargs: object) -> FilescanQtWindow:
 def test_window_builds_with_defaults(home: Path) -> None:
     window = _window()
     try:
-        # 侧边栏分页与 wslmanw / llmw 同构：扫描 / 结果 / 规则，默认停在扫描页。
-        assert window.nav.keys() == ("scan", "results", "rules")
+        # 侧边栏分页与 wslmanw / llmw 同构：扫描 / 结果 / 规则 / 设置，默认停在扫描页。
+        assert window.nav.keys() == ("scan", "results", "rules", "settings")
         assert window.nav.selected() == "scan"
         assert window.current_page() == "scan"
         assert window.page_title.text() == "扫描"
         assert window._scan_page.page_key == "scan"
         assert window._result_page.page_key == "results"
         assert window._rules_page.page_key == "rules"
+        assert window._settings_page.page_key == "settings"
         assert window._whitelist_table.rowCount() >= 1
         assert window._rules_table.rowCount() == len(builtin_ruleset().rules)
         assert window._start_button.isEnabled()
@@ -261,5 +262,71 @@ def test_scan_dirs_reuse_shared_storage_card(home: Path, tmp_path: Path) -> None
         window._clear_directories()
         assert window._paths == []
         assert card.roots() == []
+    finally:
+        window.deleteLater()
+
+
+def test_settings_page_holds_options_whitelist_and_cache(home: Path, sample: Path) -> None:
+    """选项 / 白名单 / 缓存配置在设置页；扫描页只留目录、动作与只读摘要。"""
+    from fcmd.gui.widgets import Card
+
+    window = _window()
+    try:
+        settings_titles = [card.title() for card in window._settings_page.findChildren(Card)]
+        assert settings_titles == ["扫描范围", "后缀白名单", "缓存与配置"]
+        # 关键控件都在设置页里
+        for widget in (
+            window._recursive,
+            window._max_depth,
+            window._include_ext,
+            window._modified_after,
+            window._whitelist_table,
+            window._use_cache,
+        ):
+            assert window._settings_page.isAncestorOf(widget), widget.objectName()
+
+        # 扫描页只有「扫描目录」与「开始扫描」两张卡，且带当前选项摘要。
+        scan_titles = [card.title() for card in window._scan_page.findChildren(Card)]
+        assert scan_titles == ["扫描目录", "开始扫描"]
+        assert window._scan_page.isAncestorOf(window._start_button)
+        assert window._scan_page.isAncestorOf(window._progress)
+        assert "白名单" in window._options_note.text()
+
+        # 在设置页改了选项，切回扫描页时摘要随之更新。
+        window.show_page("settings")
+        window._workers.setValue(7)
+        window._max_depth.setValue(3)
+        window.show_page("scan")
+        assert "深度 3" in window._options_note.text()
+        assert "并发 7" in window._options_note.text()
+    finally:
+        window.deleteLater()
+
+
+def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> None:
+    """设置页改的值就是 ``_start_scan`` 用的 ScanOptions，不需要额外同步。"""
+    window = _window()
+    try:
+        window.show_page("settings")
+        window._recursive.setChecked(False)
+        window._follow.setChecked(True)
+        window._max_depth.setValue(2)
+        window._min_size.setValue(10)
+        window._max_size.setValue(2048)
+        window._workers.setValue(3)
+        window._context_chars.setValue(12)
+        window._include_ext.setText(".txt")
+        window._use_cache.setChecked(False)
+        options = window._scan_options()
+        assert options.recursive is False
+        assert options.follow_symlinks is True
+        assert options.max_depth == 2
+        assert options.min_size == 10
+        assert options.max_size == 2048
+        assert options.workers == 3
+        assert options.context_chars == 12
+        assert options.include_exts == (".txt",)
+        assert window._use_cache.isChecked() is False
+        assert window._current_settings().use_cache is False
     finally:
         window.deleteLater()

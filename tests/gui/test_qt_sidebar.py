@@ -14,8 +14,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEvent, QPointF, Qt
-from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from fcmd.gui.sidebar import COLLAPSED_WIDTH, EXPANDED_WIDTH, SidebarNav
@@ -191,14 +192,10 @@ def test_collapsed_keeps_icon_and_shows_expand_button() -> None:
         assert nav.toggle_button.icon().isNull() is False
         assert "展开侧边栏" in nav.icon_label.toolTip()
         assert "展开侧边栏" in nav.toggle_button.toolTip()
-        event = QMouseEvent(
-            QEvent.Type.MouseButtonRelease,
-            QPointF(1, 1),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-        assert nav.eventFilter(nav.icon_label, event) is True
+        # 用 QTest 生成标准鼠标事件：直接 new QMouseEvent 在 PySide6 6.11 会触发
+        # deprecated 构造签名警告，且要手动拼 localPos / globalPos。
+        QTest.mouseClick(nav.icon_label, Qt.MouseButton.LeftButton)
+        application.processEvents()
         assert not nav.is_collapsed()
         assert not nav.toggle_button.isHidden()
         # 收起后按钮回到侧栏底部，与页按钮同款整行按钮且不带文字。
