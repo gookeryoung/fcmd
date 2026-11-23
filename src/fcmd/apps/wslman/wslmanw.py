@@ -1,7 +1,7 @@
 """wslmanw - WSL 实例管理的 Qt 窗口。
 
 窗口只做编排：业务判断仍走 :mod:`fcmd.apps.wslman.wslman` 与
-:mod:`fcmd.apps.wslman._source` 的共享实现（导出核心、预检、注销前备份），
+:mod:`fcmd.apps.wslman._source` 的共享实现（导出核心、预检、删除实例前备份），
 避免 GUI 与 CLI 两套口径。
 
 设置文件：``${FCMD_HOME:-~/.fcmd}/ui/wslmanw.json``。
@@ -85,7 +85,7 @@ DEFAULT_GEOMETRY = "1160x760"
 MIN_WIDTH = 900
 MIN_HEIGHT = 600
 
-_DESCRIPTION = "WSL 实例管理的图形界面：列表/详情、打开终端、启动停止、导出导入、镜像下载、注销与关闭全部（Qt）"
+_DESCRIPTION = "WSL 实例管理的图形界面：列表/详情、打开终端、启动重启停止、导出导入、镜像下载、删除实例与关闭全部（Qt）"
 
 _SOURCE_LABELS = {
     "cli": "CLI 安装（wsl --install）",
@@ -606,7 +606,7 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
 
 
 def unregister_confirm_enabled(typed: str, name: str) -> bool:
-    """注销按钮只在手输名称与目标完全一致（忽略大小写与首尾空格）时可用。"""
+    """删除实例按钮只在手输名称与目标完全一致（忽略大小写与首尾空格）时可用。"""
     return bool(name) and typed.strip().casefold() == name.strip().casefold()
 
 

@@ -186,9 +186,11 @@ class StreamingRun(Protocol):
 - `unregister`：`wsl.exe --unregister <Name>`。护栏四件套：
   1. 运行中且未给 `--terminate-first` → 拒绝；
   2. 未给 `--yes` → 拒绝（退出码 2）；
-  3. `--backup <file>` 给定时先导出，导出失败则**绝不继续注销**；
+  3. `--backup <file>` 给定时先导出，导出失败则**绝不继续删除实例**；
   4. `--preview` 展示 `BasePath`、占用大小、将删除的虚拟磁盘路径。
-  注销后 BasePath 目录是否残留随 WSL 版本而异：只报告，不自动清理。
+  删除后 BasePath 目录是否残留随 WSL 版本而异：只报告，不自动清理。
+  GUI 与文案统一叫「删除实例」（子命令仍是 `unregister`，对应 `wsl --unregister`），
+  明写会删除 `ext4.vhdx` 且不可恢复，避免用户误解为「只解除管理」。
 - `shutdown`：`wsl.exe --shutdown`。必须 `--yes`，提示中明确列出连带影响
   （Docker Desktop、IDE Remote、其他发行版）。
 
@@ -290,9 +292,9 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
 - 导出先写 `<file>.part`，成功后 `os.replace` 原子改名：中断不会破坏已有备份；
 - 默认删除本次产生的 `.part`（`--keep-partial` 保留），退出码 130（`INTERRUPTED`）；
 - 导入被中断或失败：**不自动 `--unregister`**，只在结果里给出残留发行版名、
-  `BasePath` 与可直接复制的清理命令；自动注销属于破坏性操作，不能藏在清理逻辑里；
+  `BasePath` 与可直接复制的清理命令；自动删除实例属于破坏性操作，不能藏在清理逻辑里；
 - `--replace`（覆盖已有发行版）额外护栏：默认要求 `--backup <file>`，无备份时
-  拒绝；`--backup` 失败则不注销旧发行版；
+  拒绝；`--backup` 失败则不删除旧发行版；
 - 并发：`~/.fcmd/locks/wslman-<distro>.lock`，同发行版同时只允许一个传输；
   陈旧锁按 PID + 创建时间判定并给出明确提示。
 
@@ -579,7 +581,7 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
 - 不写注册表、不写 `wsl.conf`、不写 `.wslconfig`。
 - 破坏性命令必须 `--yes`；GUI 必须手输名称或勾选风险声明。
 - 导出成功前不覆盖旧备份（`.part` + 原子改名）。
-- 导入失败不自动注销；清理命令以文本给出。
+- 导入失败不自动删除实例；清理命令以文本给出。
 - 所有外部副作用出现在 JSON `commands[]` 里，不含隐式调用。
 - 单元测试不执行 `wsl.exe`；真实环境用例标 `slow`，不进主门禁。
 - 下载源可配置，且未校验时不得标记 `verified`。
@@ -591,8 +593,8 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
 | P1（已完成） | `_errors` / `_runner` / `_decode` / `_registry` / `_wslconfig` / `_config` / `_disk` / `_distro` + `list` / `status` / `info` / `config` / `doctor` | 147 项单测（假执行器）；未启用 WSL / 无发行版 / 无 `wsl.exe` 三种情况稳定退出码；`--json` 信封 |
 | P2（已完成） | `_terminal` + `open` / `terminate` / `set-default` | 37 项单测（假执行器 + 假启动器）：argv 构造（含空格名）、`wt` 失败回退、`--preview` 零调用、双读 |
 | P3（已完成） | `_transfer` + `export` / `import` / `copy` / `compress` / `backups` / `backup-verify` / `backup-remove` | 56 项单测：预检、进度、中断、`.part` 原子改名、导入残留提示、导出运行中二选一、preview 零副作用 |
-| P4（已完成） | `_source` + `available` / `download` / `unregister` / `shutdown` | 47 项单测：来源降级阶梯、`wsl --install` 风险提示、sha256 判定、断点续传/中转 200 重启、注销强制先备份、preview 零调用 |
-| P5（已完成） | `wslmanw` | 窗口骨架复用、后台任务与取消（取消信号透传 `_source.download`，`.part` 保留可续传）、破坏性确认（注销需手输名称、关闭全部需勾选影响）、导出复用 CLI 的预检与 `.part` 原子改名；导出进度经 Qt 信号桥写状态栏 |
+| P4（已完成） | `_source` + `available` / `download` / `unregister` / `shutdown` | 47 项单测：来源降级阶梯、`wsl --install` 风险提示、sha256 判定、断点续传/中转 200 重启、删除实例强制先备份、preview 零调用 |
+| P5（已完成） | `wslmanw` | 窗口骨架复用、后台任务与取消（取消信号透传 `_source.download`，`.part` 保留可续传）、破坏性确认（删除实例需手输名称、关闭全部需勾选影响）、导出复用 CLI 的预检与 `.part` 原子改名；导出进度经 Qt 信号桥写状态栏 |
 
 每阶段跑 `make check-fast`，收尾跑 `make test`；覆盖率门禁 95%，新增纯逻辑模块的
 单测不得低于现有平均水平。涉及 `apps/` 目录形状后由统一会话重生成
@@ -608,7 +610,7 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
 - `wsl.exe` 输出本地化、编码随版本波动，解析必须按结构而非文案；
 - 注册表可能因权限或策略不可读，所有依赖它的字段都要可缺省；
 - Store 版 WSL 会自动更新，能力探测必须每次运行现算，不能缓存成常量；
-- 非管理员可完成导出 / 导入 / 注销，但 `set-version` 与 WSL 功能启用可能受虚拟化
+- 非管理员可完成导出 / 导入 / 删除实例，但 `set-version` 与 WSL 功能启用可能受虚拟化
   与策略限制；不静默提权。
 
 ## 已定稿的设计选择（2026-11-13）
@@ -625,7 +627,7 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
 6. 不引入 zstd，只用 `export` 的 tar 与可选 gzip。
 7. 导出**不强制**先停机，但也不允许静默：运行中必须显式二选一
    `--terminate-first` / `--allow-running`，没有默认值，缺省即报错并给出两条完整命令。
-8. GUI 注销要求**手输发行版名**，保留。
+8. GUI 删除实例要求**手输发行版名**，按钮用红色危险样式并明写会删除 `ext4.vhdx`；保留。
 9. 备份默认目录保持空、必须显式指定；`doctor` 报出推荐目录与所在卷剩余空间。
 
 ## 交接：需要统一会话处理的共享改动
@@ -658,8 +660,11 @@ uv run python -m fcmd.cli._manifest_data
 ## 落地状态与交接
 
 - 已完成：CLI 与 wslmanw 主窗口（实例 / 文件 / 镜像 / 设置四页）、启停与看护、
-  导出 / 导入 / 注销、下载与校验，以及实例配置对话框里的「初始化环境」与
-  「迁移 SSH 文件」两张卡片，均有单测覆盖。
+  导出 / 导入 / 删除实例、下载与校验，实例配置对话框里的「初始化环境」与
+  「迁移 SSH 文件」两张卡片，文件页「用 IDE / AI Agent 打开当前目录」与设置页
+  「打开方式」条目管理（含智能检测与安装状态标签），设置页多工作目录（默认目录推演
+  下载 / 安装 / 备份、实例行标注归属目录）与实例「迁移」到另一个工作目录；
+  均有单测覆盖。
 - 文件页纯逻辑在 `_files.py`：UNC 浏览、上传下载、新建 / 重命名 / 删除，删除与
   覆盖都要确认；SSH 迁移纯逻辑在 `_sshfiles.py`（来源类型 / 跨实例 `cat` 文件流 /
   实际读取路径），真实实例（Ubuntu 24.04）上已用隔离 HOME 冒烟验证落盘权限、

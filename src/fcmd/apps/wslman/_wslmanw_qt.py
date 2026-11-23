@@ -1,7 +1,7 @@
 """wslmanw 的 Qt 主窗口与入口。
 
 窗口只做编排：业务判断全部走 :mod:`fcmd.apps.wslman.wslman` 与
-:mod:`fcmd.apps.wslman._source` 的共享实现（导出、预检、注销前备份、镜像下载），
+:mod:`fcmd.apps.wslman._source` 的共享实现（导出、预检、删除实例前备份、镜像下载），
 与 CLI 共用同一套口径；界面负责列表 / 详情 / 下载与下载配置，配置项集中在设置页；
 任务日志从「帮助 → 任务日志…」以非模态窗口打开（与 llmw 的服务日志同形态）。
 
@@ -117,7 +117,7 @@ TITLE = "WSL · 实例管理"
 NAV_TITLE = "WSL"
 
 PAGES: tuple[PageSpec, ...] = (
-    PageSpec("distros", "实例", "列表、详情、启动停止、导出与注销", "distros"),
+    PageSpec("distros", "实例", "列表、详情、启动停止、导出与删除实例", "distros"),
     PageSpec("files", "文件", "浏览实例文件系统、上传下载与增删改", "folder"),
     PageSpec("images", "镜像", "在线镜像清单、本地安装与清单更新", "disc"),
     PageSpec("settings", "设置", "下载目录、下载源与校验", "settings"),
@@ -631,11 +631,12 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             (
                 ("打开终端", self._open_selected, "primary"),
                 ("启动", self._start_selected, ""),
+                ("重启", self._restart_selected, ""),
                 ("停止", self._terminate_selected, ""),
             ),
             (("导出", self._export_selected, ""), ("迁移", self._migrate_selected, "")),
             (
-                ("注销", self._unregister, "danger"),
+                ("删除实例", self._unregister, "danger"),
                 ("关闭全部", self._shutdown, "danger"),
             ),
         )
@@ -652,6 +653,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 self._button_by_text[text] = widget
         toolbar.addStretch(1)
         self.start_button = self._button_by_text["启动"]
+        self.restart_button = self._button_by_text["重启"]
         self.stop_button = self._button_by_text["停止"]
         return toolbar
 
@@ -1880,7 +1882,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             self._refresh_rows()
         else:
             self.refresh()
-        # 下载 / 安装 / 注销后重扫本地状态：行内标签与动作按钮（已下载→安装、
+        # 下载 / 安装 / 删除实例后重扫本地状态：行内标签与动作按钮（已下载→安装、
         # 安装完成→已安装）要立刻跟着变，不必等用户手动「更新列表」。
         self._refresh_image_states()
 
@@ -2173,6 +2175,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         distro = self._selected()
         can_start, can_stop = w.action_states(distro.state if distro is not None else None)
         self.start_button.setEnabled(can_start)
+        # 重启只对运行中的实例有意义：停止 / 启动已能覆盖其余状态。
+        self.restart_button.setEnabled(can_stop)
         self.stop_button.setEnabled(can_stop)
 
     def _toggle_distro_state(self, name: str) -> None:
@@ -2299,6 +2303,26 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             return
         self._log(f"[打开] 已启动 {distro.name}")
 
+    def _launch_keepalive(self, env: Any, name: str) -> None:
+        """用看护进程把实例带起来，并等状态真正变成 Running（后台线程调用）。
+
+        一次性命令（如 ``/bin/true``）跑完 WSL 就把实例收回 Stopped，
+        wslmanw 关闭后更会失去唯一的进程；这里让实例里常驻一个 sleep 循环，
+        关掉 wslmanw 也不会结束实例，只有用户点「停止」或 ``wsl --shutdown`` 才会退出。
+        启动是异步的：``wsl -l -v`` 要过几百毫秒才看到 Running（实测约 0.7s），
+        立刻断言会误报「启动失败」，统一在这里等一小段时间。
+        """
+        wsl_path = cli._require_wsl(env)
+        spawn_detached(
+            [wsl_path, "-d", name, "--exec", "/bin/sh", "-c", _KEEPALIVE_LOOP],
+        )
+        current = cli.wait_until_running(env, name)
+        if current.state != "running":
+            raise runtime_error(
+                f"{name} 启动后状态仍为 {state_label(current)}（已等待 {cli.START_TIMEOUT_S:.0f}s）",
+                hint="实例可能仍在启动：稍等后点「刷新」；持续未运行请检查 wsl -l -v 或运行 fcmd wslman doctor",
+            )
+
     def _start_selected(self) -> None:
         distro = self._selected()
         if distro is None:
@@ -2313,25 +2337,31 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             target = cli._require_target(env, distro.name)
             if target.state == "running":
                 return f"{target.name} 已在运行"
-            # 用后台看护进程把实例带起来（不弹控制台）：一次性命令（如 /bin/true）跑完
-            # WSL 就把实例收回 Stopped，wslmanw 关闭后更会失去唯一的进程；这里让实例
-            # 里常驻一个 sleep 循环，关掉 wslmanw 也不会结束实例，只有用户点「停止」
-            # 或 wsl --shutdown 才会退出。
-            wsl_path = cli._require_wsl(env)
-            spawn_detached(
-                [wsl_path, "-d", target.name, "--exec", "/bin/sh", "-c", _KEEPALIVE_LOOP],
-            )
-            # 启动是异步的：`wsl -l -v` 要过几百毫秒才看到 Running（实测约 0.7s），
-            # 立刻断言会误报「启动失败」；统一在这里等一小段时间。
-            current = cli.wait_until_running(env, target.name)
-            if current.state != "running":
-                raise runtime_error(
-                    f"{target.name} 启动后状态仍为 {state_label(current)}（已等待 {cli.START_TIMEOUT_S:.0f}s）",
-                    hint="实例可能仍在启动：稍等后点「刷新」；持续未运行请检查 wsl -l -v 或运行 fcmd wslman doctor",
-                )
+            self._launch_keepalive(env, target.name)
             return f"已启动 {target.name}"
 
         self._start("启动", work)
+
+    def _restart_selected(self) -> None:
+        """重启：先停止再重新拉起；只在运行中可用，忙碌时与其他动作一起禁用。"""
+        distro = self._selected()
+        if distro is None:
+            return
+        if distro.state != "running":
+            self.set_page_status("distros", f"{distro.name} 未运行，无需重启")
+            self._update_action_states()
+            return
+        if not confirm(self, "重启实例", f"重启 {distro.name}？正在运行的任务会被中断。"):
+            return
+
+        def work(_cancel: threading.Event) -> str:
+            env = cli._build_environment()
+            cli._run_step(env, ["--terminate", distro.name], action=f"停止 {distro.name}（重启）")
+            target = cli._require_target(env, distro.name)
+            self._launch_keepalive(env, target.name)
+            return f"已重启 {target.name}"
+
+        self._start("重启", work)
 
     def _terminate_selected(self) -> None:
         distro = self._selected()
@@ -2607,7 +2637,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                     )
                 running = existing.state == "running"
                 steps = [
-                    step for step, flag in (("停止", running), ("备份", backup is not None), ("注销", True)) if flag
+                    step for step, flag in (("停止", running), ("备份", backup is not None), ("删除实例", True)) if flag
                 ]
                 if self._bridge is not None:
                     self._bridge.event.emit(f"[安装] 替换 {existing.name}：" + " → ".join(steps) + " → 重新导入")
@@ -2621,11 +2651,11 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                         env,
                         ["--export", existing.name, str(backup)],
                         action=f"备份 {existing.name}",
-                        hint="备份失败时不会注销旧实例",
+                        hint="备份失败时不会删除旧实例",
                         timeout=3600.0,
                     )
-                cli._run_step(env, ["--unregister", existing.name], action=f"注销 {existing.name}")
-            # 目录校验放在替换处理之后：替换会注销并清空旧目录，先校验会把「已存在」误报成目录问题。
+                cli._run_step(env, ["--unregister", existing.name], action=f"删除实例 {existing.name}")
+            # 目录校验放在替换处理之后：替换会删除并清空旧目录，先校验会把「已存在」误报成目录问题。
             problem = cli._dir_problem(target)
             if problem:
                 raise invalid_argument(f"安装目录不可用：{problem}", hint="选择一个空目录（不存在会自动创建）")
@@ -2799,7 +2829,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
     def _refresh_image_states(self) -> None:
         """重扫本地状态并重绘行（不重新拉在线清单）。
 
-        下载完成 → 行标签变「已下载」且按钮变「安装」；安装 / 注销完成 → 「已安装」
+        下载完成 → 行标签变「已下载」且按钮变「安装」；安装 / 删除实例完成 → 「已安装」
         随之增减。只跑 ``wsl -l -v`` 与下载目录扫描，代价远小于重新联网拉清单。
         """
         if self._closing or self._states_busy or not self.image_entries:
@@ -2979,7 +3009,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         return row.entry if isinstance(row, _ImageItemRow) else None
 
     # ------------------------------------------------------------------ #
-    # 注销 / 关闭全部
+    # 删除实例 / 关闭全部
     # ------------------------------------------------------------------ #
     def _unregister(self) -> None:
         distro = self._selected()
@@ -3002,10 +3032,10 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                     cli._export_for_backup(env, target.name, backup, estimate, estimated=estimated)
                 if terminate_first:
                     cli._run_step(env, ["--terminate", target.name], action=f"停止 {target.name}")
-                cli._run_step(env, ["--unregister", target.name], action=f"注销 {target.name}")
-            return f"已注销 {target.name}" + (f"；备份在 {backup}" if backup else "")
+                cli._run_step(env, ["--unregister", target.name], action=f"删除实例 {target.name}")
+            return f"已删除实例 {target.name}" + (f"；备份在 {backup}" if backup else "")
 
-        self._start("注销", work)
+        self._start("删除实例", work)
 
     def _shutdown(self) -> None:
         dialog = _ShutdownDialog(self)
@@ -4167,11 +4197,11 @@ class _OpenerDialog(QDialog):  # pragma: no cover - 模态对话框
 
 
 class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
-    """注销确认：手输实例名、可选先停止、可选先备份。"""
+    """删除实例确认：手输实例名、可选先停止、可选先备份；明确写清磁盘会被删除。"""
 
     def __init__(self, owner: WslmanQtWindow, distro: Distro, size: tuple[int | None, bool]) -> None:
         super().__init__(owner)
-        self.setWindowTitle(f"注销 {distro.name}")
+        self.setWindowTitle(f"删除实例 {distro.name}")
         self.setMinimumWidth(560)
         self._owner = owner
         self._distro = distro
@@ -4183,8 +4213,9 @@ class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
         outer.addWidget(
             hint_label(
                 f"BasePath: {distro.base_path or '未知'}\n"
-                f"占用: {format_bytes(estimate, estimated=estimated)}\n"
-                "虚拟磁盘删除后无回收站。"
+                f"占用: {format_bytes(estimate, estimated=estimated)}\n\n"
+                "删除会移除该实例的注册信息，并删除其 ext4.vhdx 虚拟磁盘（不可恢复，无回收站）。\n"
+                "需要保留数据请勾选「先导出备份」。"
             )
         )
         self.terminate_first = QCheckBox("先停止实例", self)
@@ -4212,7 +4243,7 @@ class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
         cancel = button("取消")
         cancel.clicked.connect(self.reject)
         actions.addWidget(cancel)
-        self.confirm = button("注销", kind="danger")
+        self.confirm = button("删除实例", kind="danger")
         self.confirm.clicked.connect(self.accept)
         actions.addWidget(self.confirm)
         outer.addLayout(actions)
@@ -4528,7 +4559,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         choose = button("选择…")
         choose.clicked.connect(self._choose_dir)
         form.addWidget(choose, 1, 2)
-        self.replace = QCheckBox("替换同名实例（会先注销，必要时先备份）", self)
+        self.replace = QCheckBox("替换同名实例（会先删除现有实例，必要时先备份）", self)
         form.addWidget(self.replace, 2, 1)
         outer.addLayout(form)
 
@@ -4636,7 +4667,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
             QMessageBox.critical(self, "安装镜像", "请选择安装目录")
             return
         replace = self.replace.isChecked()
-        if replace and not confirm(self, "替换实例", f"替换 {name} 会先注销现有实例（运行中会先停止），继续？"):
+        if replace and not confirm(self, "替换实例", f"替换 {name} 会先删除现有实例（运行中会先停止），继续？"):
             return
         backup: Path | None = None
         if replace and load_config().require_backup_on_replace:

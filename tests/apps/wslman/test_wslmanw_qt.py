@@ -160,6 +160,83 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
         window.deleteLater()
 
 
+def test_actions_and_distro_rows_all_carry_icons(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """实例动作与行卡都有图标：重启 / 配置不再缺图标，发行版按名称区分。"""
+    view = _view(
+        _distro("Ubuntu-24.04", "running"),
+        _distro("Debian", "stopped", default=False),
+        _distro("kali-linux", "stopped", default=False),
+        _distro("Devuan", "stopped", default=False),
+    )
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        # 工具栏：每个动作都有图标，重启是 power、启动是 run。
+        assert all(_icon_name(item) for item in window._buttons)
+        assert _icon_name(window.start_button) == "run"
+        assert _icon_name(window.restart_button) == "power"
+        assert _icon_name(window.stop_button) == "stop"
+
+        assert _icon_name(_distro_row(window, 0).config_button) == "settings"
+        assert _icon_name(_distro_row(window, 0).icon_label) == "distro-ubuntu"
+        assert _icon_name(_distro_row(window, 1).icon_label) == "distro-debian"
+        assert _icon_name(_distro_row(window, 2).icon_label) == "distro-kali"
+        # 识别不出的发行版回落通用图标，不留空。
+        assert _icon_name(_distro_row(window, 3).icon_label) == "distro"
+        for index in range(window.distro_list.count()):
+            icon = _distro_row(window, index).icon_label
+            assert icon.pixmap().isNull() is False
+
+        # 文件页的两个入口也用各自的图标，而不是都落到「打开」。
+        assert _icon_name(window.files_open_ide) == "code"
+        assert _icon_name(window.files_open_agent) == "bot"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_restart_button_sits_between_start_and_stop_and_terminates_first(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """重启排在启动 / 停止之间：只对运行中的实例可用，先 terminate 再拉起。"""
+    from types import SimpleNamespace
+
+    running = _distro("Ubuntu", "running")
+    view = _view(running, _distro("Debian", "stopped", default=False))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    calls: list[tuple[str, object]] = []
+    try:
+        _wait_idle(window)
+        texts = [button.text() for button in window._buttons]
+        assert texts.index("启动") < texts.index("重启") < texts.index("停止")
+
+        window.distro_list.setCurrentRow(0)
+        assert window.restart_button.isEnabled() is True
+        window.distro_list.setCurrentRow(1)
+        assert window.restart_button.isEnabled() is False
+        window.distro_list.setCurrentRow(0)
+
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
+        monkeypatch.setattr(cli, "_build_environment", lambda *args, **kwargs: SimpleNamespace())
+        monkeypatch.setattr(cli, "_require_target", lambda env, name: running)
+        monkeypatch.setattr(cli, "_run_step", lambda env, argv, **kwargs: calls.append(("run", tuple(argv))))
+        monkeypatch.setattr(window, "_launch_keepalive", lambda env, name: calls.append(("launch", name)))
+        window._restart_selected()
+        # 任务一开始就把按钮置忙（与其他动作同一套忙碌态）
+        assert window._busy is True
+        assert window.restart_button.isEnabled() is False
+        _wait_idle(window)
+        assert calls == [("run", ("--terminate", "Ubuntu")), ("launch", "Ubuntu")]
+        assert window.page_status("distros") == "重启完成"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_running_distro_row_uses_red_stop_button(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """运行中的发行版给红色危险按钮「停止」；待机仍是主按钮「启动」。"""
     view = _view(_distro("Ubuntu", "running"), _distro("Debian", "stopped", default=False))

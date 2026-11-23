@@ -1292,7 +1292,7 @@ def export_distro(  # noqa: PLR0913, PLR0917
         "preview": "打印命令与预检结论，不创建目录、不导入",
         "dir": "目标安装目录（必须为空；不存在会在执行时创建）",
         "version": "WSL 版本：1 或 2；默认交给 wsl.exe 决定",
-        "replace": "覆盖同名发行版（会先注销旧发行版）",
+        "replace": "覆盖同名发行版（会先删除旧发行版及其磁盘）",
         "yes": "确认破坏性替换",
         "backup": "--replace 时旧发行版的备份文件路径",
         "terminate_first": "替换前先终止正在运行的旧发行版",
@@ -1310,7 +1310,7 @@ def import_distro(  # noqa: PLR0912, PLR0913, PLR0917
     backup: Path | None = None,
     terminate_first: bool = False,
 ) -> None:
-    """校验目标目录与名称冲突，必要时先备份并注销旧发行版，再执行 ``wsl --import``。"""
+    """校验目标目录与名称冲突，必要时先备份并删除旧发行版，再执行 ``wsl --import``。"""
     warnings: list[str] = []
     try:
         env = _build_environment()
@@ -1391,7 +1391,7 @@ def import_distro(  # noqa: PLR0912, PLR0913, PLR0917
                     f"预检: {check.detail}",
                     "命令:",
                     *[f"  {_display_argv(argv)}" for argv in commands],
-                    "[预览] 未创建目录、未导入、未注销任何发行版",
+                    "[预览] 未创建目录、未导入、未删除任何发行版",
                 ],
                 warnings=[*warnings, *env.config.warnings],
             )
@@ -1409,13 +1409,13 @@ def import_distro(  # noqa: PLR0912, PLR0913, PLR0917
                         env,
                         ["--export", existing.name, str(backup)],
                         action=f"备份 {existing.name}",
-                        hint="备份失败时不会注销旧发行版；检查备份路径后重试",
+                        hint="备份失败时不会删除旧发行版；检查备份路径后重试",
                         timeout=_TRANSFER_TIMEOUT_S,
                     )
                 _run_step(
                     env,
                     ["--unregister", existing.name],
-                    action=f"注销 {existing.name}",
+                    action=f"删除实例 {existing.name}",
                     hint=f"旧发行版可能已被部分移除；运行 fcmd wslman list 复核，必要时 wsl --unregister {name}",
                 )
             target_dir.mkdir(parents=True, exist_ok=True)
@@ -1630,10 +1630,10 @@ def copy_distro(  # noqa: PLR0912, PLR0913, PLR0917
                         env,
                         ["--export", existing.name, str(backup)],
                         action=f"备份 {existing.name}",
-                        hint="备份失败时不会注销目标发行版；检查备份路径后重试",
+                        hint="备份失败时不会删除目标发行版；检查备份路径后重试",
                         timeout=_TRANSFER_TIMEOUT_S,
                     )
-                _run_step(env, ["--unregister", existing.name], action=f"注销 {existing.name}")
+                _run_step(env, ["--unregister", existing.name], action=f"删除实例 {existing.name}")
             target_dir.mkdir(parents=True, exist_ok=True)
             _run_step(
                 env,
@@ -2479,13 +2479,13 @@ def _download_preview(  # noqa: PLR0913
 @fcmd.tool(
     "wslman",
     subcommand="unregister",
-    help="注销发行版并删除其虚拟磁盘（破坏性，需 --yes；可先 --backup 导出）",
+    help="彻底删除实例与虚拟磁盘（wsl --unregister，破坏性，需 --yes；可先 --backup 导出）",
     param_help={
         "distro": "发行版名称，大小写不敏感",
-        "yes": "确认注销；缺失时退出码 2 并给出完整命令",
-        "terminate_first": "运行中时先终止再注销",
-        "backup": "注销前导出到该文件；导出失败则绝不注销",
-        "preview": "展示 BasePath、占用与将删除的虚拟磁盘，不注销",
+        "yes": "确认删除实例；缺失时退出码 2 并给出完整命令",
+        "terminate_first": "运行中时先终止再删除",
+        "backup": "删除前导出到该文件；导出失败则绝不删除实例",
+        "preview": "展示 BasePath、占用与将删除的虚拟磁盘，不删除任何东西",
         "json_output": "输出机读结果信封",
     },
 )
@@ -2497,7 +2497,7 @@ def unregister(  # noqa: PLR0913, PLR0917
     preview: bool = False,
     json_output: bool = False,
 ) -> None:
-    """注销前可先导出备份；``--preview`` 只读列表与元数据，不删任何东西。"""
+    """删除实例前可先导出备份；``--preview`` 只读列表与元数据，不删任何东西。"""
     warnings: list[str] = []
     started = time.monotonic()
     name = distro.strip()
@@ -2553,13 +2553,13 @@ def unregister(  # noqa: PLR0913, PLR0917
 
         if target.state == "running" and not terminate_first:
             raise invalid_argument(
-                f"{name} 正在运行，注销前必须先停机",
+                f"{name} 正在运行，删除前必须先停机",
                 hint=f"执行：{command_text} --terminate-first",
             )
         if not yes:
             suffix = f" --backup {backup}" if backup else " --backup <备份文件>"
             raise usage_error(
-                f"注销 {name} 需要 --yes",
+                f"删除实例 {name} 需要 --yes",
                 hint=f"确认后执行：{command_text}{suffix}",
             )
 
@@ -2571,25 +2571,29 @@ def unregister(  # noqa: PLR0913, PLR0917
                 _run_step(
                     env,
                     ["--terminate", name],
-                    action=f"注销前终止 {name}",
+                    action=f"删除前终止 {name}",
                     hint=f"手动终止后重试：{command_text} --terminate-first",
                 )
             _run_step(
                 env,
                 ["--unregister", name],
-                action=f"注销 {name}",
-                hint="注销后虚拟磁盘不可恢复；可先用 --backup 导出",
+                action=f"删除实例 {name}",
+                hint="删除后 ext4.vhdx 不可恢复；可先用 --backup 导出",
             )
         remaining = bool(target.base_path and Path(target.base_path).exists())
     except KeyboardInterrupt:
-        _fail(interrupted(f"注销 {name} 被中断", hint="运行 fcmd wslman list 复核当前状态"), "unregister", json_output)
+        _fail(
+            interrupted(f"删除实例 {name} 被中断", hint="运行 fcmd wslman list 复核当前状态"), "unregister", json_output
+        )
         return
     except WslmanError as exc:
         _fail(exc, "unregister", json_output)
         return
     except OSError as exc:
         _fail(
-            runtime_error(f"注销过程文件操作失败：{exc}", hint="运行 fcmd wslman list 复核"), "unregister", json_output
+            runtime_error(f"删除实例过程文件操作失败：{exc}", hint="运行 fcmd wslman list 复核"),
+            "unregister",
+            json_output,
         )
         return
 
@@ -2615,11 +2619,11 @@ def unregister(  # noqa: PLR0913, PLR0917
         },
         json_output=json_output,
         lines=[
-            f"已注销 {name}",
+            f"已删除实例 {name}",
             *(
                 [f"已备份: {backup}（sha256 {backup_info['sha256']}）"]
                 if backup_info is not None
-                else ["[提醒] 未提供 --backup，虚拟磁盘已删除且无回收站"]
+                else ["[提醒] 未提供 --backup，ext4.vhdx 已删除且无回收站"]
             ),
             f"BasePath {'仍有残留目录（WSL 版本差异，未自动清理）：' + str(target.base_path) if remaining else '已不存在'}",
         ],
@@ -2635,7 +2639,7 @@ def _export_for_backup(
     *,
     estimated: bool,
 ) -> dict[str, object]:
-    """注销前的备份导出：失败即抛错，调用方因此不会继续注销。"""
+    """删除实例前的备份导出：失败即抛错，调用方因此不会继续删除。"""
     if backup.exists():
         raise invalid_argument(
             f"备份文件已存在：{backup}",
@@ -2647,7 +2651,7 @@ def _export_for_backup(
         raise invalid_argument(problem, hint="选择本地 NTFS 卷上的路径", field="backup")
     check = _preflight_for(env, backup, estimate, estimated=estimated)
     if not check.ok:
-        raise runtime_error(f"备份目标空间不足，已取消注销：{check.detail}", hint=_RESERVE_HINT)
+        raise runtime_error(f"备份目标空间不足，已取消删除实例：{check.detail}", hint=_RESERVE_HINT)
     part = part_path(backup)
     part.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
@@ -2664,7 +2668,7 @@ def _export_for_backup(
         detail = _first_line(decode_console(result.stderr or result.stdout))
         raise runtime_error(
             f"备份 {name} 失败（退出码 {result.returncode}）：{detail}",
-            hint="已取消注销，发行版保持原样；检查空间后重试",
+            hint="已取消删除实例，发行版保持原样；检查空间后重试",
         )
     if not part.is_file():
         raise runtime_error("wsl --export 返回成功但未生成备份文件", hint=f"检查 {part} 所在目录的权限")

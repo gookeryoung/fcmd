@@ -679,7 +679,7 @@ def test_unregister_success_without_backup(
     code, out, _err = _run(capsys, ["unregister", "Debian", "--yes"])
 
     assert code == 0
-    assert "已注销 Debian" in out
+    assert "已删除实例 Debian" in out
     assert "无回收站" in out
     assert [call[1] for call in runner.calls] == ["--list", "--unregister"]
 
@@ -733,7 +733,7 @@ def test_unregister_backup_failure_aborts(
     code, _out, err = _run(capsys, ["unregister", "Debian", "--yes", "--backup", str(backup)])
 
     assert code == 1
-    assert "已取消注销" in err
+    assert "已取消删除实例" in err
     assert [call[1] for call in runner.calls] == ["--list", "--export"]
     assert not _transfer.part_path(backup).exists()
     assert not backup.exists()
@@ -1011,7 +1011,7 @@ def test_unregister_backup_stage_errors(
     )
     code, _out, err = _run(capsys, ["unregister", "Debian", "--yes", "--backup", str(backup)])
     assert code == 1
-    assert "已取消注销" in err
+    assert "已取消删除实例" in err
 
 
 def test_unregister_backup_export_without_file(
