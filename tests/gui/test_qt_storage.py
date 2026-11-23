@@ -17,8 +17,8 @@ from fcmd.gui.widgets import (
     DiskGrid,
     DiskLocation,
     DiskTile,
-    PathPairCard,
     StorageCard,
+    StoragePairCard,
     StorageRoots,
     default_disk_locations,
 )
@@ -209,25 +209,6 @@ def test_storage_card_swap_reorders_roots() -> None:
         card.deleteLater()
 
 
-def test_path_pair_card_reads_swaps_and_emits() -> None:
-    """成对目录卡片：左右字段、整体读写、交换与 changed 信号。"""
-    app = QApplication.instance() or QApplication([])
-    card = PathPairCard("L", "R")
-    seen: list[tuple[str, str]] = []
-    card.changed.connect(lambda left, right: seen.append((left, right)))
-    try:
-        app.processEvents()
-        assert card.sides() == ("L", "R")
-        card.swap()
-        assert card.sides() == ("R", "L")
-        assert seen[-1] == ("R", "L")  # 交换后两次 textChanged 的最终值
-        card.set_sides("A", "B")
-        assert card.sides() == ("A", "B")
-        assert seen[-1] == ("A", "B")
-    finally:
-        card.deleteLater()
-
-
 def test_storage_card_remove_can_skip_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
     """``confirm_remove=False``：移除只清列表，不弹确认框（filescanw 扫描目录）。"""
     from fcmd.gui.widgets import storage as storage_module
@@ -244,4 +225,81 @@ def test_storage_card_remove_can_skip_confirmation(monkeypatch: pytest.MonkeyPat
         app.processEvents()
         assert card.roots() == [Path("D:/scan-a")]
     finally:
+        card.deleteLater()
+
+
+def test_storage_pair_card_renders_two_disk_tiles_with_placeholder(tmp_path: Path) -> None:
+    """左右各一张磁盘卡（沿用 StorageCard 的 DiskTile）；未选择时显示占位文案。"""
+    app = QApplication.instance() or QApplication([])
+    left = tmp_path / "left"
+    left.mkdir()
+    card = StoragePairCard(str(left), "")
+    try:
+        app.processEvents()
+        tiles = card.findChildren(DiskTile)
+        assert len(tiles) == 2
+        assert tiles[0].location.label == "左侧"
+        assert tiles[0].location.display_text == str(left)
+        assert tiles[1].location.label == "右侧"
+        assert tiles[1].location.placeholder == "未选择目录"
+        assert tiles[1].location.display_text == "未选择目录"
+        # 未选择的一侧没有容量条数据，提示去「更改」。
+        assert tiles[1].location.total == 0
+    finally:
+        card.deleteLater()
+
+
+def test_storage_pair_card_swap_and_change_emit(tmp_path: Path) -> None:
+    """交换只换左右槽位；「更改」在对应槽位弹目录框并回填。"""
+    from fcmd.gui.widgets import storage as storage_module
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        card = StoragePairCard("L", "R")
+        changed: list[tuple[str, str]] = []
+        swapped: list[tuple[str, str]] = []
+        card.changed.connect(lambda left, right: changed.append((left, right)))
+        card.swapped.connect(lambda left, right: swapped.append((left, right)))
+        app.processEvents()
+        assert card.sides() == ("L", "R")
+
+        card.swap()
+        assert card.sides() == ("R", "L")
+        assert changed[-1] == ("R", "L")
+        assert swapped == [("R", "L")]
+
+        monkeypatch.setattr(storage_module.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "D:/picked")
+        card._change(1)
+        assert card.sides() == ("R", "D:/picked")
+        assert changed[-1] == ("R", "D:/picked")
+        assert swapped == [("R", "L")]  # 只有 swap() 发 swapped
+
+        # 取消选择不改变槽位，也不发 changed。
+        monkeypatch.setattr(storage_module.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "")
+        before = list(changed)
+        card._change(0)
+        assert card.sides() == ("R", "D:/picked")
+        assert changed == before
+        card.deleteLater()
+    finally:
+        monkeypatch.undo()
+
+
+def test_storage_pair_card_change_button_targets_its_own_slot() -> None:
+    """两张卡的「更改」各自绑定槽位，点右侧不会改到左侧。"""
+    from fcmd.gui.widgets import storage as storage_module
+
+    app = QApplication.instance() or QApplication([])
+    card = StoragePairCard("L", "R")
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        app.processEvents()
+        monkeypatch.setattr(storage_module.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "D:/picked")
+        buttons = [btn for btn in card.right_tile.findChildren(QPushButton) if btn.text() == "更改"]
+        assert len(buttons) == 1
+        buttons[0].click()
+        assert card.sides() == ("L", "D:/picked")
+    finally:
+        monkeypatch.undo()
         card.deleteLater()

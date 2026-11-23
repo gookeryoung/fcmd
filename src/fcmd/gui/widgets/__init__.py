@@ -16,7 +16,8 @@
 - :mod:`fcmd.gui.widgets.layouts`：动作条用的流式布局（宽度不足自动换行）；
 - :mod:`fcmd.gui.widgets.metrics`：指标网格、分段负载条、加载条与进度行；
 - :mod:`fcmd.gui.widgets.log`：只读日志区 + 工具条；
-- :mod:`fcmd.gui.widgets.storage`：通用磁盘 / 目录卡片网格（Steam 式多根目录管理）；
+- :mod:`fcmd.gui.widgets.storage`：通用磁盘 / 目录卡片网格（Steam 式多根目录管理）
+  与左右成对目录卡（`StoragePairCard`，filesyncw 文件夹对）；
 - :mod:`fcmd.gui.widgets.splitter`：分栏容器与尺寸持久化。
 
 约定：
@@ -75,8 +76,8 @@ from fcmd.gui.widgets.storage import (
     DiskGrid,
     DiskLocation,
     DiskTile,
-    PathPairCard,
     StorageCard,
+    StoragePairCard,
     StorageRoots,
     default_disk_locations,
 )
@@ -123,7 +124,6 @@ __all__ = [
     "PageScroll",
     "PathField",
     "PathInputMixin",
-    "PathPairCard",
     "PathRow",
     "PillTabBar",
     "ProgressBar",
@@ -139,6 +139,7 @@ __all__ = [
     "SidebarList",
     "StatusTag",
     "StorageCard",
+    "StoragePairCard",
     "StorageRoots",
     "ToggleChip",
     "ToneLabelMixin",

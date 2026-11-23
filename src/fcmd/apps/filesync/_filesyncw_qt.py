@@ -4,9 +4,10 @@
 结果区（比较结果表 + 日志，垂直分栏可拖动）。比较 / 同步仍在后台线程执行，
 进度与结果经信号桥回投 GUI 线程，与后台队列事件语义一致。
 
-布局口径：目录行是「输入框 + 浏览… + 整行省略路径提示」，结果表「相对路径」
-列吸收剩余宽度（长路径省略、悬停看全路径），日志与结果表按 3:1 分栏并各自
-保留最小高度，窗口变矮时优先压缩日志。
+布局口径：文件夹对复用公共 ``StoragePairCard`` — 左右各一张磁盘卡（容量 / 更改 /
+打开，与 filescanw 扫描目录同源），交换按钮纵向居中固定在最右侧；结果表
+「相对路径」列吸收剩余宽度（长路径省略、悬停看全路径），日志与结果表按 3:1
+分栏并各自保留最小高度，窗口变矮时优先压缩日志。
 """
 
 from __future__ import annotations
@@ -71,7 +72,7 @@ from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
 from fcmd.gui.widgets import (
     Card,
-    PathPairCard,
+    StoragePairCard,
     button,
     confirm,
     make_table,
@@ -175,13 +176,20 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.log("选择左右目录后点击「比较」，确认结果与计划再执行「同步」。")
 
     def _build_folders_card(self) -> Card:
-        """左右目录两行，右侧「交换左右」纵向居中（共享 ``PathPairCard``）。"""
-        card = PathPairCard(self._settings.left, self._settings.right, parent=self)
+        """文件夹对：左右各一张磁盘卡（容量 / 更改 / 打开），最右侧「交换左右」。
+
+        外观与 filescanw 的扫描目录同源（共享 ``StorageCard`` 的 ``DiskTile``），
+        只是槽位固定为左右两个；未选择时卡片显示占位文案。
+        """
+        card = StoragePairCard(
+            self._settings.left,
+            self._settings.right,
+            title="文件夹对",
+            change_text="更改",
+            dialog_title="选择文件夹",
+            parent=self,
+        )
         self._pair_card = card
-        # 兼容既有属性名：业务代码与测试继续用 _left_row / _right_row 读写路径。
-        self._left_row = card.left_field
-        self._right_row = card.right_field
-        self._swap_button = card.swap_button
         return card
 
     def _build_options_card(self) -> Card:
@@ -317,8 +325,9 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _validate(self) -> tuple[Path, Path, CompareOptions] | None:
         """校验左右目录；无效时弹窗并返回 ``None``。"""
-        left = Path(self._left_row.value()).expanduser()
-        right = Path(self._right_row.value()).expanduser()
+        left_text, right_text = self._pair_card.sides()
+        left = Path(left_text).expanduser()
+        right = Path(right_text).expanduser()
         if not left.is_dir() or not right.is_dir():
             QMessageBox.critical(self, "路径无效", "请选择存在的左侧和右侧文件夹。")
             return None
@@ -498,8 +507,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             QMessageBox.critical(self, "载入配置", "配置文件无法解析。")
             return
         loaded = settings_from_mapping(raw)
-        self._left_row.set_value(loaded.left)
-        self._right_row.set_value(loaded.right)
+        self._pair_card.set_sides(loaded.left, loaded.right)
         self._compare.setCurrentText(mode_label(loaded.compare_mode, COMPARE_MODE_TEXT))
         self._sync.setCurrentText(mode_label(loaded.sync_mode, SYNC_MODE_TEXT))
         self._include.setText(loaded.include)
@@ -523,9 +531,10 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # ------------------------------------------------------------------ #
     def _current_settings(self, geometry: str | None) -> FilesyncSettings:
         """收集当前界面状态。"""
+        left, right = self._pair_card.sides()
         return FilesyncSettings(
-            left=self._left_row.edit.text(),
-            right=self._right_row.edit.text(),
+            left=left,
+            right=right,
             compare_mode=self._compare_mode(),
             sync_mode=self._sync_mode(),
             include=self._include.text(),

@@ -41,8 +41,10 @@
   表单抢高度。
 - 存储目录组件通用化：`StorageCard` 支持单目录 / 多目录 / 平权目录三种配方
   （`add_text` 可为 `None`、`max_count` 上限、`labels` / `metas` 覆盖标题与副标题），
-  补齐「更改」目录、`swap()` 交换与达到上限隐藏添加入口；新增 `PathPairCard`
-  统一左右成对目录（`filesyncw` 已复用，保留原 `_left_row` / `_right_row` 绑定）。
+  补齐「更改」目录、`swap()` 交换与达到上限隐藏添加入口；新增 `StoragePairCard`
+  统一左右成对目录：沿用 filescanw 扫描目录的 `DiskTile` 磁盘卡外观（容量 /
+  「更改」选取 / 「打开」），固定左右两槽、未选择显示占位文案，交换按钮固定在最右侧，
+  发 `changed` / `swapped`；`filesyncw` 文件夹对改用它。
   `filescanw` 扫描目录也改走 `StorageCard`（平权目录配方），删除旧的列表 + 三按钮区。
 - `filescanw`「扫描目录」改用共享 `StorageCard`（与 `wslmanw` 工作目录 / `llmw` 存储
   同一套磁盘卡网格）：目录以卡片列出（路径 + 容量 + 打开 / 移除），末尾虚线卡添加目录，

@@ -24,6 +24,7 @@ from fcmd.apps.filesync.filesyncw import config_path
 from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.app import create_application
+from fcmd.gui.widgets import DiskTile, StoragePairCard
 from fcmd.gui.workers import EventBridge
 
 
@@ -55,8 +56,7 @@ def trees(tmp_path: Path) -> tuple[Path, Path]:
 
 def _prepare(window: FilesyncWindow, left: Path, right: Path) -> None:
     """填目录并切到「内容」比较，结果不受修改时间影响。"""
-    window._left_row.set_value(str(left))
-    window._right_row.set_value(str(right))
+    window._pair_card.set_sides(str(left), str(right))
     window._compare.setCurrentText("内容")
 
 
@@ -64,8 +64,9 @@ def test_window_builds_with_defaults(home: Path) -> None:
     """默认空目录、双向同步、预演开启、结果表为空。"""
     window = FilesyncWindow()
     try:
-        assert window._left_row.value() == ""
-        assert window._left_row.hint.text() == "未选择"
+        assert window._pair_card.sides() == ("", "")
+        # 未选择时左右两张卡都在，显示占位文案而不是空白。
+        assert window._pair_card.findChildren(DiskTile)[0].location.display_text == "未选择目录"
         assert window._compare.currentText() == "时间与大小"
         assert window._sync.currentText() == "双向"
         assert window._dry_run.isChecked()
@@ -97,7 +98,7 @@ def test_settings_restored(home: Path) -> None:
     )
     window = FilesyncWindow()
     try:
-        assert window._left_row.value() == "L"
+        assert window._pair_card.sides() == ("L", "R")
         assert window._compare.currentText() == "内容"
         assert window._sync.currentText() == "镜像（左→右）"
         assert window._include.text() == "*.py"
@@ -112,11 +113,41 @@ def test_swap_exchanges_sides(home: Path) -> None:
     """交换左右只换目录，不动其他选项。"""
     window = FilesyncWindow()
     try:
-        window._left_row.set_value("L")
-        window._right_row.set_value("R")
+        window._pair_card.set_sides("L", "R")
         window._swap()
-        assert window._left_row.value() == "R"
-        assert window._right_row.value() == "L"
+        assert window._pair_card.sides() == ("R", "L")
+    finally:
+        window.deleteLater()
+
+
+def test_folder_pair_uses_storage_pair_card(home: Path) -> None:
+    """文件夹对复用 filescanw 的磁盘卡 UI：左右各一张卡，交换在最右侧。"""
+    window = FilesyncWindow()
+    try:
+        card = window._pair_card
+        assert isinstance(card, StoragePairCard)
+        assert card.title() == "文件夹对"
+        tiles = card.findChildren(DiskTile)
+        assert len(tiles) == 2
+        # 两张卡都有「更改」（文件夹选取）与「打开」，不出现移除 / 主目录。
+        texts = [[button.text() for button in tile.findChildren(type(card.swap_button))] for tile in tiles]
+        assert all("更改" in row and "打开" in row for row in texts)
+        assert all("移除" not in row and "设为主目录" not in row for row in texts)
+        assert card.swap_button.text() == "交换左右"
+
+        card.set_sides("L", "R")
+        window.show()
+        QApplication.processEvents()
+        assert card.left_tile.geometry().right() < card.swap_button.geometry().left()
+        assert card.right_tile.geometry().right() < card.swap_button.geometry().left()
+
+        seen: list[tuple[str, str]] = []
+        card.changed.connect(lambda left, right: seen.append((left, right)))
+        card.swap_button.click()
+        assert card.sides() == ("R", "L")
+        assert seen[-1] == ("R", "L")
+        assert window._current_settings(None).left == "R"
+        assert window._current_settings(None).right == "L"
     finally:
         window.deleteLater()
 
@@ -213,8 +244,7 @@ def test_compare_rejects_missing_directories(home: Path, tmp_path: Path, monkeyp
     )
     window = FilesyncWindow()
     try:
-        window._left_row.set_value(str(tmp_path / "missing"))
-        window._right_row.set_value(str(tmp_path))
+        window._pair_card.set_sides(str(tmp_path / "missing"), str(tmp_path))
         window._start_compare()
         assert shown and "路径无效" in shown[0]
         assert not window._busy
@@ -227,8 +257,7 @@ def test_close_persists_settings(home: Path, tmp_path: Path) -> None:
     window = FilesyncWindow()
     try:
         window.show()
-        window._left_row.set_value("L")
-        window._right_row.set_value("R")
+        window._pair_card.set_sides("L", "R")
         window._sync.setCurrentText("更新（左→右）")
         window._include.setText("*.py")
         window._skip_hidden.setChecked(True)
@@ -262,13 +291,12 @@ def test_worker_error_reports_status(home: Path, trees: tuple[Path, Path], monke
 
 
 def test_single_line_controls_follow_shared_height() -> None:
-    """路径行与动作按钮统一高度（共享基准），不逐个窗口写死。"""
+    """单行动作按钮与下拉框统一高度（共享基准），不逐个窗口写死。"""
     window = FilesyncWindow()
     try:
         window.show()
         QApplication.processEvents()
         heights: set[int] = {window._compare_button.height(), window._sync_button.height()}
-        heights.add(window._left_row.edit.height())
         heights.add(window._compare.height())
         assert len(heights) == 1
     finally:
