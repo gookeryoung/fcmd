@@ -46,13 +46,13 @@ OK '_add' 成功 (0.025s)
 | D7 | cmd 步骤在 `$ …` 之后实时透传子进程输出（不缓冲），长命令仍能看到进展 | `core/toolkit/exec.py` |
 | D8 | 框架行统一由 `fcmd.console` 产出，CLI 与 `fx.run(verbose=True)` 共用同一套措辞；测试用 `tests/helpers.strip_framework_lines` 过滤 | `console.py`、`tests/helpers.py` |
 
-目标输出（`fcmd gitt a`）：
+目标输出（`fcmd gitt i`）：
 
 ```
 完成  确保 Git 仓库已就绪  0.00s
 $ git add .
 完成  暂存全部更改  0.02s
-[main fac721d] chore: update
+[main fac721d] init commit
  8 files changed, 94 insertions(+), 22 deletions(-)
 完成  检查并提交更改  0.05s
 共 3 步，用时 0.08s
@@ -63,9 +63,10 @@ $ git add .
 - 已落地：D1–D8 全部实施，`gittool` 的「无更改」分支补一句
   `没有需要提交的更改`（避免“完成提交”与事实不符）；`gitt isub` 跳过 `.git` / `.venv`
   这类隐藏目录（原先会把 `.git` 当子项目再 init）。
-- `gitt a` 的 `_init` 步骤改为前置校验（不再隐式 `git init`），步骤名同步为
-  「确保 Git 仓库已就绪」；初始化只由 `gitt i` / `gitt a --init` 触发，
-  在仓库子目录执行也不会创建嵌套仓库。
+- `gitt a` 现在只做 add + commit（2 步），「必须已在仓库内」由
+  `preconditions` 断言表达；`gitt i` 才包含初始化步骤（3 步）。具体原语见
+  [0045](0045-fx-tool-execution-primitives.md)。在仓库子目录执行也不会创建
+  嵌套仓库。
 - 守卫测试：`tests/core/test_toolkit.py`（P19 段）覆盖内部名不外泄、`$` 回显、
   单步不补收尾行、`--quiet` 静默、`CalledProcessError` 友好化；
   `tests/core/test_engine_*` 覆盖 verbose 单行结果。

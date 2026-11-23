@@ -397,6 +397,33 @@ def _build() -> None: ...  # 函数体可空，cmd 优先执行
 def _all() -> None: ...  # aggregate：仅声明依赖
 ```
 
+顺序流水线、前置断言与显式聚合：
+
+```python
+import fcmd as fx
+
+
+def _require_repo() -> None:
+    if not Path(".git").exists():
+        raise RuntimeError("请先初始化仓库")
+
+
+@fx.tool(
+    "mytool",
+    subcommand="release",
+    aggregate=True,
+    preconditions=[_require_repo],
+    steps=[fx.step("_build", clean=True), "_test", "_publish"],
+)
+def release() -> None: ...
+```
+
+- `steps`：有序流水线（自动链式依赖），`step("task", key=value)` 的参数只注入该步骤，
+  不进入 CLI / `--help`；
+- `preconditions`：执行前断言，失败即中止（不进 DAG、不计步数，`--dry-run` 跳过）；
+- `aggregate=True`：显式声明编排壳，不再依赖函数体推断；
+- `needs` 仍用于并行前置任务，`conditions`（`TaskSpec`）仍用于「不满足则跳过」。
+
 ## YAML 编排
 
 GitHub Actions 风格的 `jobs`/`needs`/`matrix`/`if`：

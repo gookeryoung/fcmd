@@ -49,3 +49,4 @@
 | [0042](0042-shared-gui-shell-and-theme.md) | 通用 GUI 组件与主题整合：窗口外壳 mixin、页面基类 `AppPage` / `PageSpec`、主题 `Metrics` 与按窗口覆盖 | 已落地 |
 | [0043](0043-llmw-multi-model-dirs.md) | llmw 多模型目录：`models_dirs` 列表 + 首个主目录，设置页参考 Steam 并排展示盘符 / 文件系统 / 剩余空间的磁盘卡片 | 已落地 |
 | [0044](0044-llmw-workflow.md) | llmw 工作流：类型化节点 + DAG 执行 + 模板化工作流页（C1 / C2 落地，C3 画布 / C4 ComfyUI 导入待办） | C1 / C2 已落地 |
+| [0045](0045-fx-tool-execution-primitives.md) | `fx.tool` 执行原语：前置断言 `preconditions`、有序步骤 `steps`、显式聚合 `aggregate`；`gittool` 的 `a` / `i` 改为步骤声明，内部开关不再泄漏到 CLI | 已落地 |

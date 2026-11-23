@@ -19,10 +19,12 @@ from fcmd.core.toolkit import (
     _TOOL_REGISTRY,
     ToolExitCode,
     ToolSpec,
+    ToolStep,
     _add_optional_arg,
     _add_positional_arg,
     _build_parser_for_tool,
     _build_task_spec,
+    _collect_order,
     _collect_with_deps,
     _has_function_logic,
     _is_aggregate,
@@ -31,6 +33,7 @@ from fcmd.core.toolkit import (
     _jsonable_default,
     _list_inner_type,
     _literal_choices,
+    _plan_steps,
     _resolve_hints,
     _unwrap_optional,
     build_tool_graph,
@@ -40,6 +43,7 @@ from fcmd.core.toolkit import (
     list_tools,
     param_schema,
     run_tool,
+    step,
     tool,
 )
 
@@ -2121,3 +2125,279 @@ def test_progress_failure_shows_friendly_command(capsys: pytest.CaptureFixture[s
     assert "失败" in out
     assert "命令执行失败: git push（返回码 1）" in out
     assert "CalledProcessError" not in out
+
+
+# ---------------------------------------------------------------------- #
+# A1 preconditions：前置断言（失败即中止，不进 DAG / 不计步数）
+# ---------------------------------------------------------------------- #
+def test_preconditions_run_before_target_and_inject_variables() -> None:
+    """preconditions 先执行，并按签名拿到 CLI 解析值。"""
+    seen: dict[str, str] = {}
+
+    def check(path: str) -> None:
+        seen["path"] = path
+
+    @tool("demo", subcommand="a", preconditions=[check])
+    def a(path: str) -> None:
+        seen["target"] = path
+
+    assert run_tool("demo", ["a", "work"]) == ToolExitCode.SUCCESS.value
+    assert seen == {"path": "work", "target": "work"}
+
+
+def test_precondition_failure_stops_before_graph(capsys: pytest.CaptureFixture[str]) -> None:
+    """断言失败时目标与依赖都不执行，错误信息来自异常文案。"""
+    ran: list[str] = []
+
+    def check() -> None:
+        raise RuntimeError("需要先初始化")
+
+    @tool("demo", subcommand="_dep")
+    def dep() -> None:
+        ran.append("dep")
+
+    @tool("demo", subcommand="a", needs=["_dep"], preconditions=[check])
+    def a() -> None:
+        ran.append("a")
+
+    assert run_tool("demo", ["a"]) == ToolExitCode.FAILURE.value
+    out = capsys.readouterr().out
+    assert "需要先初始化" in out
+    assert ran == []
+
+
+def test_precondition_skipped_in_dry_run() -> None:
+    """--dry-run 只打印计划，不执行前置断言。"""
+    calls: list[str] = []
+
+    def check() -> None:
+        calls.append("check")
+
+    @tool("demo", subcommand="a", preconditions=[check])
+    def a() -> None:
+        calls.append("run")
+
+    assert run_tool("demo", ["a", "--dry-run"]) == ToolExitCode.SUCCESS.value
+    assert calls == []
+
+
+# ---------------------------------------------------------------------- #
+# A2 steps：有序流水线 + 步骤级内部参数
+# ---------------------------------------------------------------------- #
+def test_steps_run_in_declared_order() -> None:
+    """steps 自动生成链式依赖，执行顺序与声明一致。"""
+    order: list[str] = []
+
+    @tool("demo", subcommand="_one")
+    def one() -> None:
+        order.append("one")
+
+    @tool("demo", subcommand="_two")
+    def two() -> None:
+        order.append("two")
+
+    @tool("demo", subcommand="all", steps=["_one", "_two"])
+    def all_steps() -> None:
+        pass
+
+    assert run_tool("demo", ["all"]) == ToolExitCode.SUCCESS.value
+    assert order == ["one", "two"]
+
+
+def test_step_kwargs_only_reach_that_step() -> None:
+    """step(...) 的参数只注入该步骤，不进入 CLI / 其他任务。"""
+    seen: dict[str, Any] = {}
+
+    @tool("demo", subcommand="_init")
+    def init(create: bool = False) -> None:
+        seen["init"] = create
+
+    @tool("demo", subcommand="_add")
+    def add(create: bool | None = None) -> None:
+        seen["add"] = create
+
+    @tool("demo", subcommand="all", steps=[step("_init", create=True), "_add"])
+    def all_steps() -> None:
+        pass
+
+    assert [item["name"] for item in param_schema(get_tool("demo", "all"))] == []
+    assert run_tool("demo", ["all"]) == ToolExitCode.SUCCESS.value
+    assert seen == {"init": True, "add": None}
+
+
+def test_steps_edge_planning_and_collection() -> None:
+    """_plan_steps 生成 前缀 -> 第一步 -> 第二步 -> 目标 的边。"""
+    order: list[str] = []
+
+    @tool("demo", subcommand="pre")
+    def pre() -> None:
+        order.append("pre")
+
+    @tool("demo", subcommand="_one")
+    def one() -> None:
+        order.append("one")
+
+    @tool("demo", subcommand="_two")
+    def two() -> None:
+        order.append("two")
+
+    @tool("demo", subcommand="all", needs=["pre"], steps=["_one", "_two"])
+    def all_steps() -> None:
+        pass
+
+    subs = _TOOL_REGISTRY["demo"]
+    edges, step_kwargs = _plan_steps(subs, "all")
+    assert edges["_one"] == ("pre",)
+    assert edges["_two"] == ("_one",)
+    assert edges["all"] == ("pre", "_two")
+    assert step_kwargs == {}
+    assert _collect_order(edges, "all") == ["pre", "_one", "_two", "all"]
+    assert run_tool("demo", ["all"]) == ToolExitCode.SUCCESS.value
+    assert order == ["pre", "one", "two"]
+
+
+def test_step_kwargs_conflict_across_aggregates() -> None:
+    """同一步骤被两条链配置成不同参数时报冲突。"""
+
+    @tool("demo", subcommand="_init")
+    def init(create: bool = False) -> None:
+        pass
+
+    @tool("demo", subcommand="a", steps=[step("_init", create=True)])
+    def a() -> None:
+        pass
+
+    @tool("demo", subcommand="b", steps=[step("_init", create=False)])
+    def b() -> None:
+        pass
+
+    subs = _TOOL_REGISTRY["demo"]
+    edges, _ = _plan_steps(subs, "a")
+    assert edges  # 单独规划无冲突
+    with pytest.raises(FcmdError, match="配置冲突"):
+        build_tool_graph("demo", None)
+
+
+def test_steps_cycle_reports_error() -> None:
+    """steps 循环引用在规划阶段报告，不无限递归。"""
+
+    @tool("demo", subcommand="a", steps=["b"])
+    def a() -> None:
+        pass
+
+    @tool("demo", subcommand="b", steps=["a"])
+    def b() -> None:
+        pass
+
+    with pytest.raises(FcmdError, match="循环引用"):
+        _plan_steps(_TOOL_REGISTRY["demo"], "a")
+
+
+# ---------------------------------------------------------------------- #
+# A3 aggregate：显式声明编排壳
+# ---------------------------------------------------------------------- #
+def test_aggregate_true_skips_function_body() -> None:
+    """aggregate=True 时函数体不是任务逻辑（不会被执行）。"""
+    ran: list[str] = []
+
+    @tool("demo", subcommand="_dep")
+    def dep() -> None:
+        pass
+
+    @tool("demo", subcommand="all", needs=["_dep"], aggregate=True)
+    def all_steps() -> None:
+        ran.append("body")
+
+    assert _is_aggregate(get_tool("demo", "all")) is True
+    assert run_tool("demo", ["all"]) == ToolExitCode.SUCCESS.value
+    assert ran == []
+
+
+def test_aggregate_false_keeps_body_for_empty_function() -> None:
+    """aggregate=False 时即使函数体为空也按 fn 任务处理。"""
+
+    @tool("demo", subcommand="_dep")
+    def dep() -> None:
+        pass
+
+    @tool("demo", subcommand="a", needs=["_dep"], aggregate=False)
+    def a() -> None:
+        pass
+
+    assert _is_aggregate(get_tool("demo", "a")) is False
+
+
+def test_steps_implies_aggregate_even_with_body() -> None:
+    """steps 非空即聚合任务，与函数体内容无关。"""
+    ran: list[str] = []
+
+    @tool("demo", subcommand="_dep")
+    def dep() -> None:
+        pass
+
+    @tool("demo", subcommand="all", steps=["_dep"])
+    def all_steps() -> None:
+        ran.append("body")
+
+    assert _is_aggregate(get_tool("demo", "all")) is True
+    assert run_tool("demo", ["all"]) == ToolExitCode.SUCCESS.value
+    assert ran == []
+
+
+# ---------------------------------------------------------------------- #
+# ToolStep / 装饰器校验
+# ---------------------------------------------------------------------- #
+def test_step_helper_builds_toolstep() -> None:
+    """step() 只做轻量装箱，便于 steps 声明。"""
+    item = step("_init", create=True)
+    assert item == ToolStep(task="_init", kwargs={"create": True})
+    assert step("_init").kwargs == {}
+
+
+def test_toolstep_rejects_empty_task() -> None:
+    with pytest.raises(ValueError, match="非空"):
+        ToolStep(task="")
+
+
+def test_steps_reject_duplicates() -> None:
+    with pytest.raises(ValueError, match="不能重复"):
+
+        @tool("demo", subcommand="a", steps=["x", "x"])
+        def a() -> None:
+            pass
+
+
+def test_steps_conflict_with_cmd() -> None:
+    with pytest.raises(ValueError, match="steps 与 cmd 互斥"):
+
+        @tool("demo", subcommand="a", cmd=["echo"], steps=["b"])
+        def a() -> None:
+            pass
+
+
+def test_steps_conflict_with_aggregate_false() -> None:
+    with pytest.raises(ValueError, match="aggregate=False"):
+
+        @tool("demo", subcommand="a", steps=["b"], aggregate=False)
+        def a() -> None:
+            pass
+
+
+def test_build_tool_graph_includes_step_edges() -> None:
+    """build_tool_graph 与执行路径使用同一套 steps 边。"""
+
+    @tool("demo", subcommand="_one")
+    def one() -> None:
+        pass
+
+    @tool("demo", subcommand="_two")
+    def two() -> None:
+        pass
+
+    @tool("demo", subcommand="all", steps=[step("_one", key="v"), "_two"])
+    def all_steps() -> None:
+        pass
+
+    graph = build_tool_graph("demo", "all")
+    assert graph.resolved_spec("_two").depends_on == ("_one",)
+    assert graph.resolved_spec("all").depends_on == ("_two",)

@@ -86,6 +86,7 @@ ERROR_CODE_KINDS: dict[str, str] = {
     "CONFIRM_REQUIRED": "usage",
     # 运行期失败
     "RUNTIME_ERROR": "runtime",
+    "PRECONDITION_FAILED": "runtime",
     # 结论性失败 / 中断
     "CHECK_FAILED": "check",
     "INTERRUPTED": "interrupted",

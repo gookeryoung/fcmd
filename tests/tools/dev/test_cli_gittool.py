@@ -186,47 +186,63 @@ class TestGittoolCmdSpecs:
 
 
 # ============================================================================ #
-# gittool 隐藏守卫链规格（a/i）
+# gittool 步骤链规格（a/i）
 # ============================================================================ #
 class TestGittoolChain:
-    """gittool a/i 的隐藏守卫链（_init/_add/_commit）规格与行为验证。"""
+    """gittool a/i 的步骤声明（steps / preconditions）与行为验证。"""
 
-    def test_init_is_hidden_fn(self) -> None:
-        """_init 是 hidden fn 子命令（.git 已存在时 no-op）。"""
+    def test_init_is_hidden_fn_with_internal_create(self) -> None:
+        """_init 是 hidden fn 子命令，create 是内部参数（不进 a/i 命令行）。"""
         spec = _TOOL_REGISTRY["gittool"]["_init"]
         assert spec.cmd is None
         assert spec.hidden is True
         assert spec.func.__name__ == "git_init"
+        assert inspect.signature(spec.func).parameters["create"].default is False
 
-    def test_add_needs_init(self) -> None:
-        """_add 前先经过 _init（确认仓库可用/按需初始化）。"""
-        spec = _TOOL_REGISTRY["gittool"]["_add"]
-        assert "_init" in spec.needs
-        assert spec.cmd == ("git", "add", ".")
-        assert spec.hidden is True
+    def test_add_and_commit_are_plain_steps(self) -> None:
+        """_add / _commit 不再各自写 needs，顺序由聚合入口的 steps 声明。"""
+        add = _TOOL_REGISTRY["gittool"]["_add"]
+        commit = _TOOL_REGISTRY["gittool"]["_commit"]
+        assert add.needs == ()
+        assert commit.needs == ()
+        assert add.cmd == ("git", "add", ".")
+        assert add.hidden is True
+        assert commit.hidden is True
+        assert "message" in inspect.signature(commit.func).parameters
 
-    def test_commit_needs_add(self) -> None:
-        """_commit 依赖 _add，是 fn 子命令（无更改时 no-op）。"""
-        spec = _TOOL_REGISTRY["gittool"]["_commit"]
-        assert "_add" in spec.needs
-        assert spec.cmd is None
-        assert spec.hidden is True
-        assert "message" in inspect.signature(spec.func).parameters
-
-    def test_aggregate_a_needs_commit_with_message(self) -> None:
-        """a 是聚合命令（needs _commit、无 cmd），声明 message/init 参数供链内传递。"""
+    def test_aggregate_a_steps_and_precondition(self) -> None:
+        """a 只做 add + commit，并用 preconditions 要求已在 Git 仓库内。"""
         spec = _TOOL_REGISTRY["gittool"]["a"]
         assert spec.cmd is None
-        assert "_commit" in spec.needs
+        assert spec.aggregate is True
+        assert spec.needs == ()
+        assert [item.task for item in spec.steps] == ["_add", "_commit"]
+        assert [check.__name__ for check in spec.preconditions] == ["_require_repo"]
         params = inspect.signature(spec.func).parameters
         assert "message" in params
-        # a 不自动初始化：init 默认 False，值会流入 _init 作为前置校验
-        assert params["init"].default is False
+        assert "init" not in params
 
-    def test_aggregate_i_allows_init(self) -> None:
-        """i 才允许初始化：init 默认 True。"""
-        params = inspect.signature(_TOOL_REGISTRY["gittool"]["i"].func).parameters
-        assert params["init"].default is True
+    def test_aggregate_i_steps_inject_create_only_to_init(self) -> None:
+        """i 的 steps 才注入 create=True，且它只属于 _init 这一步。"""
+        spec = _TOOL_REGISTRY["gittool"]["i"]
+        assert spec.aggregate is True
+        assert spec.needs == ()
+        steps = [(item.task, dict(item.kwargs)) for item in spec.steps]
+        assert steps == [("_init", {"create": True}), ("_add", {}), ("_commit", {})]
+        assert "init" not in inspect.signature(spec.func).parameters
+
+    def test_a_has_no_internal_init_flag(self) -> None:
+        """a/i 的命令行只有 message，内部 create 开关不泄漏。"""
+        for subcommand in ("a", "i"):
+            params = inspect.signature(_TOOL_REGISTRY["gittool"][subcommand].func).parameters
+            assert set(params) == {"message"}
+
+    def test_a_init_flag_is_gone(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """a --init 已移除（内部 create 只由 i 的 steps 注入）。"""
+        monkeypatch.chdir(tmp_path)
+        code = run_tool("gittool", ["a", "--init"])
+        assert code != 0
+        assert not (tmp_path / ".git").exists()
 
     def test_a_requires_repo(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """gittool a 在非仓库目录直接报错，不会静默创建 .git。"""
@@ -235,20 +251,6 @@ class TestGittoolChain:
         code = run_tool("gittool", ["a"])
         assert code != 0
         assert not (tmp_path / ".git").exists()
-
-    def test_a_explicit_init_flag_creates_repo(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """显式 a --init 时才初始化（与 i 的行为对齐）。"""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("GIT_AUTHOR_NAME", "test")
-        monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@test.com")
-        monkeypatch.setenv("GIT_COMMITTER_NAME", "test")
-        monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@test.com")
-        (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
-        code = run_tool("gittool", ["a", "--init"])
-        assert code == 0
-        assert (tmp_path / ".git").is_dir()
-        result = subprocess.run(["git", "log", "--oneline"], capture_output=True, text=True, check=True)
-        assert "chore: update" in result.stdout
 
     def test_a_in_repo_subdir_does_not_create_nested_repo(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

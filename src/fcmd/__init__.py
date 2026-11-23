@@ -61,6 +61,7 @@ __all__ = [
     "TaskTimeoutError",
     "ToolExitCode",
     "ToolSpec",
+    "ToolStep",
     "__version__",
     "build_tool_graph",
     "clear_tool_registry",
@@ -76,6 +77,7 @@ __all__ = [
     "run",
     "run_command",
     "run_tool",
+    "step",
     "task",
     "tool",
 ]
@@ -103,6 +105,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "TaskTimeoutError": ("fcmd.core.errors", "TaskTimeoutError"),
     "ToolExitCode": ("fcmd.core.toolkit", "ToolExitCode"),
     "ToolSpec": ("fcmd.core.toolkit", "ToolSpec"),
+    "ToolStep": ("fcmd.core.toolkit", "ToolStep"),
     "build_tool_graph": ("fcmd.core.toolkit", "build_tool_graph"),
     "cmd": ("fcmd.core.task", "cmd"),
     "clear_tool_registry": ("fcmd.core.toolkit", "clear_tool_registry"),
@@ -117,6 +120,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "run": ("fcmd.core.execution.executors", "run"),
     "run_command": ("fcmd.core.execution.task_command", "run_command"),
     "run_tool": ("fcmd.core.toolkit", "run_tool"),
+    "step": ("fcmd.core.toolkit", "step"),
     "task": ("fcmd.core.task", "task"),
     "tool": ("fcmd.core.toolkit", "tool"),
 }

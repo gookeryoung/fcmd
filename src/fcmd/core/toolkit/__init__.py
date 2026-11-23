@@ -42,6 +42,7 @@ from __future__ import annotations
 __all__ = [
     "ToolExitCode",
     "ToolSpec",
+    "ToolStep",
     "build_tool_graph",
     "clear_tool_registry",
     "get_tool",
@@ -50,6 +51,7 @@ __all__ = [
     "main",
     "param_schema",
     "run_tool",
+    "step",
     "tool",
 ]
 
@@ -66,6 +68,7 @@ from ..task import RetryPolicy, TaskSpec
 from .args import (
     ToolExitCode,
     ToolSpec,
+    ToolStep,
     _add_global_options,  # noqa: F401  重新导出供测试 import
     _add_optional_arg,  # noqa: F401  重新导出供测试 import
     _add_positional_arg,  # noqa: F401  重新导出供测试 import
@@ -76,18 +79,23 @@ from .args import (
     _list_inner_type,  # noqa: F401  重新导出供测试 import
     _literal_choices,  # noqa: F401  重新导出供测试 import
     _noop,  # noqa: F401  重新导出供测试 import
+    _normalize_steps,
     _resolve_hints,  # noqa: F401  重新导出供测试 import
     _unwrap_optional,  # noqa: F401  重新导出供测试 import
     param_schema,
+    step,
 )
 from .exec import (
     _build_task_spec,
-    _collect_with_deps,
+    _collect_order,
+    _collect_with_deps,  # noqa: F401  重新导出供测试 import
     _execute_tool_tasks,
     _has_function_logic,  # noqa: F401  重新导出供测试 import
     _is_aggregate,  # noqa: F401  重新导出供测试 import
     _json_requested,
+    _merge_step_kwargs,
     _parse_tool_args,
+    _plan_steps,
     _print_subcommands,  # noqa: F401  重新导出供测试 import
     _print_task_summary,  # noqa: F401  重新导出供测试 import
     _resolve_tool_target,
@@ -108,6 +116,9 @@ def tool(  # noqa: PLR0913
     description: str = "",
     cmd: Sequence[str] | str | None = None,
     needs: Sequence[str] | None = None,
+    steps: Sequence[str | ToolStep] | None = None,
+    preconditions: Sequence[Callable[..., Any]] | None = None,
+    aggregate: bool | None = None,
     strategy: Literal["sequential", "thread", "async", "dependency"] | None = None,
     cwd: str | Path | None = None,
     allow_upstream_skip: bool = False,
@@ -133,7 +144,15 @@ def tool(  # noqa: PLR0913
     cmd:
         命令列表或 shell 字符串；有 ``cmd`` 执行命令，函数体不执行（签名仅驱动 CLI）
     needs:
-        依赖任务名（引用同 tool 的其他 subcommand）
+        依赖任务名（引用同 tool 的其他 subcommand）；语义是「必须先完成」
+    steps:
+        有序流水线（任务名或 :func:`step`）：自动生成链式依赖，元素可携带
+        只注入该步的内部参数；与 ``cmd`` 互斥
+    preconditions:
+        目标子命令的前置断言（可调用对象）：参数按签名从 CLI 值注入，
+        失败即中止；不进入 DAG、不计步数，``--dry-run`` 时跳过
+    aggregate:
+        是否强制视为编排壳任务；``None`` 按函数体自动推断
     strategy:
         执行策略：``"sequential"`` / ``"thread"`` / ``"async"`` / ``"dependency"``
     cwd:
@@ -153,6 +172,11 @@ def tool(  # noqa: PLR0913
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        normalized_steps = _normalize_steps(steps) if steps else ()
+        if normalized_steps and cmd is not None:
+            raise ValueError(f"工具 {name!r} 子命令 {subcommand!r}: steps 与 cmd 互斥")
+        if normalized_steps and aggregate is False:
+            raise ValueError(f"工具 {name!r} 子命令 {subcommand!r}: steps 已是聚合任务，不能 aggregate=False")
         spec = ToolSpec(
             name=name,
             subcommand=subcommand,
@@ -161,6 +185,9 @@ def tool(  # noqa: PLR0913
             description=description,
             cmd=cast("tuple[str, ...] | str | None", tuple(cmd) if isinstance(cmd, (list, tuple)) else cmd),
             needs=tuple(needs) if needs else (),
+            steps=normalized_steps,
+            preconditions=tuple(preconditions) if preconditions else (),
+            aggregate=aggregate,
             strategy=strategy,
             cwd=cwd,
             allow_upstream_skip=allow_upstream_skip,
@@ -348,10 +375,27 @@ def build_tool_graph(name: str, target: str | None) -> Graph:
     if target is not None and target not in subs:
         raise FcmdError(f"工具 {name!r} 没有子命令 {target!r}")
     if target is None:
-        # 包含全部子命令（含 hidden），便于完整可视化
+        # 包含全部子命令（含 hidden），便于完整可视化；steps 边逐子命令合并
         selected: list[ToolSpec] = list(subs.values())
+        edges: dict[str | None, tuple[str | None, ...]] = {}
+        step_kwargs: dict[str | None, dict[str, Any]] = {}
+        for sc in subs:
+            sc_edges, sc_kwargs = _plan_steps(subs, sc)
+            for dep_task, deps in sc_edges.items():
+                edges[dep_task] = tuple(dict.fromkeys((*edges.get(dep_task, ()), *deps)))
+            for task, kwargs in sc_kwargs.items():
+                _merge_step_kwargs(step_kwargs, task, kwargs)
     else:
-        chain = _collect_with_deps(subs, target)
+        edges, step_kwargs = _plan_steps(subs, target)
+        chain = _collect_order(edges, target)
         selected = [subs[sc] for sc in chain if sc in subs]
-    task_specs: list[TaskSpec[Any]] = [_build_task_spec(spec, {}) for spec in selected]
+    task_specs: list[TaskSpec[Any]] = [
+        _build_task_spec(
+            spec,
+            {},
+            depends=[dep for dep in edges.get(spec.subcommand, ()) if dep is not None],
+            extra_kwargs=step_kwargs.get(spec.subcommand),
+        )
+        for spec in selected
+    ]
     return Graph.from_specs(task_specs, defaults=GraphDefaults())

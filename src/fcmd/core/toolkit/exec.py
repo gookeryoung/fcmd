@@ -61,7 +61,8 @@ from .args import (
 def _collect_with_deps(subs: dict[str | None, ToolSpec], target: str | None) -> list[str | None]:
     """BFS 收集 target 及其传递依赖（subcommand 名）。
 
-    返回顺序：依赖在前，target 在后（符合 DAG 拓扑）。
+    返回顺序：依赖在前，target 在后（符合 DAG 拓扑）。仅看 ``needs``；
+    带 ``steps`` 的编排请用 :func:`_plan_steps` + :func:`_collect_order`。
 
     Parameters
     ----------
@@ -85,6 +86,111 @@ def _collect_with_deps(subs: dict[str | None, ToolSpec], target: str | None) -> 
     # 反转：依赖在前，target 在后
     result.reverse()
     return result
+
+
+def _merge_step_kwargs(store: dict[str | None, dict[str, Any]], task: str | None, kwargs: Mapping[str, Any]) -> None:
+    """合并步骤级静态参数；同一任务被不同 steps 配置成不同值时报告冲突。"""
+    if not kwargs:
+        return
+    existing = store.setdefault(task, {})
+    for name, value in kwargs.items():
+        if name in existing and existing[name] != value:
+            raise InjectionError(task=task or "<unknown>", reason=f"参数 {name!r} 在不同 steps 中配置冲突")
+        existing[name] = value
+
+
+def _plan_steps(
+    subs: dict[str | None, ToolSpec], target: str | None
+) -> tuple[dict[str | None, tuple[str | None, ...]], dict[str | None, dict[str, Any]]]:
+    """计算执行边：``needs`` 依赖 + ``steps`` 顺序链。
+
+    规则：
+
+    - 普通任务：边即 ``spec.needs``；
+    - ``steps`` 任务：第一步依赖目标自身的 ``needs``，之后每步依赖前一步，
+      目标任务依赖最后一步（``needs`` 也从目标保留，便于并行前置任务）；
+    - 同一任务出现在多条链时合并依赖边，参数冲突报 :class:`InjectionError`。
+
+    Returns
+    -------
+    (edges, step_kwargs)
+        ``edges`` 为任务名 → 依赖元组；``step_kwargs`` 为任务名 → 只注入该
+        任务的静态参数（来自 ``step(..., **kwargs)``）。
+    """
+    edges: dict[str | None, tuple[str | None, ...]] = {}
+    step_kwargs: dict[str | None, dict[str, Any]] = {}
+    visiting: set[str | None] = set()
+    seen: set[tuple[str | None, str | None]] = set()
+
+    def visit(sc: str | None, prev: str | None) -> None:
+        if sc in visiting:
+            raise InjectionError(task=sc or "<unknown>", reason="steps 存在循环引用")
+        if (sc, prev) in seen:
+            return
+        spec = subs.get(sc)
+        if spec is None:
+            return
+        seen.add((sc, prev))
+        visiting.add(sc)
+        deps: list[str | None] = list(spec.needs)
+        if prev is not None:
+            deps.append(prev)
+        if spec.steps:
+            chain_prev = prev
+            for index, item in enumerate(spec.steps):
+                visit(item.task, chain_prev)
+                _merge_step_kwargs(step_kwargs, item.task, item.kwargs)
+                if index == 0 and spec.needs:
+                    # 流水线第一步额外依赖目标自身的 needs（外层已就绪再开始）
+                    first_deps = tuple(dict.fromkeys((*edges.get(item.task, ()), *spec.needs)))
+                    edges[item.task] = first_deps
+                    for dep in spec.needs:
+                        visit(dep, None)
+                chain_prev = item.task
+            if chain_prev is not None:
+                deps.append(chain_prev)
+        visiting.discard(sc)
+        merged = tuple(dict.fromkeys(dep for dep in (*edges.get(sc, ()), *deps) if dep != sc))
+        edges[sc] = merged
+        for dep in merged:
+            visit(dep, None)
+
+    visit(target, None)
+    return edges, step_kwargs
+
+
+def _collect_order(edges: Mapping[str | None, Sequence[str | None]], target: str | None) -> list[str | None]:
+    """按 :func:`_plan_steps` 算出的边做深度优先遍历，返回依赖在前的拓扑序。"""
+    ordered: list[str | None] = []
+    done: set[str | None] = set()
+    visiting: set[str | None] = set()
+
+    def visit(sc: str | None) -> None:
+        if sc in done:
+            return
+        if sc in visiting:
+            raise InjectionError(task=sc or "<unknown>", reason="steps/needs 存在循环引用")
+        visiting.add(sc)
+        for dep in edges.get(sc, ()):
+            visit(dep)
+        visiting.discard(sc)
+        done.add(sc)
+        ordered.append(sc)
+
+    visit(target)
+    return ordered
+
+
+def _run_preconditions(spec: ToolSpec, variables: Mapping[str, Any]) -> None:
+    """按签名注入 CLI 变量后执行目标子命令的前置断言；异常由调用方呈现。"""
+    for check in spec.preconditions:
+        kwargs = {name: variables[name] for name in inspect.signature(check).parameters if name in variables}
+        check(**kwargs)
+
+
+# ---------------------------------------------------------------------- #
+# 任务分类
+# ---------------------------------------------------------------------- #
 
 
 def _has_function_logic(func: Any) -> bool:
@@ -111,8 +217,19 @@ def _has_function_logic(func: Any) -> bool:
 
 
 def _is_aggregate(spec: ToolSpec) -> bool:
-    """判断是否为聚合任务（有 needs 无 cmd 无函数逻辑）。"""
-    if spec.cmd is not None or not spec.needs:
+    """判断是否为编排壳任务（有 needs/steps 无 cmd）。
+
+    优先使用装饰器显式声明的 ``aggregate``；未声明时保留历史推断：
+    无 cmd、有依赖且函数体无实际逻辑。声明 ``steps`` 时天然是聚合任务，
+    不受函数体是否写了代码影响。
+    """
+    if spec.cmd is not None:
+        return False
+    if spec.aggregate is not None:
+        return spec.aggregate
+    if spec.steps:
+        return True
+    if not spec.needs:
         return False
     return not _has_function_logic(spec.func)
 
@@ -168,14 +285,25 @@ def _expand_cmd_placeholders(cmd: str | list[str], spec: ToolSpec, variables: Ma
     return result
 
 
-def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[Any]:
+def _build_task_spec(
+    spec: ToolSpec,
+    variables: Mapping[str, Any],
+    *,
+    depends: Sequence[str] | None = None,
+    extra_kwargs: Mapping[str, Any] | None = None,
+) -> TaskSpec[Any]:
     """将 ToolSpec + 解析后的变量转为 TaskSpec。
 
     - cmd 任务：执行命令，cwd 从 ``variables["cwd"]`` 或装饰器 cwd 取；
       cmd 中 ``{参数名}`` 占位符替换为 CLI 解析值
-    - 聚合任务（有 needs 无 cmd 无函数逻辑）：fn=noop
+    - 聚合任务（needs/steps 编排、显式 aggregate）：fn=noop
     - fn 任务：执行函数，kwargs 按签名从 variables 取
+
+    ``depends`` 覆盖依赖边（由 ``steps`` 顺序链计算），``extra_kwargs`` 是
+    只注入该任务的静态参数（来自 ``step(...)``），不经过 CLI / schema。
     """
+    depends_on: tuple[str, ...] = tuple(spec.needs) if depends is None else tuple(depends)
+    extra = dict(extra_kwargs or {})
     task_name = spec.subcommand if spec.subcommand is not None else spec.name
 
     # cmd 任务
@@ -195,7 +323,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
         return TaskSpec(
             name=task_name,
             cmd=cmd_value,
-            depends_on=spec.needs,
+            depends_on=depends_on,
             cwd=cwd,
             env=env,
             retry=spec.retry if spec.retry is not None else RetryPolicy(),
@@ -210,7 +338,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
         return TaskSpec(
             name=task_name,
             fn=_noop,
-            depends_on=spec.needs,
+            depends_on=depends_on,
             allow_upstream_skip=spec.allow_upstream_skip,
             strategy=spec.strategy,
         )
@@ -221,6 +349,8 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
     for pname in sig.parameters:
         if pname in variables:
             kwargs[pname] = variables[pname]
+    # 步骤级静态参数优先：它们是内部布线（如 create=True），不是用户入参
+    kwargs.update(extra)
     # cwd 取值与 cmd 分支对齐：CLI 变量优先，回退装饰器声明
     cwd_value = variables.get("cwd", spec.cwd)
     cwd = Path(cwd_value) if cwd_value is not None else None
@@ -228,7 +358,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
         name=task_name,
         fn=spec.func,
         kwargs=kwargs,
-        depends_on=spec.needs,
+        depends_on=depends_on,
         cwd=cwd,
         env=spec.env,
         retry=spec.retry if spec.retry is not None else RetryPolicy(),
@@ -468,7 +598,7 @@ def _make_progress_printer(labels: Mapping[str, str], noop_tasks: frozenset[str]
     return _printer
 
 
-def _execute_tool_tasks(
+def _execute_tool_tasks(  # noqa: PLR0911 - 前置断言 / 未知子命令 / 任务失败各自有独立错误信封与退出码
     name: str,
     target: str | None,
     variables: dict[str, Any],
@@ -484,7 +614,25 @@ def _execute_tool_tasks(
     """
     reset_error_state()
     json_output = bool(variables.get("json_output", False))
-    chain = _collect_with_deps(subs, target)
+    dry_run = False if "dry_run" in inspect.signature(target_spec.func).parameters else variables.get("dry_run", False)
+    # 前置断言：只针对目标子命令，不进 DAG / 不计步数；dry-run 不执行
+    if not dry_run:
+        try:
+            _run_preconditions(target_spec, variables)
+        except Exception as exc:
+            _report_tool_failure(
+                name,
+                target,
+                code="PRECONDITION_FAILED",
+                message=_describe_exception(exc),
+                json_output=json_output,
+                hint="按提示完成前置条件后重试（如先初始化目录 / 安装依赖）",
+            )
+            pending = take_pending_exit_code()
+            return int(pending) if pending is not None else int(ExitCode.FAILURE)
+
+    edges, step_kwargs = _plan_steps(subs, target)
+    chain = _collect_order(edges, target)
     task_specs: list[TaskSpec[Any]] = []
     labels: dict[str, str] = {}
     noop_tasks: set[str] = set()
@@ -502,14 +650,20 @@ def _execute_tool_tasks(
         labels[_task_name(sc_spec)] = _display_label(sc_spec)
         if _is_aggregate(sc_spec):
             noop_tasks.add(_task_name(sc_spec))
-        task_specs.append(_build_task_spec(sc_spec, variables))
+        task_specs.append(
+            _build_task_spec(
+                sc_spec,
+                variables,
+                depends=[dep for dep in edges.get(sc, ()) if dep is not None],
+                extra_kwargs=step_kwargs.get(sc),
+            )
+        )
 
     # 构建图并执行
     graph = Graph.from_specs(task_specs, defaults=GraphDefaults())
     strategy = variables.get("strategy") or target_spec.strategy or "dependency"
     # --json 要求 stdout 可整体解析：同时关闭框架的进度/汇总行，避免与 JSON 混排
     show_progress = not variables.get("quiet", False) and not json_output
-    dry_run = False if "dry_run" in inspect.signature(target_spec.func).parameters else variables.get("dry_run", False)
     if show_progress:
         # cmd 任务行会被回显为 ``$ git add .`` 并把子进程输出实时透传到终端，
         # 便于用户在长命令运行期间看到进展（框架自己的生命周期行由回调接管）。

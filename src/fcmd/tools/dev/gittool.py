@@ -2,18 +2,18 @@
 
 提供初始化/添加提交/初始化子目录/清理/推送/拉取等子命令。
 
-``a`` / ``i`` 为聚合入口，共用隐藏链 ``_init`` → ``_add`` → ``_commit``：
+``a`` / ``i`` 都用 ``steps`` 声明顺序流水线，并把「必须已在仓库内」写成
+``preconditions``：
 
-- ``_init`` 先确认当前目录已在 Git 仓库内；不在仓库里时，只有 ``i``（或显式
-  ``a --init``）会创建仓库，单独的 ``a`` 直接报错提示先初始化；
-- ``_add`` / ``_commit`` 仍只在仓库内执行，无更改时提交步骤 no-op。
-
-``needs`` 在这里表达「必须先确认仓库可用」，而不是「自动补做 init」。
+- ``a``：``preconditions=[_require_repo]`` + ``steps=["_add", "_commit"]``；
+  不在仓库内直接报错，不会隐式 ``git init``；
+- ``i``：``steps=[step("_init", create=True), "_add", "_commit"]``；只有它会把
+  ``create=True`` 注入内部步骤，用户命令行上没有多余的 ``--init`` 开关；
+- ``_add`` / ``_commit`` 是纯步骤，不在各自的装饰器里写 ``needs``。
 
 示例
 ----
     fcmd gitt a --message "feat: 新功能"   # 添加并提交（要求已是 Git 仓库）
-    fcmd gitt a --init                    # 明确允许先初始化当前目录
     fcmd gitt i                           # 初始化并提交
     fcmd gitt isub                        # 初始化所有子目录的 Git 仓库
     fcmd gitt c                           # 清理未跟踪文件（保留排除目录）并查看状态
@@ -65,6 +65,12 @@ def _repo_root() -> Path | None:
         return None
     text = result.stdout.strip()
     return Path(text) if text else None
+
+
+def _require_repo() -> None:
+    """前置断言：当前目录必须已在 Git 仓库内（仓库子目录也算）。"""
+    if _repo_root() is None:
+        raise RuntimeError("当前目录不是 Git 仓库；请先运行 `fcmd gitt i` 初始化")
 
 
 def _has_staged_changes(cwd: Path | None = None) -> bool:
@@ -129,26 +135,29 @@ def git_init_sub_dirs(message: str = "init commit") -> None:
 
 
 # ============================================================================
-# 守卫链：_init → _add → _commit
+# 步骤链：_init → _add → _commit（顺序由 a / i 的 steps 声明）
 # ============================================================================
 
 
 @fx.tool("gittool", subcommand="_init", help="确保 Git 仓库已就绪（内部）", hidden=True)
-def git_init(init: bool = False) -> None:
-    """确认当前目录在 Git 仓库内，必要时按 ``init`` 创建仓库。
+def git_init(create: bool = False) -> None:
+    """确保当前目录在 Git 仓库内；``create=True`` 时不存在则初始化。
 
     - 已在仓库内（含仓库子目录）：no-op，不再重复 ``git init``；
-    - 不在仓库内且 ``init=False``：直接报错，提示先执行 ``fcmd gitt i``；
-    - 不在仓库内且 ``init=True``（``i`` / ``a --init``）：执行 ``git init``。
+    - 不在仓库内且 ``create=False``：报错提示先执行 ``fcmd gitt i``；
+    - 不在仓库内且 ``create=True``：执行 ``git init``。
+
+    ``create`` 不进入 ``a`` / ``i`` 的命令行，只由 ``step("_init", create=True)``
+    注入；是否需要初始化由聚合入口决定。
 
     Parameters
     ----------
-    init:
-        是否允许创建仓库；``a`` 默认 ``False``，``i`` 默认 ``True``
+    create:
+        是否允许创建仓库（仅 ``i`` 的步骤声明传 ``True``）
     """
     if _repo_root() is not None:
         return
-    if not init:
+    if not create:
         raise RuntimeError("当前目录不是 Git 仓库；请先运行 `fcmd gitt i` 初始化")
     subprocess.run(["git", "init"], check=True)
 
@@ -158,18 +167,16 @@ def git_init(init: bool = False) -> None:
     subcommand="_add",
     help="暂存全部更改（内部）",
     cmd=["git", "add", "."],
-    needs=["_init"],
     hidden=True,
 )
 def git_add() -> None:
-    """暂存全部更改（前置 ``_init`` 保证仓库已就绪）。"""
+    """暂存全部更改（顺序由调用方的 ``steps`` 保证）。"""
 
 
 @fx.tool(
     "gittool",
     subcommand="_commit",
     help="检查并提交更改（内部）",
-    needs=["_add"],
     hidden=True,
 )
 def git_commit(message: str = "init commit") -> None:
@@ -192,17 +199,17 @@ def git_commit(message: str = "init commit") -> None:
     "gittool",
     subcommand="a",
     help="添加并提交（要求已是 Git 仓库）",
-    needs=["_commit"],
+    aggregate=True,
+    preconditions=[_require_repo],
+    steps=["_add", "_commit"],
 )
-def add_and_commit(message: str = "chore: update", init: bool = False) -> None:
+def add_and_commit(message: str = "chore: update") -> None:
     """添加并提交；不在 Git 仓库内时报错，不会自动初始化。
 
     Parameters
     ----------
     message:
         提交信息
-    init:
-        允许先初始化当前目录（一般用 ``i``；默认关闭）
     """
 
 
@@ -210,17 +217,19 @@ def add_and_commit(message: str = "chore: update", init: bool = False) -> None:
     "gittool",
     subcommand="i",
     help="初始化并提交",
-    needs=["_commit"],
+    aggregate=True,
+    steps=[fx.step("_init", create=True), "_add", "_commit"],
 )
-def init_and_commit(message: str = "init commit", init: bool = True) -> None:
+def init_and_commit(message: str = "init commit") -> None:
     """初始化并提交（仓库已存在时不重复初始化）。
+
+    ``create=True`` 只注入给 ``_init`` 这一步；``a`` / ``i`` 的命令行只保留
+    ``--message``。
 
     Parameters
     ----------
     message:
         提交信息
-    init:
-        是否创建仓库（默认开启；传 ``--no-init`` 等价于 ``a``）
     """
 
 
