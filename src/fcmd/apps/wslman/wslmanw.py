@@ -26,9 +26,13 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _geometry
+from fcmd.infras.download import format_speed
 
 __all__ = [
+    "DEFAULT_MAX_DOWNLOADS",
     "DEFAULT_TERMINAL_CWD",
+    "MAX_DOWNLOADS",
+    "MIN_DOWNLOADS",
     "MIN_HEIGHT",
     "MIN_WIDTH",
     "SETTINGS_NAME",
@@ -39,7 +43,10 @@ __all__ = [
     "detail_fields",
     "dialog_geometry",
     "distro_image_text",
+    "download_limit",
+    "download_metrics_text",
     "download_progress_text",
+    "download_queue_text",
     "export_progress_text",
     "filter_images",
     "image_counts",
@@ -70,6 +77,7 @@ __all__ = [
     "unregister_confirm_enabled",
     "with_dialog_geometry",
     "with_init_task_keys",
+    "with_max_downloads",
     "with_terminal_cwd",
     "with_work_dir",
     "with_work_dirs",
@@ -84,6 +92,15 @@ DEFAULT_TERMINAL_CWD = "~"
 DEFAULT_GEOMETRY = "1160x760"
 MIN_WIDTH = 900
 MIN_HEIGHT = 600
+
+MIN_DOWNLOADS = 1
+MAX_DOWNLOADS = 4
+DEFAULT_MAX_DOWNLOADS = 2
+"""镜像并发下载数：默认 2 个，够吃带宽又不会把磁盘 / 网络打满。
+
+上限刻意保守（4 个）：镜像归档动辄几百 MB，开太多会互相抢带宽、拖慢每个任务，
+也让「取消」与进度展示更难读。设置页可调，越界值读入时收敛到这个区间。
+"""
 
 _DESCRIPTION = "WSL 实例管理的图形界面：列表/详情、打开终端、启动重启停止、导出导入、镜像下载、删除实例与关闭全部（Qt）"
 
@@ -226,6 +243,8 @@ class WslmanwSettings:
     backup_dir: str = ""
     """旧版的备份目录覆盖值：仅用于读入旧设置并给迁移提示，界面不再写入。"""
     mirror: str = "auto"
+    max_downloads: int = DEFAULT_MAX_DOWNLOADS
+    """镜像并发下载上限；队列里超出上限的条目保持「排队中」。"""
     sidebar_collapsed: bool = False
     image_filter: str = DEFAULT_IMAGE_FILTER
     image_sort: str = DEFAULT_IMAGE_SORT
@@ -254,6 +273,7 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "download_dir": settings.download_dir,
         "backup_dir": settings.backup_dir,
         "mirror": settings.mirror,
+        "max_downloads": settings.max_downloads,
         "sidebar_collapsed": settings.sidebar_collapsed,
         "image_filter": settings.image_filter,
         "image_sort": settings.image_sort,
@@ -287,6 +307,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         download_dir=_str(raw, "download_dir"),
         backup_dir=_str(raw, "backup_dir"),
         mirror=mirror if mirror in _mirrors.identifiers() else "auto",
+        max_downloads=download_limit(raw.get("max_downloads")),
         sidebar_collapsed=collapsed is True,
         image_filter=_choice(raw, "image_filter", IMAGE_FILTERS, DEFAULT_IMAGE_FILTER),
         image_sort=_choice(raw, "image_sort", IMAGE_SORTS, DEFAULT_IMAGE_SORT),
@@ -753,6 +774,45 @@ def image_status_text(
     if shown == 0 and counts["all"]:
         text += "（没有匹配项，可调整筛选或搜索词）"
     return f"{text} · {note}" if note else text
+
+
+def download_limit(raw: Any) -> int:
+    """并发下载上限：非整数或越界时收敛到 :data:`MIN_DOWNLOADS`–:data:`MAX_DOWNLOADS`。"""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_DOWNLOADS
+    return max(MIN_DOWNLOADS, min(MAX_DOWNLOADS, value))
+
+
+def with_max_downloads(settings: WslmanwSettings, value: int | str) -> WslmanwSettings:
+    """写回并发上限；越界值收敛，正在排队的下载会在下一次调度时生效。"""
+    return replace(settings, max_downloads=download_limit(value))
+
+
+def download_metrics_text(done: int, total: int | None, speed: float = 0.0) -> str:
+    """镜像行内的进度短文案；总量未知时只给已下载量，速度为 0 时不追加。"""
+    if total and total > 0:
+        text = f"下载 {min(100, int(done * 100 / total))}%"
+    elif done > 0:
+        text = f"下载 {format_bytes(done)}"
+    else:
+        text = "下载中…"
+    if speed > 0:
+        text += f" · {format_speed(speed)}"
+    return text
+
+
+def download_queue_text(running: int, queued: int, limit: int) -> str:
+    """镜像页状态行：并发几项、上限多少、还有几项排队；无任务时为空串。"""
+    if running <= 0 and queued <= 0:
+        return ""
+    parts = [f"正在下载 {running} 项"]
+    if limit > 0:
+        parts.append(f"上限 {limit}")
+    if queued > 0:
+        parts.append(f"排队 {queued} 项")
+    return " · ".join(parts)
 
 
 def download_progress_text(name: str, done: int, total: int | None, speed: float = 0.0) -> str:

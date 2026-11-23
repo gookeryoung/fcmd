@@ -427,37 +427,32 @@ def test_export_progress_lands_in_status_bar(home: Path, monkeypatch: pytest.Mon
         window.deleteLater()
 
 
-def test_download_progress_lands_in_status_bar(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """下载进度写状态栏：文案带百分比 / 速度，右侧进度条切确定进度；任务结束收起。"""
+def test_download_progress_lands_on_its_own_row(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """并发下载的进度按镜像名落到各自行：行内给百分比 / 已下载量，状态行给并发与排队。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        bar = window.statusBar()
-        assert bar.loading_bar.is_running() is False
+        entry = _image_entry("Ubuntu")
+        window._apply_images((_catalog((entry,)), (entry,)))
+        task = _wslmanw_qt._DownloadTask(entry)
+        task.state = "running"
+        window._downloads[entry.name] = task
+        window._render_images()
 
-        window._busy = True
-        window._active_entry = "Ubuntu"
-        window._task_page = "images"
-        window._on_download_progress(512, 1024)
-        text = window.page_status("images")
-        assert text.startswith("下载 Ubuntu · 50% · ")
-        assert bar.loading_bar.bar.maximum() == 1000
-        assert bar.loading_bar.bar.value() == 500
-        assert bar.loading_bar.is_running() is True
-        # 右侧进度条只放短文案（百分比 + 速度），长文案留给左侧状态文字。
-        assert bar.loading_bar.text_label.text().startswith("下载 50% · ")
+        window._on_download_event((entry.name, 512, 1024))
+        row = _image_row(window, 0)
+        assert row.metrics_label is not None
+        assert row.metrics_label.text().startswith("下载 50%")
+        assert "正在下载 1 项" in window.page_status("images")
+        assert "排队" not in window.page_status("images")
 
-        # 总量未知（服务器没给长度）时回到忙碌动画，文案只给已下载字节。
-        window._on_download_progress(2048, None)
-        assert "下载 Ubuntu · 2.0 KiB · " in window.page_status("images")
-        assert bar.loading_bar.bar.maximum() == 0
-
-        window._busy = False
-        window._active_entry = ""
-        window._task_finished()
-        assert bar.loading_bar.is_running() is False
+        # 总量未知（服务器没给长度）时只给已下载量。
+        window._on_download_event((entry.name, 2048, None))
+        assert row.metrics_label.text().startswith("下载 2.0 KiB")
     finally:
+        window._downloads.clear()
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
@@ -1007,7 +1002,7 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
         assert settings_page is not None
         # 页面用滚动容器：窗口变矮时滚动，而不是压扁控件
         assert settings_page.findChild(PageScroll) is not None
-        for widget in (window.mirror, window.expected_sha, window.work_grid):
+        for widget in (window.mirror, window.expected_sha, window.download_limit_combo, window.work_grid):
             assert settings_page.isAncestorOf(widget)
         assert "64" in window.expected_sha.placeholderText()
 
@@ -1693,8 +1688,8 @@ def test_image_row_actions_follow_state(home: Path, monkeypatch: pytest.MonkeyPa
         window.deleteLater()
 
 
-def test_image_row_cancel_button_reaches_active_task(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """忙态下该行按钮变「取消」，点击要取消当前任务，而不是再触发一次下载。"""
+def test_image_row_cancel_button_cancels_its_download(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """行内「取消」只作用于这一项下载：设置该项的取消标记，不触发新的下载请求。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
     window = _wslmanw_qt.WslmanQtWindow()
@@ -1704,11 +1699,9 @@ def test_image_row_cancel_button_reaches_active_task(home: Path, monkeypatch: py
         started: list[str] = []
         monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_download_entry", lambda self, name: started.append(name))
         window._apply_images((_catalog((entry,)), (entry,)))
-        window._busy = True
-        window._active_entry = entry.name
-        window._label = "下载"
-        window._task_page = "images"
-        window._cancel = threading.Event()
+        task = _wslmanw_qt._DownloadTask(entry)
+        task.state = "running"
+        window._downloads[entry.name] = task
         window._render_images()
 
         row = _image_row(window, 0)
@@ -1716,11 +1709,118 @@ def test_image_row_cancel_button_reaches_active_task(home: Path, monkeypatch: py
         assert row.download_button.text() == "取消"
         row.download_button.click()
 
-        assert window._cancel.is_set()
+        assert task.cancel.is_set()
         assert started == []
         assert "取消中" in window.page_status("images")
     finally:
+        window._downloads.clear()
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_download_queue_respects_limit_and_queues_extra(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """并发上限内立刻启动，超出的排队；状态行给出并发数、上限与排队数，排队项可单独取消。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entries = [_image_entry(name) for name in ("Ubuntu", "Debian", "Kali")]
+        window._apply_images((_catalog(tuple(entries)), tuple(entries)))
+        window.settings = wslmanw.with_max_downloads(window.settings, 2)
+        launched: list[str] = []
+        monkeypatch.setattr(
+            _wslmanw_qt.WslmanQtWindow,
+            "_launch_download",
+            lambda self, task: launched.append(task.entry.name),
+        )
+
+        for entry in entries:
+            window._download_payload(entry)
+
+        # 前两项按顺序占用槽位，第三项排队。
+        assert launched == ["Ubuntu", "Debian"]
+        assert window._downloads["Kali"].state == "queued"
+        status = window.page_status("images")
+        assert "正在下载 2 项" in status
+        assert "排队 1 项" in status
+
+        # 排队项取消只移除它自己，不碰正在跑的两项。
+        window._cancel_download("Kali")
+        assert "Kali" not in window._downloads
+        assert window._downloads["Ubuntu"].cancel.is_set() is False
+        assert "排队" not in window.page_status("images")
+    finally:
+        window._downloads.clear()
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_download_failure_releases_slot_without_stopping_others(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """单项失败 / 取消只释放自己的槽位，排队的下一项继续启动。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entries = [_image_entry(name) for name in ("Ubuntu", "Debian")]
+        window._apply_images((_catalog(tuple(entries)), tuple(entries)))
+        window.settings = wslmanw.with_max_downloads(window.settings, 1)
+        launched: list[str] = []
+        monkeypatch.setattr(
+            _wslmanw_qt.WslmanQtWindow,
+            "_launch_download",
+            lambda self, task: launched.append(task.entry.name),
+        )
+        # 收尾会重扫磁盘 / 重绘列表，这里只验证调度，不触发真实 IO。
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_refresh_image_states", lambda self: None)
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_render_images", lambda self: None)
+
+        window._download_payload(entries[0])
+        window._download_payload(entries[1])
+        assert launched == ["Ubuntu"]
+
+        first = window._downloads["Ubuntu"]
+        window._download_done(first, ("failed", "网络中断"))
+        window._download_finished(first)
+
+        assert "Ubuntu" not in window._downloads
+        assert launched == ["Ubuntu", "Debian"]
+    finally:
+        window._downloads.clear()
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_heavy_task_does_not_turn_download_rows_into_cancel(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """安装 / 迁移等重操作只禁用无下载的行，不会把整列误标成「正在下载」。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entry = _image_entry("Ubuntu")
+        window._apply_images((_catalog((entry,)), (entry,)))
+        window._busy = True
+        window._set_buttons(False)
+
+        row = _image_row(window, 0)
+        assert row.download_button.text() == "下载"
+        assert not row.download_button.isEnabled()
+
+        task = _wslmanw_qt._DownloadTask(entry)
+        task.state = "running"
+        window._downloads[entry.name] = task
+        window._set_buttons(False)
+        assert row.download_button.text() == "取消"
+        assert row.download_button.isEnabled()
+    finally:
         window._busy = False
+        window._downloads.clear()
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 

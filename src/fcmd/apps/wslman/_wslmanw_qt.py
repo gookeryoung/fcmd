@@ -27,6 +27,7 @@ import contextlib
 import shutil
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -152,6 +153,26 @@ def _images_note_text(catalog: Any) -> str:
 def _state_tone(state: str) -> str:
     """实例状态 → 胶囊色调（与 ``state_label`` 的文案配套）。"""
     return {"running": "success", "stopped": "muted", "unknown": "warning"}.get(state, "muted")
+
+
+@dataclass
+class _DownloadTask:
+    """镜像下载队列里的一项：独立取消标记、进度与状态，互不影响。
+
+    ``state`` 取 ``queued`` / ``running`` / ``ok`` / ``failed`` / ``cancelled``：
+    排队中也能单独取消；单项失败只影响自己，调度器会继续跑后面的项。
+    """
+
+    entry: ImageEntry
+    cancel: threading.Event = field(default_factory=threading.Event)
+    state: str = "queued"
+    done: int = 0
+    total: int | None = None
+    message: str = ""
+
+    @property
+    def finished(self) -> bool:
+        return self.state in ("ok", "failed", "cancelled")
 
 
 class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
@@ -399,20 +420,30 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
         else:
             self.downloadRequested.emit(self.entry.name)
 
-    def set_download_state(self, *, busy: bool, active: bool = False) -> None:
-        """任务进行中：正在跑的这一行按钮变「取消」，其它行禁用。"""
+    def set_download_state(
+        self,
+        *,
+        busy: bool,
+        active: bool = False,
+        queued: bool = False,
+        enabled: bool = True,
+    ) -> None:
+        """按下载队列刷新按钮：有任务的显示「取消」（排队中同样可取消），其余按忙态禁用。"""
         self._busy = busy
         self._active = busy and active
         if self.download_button is None:
             return
         if self._active:
             self.download_button.setText("取消")
-            self.download_button.setToolTip("取消本次任务（已下载的部分保留 .part，可续传）")
+            if queued:
+                self.download_button.setToolTip("取消排队中的这项下载")
+            else:
+                self.download_button.setToolTip("取消本次下载（已下载的部分保留 .part，可续传）")
             self.download_button.setEnabled(True)
             return
         self.download_button.setText(self._action_text())
         self.download_button.setToolTip(self._action_tooltip())
-        self.download_button.setEnabled(not busy)
+        self.download_button.setEnabled(enabled)
 
 
 class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
@@ -495,11 +526,15 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._images_busy = False
         self._images_from_cache = False
         self._states_busy = False
+        self._states_pending = False
         self._active_entry = ""
         self._task_page = ""
         self._closing = False
         self._bridge: EventBridge | None = None
-        self._download_meter = SpeedMeter()
+        # 镜像下载队列：每项独立取消 / 进度，按设置里的并发上限调度；不占用全局
+        # ``_busy``，避免和安装、迁移、刷新等重操作互相误判。
+        self._downloads: dict[str, _DownloadTask] = {}
+        self._download_meters: dict[str, SpeedMeter] = {}
         self._export_meter = SpeedMeter()
         self._poll: QTimer | None = None
         self._filter_timer: QTimer | None = None
@@ -1398,8 +1433,20 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self.expected_sha = QLineEdit("", download)
         self.expected_sha.setPlaceholderText("可选：64 位十六进制摘要；留空用官方清单")
         self.expected_sha.setToolTip("只对下一次下载生效，不写入配置")
-        # 同一行两对：下载源 + 校验，避免两个输入控件各占一整行。
-        form.add_pair("下载源", self.mirror, "校验 sha256", self.expected_sha)
+
+        # 并发下载上限：默认 2 个（保守值），超出上限的任务在队列里排队、可单独取消。
+        self.download_limit_combo = QComboBox(download)
+        for value in range(w.MIN_DOWNLOADS, w.MAX_DOWNLOADS + 1):
+            self.download_limit_combo.addItem(f"{value} 个", value)
+        self.download_limit_combo.setCurrentIndex(
+            max(0, w.download_limit(self.settings.max_downloads) - w.MIN_DOWNLOADS)
+        )
+        self.download_limit_combo.setToolTip("同时进行的镜像下载数上限；其余任务排队等待，也能单独取消")
+        self.download_limit_combo.currentIndexChanged.connect(self._on_download_limit_changed)
+
+        # 同一行两对：下载源 + 并发上限；校验单独一行（摘要较长，需要整行宽度）。
+        form.add_pair("下载源", self.mirror, "并发下载", self.download_limit_combo)
+        form.add_pair("校验 sha256", self.expected_sha)
         download.body.addWidget(form)
         download.body.addWidget(
             hint_label(f"镜像归档统一存到工作目录的 download 子目录（见上方「工作目录」卡片）。{w._DOWNLOAD_HINT}")
@@ -1872,8 +1919,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._bridge.event.connect(self._on_log_event)
         self._set_task_status(f"{label}…")
         self._set_buttons(False)
-        # 任务进行中在状态栏右侧显示加载条；可预估总量的下载会切成确定进度。
-        self._download_meter.reset()
+        # 任务进行中在状态栏右侧显示加载条；可预估总量的导出会切成确定进度。
         self._export_meter.reset()
         self.show_loading(f"{label}…")
 
@@ -1925,9 +1971,9 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._busy = False
         self._active_entry = ""
         self.show_loading("")
-        self._download_meter.reset()
         self._export_meter.reset()
         self._set_buttons(True)
+        self._update_download_status()
         if self._closing:
             return
         self._update_action_states()
@@ -1954,10 +2000,9 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 if isinstance(row, _DistroItemRow):
                     row.set_busy(not enabled)
         if hasattr(self, "image_list"):
-            for index in range(self.image_list.count()):
-                row = self.image_list.itemWidget(self.image_list.item(index))
-                if isinstance(row, _ImageItemRow):
-                    row.set_download_state(busy=not enabled, active=row.entry.name == self._active_entry)
+            # 镜像行的按钮由下载队列决定：有任务的保持「取消」，其余按重操作忙闲禁用；
+            # 不能把全局忙态当成「正在下载」，否则安装 / 迁移时整列都变成取消。
+            self._refresh_download_rows()
         if enabled:
             self._update_action_states()
 
@@ -1971,31 +2016,69 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             self._log(message)
 
     def _on_download_event(self, payload: Any) -> None:
-        """共享进度桥的 ``(累计字节, 总量 / None)`` → 状态栏 / 进度条。"""
-        done, total = payload
-        self._on_download_progress(done, total)
+        """下载线程的 ``(镜像名, 累计字节, 总量 / None)`` → 该行进度与队列状态。"""
+        if not (isinstance(payload, tuple) and len(payload) == 3):
+            return
+        name, done, total = payload
+        task = self._downloads.get(name)
+        if task is None:
+            return
+        task.done = done if isinstance(done, int) else 0
+        task.total = total if isinstance(total, int) and total > 0 else None
+        meter = self._download_meters.get(name)
+        if meter is not None:
+            meter.update(task.done)
+        row = self._image_row(name)
+        if row is not None:
+            row.set_metrics(self._download_metrics(task))
+        self._update_download_status()
+
+    def _download_metrics(self, task: _DownloadTask) -> str:
+        if task.state == "queued":
+            return "排队中"
+        meter = self._download_meters.get(task.entry.name)
+        speed = meter.speed if meter is not None else 0.0
+        return w.download_metrics_text(task.done, task.total, speed)
+
+    def _update_download_status(self) -> None:
+        """镜像页状态行：并发数 / 上限 / 排队数；重操作占用状态行时不抢。"""
+        if self._busy:
+            return
+        running = sum(1 for task in self._downloads.values() if task.state == "running")
+        queued = sum(1 for task in self._downloads.values() if task.state == "queued")
+        text = w.download_queue_text(running, queued, w.download_limit(self.settings.max_downloads))
+        if text:
+            self.set_page_status("images", text)
+
+    def _image_row(self, name: str) -> _ImageItemRow | None:
+        for index in range(self.image_list.count()):
+            row = self.image_list.itemWidget(self.image_list.item(index))
+            if isinstance(row, _ImageItemRow) and row.entry.name == name:
+                return row
+        return None
+
+    def _refresh_download_rows(self) -> None:
+        """按下载队列重算每一行：有任务的显示「取消」，其余按重操作忙态禁用。"""
+        if not hasattr(self, "image_list"):
+            return
+        for index in range(self.image_list.count()):
+            row = self.image_list.itemWidget(self.image_list.item(index))
+            if not isinstance(row, _ImageItemRow):
+                continue
+            task = self._downloads.get(row.entry.name)
+            row.set_download_state(
+                busy=task is not None,
+                active=task is not None,
+                queued=task is not None and task.state == "queued",
+                enabled=not self._busy,
+            )
+            if task is not None:
+                row.set_metrics(self._download_metrics(task))
 
     def _on_export_event(self, payload: Any) -> None:
         """共享事件桥的 ``(发行版, 累计字节, 总量 / None)`` → 导出进度。"""
         name, done, total = payload
         self._on_export_progress(name, done, total)
-
-    def _on_download_progress(self, done: int, total: object) -> None:
-        """下载进度：状态栏写「百分比 · 已下载 / 总量 · 速度 · 剩余」，右侧进度条同步。
-
-        进度信号从下载线程排队过来，``SpeedMeter`` 在主线程里按墙钟采样，数字平滑
-        不抖；``start_page`` 固定写镜像页，用户切到别的页看日志时不会被进度文案刷屏。
-        """
-        total_bytes = total if isinstance(total, int) and total > 0 else None
-        self._download_meter.update(done)
-        speed = self._download_meter.speed
-        self.set_page_status("images", w.download_progress_text(self._active_entry or "镜像", done, total_bytes, speed))
-        # 右侧进度条用短文案：百分比 + 速度，长文案会把进度条挤窄。
-        if total_bytes:
-            brief = f"下载 {min(100, int(done * 100 / total_bytes))}% · {format_speed(speed)}"
-        else:
-            brief = f"下载 {format_bytes(done)} · {format_speed(speed)}"
-        self.show_progress(brief, done, total_bytes)
 
     def _on_export_progress(self, name: str, done: int, total: object) -> None:
         """导出进度：左侧状态栏写「百分比 · 已写 / 估算 · 速度 · 剩余」，右侧进度条同步。
@@ -2749,13 +2832,61 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 return
 
     def _download_payload(self, entry: ImageEntry) -> None:
-        """行内「下载」：只把归档拉到下载目录；完成后行变「已下载」，再点「安装」。
+        """把一次镜像下载放进队列；并发上限由设置决定，超出上限先排队。
 
-        安装单独成为一个动作（``_install_entry``），避免「下载 + 自动导入」把两件
-        事混在一次操作里；下载失败的半成品仍按配置保留 ``.part``。
+        每一项各有取消标记、进度与速度，互相独立：单项失败 / 取消只影响自己。
+        下载落点、校验、续传仍复用 ``_source.download_mirrored``，与 CLI 同一口径。
         """
+        if entry.name in self._downloads:
+            self._cancel_download(entry.name)
+            return
+        if self._busy:
+            self.set_page_status("images", "已有重操作在执行；等它结束再下载，避免磁盘与网络互相拖慢")
+            return
+        self._downloads[entry.name] = _DownloadTask(entry)
+        self._download_meters[entry.name] = SpeedMeter()
+        self._pump_downloads()
+
+    def _pump_downloads(self) -> None:
+        """按并发上限启动排队项；完成 / 取消 / 改上限后都重新收敛一次。"""
+        limit = w.download_limit(self.settings.max_downloads)
+        running = sum(1 for task in self._downloads.values() if task.state == "running")
+        for task in list(self._downloads.values()):
+            if running >= limit:
+                break
+            if task.state != "queued":
+                continue
+            task.state = "running"
+            running += 1
+            self._launch_download(task)
+        self._refresh_download_rows()
+        self._update_download_status()
+
+    def _cancel_download(self, name: str) -> None:
+        """单独取消一项：排队项直接移除；运行中置取消标记，由下载层尽快收尾。"""
+        task = self._downloads.get(name)
+        if task is None:
+            return
+        if task.state == "queued":
+            self._downloads.pop(name, None)
+            self._download_meters.pop(name, None)
+            self._log(f"[下载] {name} 已取消（尚未开始）")
+            self._refresh_download_rows()
+            self._update_download_status()
+            if not self._downloads and not self._busy:
+                self._render_images()
+            return
+        task.cancel.set()
+        self._log(f"[下载] {name} 取消中…")
+        if not self._busy:
+            self.set_page_status("images", f"{name} 取消中…")
+
+    def _launch_download(self, task: _DownloadTask) -> None:
+        """启动一项下载；设置项在主线程读好，工作线程只碰纯数据。"""
+        entry = task.entry
         expected = self.expected_sha.text().strip() or None
-        mirror_policy = self.mirror_ids[self.mirror.currentIndex()] if self.mirror.currentIndex() >= 0 else "auto"
+        mirror_index = self.mirror.currentIndex()
+        mirror_policy = self.mirror_ids[mirror_index] if mirror_index >= 0 else "auto"
         directory = self._download_dir_path()
 
         def work(cancel: threading.Event) -> str:
@@ -2789,7 +2920,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 ),
                 expected_sha256=expected or download.sha256,
                 cancelled=cancel.is_set,
-                progress=lambda done, total: self._progress_bridge.progress.emit((done, total)),
+                progress=lambda done, total: self._progress_bridge.progress.emit((entry.name, done, total)),
             )
             return (
                 f"已下载 {target}（{format_bytes(result_data.size)}，"
@@ -2797,8 +2928,50 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 "点行内「安装」导入 WSL"
             )
 
-        self._active_entry = entry.name
-        self._start("下载", work)
+        def runner(cancel: threading.Event) -> tuple[str, str]:
+            try:
+                return "ok", work(cancel)
+            except KeyboardInterrupt:
+                return "cancelled", "已取消；未完成的 .part 保留在下载目录，可续传"
+            except Exception as exc:  # 统一转成可读文案，单项失败不打断队列
+                return "failed", w._error_text(exc)
+
+        submit(
+            runner,
+            task.cancel,
+            on_done=lambda payload: self._download_done(task, payload),
+            on_error=lambda message: self._download_done(task, ("failed", message)),
+            on_finished=lambda: self._download_finished(task),
+        )
+
+    def _download_done(self, task: _DownloadTask, payload: tuple[str, str]) -> None:
+        status, message = payload
+        task.state = status
+        task.message = message
+        if self._closing:
+            return
+        self._log(f"[下载] {task.entry.name}：{message}")
+        if self._busy:
+            # 重操作占着镜像页状态行时只留日志，避免把「迁移 / 安装」误标成下载。
+            return
+        if status == "ok":
+            self.set_page_status("images", f"{task.entry.name} 下载完成")
+        elif status == "cancelled":
+            self.set_page_status("images", f"{task.entry.name} 已取消")
+        else:
+            self.set_page_status("images", f"{task.entry.name} 下载失败：{message}")
+
+    def _download_finished(self, task: _DownloadTask) -> None:
+        """单项收尾：释放槽位并启动下一项；单点失败 / 取消不影响其它下载。"""
+        name = task.entry.name
+        self._downloads.pop(name, None)
+        self._download_meters.pop(name, None)
+        if self._closing:
+            return
+        # 已下载标记按磁盘重扫，行内按钮随结果从「下载」切到「安装」。
+        self._refresh_image_states()
+        self._render_images()
+        self._pump_downloads()
 
     def _install_entry(self, name: str) -> None:
         """行内「安装」：已下载的归档 → 复用「安装镜像」对话框；无归档 → wsl --install。"""
@@ -2858,6 +3031,17 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             self.set_page_status("settings", f"下载源：{_mirrors.label(self.mirror_ids[self.mirror.currentIndex()])}")
             self._persist_image_view()
 
+    def _on_download_limit_changed(self, _index: int) -> None:
+        """调整并发上限：写回设置，并立刻让排队的下载补上新增的槽位。"""
+        value = self.download_limit_combo.currentData()
+        if not isinstance(value, int):
+            return
+        self.settings = w.with_max_downloads(self.settings, value)
+        self._persist_settings(self.geometry_text())
+        if not self._busy:
+            self.set_page_status("settings", f"并发下载：最多 {value} 个")
+        self._pump_downloads()
+
     def _restore_images_cache(self) -> Any:
         """把上次落盘的镜像清单直接铺到列表上（不等网络），返回命中的缓存。"""
         cache = _images.load_cache()
@@ -2877,7 +3061,11 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         下载完成 → 行标签变「已下载」且按钮变「安装」；安装 / 删除实例完成 → 「已安装」
         随之增减。只跑 ``wsl -l -v`` 与下载目录扫描，代价远小于重新联网拉清单。
         """
-        if self._closing or self._states_busy or not self.image_entries:
+        if self._closing or not self.image_entries:
+            return
+        if self._states_busy:
+            # 并发下载同时收尾时，合并成一次补扫，避免最后一个完成项漏掉状态。
+            self._states_pending = True
             return
         self._states_busy = True
         entries = self.image_entries
@@ -2889,8 +3077,14 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             worker,
             on_done=self._apply_image_states,
             on_error=lambda message: self._log(f"[镜像状态] 刷新失败：{message}"),
-            on_finished=lambda: setattr(self, "_states_busy", False),
+            on_finished=self._finish_image_states,
         )
+
+    def _finish_image_states(self) -> None:
+        self._states_busy = False
+        if self._states_pending and not self._closing:
+            self._states_pending = False
+            self._refresh_image_states()
 
     def _apply_image_states(self, entries: tuple[ImageEntry, ...]) -> None:
         if self._closing or not entries:
@@ -2990,8 +3184,17 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             row.toggleRequested.connect(self._on_image_toggle)
             row.downloadRequested.connect(self._download_entry)
             row.installRequested.connect(self._install_entry)
-            row.cancelRequested.connect(self._cancel_task)
-            row.set_download_state(busy=self._busy, active=entry.name == self._active_entry)
+            # 每行的「取消」只作用于这一项下载，不碰其它并发任务。
+            row.cancelRequested.connect(lambda name=entry.name: self._cancel_download(name))
+            task = self._downloads.get(entry.name)
+            row.set_download_state(
+                busy=task is not None,
+                active=task is not None,
+                queued=task is not None and task.state == "queued",
+                enabled=not self._busy,
+            )
+            if task is not None:
+                row.set_metrics(self._download_metrics(task))
             item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.image_list.setItemWidget(item, row)
         self.image_list.sync_row_widths()
@@ -3011,6 +3214,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             target = 0
         if target is not None:
             self.image_list.setCurrentRow(target)
+        # 重绘会重写镜像页状态行：有并发下载时改回「正在下载 / 排队」口径。
+        self._update_download_status()
 
     def _on_image_filter_changed(self, key: str) -> None:
         """切换筛选按钮：只重绘列表，不重新拉取在线清单。"""
@@ -3104,6 +3309,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 work_dir=self.settings.work_dir,
                 work_dirs=self.settings.work_dirs,
                 mirror=self.mirror_ids[self.mirror.currentIndex()] if self.mirror.currentIndex() >= 0 else "auto",
+                max_downloads=w.download_limit(self.settings.max_downloads),
                 sidebar_collapsed=self.nav.is_collapsed(),
                 image_filter=self._image_filter_key,
                 image_sort=self.image_sort.currentData() or w.DEFAULT_IMAGE_SORT,
@@ -3122,7 +3328,11 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
     def _on_close(self) -> bool:
         if self._busy and not confirm(self, "任务进行中", "有任务正在执行，取消并退出？"):
             return False
+        if self._downloads and not confirm(self, "下载进行中", "还有镜像正在下载，取消并退出？"):
+            return False
         self._cancel.set()
+        for task in self._downloads.values():
+            task.cancel.set()
         self._closing = True
         if self._poll is not None:
             self._poll.stop()

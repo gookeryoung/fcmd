@@ -107,6 +107,7 @@ def test_settings_mapping_is_json_friendly() -> None:
         "download_dir": r"D:\WSL",
         "backup_dir": "",
         "mirror": "auto",
+        "max_downloads": 2,
         "sidebar_collapsed": False,
         "image_filter": "all",
         "image_sort": "name",
@@ -374,6 +375,44 @@ def test_export_progress_text_uses_same_shape_as_download() -> None:
     text = wslmanw.export_progress_text("Ubuntu", 512, 1024, 256.0)
     assert text == "导出 Ubuntu · 50% · 512 B / 1.0 KiB · 256 B/s · 剩余 2s"
     assert wslmanw.export_progress_text("Ubuntu", 2048, None, 1024.0) == ("导出 Ubuntu · 2.0 KiB · 1.00 KB/s")
+
+
+def test_download_limit_clamps_to_safe_range() -> None:
+    """并发上限：默认 2 个，非法值回落默认，越界收敛到 1–4。"""
+    assert wslmanw.DEFAULT_MAX_DOWNLOADS == 2
+    assert wslmanw.download_limit(None) == 2
+    assert wslmanw.download_limit("not-a-number") == 2
+    assert wslmanw.download_limit(0) == wslmanw.MIN_DOWNLOADS
+    assert wslmanw.download_limit(99) == wslmanw.MAX_DOWNLOADS
+    assert wslmanw.download_limit("3") == 3
+    settings = wslmanw.with_max_downloads(wslmanw.WslmanwSettings(), 4)
+    assert settings.max_downloads == 4
+    assert wslmanw.with_max_downloads(settings, 0).max_downloads == wslmanw.MIN_DOWNLOADS
+
+
+def test_max_downloads_roundtrips_through_settings() -> None:
+    """并发上限随设置文件读写；坏值读入时收敛而不是抛错。"""
+    settings = wslmanw.WslmanwSettings(max_downloads=3)
+    assert wslmanw.settings_from_mapping(wslmanw.settings_to_mapping(settings)).max_downloads == 3
+    assert wslmanw.settings_from_mapping({"max_downloads": 42}).max_downloads == wslmanw.MAX_DOWNLOADS
+    assert wslmanw.settings_from_mapping({"max_downloads": "x"}).max_downloads == wslmanw.DEFAULT_MAX_DOWNLOADS
+
+
+def test_download_metrics_text_handles_known_and_unknown_total() -> None:
+    """行内进度：有总量给百分比，无总量给已下载量，刚开始给「下载中…」。"""
+    assert wslmanw.download_metrics_text(512, 1024, 256.0) == "下载 50% · 256 B/s"
+    assert wslmanw.download_metrics_text(2048, None) == "下载 2.0 KiB"
+    assert wslmanw.download_metrics_text(0, None) == "下载中…"
+    assert wslmanw.download_metrics_text(0, 0) == "下载中…"
+
+
+def test_download_queue_text_reports_concurrency_and_backlog() -> None:
+    """镜像页状态行：并发几项 / 上限 / 排队几项；没有任务时为空串。"""
+    assert wslmanw.download_queue_text(0, 0, 2) == ""
+    assert wslmanw.download_queue_text(2, 0, 2) == "正在下载 2 项 · 上限 2"
+    text = wslmanw.download_queue_text(2, 3, 2)
+    assert "正在下载 2 项" in text
+    assert "排队 3 项" in text
 
 
 def test_pick_download_prefers_matching_arch(monkeypatch: pytest.MonkeyPatch) -> None:
