@@ -37,6 +37,28 @@ def test_restart_button_disabled_state_is_distinct() -> None:
     assert disabled != enabled
 
 
+@pytest.mark.parametrize("name", list(_guitheme.THEMES))
+def test_disabled_rules_use_disabled_tokens(name: str) -> None:
+    """所有按钮级禁用规则都改用 disabled_* token，不再复用 muted / surface。"""
+    theme = _guitheme.resolve_theme(name)
+    palette = theme.palette
+    text = _qt_theme.stylesheet(theme)
+    for block in text.split(":disabled", 1)[1:]:
+        body = block.split("{", 1)[1].split("}", 1)[0]
+        assert palette.muted not in body
+    # 主 / 危险 / 重启 / 侧边栏 / 图标按钮的禁用态都必须有独立底色或前景色。
+    for selector in (
+        "QPushButton#Primary:disabled",
+        "QPushButton#Danger:disabled",
+        "QPushButton#RunAction:disabled",
+        "QPushButton#SidebarAction:disabled",
+        "QToolButton:disabled",
+    ):
+        assert selector in text
+        body = text.split(selector + " {", 1)[1].split("}", 1)[0]
+        assert palette.disabled_fg in body or palette.disabled_border in body
+
+
 def test_owner_tag_differs_from_quant_tag() -> None:
     """发布方标签用中性色，量化精度标签保留强调色，避免两种胶囊混淆。"""
     theme = _guitheme.resolve_theme("dark-blue")

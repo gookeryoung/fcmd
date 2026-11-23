@@ -226,7 +226,10 @@ QPushButton {
 }
 QPushButton:hover { background: $surface_active; border-color: $border_strong; }
 QPushButton:pressed { background: $border; }
-QPushButton:disabled { color: $muted; background: $surface; border-color: $border; }
+/* 禁用态：底色比可用态更平（贴近窗口底）、文字退一档、边框几乎消失，
+   与 hover / pressed 的层次完全分开；只靠 muted + surface 在浅色主题里
+   反而比可用态更亮。具体色值由各主题的 disabled_* token 决定。 */
+QPushButton:disabled { color: $disabled_fg; background: $disabled_bg; border-color: $disabled_border; }
 QPushButton#Primary {
     background: $accent;
     color: $on_accent;
@@ -235,10 +238,10 @@ QPushButton#Primary {
 }
 QPushButton#Primary:hover { background: $accent_hover; border-color: $accent_hover; }
 QPushButton#Primary:pressed { background: $accent_pressed; }
-QPushButton#Primary:disabled { background: $surface_hover; color: $muted; border-color: $border; }
+QPushButton#Primary:disabled { background: $disabled_bg; color: $disabled_fg; border-color: $disabled_border; }
 QPushButton#Danger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#Danger:hover { background: $danger; color: $on_accent; }
-QPushButton#Danger:disabled { color: $muted; border-color: $border; background: transparent; }
+QPushButton#Danger:disabled { color: $disabled_fg; border-color: $disabled_border; background: transparent; }
 QComboBox#ModelCombo[running="true"] { color: $success; border-color: $success; font-weight: 600; }
 QComboBox#ModelCombo {
     min-height: $run_control_height;
@@ -255,15 +258,15 @@ QPushButton#RunPrimary, QPushButton#RunAction, QPushButton#RunDanger {
 QPushButton#RunPrimary { background: $accent; color: $on_accent; border-color: $accent; }
 QPushButton#RunPrimary:hover { background: $accent_hover; border-color: $accent_hover; }
 QPushButton#RunPrimary:pressed { background: $accent_pressed; }
-QPushButton#RunPrimary:disabled { background: $surface_hover; color: $muted; border-color: $border; }
+QPushButton#RunPrimary:disabled { background: $disabled_bg; color: $disabled_fg; border-color: $disabled_border; }
 QPushButton#RunAction { background: $surface_hover; color: $text; border-color: $border; }
 QPushButton#RunAction:hover { background: $surface_active; border-color: $border_strong; }
 QPushButton#RunAction:pressed { background: $border; }
 /* 禁用态必须覆盖 #RunAction 的常态配色：只靠全局 QPushButton:disabled 会被 ID 选择器盖掉。 */
-QPushButton#RunAction:disabled { background: $surface; color: $muted; border-color: $border; }
+QPushButton#RunAction:disabled { background: $disabled_bg; color: $disabled_fg; border-color: $disabled_border; }
 QPushButton#RunDanger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#RunDanger:hover { background: $danger; color: $on_accent; }
-QPushButton#RunDanger:disabled { color: $muted; border-color: $border; background: transparent; }
+QPushButton#RunDanger:disabled { color: $disabled_fg; border-color: $disabled_border; background: transparent; }
 QFrame#ChatSidebar {
     background: transparent;
     border: none;
@@ -287,7 +290,7 @@ QPushButton#SidebarAction {
 }
 QPushButton#SidebarAction:hover { background: $surface_hover; border-color: $accent; }
 QPushButton#SidebarAction:pressed { background: $accent_soft_strong; border-color: $accent; }
-QPushButton#SidebarAction:disabled { background: $surface; color: $muted; border-color: $border; }
+QPushButton#SidebarAction:disabled { background: $disabled_bg; color: $disabled_fg; border-color: $disabled_border; }
 QTextEdit#ChatTranscript {
     background: transparent;
     border: none;
@@ -324,6 +327,9 @@ QFrame#ChatSidebarActions QToolButton#ChatIconButton { border-radius: 7px; }
 QToolButton#ChatStop { background: transparent; }
 QToolButton#ChatStop:hover { background: $danger_soft; }
 QToolButton#ChatStop:disabled { background: transparent; }
+QToolButton#ChatStop:disabled, QToolButton#ChatSend:disabled, QToolButton#ChatIconButton:disabled {
+    color: $disabled_fg;
+}
 /* 发送按钮与设置齿轮同为无边框透明底：只靠图标色与 hover 底色区分主次。 */
 QToolButton#ChatSend { background: transparent; }
 QToolButton#ChatSend:hover { background: $accent_soft; }
@@ -355,6 +361,9 @@ QToolButton#ToggleChip:checked {
     color: $accent;
 }
 QToolButton#ToggleChip:checked:hover { background: $accent_soft_strong; }
+/* 禁用态放在 checked 之后：同特异性下后者生效，避免选中胶囊仍然亮着强调色。 */
+QToolButton#ToggleChip:disabled { background: $disabled_bg; color: $disabled_fg; }
+QToolButton#ToggleChip:checked:disabled { background: $disabled_bg; color: $disabled_fg; }
 QPushButton#ChoiceCard {
     background: $surface;
     border: 1px solid $border;
@@ -431,7 +440,7 @@ QPushButton#Ghost:hover {
     color: $text;
 }
 QPushButton#Ghost:pressed { background: $surface_active; }
-QPushButton#Ghost:disabled { color: $muted; border-color: $border; background: transparent; }
+QPushButton#Ghost:disabled { color: $disabled_fg; border-color: $disabled_border; background: transparent; }
 /* 选中行卡底色更深，Ghost 默认的 border 与底色接近；换成强调色边框，保证配置等
    次要动作在选中行里仍能看见边框。这是行卡 + Ghost 的公共契约，各应用无需重复写。 */
 QFrame#RecommendationRow[selected="true"] QPushButton#Ghost,
@@ -449,7 +458,8 @@ QFrame[itemRow="true"][selected="true"] QPushButton#Ghost:hover {
 QFrame#RecommendationRow[selected="true"] QPushButton#Ghost:disabled,
 QFrame#EngineRow[selected="true"] QPushButton#Ghost:disabled,
 QFrame[itemRow="true"][selected="true"] QPushButton#Ghost:disabled {
-    border-color: $border_strong;
+    border-color: $disabled_border;
+    color: $disabled_fg;
 }
 QPushButton#FilterChip {
     background: $surface;
@@ -476,10 +486,16 @@ QPushButton#Link {
 }
 QPushButton#Link:hover { color: $accent_hover; }
 QPushButton#Link:pressed { color: $accent_pressed; }
-QPushButton#Link:disabled { color: $muted; }
+QPushButton#Link:disabled { color: $disabled_fg; }
+QPushButton#FilterChip:disabled {
+    background: $disabled_bg;
+    border-color: $disabled_border;
+    color: $disabled_fg;
+}
 
 QToolButton { border: 1px solid $border; border-radius: 6px; background: $surface_hover; padding: 4px 8px; }
 QToolButton:hover { background: $surface_active; }
+QToolButton:disabled { background: $disabled_bg; border-color: $disabled_border; color: $disabled_fg; }
 QToolButton#Collapsible {
     border: none;
     background: transparent;
@@ -503,6 +519,8 @@ QToolButton#IconButton {
 }
 QToolButton#IconButton:hover { background: $surface_hover; color: $text; }
 QToolButton#IconButton:checked { background: $accent_soft_strong; color: $accent; border-color: $accent; }
+QToolButton#IconButton:disabled { background: transparent; border-color: $disabled_border; color: $disabled_fg; }
+QToolButton#IconButton:checked:disabled { background: $disabled_bg; color: $disabled_fg; border-color: $disabled_border; }
 QPushButton#NavButton {
     background: transparent;
     border: none;
@@ -523,6 +541,7 @@ QPushButton#NavButton:checked {
     border-left: 3px solid $accent;
     font-weight: 600;
 }
+QPushButton#NavButton:disabled { background: transparent; color: $disabled_fg; border-left-color: transparent; }
 QToolButton#SidebarToggle {
     background: transparent;
     border: none;
@@ -535,6 +554,8 @@ QToolButton#SidebarToggle {
     max-height: 36px;
 }
 QToolButton#SidebarToggle:hover { background: $surface_hover; color: $text; }
+QToolButton#SidebarToggle:disabled { background: transparent; color: $disabled_fg; }
+QToolButton#Collapsible:disabled { color: $disabled_fg; }
 
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     background: $surface;
@@ -558,7 +579,11 @@ QPlainTextEdit, QTextEdit {
 }
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus,
 QSpinBox:focus, QDoubleSpinBox:focus { border-color: $accent; }
-QLineEdit:disabled, QComboBox:disabled { color: $muted; background: $surface_hover; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
+    color: $disabled_fg;
+    background: $disabled_bg;
+    border-color: $disabled_border;
+}
 QLineEdit[readOnly="true"] { color: $muted; background: $surface_hover; }
 QComboBox::drop-down { border: none; width: 20px; }
 QComboBox QAbstractItemView {
@@ -757,10 +782,12 @@ QPushButton#InstalledButton, QPushButton#ConvertedButton {
     border: 1px solid $success;
     font-weight: 600;
 }
+/* 「已安装 / 已转换」按钮的禁用态是完成标记，不是不可用：保留成功色，
+   只用更淡的边框弱化可点击感。 */
 QPushButton#InstalledButton:disabled, QPushButton#ConvertedButton:disabled {
     color: $success;
     background: $success_soft;
-    border: 1px solid $success;
+    border: 1px solid $success_soft_strong;
 }
 QLabel#DownloadProgress {
     color: $warning;
@@ -941,7 +968,7 @@ def _qt_palette(theme: Theme, app: Any) -> Any:  # pragma: no cover - 需要 PyS
     for role, color in roles.items():
         palette.setColor(role, QColor(color))
     for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
-        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(colors.muted))
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(colors.disabled_fg))
     del app
     return palette
 

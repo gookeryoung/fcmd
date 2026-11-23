@@ -100,6 +100,29 @@ def test_mono_candidates_prefer_cascadia_code() -> None:
 
 
 # ---------------------------------------------------------------------- #
+# 禁用态调色板：每套主题都要把「可用」与「禁用」拉开对比
+# ---------------------------------------------------------------------- #
+def _contrast(first: str, second: str) -> float:
+    """WCAG 对比度（1–21）；用于断言禁用态确实比可用态退后一档。"""
+    high, low = sorted((_guitheme.relative_luminance(first), _guitheme.relative_luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+@pytest.mark.parametrize("name", list(_guitheme.theme_names()))
+def test_disabled_palette_is_a_clear_step_down(name: str) -> None:
+    """禁用文字 / 底色既不同于正文，也不同于 muted，且对比明显低于可用态。"""
+    palette = _guitheme.resolve_theme(name).palette
+    assert palette.disabled_fg not in (palette.text, palette.muted)
+    assert palette.disabled_bg not in (palette.surface_hover, palette.surface_active)
+    assert palette.disabled_border != palette.border
+    enabled = _contrast(palette.text, palette.surface_hover)
+    disabled = _contrast(palette.disabled_fg, palette.disabled_bg)
+    # 禁用态要比可用态明显退后，但仍保持可辨认（>= 3:1，防止淡到看不见）。
+    assert disabled <= enabled - 4
+    assert disabled >= 3.0
+
+
+# ---------------------------------------------------------------------- #
 # 主题覆盖：调色板 / 字号 / 度量，全局段与按窗口段
 # ---------------------------------------------------------------------- #
 def test_builtin_themes_expose_default_metrics() -> None:

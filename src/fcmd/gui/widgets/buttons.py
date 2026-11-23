@@ -202,8 +202,10 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         painter.drawText(x - ink.left(), baseline, text)
 
     def _content_color(self) -> QColor:
-        """内容色与 QSS 语义色一致：选中 accent、悬停 text、其余 muted。"""
+        """内容色与 QSS 语义色一致：禁用 disabled、选中 accent、悬停 text、其余 muted。"""
         palette = _qt_theme.active_theme().palette
+        if not self.isEnabled():
+            return QColor(palette.disabled_fg)
         if self.isChecked():
             return QColor(palette.accent)
         if self._hovered:
@@ -227,13 +229,22 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
             return
         from fcmd.gui.icons import set_icon
 
-        if self.isChecked():
+        if not self.isEnabled():
+            tone = "disabled_fg"
+        elif self.isChecked():
             tone = "accent"
         elif self._hovered:
             tone = "text"
         else:
             tone = "muted"
         set_icon(self, self._icon_name, tone=tone)
+
+    def changeEvent(self, event: QEvent) -> None:  # pragma: no cover - Qt 控件
+        """启用 / 禁用切换时重绘自绘内容与图标（QSS 不会触发 paintEvent 之外的更新）。"""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            self._refresh_icon()
+            self.update()
 
 
 def confirm(parent: QWidget, title: str, text: str) -> bool:

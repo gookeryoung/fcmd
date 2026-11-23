@@ -89,6 +89,9 @@ class ChatPage(AppPage):
 
 - 全局 `overrides` 对所有窗口生效，`apps.<config_name>` 再按窗口叠加（窗口段优先）；
 - 键名与 `Palette` 字段 / `font_small|font_body|font_heading|font_title` / `Metrics` 字段同名；
+- 禁用态用独立 token `disabled_bg` / `disabled_fg` / `disabled_border`：只用 `muted` + `surface`
+  时浅色主题里禁用按钮会比可用按钮更亮、深色主题里文字仍偏亮，可直接在 `overrides`
+  里单独调这一组，不必改 QSS；
 - 值非法（非 `#rrggbb`、字号越界、内边距不是 `em|px`）时逐项忽略，主题仍可用；
 - 主题菜单切换只改 `theme` 字段，覆盖段原样保留。
 

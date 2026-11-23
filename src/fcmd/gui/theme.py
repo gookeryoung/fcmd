@@ -76,6 +76,11 @@ class Palette:
     前景层次：``text``（正文）> ``muted``（次要说明）。``accent`` 系列用于
     强调、选中和进度，``select_*`` 专门给 Text / Listbox 的文本选区，
     ``log_bg`` / ``log_fg`` 给日志与代码文本。
+
+    禁用态单独占一组 token（``disabled_bg`` / ``disabled_fg`` /
+    ``disabled_border``）：只把 ``muted`` + ``surface`` 拿来当禁用色时，浅色主题里
+    禁用按钮会比可用按钮更亮、深色主题里文字仍偏亮，两种状态都不容易分辨。
+    这组色按「比常态更平、更退后」单独调，各主题可以各自拉开对比。
     """
 
     background: str = "#0b1220"
@@ -99,6 +104,9 @@ class Palette:
     warning: str = "#fbbf24"
     danger: str = "#f87171"
     stripe: str = "#1c2940"
+    disabled_bg: str = "#0e1724"
+    disabled_fg: str = "#5d6d80"
+    disabled_border: str = "#26364c"
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +284,9 @@ _LIGHT = Theme(
         warning="#b45309",
         danger="#b91c1c",
         stripe="#edf1f7",
+        disabled_bg="#f7f9fc",
+        disabled_fg="#84909f",
+        disabled_border="#dde4ed",
     ),
     description="浅色底 + 蓝色强调，适合白天办公、投影与浅色桌面。",
 )
@@ -305,6 +316,9 @@ _HIGH_CONTRAST = Theme(
         warning="#ffb000",
         danger="#ff5555",
         stripe="#1e1e1e",
+        disabled_bg="#0a0a0a",
+        disabled_fg="#8a8a8a",
+        disabled_border="#5a5a5a",
     ),
     description="纯黑底 + 白字 + 黄色强调，优先低视力与强光环境可读性。",
 )
@@ -334,6 +348,9 @@ _NATIVE = Theme(
         warning="#9d5d00",
         danger="#c42b1c",
         stripe="#eef1f5",
+        disabled_bg="#f4f4f4",
+        disabled_fg="#8a8a8a",
+        disabled_border="#d8d8d8",
     ),
     native=True,
     description="浅灰系统色 + 蓝色强调，保留系统原生观感，主题化收敛到字体与强调色。",
