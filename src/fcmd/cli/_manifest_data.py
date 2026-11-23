@@ -305,7 +305,7 @@ HELP: dict[str, str] = {
     "envw": "usage: envw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开环境变量编辑器窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "filecheck": "usage: filecheck [-h] [--path PATH] [--workers WORKERS] [--chunk-kb CHUNK_KB]\n                 [--all-files] [--dry-run] [-q] [--strategy STRATEGY]\n\n文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数\n\noptions:\n  -h, --help           show this help message and exit\n  --path PATH          要检查的根目录（默认：当前路径）\n  --workers WORKERS    并发检查线程数（默认：CPU 核数的 2 倍，上限 16）\n  --chunk-kb CHUNK_KB  每个文件头尾各读取的大小，单位 KB（默认：64）\n  --all-files          检查所有文件而不仅是视频文件\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "filedate": "filedate 子命令\n+--------------------------------+\n| 子命令 | 说明                  |\n|--------+-----------------------|\n| add    | 添加/更新文件日期前缀 |\n| clear  | 清除文件日期前缀      |\n+--------------------------------+\n",
-    "filelevel": "filelevel 子命令\n+-----------------------+\n| 子命令 | 说明         |\n|--------+--------------|\n| set    | 设置文件等级 |\n+-----------------------+\n",
+    "filelevel": "filelevel 子命令\n+------------------------------+\n| 子命令 | 说明                |\n|--------+---------------------|\n| config | 查看 / 修改等级配置 |\n| set    | 设置文件等级        |\n+------------------------------+\n",
     "filerename": "filerename 子命令\n+------------------------------------+\n| 子命令  | 说明                     |\n|---------+--------------------------|\n| case    | 转换文件名大小写         |\n| insert  | 在文件名指定位置插入文本 |\n| replace | 正则替换文件名主干       |\n+------------------------------------+\n",
     "filescan": "filescan 子命令\n+---------------------------------+\n| 子命令 | 说明                   |\n|--------+------------------------|\n| rules  | 查看、校验或导出规则集 |\n| run    | 按配置文件执行扫描     |\n| scan   | 扫描目录中的敏感内容   |\n+---------------------------------+\n",
     "filescanw": "usage: filescanw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开敏感内容扫描窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
@@ -530,11 +530,11 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "f12ea668eb850092b98a336331a7601f"
+DIGEST = "a511bfbfeffc67ef158887976f61be06"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 115
-SUBCOMMAND_TOTAL = 398
+SUBCOMMAND_TOTAL = 399
 
 
 if __name__ == "__main__":  # pragma: no cover

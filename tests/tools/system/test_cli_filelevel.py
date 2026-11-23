@@ -13,6 +13,15 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
+from fcmd.infras.fs import config_path, default_config
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """等级配置写到测试隔离目录，避免读 / 写开发机的 ~/.fcmd。"""
+    home = tmp_path / "fcmd-home"
+    monkeypatch.setenv("FCMD_HOME", str(home))
+    return home
 
 
 class TestRegistration:
@@ -21,7 +30,7 @@ class TestRegistration:
     def test_registered(self) -> None:
         """filelevel 已注册且含 set 子命令。"""
         assert "filelevel" in list_tools()
-        assert set(list_subcommands("filelevel")) == {"set"}
+        assert set(list_subcommands("filelevel")) == {"set", "config"}
 
 
 class TestFilelevelRun:
@@ -92,6 +101,72 @@ class TestFilelevelRun:
         """文件不存在时提示后继续，退出码 0。"""
         assert run_tool("filelevel", ["set", str(tmp_path / "missing.pdf")]) == 0
         assert "文件不存在" in capsys.readouterr().out
+
+    def test_config_shows_defaults_and_path(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """默认只展示：等级映射与配置文件路径都能看到。"""
+        assert run_tool("filelevel", ["config"]) == 0
+        out = capsys.readouterr().out
+        assert str(config_path()) in out
+        assert "1: PUB,NOR" in out
+        assert "括号:" in out
+        assert not config_path().exists()
+
+    def test_config_init_writes_defaults(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--init 在配置缺失时落一份默认配置。"""
+        assert run_tool("filelevel", ["config", "--init"]) == 0
+        assert config_path().exists()
+        assert "已写入默认配置" in capsys.readouterr().out
+        # 再次 --init 不覆盖已有文件。
+        assert run_tool("filelevel", ["config", "--init"]) == 0
+        assert "已存在" in capsys.readouterr().out
+
+    def test_config_level_override_changes_set_behavior(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """改等级映射后，下一次 set 立即用新标记。"""
+        assert run_tool("filelevel", ["config", "--level", "1=PUBLIC"]) == 0
+        f = tmp_path / "report.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "1"]) == 0
+        assert (tmp_path / "report(PUBLIC).pdf").exists()
+        assert "已保存配置" in capsys.readouterr().out
+
+    def test_config_brackets_override_changes_clearing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """改括号字符集后，新括号包裹的标记也会被清除。"""
+        assert run_tool("filelevel", ["config", "--bracket-left", " ({", "--bracket-right", " )}"]) == 0
+        f = tmp_path / "report{PUB}.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "0"]) == 0
+        assert (tmp_path / "report.pdf").exists()
+        assert "已保存配置" in capsys.readouterr().out
+
+    def test_config_reset_restores_defaults(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--reset 覆盖自定义等级，恢复内置默认值。"""
+        assert run_tool("filelevel", ["config", "--level", "1=SECRET"]) == 0
+        assert run_tool("filelevel", ["config", "--reset"]) == 0
+        from fcmd.infras.jsonio import read_json_file
+
+        raw = read_json_file(config_path())
+        assert raw["levels"] == default_config().levels
+        assert "已重置" in capsys.readouterr().out
+
+    def test_config_rejects_unknown_level(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """只能修改已有等级，越界等级返回失败。"""
+        assert run_tool("filelevel", ["config", "--level", "9=X"]) == 1
+        assert "未定义" in capsys.readouterr().out
+
+    def test_broken_config_falls_back_with_warning(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """配置文件损坏时回落默认值并给提示，不影响 set。"""
+        config_path().parent.mkdir(parents=True, exist_ok=True)
+        config_path().write_text("{not json", encoding="utf-8")
+        assert run_tool("filelevel", ["config"]) == 0
+        assert "内置默认值" in capsys.readouterr().out
+        f = tmp_path / "a.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "2"]) == 0
+        assert (tmp_path / "a(INT).pdf").exists()
 
     def test_invalid_level_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """无效等级 → 任务失败汇总 + 退出码 1。"""
