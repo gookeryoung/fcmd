@@ -26,6 +26,8 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         status: _owner._initenv.EnvStatus | None = None,
         on_detected: Any = None,
         state_provider: Any = None,
+        package_mirror: str = _owner._initenv.PACKAGE_MIRROR_AUTO,
+        on_package_mirror_changed: Any = None,
     ) -> None:
         super().__init__("初始化环境", parent)
         self._distro = distro
@@ -33,11 +35,15 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self._selected = None if selected is None else {key for key in selected if key in _owner._initenv.task_keys()}
         """上次保存的勾选（``None`` 表示未保存过，按默认勾选）。"""
         self._on_detected = on_detected
+        self._on_package_mirror_changed = on_package_mirror_changed
         self.setToolTip(_owner._INIT_ENV_HINT)
         self._status: _owner._initenv.EnvStatus | None = None
         self._done: set[str] = set()
         """检测结果里已就绪的项目 key；这些勾选框保持勾选 + 禁用，并显示绿色标签。"""
+        self._tasks = {task.key: task for task in _owner._initenv.TASKS}
         self._busy = False
+        self._package_mirror_dirty = False
+        """软件包源改过（或探测到的 pip/uv 索引不匹配）时，下次初始化先同步配置。"""
         self._closing = False
         self._refresh_after_run = False
         self._keepalive = False
@@ -139,6 +145,27 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self.body.addWidget(self.details)
         self.details.setVisible(False)
 
+        # 软件包源独立于系统镜像源：只影响 pip / uv，可选跟随系统源或指定源。
+        source_row = _owner.QHBoxLayout()
+        source_row.setContentsMargins(0, 0, 0, 0)
+        source_row.setSpacing(6)
+        source_row.addWidget(_owner.QLabel("软件包源", self))
+        self.package_mirror = _owner.QComboBox(self)
+        for key, label in _owner._initenv.PACKAGE_MIRROR_CHOICES:
+            self.package_mirror.addItem(label, key)
+        selected_mirror = _owner._initenv.normalize_package_mirror(package_mirror)
+        self.package_mirror.setCurrentIndex(max(self.package_mirror.findData(selected_mirror), 0))
+        self.package_mirror.setToolTip(
+            "独立于系统镜像源（APT / YUM），只影响 pip / uv 的索引；"
+            "「自动」表示跟随当前系统镜像源。npm / bun 仍使用 npmmirror。"
+        )
+        self.package_mirror.currentIndexChanged.connect(self._on_package_mirror_index_changed)
+        source_row.addWidget(self.package_mirror)
+        source_row.addWidget(
+            _owner.hint_label("独立于系统镜像源；仅影响 pip / uv，npm / bun 仍用 npmmirror。", wrap=False), 1
+        )
+        self.body.addLayout(source_row)
+
         # 动作行固定在卡片里，不随详情显隐：收起态下也能全选 / 检测 / 复制 / 初始化。
         actions = _owner.QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
@@ -190,16 +217,28 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             _owner.QTimer.singleShot(0, lambda w=window: w.adjustSize())
 
     def _sync_collapsed_view(self) -> None:
-        """收起：只显示已初始化情况；展开：额外显示勾选、状态与日志（动作行始终显示）。"""
+        """收起：显示全部项目的初始化状态；展开：额外显示勾选、状态与日志。
+
+        检测完成后，已就绪项目用绿色短标签、未就绪项目用红色短标签；不再只展示
+        「已初始化」的项目，避免用户以为没显示的项目也已完成。
+        """
         if self._status is None:
             hint = "尚未检测环境。"
-        elif not self._done:
-            hint = "尚未检测到已初始化的项目。"
-        else:
+        elif len(self._done) == len(self.checks):
             hint = "已初始化："
+        elif not self._done:
+            hint = "未初始化："
+        else:
+            hint = "初始化状态："
         self.collapsed_hint.setText(hint)
         for key, tag in self._collapsed_tags.items():
-            tag.setVisible(self._collapsed and key in self._done)
+            if self._status is None:
+                tag.setVisible(False)
+                continue
+            done = key in self._done
+            tag.set_status(_owner._initenv.short_label(key), "success" if done else "danger")
+            tag.setToolTip(f"{self._tasks[key].label}：{'已初始化' if done else '未初始化'}")
+            tag.setVisible(self._collapsed)
         self.collapsed_hint.setVisible(self._collapsed)
         self.summary.setVisible(not self._collapsed)
         self.details.setVisible(not self._collapsed)
@@ -223,6 +262,26 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         if self._selected is not None:
             return key in self._selected
         return _owner._initenv.default_checked(key, _owner._initenv.EnvStatus())
+
+    def package_mirror_key(self) -> str:
+        """当前选择的软件包源 key。"""
+        value = self.package_mirror.currentData()
+        return _owner._initenv.normalize_package_mirror(value if isinstance(value, str) else "")
+
+    def _on_package_mirror_index_changed(self, _index: int) -> None:
+        self._package_mirror_dirty = True
+        if callable(self._on_package_mirror_changed):
+            self._on_package_mirror_changed(self.package_mirror_key())
+        self._sync_check_states()
+
+    def _package_mirror_pending(self, status: _owner._initenv.EnvStatus) -> bool:
+        """显式软件包源与实例里的 pip / uv 索引不一致时，视为待同步。"""
+        expected = _owner._initenv.pypi_index_for_package_mirror(self.package_mirror_key())
+        if not expected:
+            return self._package_mirror_dirty
+        pip_ok = (status.pip_index or "").rstrip("/") == expected.rstrip("/")
+        uv_ok = (status.uv_index or "").rstrip("/") == expected.rstrip("/")
+        return not (pip_ok and uv_ok)
 
     def selected_keys(self) -> tuple[str, ...]:
         """当前勾选且未就绪的项目 key，用于保存「已设置参数」。"""
@@ -265,6 +324,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
     def _apply_status(self, status: _owner._initenv.EnvStatus) -> None:
         """回填详情；已就绪的项目勾选 + 禁用 + 绿色标签，其余按「尚未完成」默认勾选。"""
         self._status = status
+        self._package_mirror_dirty = self._package_mirror_pending(status)
         self._done = {key for key in self.checks if _owner._initenv.present(key, status)}
         summary = _owner._initenv.summary_text(status)
         self.summary.setText(summary)
@@ -311,14 +371,33 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
     # 检测 / 执行
     # ------------------------------------------------------------------ #
     def _sync_check_states(self) -> None:
-        """按「已就绪 / 执行中」同步勾选框、绿色标签与「开始初始化」可用性。"""
+        """按「已就绪 / 执行中」同步勾选框、状态标签与「开始初始化」可用性。
+
+        检测完成后每个项目都显示标签：已就绪＝绿色「已初始化」，未就绪＝红色
+        「未初始化」；检测前保持隐藏，避免把「还没检测」误报成未初始化。
+        """
+        checked = self._status is not None
         all_done = bool(self.checks) and len(self._done) == len(self.checks)
+        needs_source = self._package_mirror_dirty
         for key, box in self.checks.items():
             done = key in self._done
             box.setEnabled(not self._busy and not done)
-            self.status_tags[key].setVisible(done)
-        self.run_button.setEnabled(not self._busy and not all_done)
-        self.run_button.setToolTip("所有项目均已初始化，无需重复执行" if all_done else "")
+            tag = self.status_tags[key]
+            tag.setVisible(checked)
+            if checked:
+                tag.set_status("已初始化" if done else "未初始化", "success" if done else "danger")
+                tag.setToolTip(
+                    "环境已就绪：保持勾选但不可再执行，需要重跑时请手动在实例内操作"
+                    if done
+                    else f"{self._tasks[key].label}尚未初始化：勾选后点「开始初始化」"
+                )
+        self.run_button.setEnabled(not self._busy and (not all_done or needs_source))
+        if all_done and needs_source:
+            self.run_button.setToolTip("软件包源已修改：点「开始初始化」更新 pip / uv 镜像")
+        elif all_done:
+            self.run_button.setToolTip("所有项目均已初始化，无需重复执行")
+        else:
+            self.run_button.setToolTip("")
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -391,7 +470,8 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
     def _run_selected(self) -> None:
         # 已就绪的项目是禁用状态，勾着也不重新执行。
         keys = [key for key, box in self.checks.items() if box.isChecked() and box.isEnabled()]
-        if not keys:
+        needs_source = self._package_mirror_dirty
+        if not keys and not needs_source:
             _owner.QMessageBox.information(self, "未选择项目", "请至少勾选一项初始化内容。")
             return
         state = self._current_state()
@@ -403,10 +483,16 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             self.summary.setText("已取消初始化（实例未运行）")
             return
         self._keepalive = state != "running"
-        steps = _owner._initenv.steps_for(keys)
+        steps: list[_owner._initenv.InitStep] = []
+        if needs_source:
+            steps.extend(_owner._initenv.package_source_steps(self.package_mirror_key()))
+        steps.extend(_owner._initenv.steps_for(keys, package_mirror=self.package_mirror_key()))
         self._set_busy(True)
         self._refresh_after_run = False
-        self._append_log("开始初始化：" + "、".join(_owner._initenv.task_labels(keys)))
+        labels = list(_owner._initenv.task_labels(keys))
+        if needs_source:
+            labels.insert(0, "软件包源")
+        self._append_log("开始初始化：" + "、".join(labels))
         _owner.submit_daemon(
             lambda: self._execute(steps),
             on_done=self._run_done,
@@ -444,6 +530,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
 
     def _run_done(self, message: str) -> None:
         self._refresh_after_run = True
+        self._package_mirror_dirty = False
         self._append_log(message)
         self.summary.setText("初始化完成，正在刷新环境…")
 

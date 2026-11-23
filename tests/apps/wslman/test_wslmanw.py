@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.wslman import _initenv, _open, wslmanw
+from fcmd.apps.wslman import _initenv, _open, _sshfiles, wslmanw
 from fcmd.apps.wslman._distro import Distro, DistroView
 from fcmd.apps.wslman._errors import not_found
 from fcmd.apps.wslman._registry import RegistrySnapshot
@@ -116,7 +116,9 @@ def test_settings_mapping_is_json_friendly() -> None:
         "distro_terminal_dirs": {},
         "dialog_geometry": {},
         "distro_init_tasks": {},
+        "distro_package_mirrors": {},
         "distro_env_status": {},
+        "distro_ssh_status": {},
         "distro_opener_paths": {},
         "openers": {
             "ide": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_IDE)],
@@ -155,6 +157,24 @@ def test_env_status_and_opener_paths_cache_roundtrip() -> None:
     cleared = wslmanw.with_opener_paths(restored, "Ubuntu", {})
     assert wslmanw.opener_paths_for(cleared, "Ubuntu") == {}
     assert wslmanw.env_status_for(cleared, "Missing") is None
+
+
+def test_ssh_status_cache_roundtrip() -> None:
+    """「迁移 SSH 文件」上次扫描状态随设置文件往返，打开配置直接回显。"""
+    snapshot = _sshfiles.build_snapshot(
+        (_sshfiles.SshFile("id_ed25519", 10, "private"),),
+        _sshfiles.SshTarget(dir="/home/me/.ssh", files=(_sshfiles.RemoteFile("id_ed25519", "600", 10),)),
+        _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", "C:/Users/me/.ssh"),
+        stamp=1700000000.0,
+    )
+    settings = wslmanw.with_ssh_status(wslmanw.WslmanwSettings(), "Ubuntu", snapshot)
+    restored = wslmanw.settings_from_mapping(wslmanw.settings_to_mapping(settings))
+    assert wslmanw.ssh_status_for(restored, "Ubuntu") == snapshot
+    assert wslmanw.ssh_status_for(restored, "Missing") is None
+    # 坏行（不是映射 / 缺标签）按「没有缓存」处理，不影响打开配置。
+    broken = wslmanw.settings_from_mapping({"distro_ssh_status": {"Ubuntu": "nope", "Debian": {}}})
+    assert wslmanw.ssh_status_for(broken, "Ubuntu") is None
+    assert wslmanw.ssh_status_for(broken, "Debian") is None
 
 
 def test_terminal_cwd_roundtrip_and_default(tmp_path: Path) -> None:
@@ -206,6 +226,31 @@ def test_init_task_keys_roundtrip_and_validation() -> None:
     assert wslmanw.settings_from_mapping(raw).distro_init_tasks == {"Ubuntu": ("python", "node")}
     dirty = wslmanw.settings_from_mapping({"distro_init_tasks": {"Alt": ["rust", 1], "Bad": "python"}})
     assert dirty.distro_init_tasks == {"Alt": ("rust",)}
+
+
+def test_package_mirror_roundtrip_and_validation() -> None:
+    """软件包源按实例保存：自动值不落盘，非法值回落 auto，序列化可往返。"""
+    settings = wslmanw.WslmanwSettings()
+    assert wslmanw.package_mirror_for(settings, "Ubuntu") == "auto"
+    settings = wslmanw.with_package_mirror(settings, "Ubuntu", "mirrors.ustc.edu.cn")
+    settings = wslmanw.with_package_mirror(settings, "Debian", "official")
+    assert wslmanw.package_mirror_for(settings, "ubuntu") == "mirrors.ustc.edu.cn"
+    assert wslmanw.package_mirror_for(settings, "Debian") == "official"
+    assert wslmanw.package_mirror_for(settings, "Kali") == "auto"
+
+    raw = wslmanw.settings_to_mapping(settings)
+    assert raw["distro_package_mirrors"] == {"Ubuntu": "mirrors.ustc.edu.cn", "Debian": "official"}
+    assert wslmanw.settings_from_mapping(raw).distro_package_mirrors == {
+        "Ubuntu": "mirrors.ustc.edu.cn",
+        "Debian": "official",
+    }
+
+    cleared = wslmanw.with_package_mirror(settings, "ubuntu", "auto")
+    assert wslmanw.package_mirror_for(cleared, "Ubuntu") == "auto"
+    dirty = wslmanw.settings_from_mapping(
+        {"distro_package_mirrors": {"A": "bogus", "B": "mirrors.ustc.edu.cn", 3: "official"}}
+    )
+    assert dirty.distro_package_mirrors == {"B": "mirrors.ustc.edu.cn"}
 
 
 def test_image_view_options_fall_back_on_bad_values() -> None:

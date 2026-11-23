@@ -12,10 +12,15 @@
 - 推进 ADR 0046 P2/P3：`WslmanQtWindow` 方法拆为 10 个 `qt/*.py` mixin，行卡/详情、
   初始化环境、SSH 迁移段落独立成模块；`_wslmanw_qt.py` 约 5.3k → 480 行。
 - `wslmanw`「初始化环境」加 `uv`、Node.js 改为 nvm + Bun，并统一国内加速口径：
-  APT 已装包跳过 + 索引新鲜不重复 `update`，pip / uv 索引走清华（uv 用 `pip --user` 装、
-  Python 下载走 npmmirror），nvm 源码走 gitee + node 二进制走 npmmirror，Bun 走
-  `npm i -g bun`（二进制随 npm 包分发），不再依赖 GitHub / astral.sh；
-  状态区新增 `uv` / `Bun` / `Node.js（nvm）` 与合并后的 `pip&uv` / `npm&bun` 镜像行。
+  APT 已装包跳过 + 索引新鲜不重复 `update`；pip / uv 索引由卡片里独立的
+  「软件包源」选择（自动跟随系统镜像，或指定中科大 / 阿里 / 腾讯 / 华为 / 清华 /
+  官方 PyPI），与 APT 系统源解耦；`uv` 用 `pip --user` 装、Python 下载走 npmmirror，
+  nvm 源码走 gitee + node 二进制走 npmmirror，Bun 走 `npm i -g bun`（二进制随 npm
+  包分发），不再依赖 GitHub / astral.sh；状态区新增 `uv` / `Bun` / `Node.js（nvm）`
+  与合并后的 `pip&uv` / `npm&bun` 镜像行。
+- 修改实例的软件包源后，即使 Python / uv 已初始化，点「开始初始化」也会先执行独立的
+  pip / uv 配置步骤（只改 `pip config` 与 `uv.toml`，不重装 uv、不碰系统源）；
+  环境检测的初始化项目标签同时覆盖两种状态：绿色「已初始化」/ 红色「未初始化」。
 - 修复 `wslmanw`「初始化环境」把 Kali 等自带 python3 的实例误判为未初始化：`uv` / `Bun`
   拆成独立初始化项目，每个项目只看自己那个工具（Python 只看 `python3`，`uv` 看 `uv`，
   `Bun` 看 `bun`，Node.js 看 `node` + nvm）；Bun 项自带 nvm 引导，只勾 Bun 也能装成。
@@ -25,6 +30,11 @@
   `FCMD_HOME` 指向临时目录），并拦截 `subprocess.run` / `Popen` / `os.startfile` /
   `QDesktopServices.openUrl`，跑测试不再碰真实 WSL、终端或 IDE；新增
   `tests/apps/wslman/test_wslman_hermetic.py` 自测这套替身。
+- `wslmanw`「迁移 SSH 文件」的状态持久化到 `wslmanw.json` 的 `distro_ssh_status`：
+  再次打开配置对话框直接回显上次扫描的标签 / 摘要 / 实例侧现状，不再为看一眼状态去
+  启动实例或重扫来源（文件清单仍要求重新扫描，迁移按钮在回显态下禁用）；
+  同时修掉设置保存用白名单式构造导致 `distro_env_status` / `distro_opener_paths` 等
+  缓存字段被静默丢弃的问题（改为 `replace(self.settings, …)`）。
 - 推进 ADR 0046 P4：llmw 模型页 `_BrowsePanel` 方法拆到 `apps/llm/qt/models_*.py`，
   `_llmw_qt_center.py` 约 2.3k → 499 行；P4 续拆 `RunPage` 到 `apps/llm/qt/run_*.py`，
   `_llmw_qt_run.py` 约 2.2k → 771 行；清理已失效的行数白名单项。

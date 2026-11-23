@@ -115,6 +115,40 @@ def test_pypi_index_follows_system_mirror() -> None:
     assert _initenv.pypi_index_for_mirror("example.com") == "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 
+def test_package_mirror_is_independent_from_system_mirror() -> None:
+    """软件包源可单独指定：不选自动时 pip / uv 用指定 PyPI，不再读系统源。"""
+    template = _initenv.steps_for(["uv"], package_mirror="mirrors.ustc.edu.cn")
+    script = template[1].script
+    assert "index='https://mirrors.ustc.edu.cn/pypi/simple'" in script
+    assert "/etc/apt/sources.list" not in script
+    assert "for domain in" not in script
+
+    official = _initenv.steps_for(["python"], package_mirror="official")[1].script
+    assert "index='https://pypi.org/simple'" in official
+    assert "for domain in" not in official
+
+    # 自动仍按系统镜像检测，旧行为保持可用。
+    auto = _initenv.steps_for(["python"])[1].script
+    assert "for domain in" in auto
+    assert "mirrors.ustc.edu.cn) index='https://mirrors.ustc.edu.cn/pypi/simple'" in auto
+    assert _initenv.pypi_index_for_package_mirror("mirrors.ustc.edu.cn") == ("https://mirrors.ustc.edu.cn/pypi/simple")
+    assert _initenv.pypi_index_for_package_mirror("bogus") == ""
+    assert _initenv.normalize_package_mirror("bogus") == _initenv.PACKAGE_MIRROR_AUTO
+
+
+def test_package_source_steps_update_runtime_without_reinstalling() -> None:
+    """软件包源变更用独立步骤同步 pip / uv 配置，不重装 uv、不碰系统源。"""
+    steps = _initenv.package_source_steps("mirrors.ustc.edu.cn")
+    assert [step.label for step in steps] == ["配置软件包镜像"]
+    script = steps[0].script
+    assert "index='https://mirrors.ustc.edu.cn/pypi/simple'" in script
+    assert "python3 -m pip config set global.index-url" in script
+    assert "uv_toml.tmp" in script
+    assert 'python-install-mirror = "%s"' in script
+    assert "pip install --user" not in script
+    assert "/etc/apt/sources.list" not in script
+
+
 def test_python_script_only_configures_pip_mirror() -> None:
     """Python 项只管 python3 / pip：就绪判定只看 python3（Kali 自带时就该显示已初始化）。"""
     script = _initenv.steps_for(["python"])[1].script

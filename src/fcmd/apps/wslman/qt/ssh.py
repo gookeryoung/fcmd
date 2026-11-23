@@ -18,18 +18,21 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
     送进目标实例，命令行与日志里只有文件名和权限。
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - 缓存 / 回调 / 状态提供者都是可选注入点
         self,
         parent: _owner.QWidget,
         distro: Distro,
         *,
         instances: Sequence[str] = (),
+        status: _owner._sshfiles.MigrationSnapshot | None = None,
+        on_scanned: Any = None,
         state_provider: Any = None,
     ) -> None:
         super().__init__("迁移 SSH 文件", parent)
         self._distro = distro
         self._instances = tuple(instances)
         self._state_provider = state_provider
+        self._on_scanned = on_scanned
         self._busy = False
         self._closing = False
         self._files: dict[str, _owner._sshfiles.SshFile] = {}
@@ -163,6 +166,8 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
 
         self._sync_collapsed_view()
         self._sync_source_controls()
+        if status is not None:
+            self._apply_cached(status)
 
     @property
     def collapsed(self) -> bool:
@@ -361,23 +366,46 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         if self._closing:
             return
         files, target, source = result
+        snapshot = _owner._sshfiles.build_snapshot(files, target, source)
         self._source_snapshot = source
         self._files = {item.name: item for item in files}
         self._target = target
         self._rebuild_files()
         names = "、".join(item.name for item in files)
         self.file_hint.setText(f"找到 {len(files)} 个文件：{names}" if files else "来源没有可迁移的普通文件")
-        self.target_hint.setText(_owner._sshfiles.target_summary(target))
-        self.summary.setText(f"{source.label} {len(files)} 个文件 · 实例内 {len(target.files)} 个文件")
-        state = _owner._sshfiles.migration_state(files, target)
-        self.state_tag.set_status(state.label, state.tone)
-        self.state_tag.setToolTip(state.detail)
+        self.target_hint.setText(snapshot.target_summary)
+        self.summary.setText(snapshot.summary)
+        self.state_tag.set_status(snapshot.state.label, snapshot.state.tone)
+        self.state_tag.setToolTip(snapshot.state.detail)
         self.state_tag.setVisible(True)
-        self.collapsed_hint.setText(f"{source.label} {len(files)} 个文件")
+        self.collapsed_hint.setText(snapshot.collapsed_hint)
         self._append_log(f"扫描完成：来源 {source.display_path()}（{len(files)} 个文件）")
-        self._append_log(_owner._sshfiles.target_summary(target))
+        self._append_log(snapshot.target_summary)
         self._sync_source_controls()
         self._sync_actions()
+        self._sync_collapsed_view()
+        if callable(self._on_scanned):
+            self._on_scanned(snapshot)
+
+    def _apply_cached(self, snapshot: _owner._sshfiles.MigrationSnapshot) -> None:
+        """回显上次扫描状态：不启动实例、不重扫，只把标签与说明填回去。
+
+        文件清单与实例侧快照不恢复：迁移要按最新现状判断冲突与权限，标签上明确
+        写「上次扫描」并提示迁移前先扫描，避免照着旧结果写盘。
+        """
+        state = snapshot.state
+        self.state_tag.set_status(state.label, state.tone)
+        detail = state.detail
+        if snapshot.scanned_at:
+            detail = f"{detail}\n上次扫描：{snapshot.scanned_at}"
+        self.state_tag.setToolTip(detail)
+        self.state_tag.setVisible(True)
+        self.summary.setText(snapshot.summary)
+        self.collapsed_hint.setText(snapshot.collapsed_hint)
+        self.file_hint.setText("显示上次扫描结果；迁移前请点「扫描」确认来源与实例现状。")
+        self.target_hint.setText(snapshot.target_summary or "尚未检测实例的 ~/.ssh。")
+        source = f"（来源 {snapshot.source_path}）" if snapshot.source_path else ""
+        self._append_log(f"显示上次扫描结果：{state.label}{source}")
         self._sync_collapsed_view()
 
     def _scan_error(self, message: str) -> None:

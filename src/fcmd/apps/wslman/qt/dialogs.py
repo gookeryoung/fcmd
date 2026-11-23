@@ -100,11 +100,23 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
             status=cached_status,
             on_detected=lambda status: getattr(owner, "_save_env_status", lambda *_: None)(distro.name, status),
             state_provider=self._live_state,
+            package_mirror=w.package_mirror_for(settings, distro.name) if settings is not None else "auto",
+            on_package_mirror_changed=lambda value: getattr(owner, "_save_package_mirror", lambda *_: None)(
+                distro.name, value
+            ),
         )
         outer.addWidget(self.init_env)
 
         # SSH 迁移单独一张卡：要选来源目录、看冲突，比塞进「初始化环境」的勾选项更清楚。
-        self.ssh_migrate = _SshMigrateSection(self, distro, instances=instances, state_provider=self._live_state)
+        # 同样只回显上次扫描结果（不启动实例、不重扫），扫描完成后立即写回缓存。
+        self.ssh_migrate = _SshMigrateSection(
+            self,
+            distro,
+            instances=instances,
+            status=w.ssh_status_for(settings, distro.name) if settings is not None else None,
+            on_scanned=lambda snapshot: getattr(owner, "_save_ssh_status", lambda *_: None)(distro.name, snapshot),
+            state_provider=self._live_state,
+        )
         outer.addWidget(self.ssh_migrate)
 
         actions = QHBoxLayout()

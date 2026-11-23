@@ -18,6 +18,7 @@ import posixpath
 import re
 import shlex
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -34,6 +35,7 @@ __all__ = [
     "SOURCE_WSL",
     "SSH_DIR",
     "WRITE_PREFIX",
+    "MigrationSnapshot",
     "MigrationState",
     "RemoteFile",
     "SshFile",
@@ -56,6 +58,9 @@ __all__ = [
     "remote_path",
     "remote_read_argv",
     "scan_source",
+    "snapshot_from_mapping",
+    "snapshot_summary",
+    "snapshot_to_mapping",
     "source_file_path",
     "source_label",
     "target_summary",
@@ -257,6 +262,128 @@ class MigrationState:
 
 DONE_LABEL = "已完成迁移"
 """全部来源文件都已存在且权限正确时的标签文案。"""
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationSnapshot:
+    """一次扫描的可持久化结果：只留状态文案与计数，不留文件内容。
+
+    打开配置对话框时直接回显它，不为了看一眼状态去启动实例 / 重扫来源；
+    真要迁移时仍需重新扫描以拿到最新的实例侧现状（冲突与权限判断靠它）。
+    """
+
+    state: MigrationState
+    source_label: str = ""
+    source_path: str = ""
+    source_count: int = 0
+    target_count: int = 0
+    target_summary: str = ""
+    scanned_at: str = ""
+
+    @property
+    def summary(self) -> str:
+        """摘要行：``来源 N 个文件 · 实例内 M 个文件``。"""
+        return snapshot_summary(self)
+
+    @property
+    def collapsed_hint(self) -> str:
+        """收起态：``<来源> N 个文件``。"""
+        return f"{self.source_label or '来源'} {self.source_count} 个文件"
+
+
+_SNAPSHOT_FIELDS: tuple[str, ...] = (
+    "label",
+    "tone",
+    "detail",
+    "matched",
+    "total",
+    "source_label",
+    "source_path",
+    "source_count",
+    "target_count",
+    "target_summary",
+    "scanned_at",
+)
+"""``MigrationSnapshot`` 的持久化字段（全部存成字符串，与设置文件同口径）。"""
+
+
+def snapshot_to_mapping(snapshot: MigrationSnapshot) -> dict[str, str]:
+    """序列化成 JSON 友好的字符串映射。"""
+    state = snapshot.state
+    values = {
+        "label": state.label,
+        "tone": state.tone,
+        "detail": state.detail,
+        "matched": str(state.matched),
+        "total": str(state.total),
+        "source_label": snapshot.source_label,
+        "source_path": snapshot.source_path,
+        "source_count": str(snapshot.source_count),
+        "target_count": str(snapshot.target_count),
+        "target_summary": snapshot.target_summary,
+        "scanned_at": snapshot.scanned_at,
+    }
+    return {name: values.get(name, "") for name in _SNAPSHOT_FIELDS}
+
+
+def _count(raw: object) -> int:
+    """坏值（空串 / 非数字 / 负数）一律当 0。"""
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
+def snapshot_from_mapping(raw: object) -> MigrationSnapshot | None:
+    """从设置文件恢复上次扫描结果；没有标签（坏行 / 旧版本）时返回 ``None``。"""
+    if not isinstance(raw, Mapping):
+        return None
+    label = str(raw.get("label") or "").strip()
+    if not label:
+        return None
+    state = MigrationState(
+        label,
+        str(raw.get("tone") or "muted").strip() or "muted",
+        str(raw.get("detail") or "").strip(),
+        _count(raw.get("matched")),
+        _count(raw.get("total")),
+    )
+    return MigrationSnapshot(
+        state=state,
+        source_label=str(raw.get("source_label") or "").strip(),
+        source_path=str(raw.get("source_path") or "").strip(),
+        source_count=_count(raw.get("source_count")),
+        target_count=_count(raw.get("target_count")),
+        target_summary=str(raw.get("target_summary") or "").strip(),
+        scanned_at=str(raw.get("scanned_at") or "").strip(),
+    )
+
+
+def snapshot_summary(snapshot: MigrationSnapshot) -> str:
+    """摘要行文案：``Windows 宿主 5 个文件 · 实例内 3 个文件``。"""
+    label = snapshot.source_label or "来源"
+    return f"{label} {snapshot.source_count} 个文件 · 实例内 {snapshot.target_count} 个文件"
+
+
+def build_snapshot(
+    files: Sequence[SshFile],
+    target: SshTarget,
+    source: SshSource,
+    *,
+    stamp: float | None = None,
+) -> MigrationSnapshot:
+    """把一次扫描结果压成可持久化的状态（不含文件内容）。"""
+    now = time.time() if stamp is None else stamp
+    return MigrationSnapshot(
+        state=migration_state(files, target),
+        source_label=source.label,
+        source_path=source.display_path(),
+        source_count=len(files),
+        target_count=len(target.files),
+        target_summary=target_summary(target),
+        scanned_at=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+    )
 
 
 def default_source_dir() -> Path:

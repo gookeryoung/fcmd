@@ -392,3 +392,45 @@ def test_parse_write_result_reads_last_marker() -> None:
     text = "已写入 ~/.ssh/id_ed25519（权限 600）\nWSLSSH_WRITTEN=600|me\nWSLSSH_WRITTEN=640|me\n"
     assert _sshfiles.parse_write_result(text) == ("640", "me")
     assert _sshfiles.parse_write_result("no marker") == ("", "")
+
+
+def test_build_snapshot_carries_state_counts_and_source() -> None:
+    """扫描结果能压成可持久化的状态：标签 / 计数 / 来源 / 实例侧摘要。"""
+    files = (
+        _sshfiles.SshFile("id_ed25519", 10, "private"),
+        _sshfiles.SshFile("config", 5, "config"),
+    )
+    target = _sshfiles.SshTarget(dir="/home/me/.ssh", files=(_sshfiles.RemoteFile("config", "644", 5),))
+    source = _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", r"C:\Users\me\.ssh")
+    snapshot = _sshfiles.build_snapshot(files, target, source, stamp=1700000000.0)
+    assert snapshot.state.label == "部分迁移"
+    assert snapshot.source_label == "Windows 宿主"
+    assert snapshot.source_count == 2
+    assert snapshot.target_count == 1
+    assert snapshot.summary == "Windows 宿主 2 个文件 · 实例内 1 个文件"
+    assert snapshot.collapsed_hint == "Windows 宿主 2 个文件"
+    assert snapshot.target_summary.startswith("实例内 ~/.ssh 已有 1 个文件")
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", snapshot.scanned_at)
+
+
+def test_snapshot_mapping_roundtrip_and_bad_rows() -> None:
+    """状态缓存可无损往返；缺标签 / 非映射 / 坏计数按「没有缓存」处理。"""
+    snapshot = _sshfiles.build_snapshot(
+        (_sshfiles.SshFile("id_ed25519", 10, "private"),),
+        _sshfiles.SshTarget(dir="/home/me/.ssh", files=(_sshfiles.RemoteFile("id_ed25519", "600", 10),)),
+        _sshfiles.SshSource(_sshfiles.SOURCE_WSL, "Debian", "/home/me/.ssh"),
+        stamp=1700000000.0,
+    )
+    mapping = _sshfiles.snapshot_to_mapping(snapshot)
+    assert set(mapping) == set(_sshfiles._SNAPSHOT_FIELDS)
+    assert all(isinstance(value, str) for value in mapping.values())
+    assert _sshfiles.snapshot_from_mapping(mapping) == snapshot
+
+    assert _sshfiles.snapshot_from_mapping(None) is None
+    assert _sshfiles.snapshot_from_mapping("nope") is None
+    assert _sshfiles.snapshot_from_mapping({}) is None
+    assert _sshfiles.snapshot_from_mapping({"label": "  "}) is None
+    # 坏计数当成 0，坏色调回退 muted，不影响回显。
+    restored = _sshfiles.snapshot_from_mapping({"label": "已完成迁移", "tone": "", "matched": "x", "total": "-3"})
+    assert restored is not None
+    assert (restored.state.tone, restored.state.matched, restored.state.total) == ("muted", 0, 0)

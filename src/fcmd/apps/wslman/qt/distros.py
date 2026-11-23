@@ -522,9 +522,19 @@ class DistrosMixin:
         """保存实例的初始化勾选，下次打开配置窗口沿用。"""
         self.settings = _owner.w.with_init_task_keys(self.settings, name, keys)
 
+    def _save_package_mirror(self, name: str, mirror: str) -> None:
+        """保存实例的软件包源（独立于系统镜像源）。"""
+        self.settings = _owner.w.with_package_mirror(self.settings, name, mirror)
+        self._persist_settings(self.geometry_text())
+
     def _save_env_status(self, name: str, status: _initenv.EnvStatus) -> None:
         """持久化环境探测结果：下次打开配置先回显，不再为看状态重启实例。"""
         self.settings = _owner.w.with_env_status(self.settings, name, status)
+        self._persist_settings(self.geometry_text())
+
+    def _save_ssh_status(self, name: str, snapshot: Any) -> None:
+        """持久化「迁移 SSH 文件」上次扫描状态：打开配置直接回显，不再重扫来源。"""
+        self.settings = _owner.w.with_ssh_status(self.settings, name, snapshot)
         self._persist_settings(self.geometry_text())
 
     def _save_opener_paths(self, name: str, found: Mapping[str, str]) -> None:

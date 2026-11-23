@@ -430,9 +430,12 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   `wsl.exe -d <实例> --exec bash -lc`（必须 `--exec`，否则 `$HOME` / `$(...)` 会被提前展开），
   `root=True` 的步骤加 `-u root`。**国内加速口径固定为「直接吃国内镜像」而不做运行时探测
   选优**（选优要逐个试站点，初始化首跑反而更慢）：APT 走 linuxmirrors 换源；pip / uv
-  的索引**跟随当前系统源**（`mirrors.ustc.edu.cn` → 中科大 PyPI、阿里 / 腾讯 / 华为 /
-  清华各自映射，识别不到时回退清华），已有 `uv.toml` 也会备份后重写 `index-url` /
-  `python-install-mirror`，避免切源后仍残留旧地址；uv 用 `pip install --user` 装
+  的索引由卡片里的**「软件包源」独立选择**（自动＝跟随当前系统源，或指定清华 / 中科大 /
+  阿里 / 腾讯 / 华为 / 官方 PyPI），与 APT / YUM 系统镜像源解耦；已有 `uv.toml` 也会
+  备份后重写 `index-url` / `python-install-mirror`，避免切源后仍残留旧地址；
+  改了软件包源但 Python / uv 已就绪时，「开始初始化」会先跑一个只更新 pip / uv
+  配置的独立步骤（不重装 uv、不碰系统源），不会因为两项已初始化就跳过源更新；
+  uv 用 `pip install --user` 装
   （不走 astral.sh / GitHub Releases），其 Python 下载走 npmmirror 的
   python-build-standalone；Node.js 用 nvm 装 LTS（nvm 源码
   clone 自 gitee 镜像、`NVM_NODEJS_ORG_MIRROR` 指 npmmirror），不再用 apt 里版本较旧的
@@ -444,9 +447,10 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   `~/.profile`（幂等、不重复追加），并把 node / npm / npx / bun 软链到 `~/.local/bin`，
   保证 `bash -lc`（只读 profile）也能测到 node / bun，同时 `nvm which default` 有值时不重装。
   打开即后台探测实例环境并按探测结果回填：
-  **已就绪的项目保持勾选但禁用，并在勾选框右侧标注绿色「已初始化」胶囊**（`StatusTag`
-  `tone="success"`）；未就绪的默认勾选、可自由增删，全选 / 全不选与「开始初始化」都只
-  作用于未就绪项目，避免重复跑脚本。卡片默认收起，收起行只显示已初始化项目标签与
+  **已就绪的项目保持勾选但禁用，并标注绿色「已初始化」胶囊**（`StatusTag`
+  `tone="success"`）；**未就绪项目显示红色「未初始化」胶囊**（`tone="danger"`），
+  默认勾选、可自由增删，全选 / 全不选与「开始初始化」都只作用于未就绪项目，避免重复跑脚本。
+  卡片默认收起，收起行显示全部项目的状态短标签（绿＝已初始化 / 红＝未初始化）与
   行尾的 chevron 展开按钮（`chevron-down` / `chevron-up`，与列表行卡同口径）；
   「检测环境」「复制 SSH 公钥」「开始初始化」三个动作固定在卡片内，
   不随详情收起，收起态下也能直接操作；全选 / 全不选也放在这条常显动作行。
@@ -454,8 +458,8 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   左右两栏（左：7 个勾选项；右：状态值一行一项，9 项：系统镜像源 / SSH 密钥 / Python /
   uv / Node.js（nvm）/ Bun / Rust / pip&uv 镜像 / npm&bun 镜像）+ 日志
   （经 `EventBridge` 增量回填），状态值单行省略、完整内容进 tooltip，说明文字
-  收在卡片 tooltip 里，展开高度只随内容增长。每个实例的勾选写入 `wslmanw.json`
-  的 `distro_init_tasks`，下次打开沿用；展开 / 收起后下个事件循环再 `adjustSize`，
+  收在卡片 tooltip 里，展开高度只随内容增长。每个实例的勾选与软件包源分别写入 `wslmanw.json`
+  的 `distro_init_tasks` / `distro_package_mirrors`，下次打开沿用；展开 / 收起后下个事件循环再 `adjustSize`，
   窗口高度跟随内容回弹而不是单向变大。**打开配置不自动检测**：上次探测结果持久化在
   `distro_env_status`，直接回显；手动点「检测环境」时如果实例未运行，先确认
   “wsl -d 会启动实例”。探测成功后立即写回缓存。用户确认后走与「启动」相同的
@@ -482,7 +486,14 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   只出现文件名与权限。卡片标题行的状态标签由每次扫描的实际结果推导（不记「点过按钮」）：
   来源为空给「无文件」，一个都没命中「未迁移」，部分命中「部分迁移」，全部存在且权限正确
   「已完成迁移」，全部存在但权限不符「权限待修正」；扫描失败时隐藏标签，迁移结束自动重扫
-  刷新。
+  刷新。**扫描结果按实例持久化**到 `wslmanw.json` 的 `distro_ssh_status`（标签 / 色调 /
+  说明 / 来源与两侧计数 / 实例侧摘要 / 扫描时间，见 `_sshfiles.MigrationSnapshot`）：
+  再次打开配置对话框直接回显「上次扫描」的标签与摘要，**不启动实例、不重扫来源**；
+  文件清单与实例侧快照不恢复（冲突与权限要按最新现状判断），卡片显式提示「迁移前请点
+  「扫描」确认」，因此回显态下「迁移所选文件」仍是禁用的。保存设置统一走
+  `dataclasses.replace(self.settings, …)`，避免白名单式构造把
+  `distro_env_status` / `distro_ssh_status` / `distro_opener_paths` 这类缓存字段
+  静默丢掉（表现为「持久化了但下次打开又没了」）。
 - 镜像页布局固定为「单行」结构：筛选胶囊 + 安装镜像 / 管理镜像 / 更新列表 → 搜索 + 排序
   + 来源 → 单行状态（`ElidedLabel`，垂直策略 Fixed）→ 行卡列表（吃满剩余空间、
   自身滚动）→ 下载动作行。状态行与动作行都是单行控件，窗口压到最小高度时不会被

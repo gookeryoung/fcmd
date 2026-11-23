@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.apps.wslman import _images, _initenv, _mirrors, _open
+from fcmd.apps.wslman import _images, _initenv, _mirrors, _open, _sshfiles
 from fcmd.apps.wslman._config import work_root
 from fcmd.apps.wslman._disk import format_bytes
 from fcmd.apps.wslman._distro import Distro, DistroView, state_label
@@ -68,6 +68,7 @@ __all__ = [
     "main",
     "opener_paths_for",
     "openers_for",
+    "package_mirror_for",
     "pick_download",
     "reconcile_distros",
     "resolve_geometry",
@@ -79,6 +80,7 @@ __all__ = [
     "settings_to_mapping",
     "shutdown_confirm_enabled",
     "sort_images",
+    "ssh_status_for",
     "summary_text",
     "terminal_cwd",
     "unregister_confirm_enabled",
@@ -87,6 +89,8 @@ __all__ = [
     "with_init_task_keys",
     "with_max_downloads",
     "with_opener_paths",
+    "with_package_mirror",
+    "with_ssh_status",
     "with_terminal_cwd",
     "with_work_dir",
     "with_work_dirs",
@@ -264,6 +268,8 @@ class WslmanwSettings:
     """按对话框名保存的几何：下次打开还原上次的尺寸与位置。"""
     distro_init_tasks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     """按实例名保存的初始化勾选；未记录时按探测结果默认勾选。"""
+    distro_package_mirrors: Mapping[str, str] = field(default_factory=dict)
+    """按实例名保存的「软件包源」：独立于 APT / YUM 系统镜像源，只影响 pip / uv。"""
     ide_openers: tuple[_open.Opener, ...] = field(default_factory=lambda: _open.default_openers(_open.KIND_IDE))
     """IDE 打开方式条目；默认是内置的 VSCode / Trae / Qoder / WorkBuddy。"""
     agent_openers: tuple[_open.Opener, ...] = field(default_factory=lambda: _open.default_openers(_open.KIND_AGENT))
@@ -278,6 +284,8 @@ class WslmanwSettings:
     """按实例名持久化的「初始化环境」上次探测结果；打开配置时先回显，避免重复启动。"""
     distro_opener_paths: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
     """按实例名持久化的 WSL 内可执行文件路径（``command -v`` 原样结果）。"""
+    distro_ssh_status: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    """按实例名持久化的「迁移 SSH 文件」上次扫描状态；打开配置时直接回显，不再重扫。"""
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -296,8 +304,10 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "distro_terminal_dirs": dict(settings.distro_terminal_dirs),
         "dialog_geometry": dict(settings.dialog_geometry),
         "distro_init_tasks": {name: list(keys) for name, keys in settings.distro_init_tasks.items()},
+        "distro_package_mirrors": dict(settings.distro_package_mirrors),
         "distro_env_status": {name: dict(values) for name, values in settings.distro_env_status.items()},
         "distro_opener_paths": {name: dict(values) for name, values in settings.distro_opener_paths.items()},
+        "distro_ssh_status": {name: dict(values) for name, values in settings.distro_ssh_status.items()},
         "openers": {
             "ide": [_open.to_mapping(item) for item in settings.ide_openers],
             "agent": [_open.to_mapping(item) for item in settings.agent_openers],
@@ -334,8 +344,10 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         distro_terminal_dirs=_terminal_dirs(raw.get("distro_terminal_dirs")),
         dialog_geometry=_dialog_geometries(raw.get("dialog_geometry")),
         distro_init_tasks=_init_tasks(raw.get("distro_init_tasks")),
+        distro_package_mirrors=_package_mirrors(raw.get("distro_package_mirrors")),
         distro_env_status=_status_cache(raw.get("distro_env_status")),
         distro_opener_paths=_opener_path_cache(raw.get("distro_opener_paths")),
+        distro_ssh_status=_ssh_status_cache(raw.get("distro_ssh_status")),
         ide_openers=ide_openers,
         agent_openers=agent_openers,
         ide_opener=_selected_key(selected_map.get("ide"), ide_openers, kind=_open.KIND_IDE),
@@ -447,6 +459,18 @@ def with_env_status(settings: WslmanwSettings, name: str, status: _initenv.EnvSt
     return replace(settings, distro_env_status=cached)
 
 
+def ssh_status_for(settings: WslmanwSettings, name: str) -> _sshfiles.MigrationSnapshot | None:
+    """回显上次持久化的 SSH 迁移状态；没有缓存时返回 ``None``。"""
+    return _sshfiles.snapshot_from_mapping(settings.distro_ssh_status.get(name))
+
+
+def with_ssh_status(settings: WslmanwSettings, name: str, snapshot: _sshfiles.MigrationSnapshot) -> WslmanwSettings:
+    """写入实例的 SSH 迁移状态缓存（按实例名覆盖）。"""
+    cached = dict(settings.distro_ssh_status)
+    cached[name] = _sshfiles.snapshot_to_mapping(snapshot)
+    return replace(settings, distro_ssh_status=cached)
+
+
 def opener_paths_for(settings: WslmanwSettings, name: str) -> Mapping[str, str]:
     """WSL 内智能检测上次找到的可执行文件路径；实例未运行时直接复用。"""
     return settings.distro_opener_paths.get(name, {})
@@ -472,6 +496,18 @@ def _status_cache(raw: Any) -> dict[str, dict[str, str]]:
         status = _initenv.status_from_mapping(values)
         if isinstance(name, str) and name.strip() and status is not None:
             cached[name.strip()] = _initenv.status_to_mapping(status)
+    return cached
+
+
+def _ssh_status_cache(raw: Any) -> dict[str, dict[str, str]]:
+    """解析实例 → SSH 迁移状态映射；坏行跳过。"""
+    if not isinstance(raw, Mapping):
+        return {}
+    cached: dict[str, dict[str, str]] = {}
+    for name, values in raw.items():
+        snapshot = _sshfiles.snapshot_from_mapping(values)
+        if isinstance(name, str) and name.strip() and snapshot is not None:
+            cached[name.strip()] = _sshfiles.snapshot_to_mapping(snapshot)
     return cached
 
 
@@ -779,6 +815,41 @@ def _init_tasks(value: Any) -> dict[str, tuple[str, ...]]:
         chosen = {key for key in keys if isinstance(key, str) and key in known}
         out[name.strip()] = tuple(key for key in order if key in chosen)
     return out
+
+
+def _package_mirrors(value: Any) -> dict[str, str]:
+    """解析实例 → 软件包源；非法 / ``auto`` 值丢弃，保持设置文件干净。"""
+    if not isinstance(value, Mapping):
+        return {}
+    out: dict[str, str] = {}
+    for name, mirror in value.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(mirror, str):
+            continue
+        key = _initenv.normalize_package_mirror(mirror)
+        if key != _initenv.PACKAGE_MIRROR_AUTO:
+            out[name.strip()] = key
+    return out
+
+
+def package_mirror_for(settings: WslmanwSettings, name: str) -> str:
+    """返回实例的「软件包源」；未配置时 ``auto``（跟随系统镜像源）。"""
+    key = name.strip().casefold()
+    for saved, mirror in settings.distro_package_mirrors.items():
+        if saved.strip().casefold() == key:
+            return _initenv.normalize_package_mirror(mirror)
+    return _initenv.PACKAGE_MIRROR_AUTO
+
+
+def with_package_mirror(settings: WslmanwSettings, name: str, mirror: str) -> WslmanwSettings:
+    """返回写入软件包源后的设置；``auto`` 时删掉该实例项。"""
+    key = name.strip().casefold()
+    value = _initenv.normalize_package_mirror(mirror)
+    mirrors = {
+        saved: item for saved, item in settings.distro_package_mirrors.items() if saved.strip().casefold() != key
+    }
+    if value != _initenv.PACKAGE_MIRROR_AUTO:
+        mirrors[name.strip()] = value
+    return replace(settings, distro_package_mirrors=mirrors)
 
 
 def dialog_geometry(settings: WslmanwSettings, name: str) -> str | None:

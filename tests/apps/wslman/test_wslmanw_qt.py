@@ -2211,26 +2211,34 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert all(tag.isHidden() for tag in section._collapsed_tags.values())
 
         section._apply_status(_initenv.EnvStatus(python="3.12.3"))
-        # 仅 Python 就绪：只有它勾选 + 禁用 + 绿标，其余仍可操作。
+        # 仅 Python 就绪：它勾选 + 禁用 + 绿标，其余可操作并显示红色「未初始化」。
         assert section._done == {"python"}
         assert section.run_button.isEnabled() is True
-        assert section.collapsed_hint.text() == "已初始化："
+        assert section.collapsed_hint.text() == "初始化状态："
         assert section.checks["python"].isEnabled() is False
         assert section.checks["python"].isChecked() is True
         assert section.status_tags["python"].isHidden() is False
+        assert section.status_tags["python"].text() == "已初始化"
+        assert section.status_tags["python"].tone() == "success"
         for key in ("mirror", "ssh", "uv", "node", "bun", "rust"):
             assert section.checks[key].isEnabled() is True
             assert section.checks[key].isChecked() is True
-            assert section.status_tags[key].isHidden() is True
+            assert section.status_tags[key].isHidden() is False
+            assert section.status_tags[key].text() == "未初始化"
+            assert section.status_tags[key].tone() == "danger"
         section._set_all(False)
         assert section.checks["python"].isChecked() is True
         assert not any(section.checks[key].isChecked() for key in ("mirror", "ssh", "uv", "node", "bun", "rust"))
 
         section._apply_status(_initenv.EnvStatus())
         assert section.copy_key.isEnabled() is False
-        assert all(tag.isHidden() for tag in section.status_tags.values())
-        assert section.collapsed_hint.text() == "尚未检测到已初始化的项目。"
-        assert all(tag.isHidden() for tag in section._collapsed_tags.values())
+        # 检测结果为「全部未初始化」：每个项目都要有红色标签，不能隐藏。
+        assert all(not tag.isHidden() for tag in section.status_tags.values())
+        assert all(tag.text() == "未初始化" and tag.tone() == "danger" for tag in section.status_tags.values())
+        assert section.collapsed_hint.text() == "未初始化："
+        section.toggle_collapsed(True)
+        assert all(not tag.isHidden() for tag in section._collapsed_tags.values())
+        assert all(tag.tone() == "danger" for tag in section._collapsed_tags.values())
         QApplication.clipboard().setText("sentinel")
         section._copy_ssh_key()
         assert QApplication.clipboard().text() == "sentinel"
@@ -2502,6 +2510,97 @@ def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.
         )
         section._run_selected()
         assert seen == [("安装 Node.js 依赖", "安装 nvm / Node.js")]
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_init_env_package_mirror_selection_reaches_run_steps(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """软件包源独立于系统镜像源：选择后初始化步骤直接使用指定 PyPI。"""
+    owner = QWidget()
+    saved: list[str] = []
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"), on_package_mirror_changed=saved.append)
+    try:
+        assert section.package_mirror_key() == "auto"
+        index = section.package_mirror.findData("mirrors.ustc.edu.cn")
+        assert index >= 0
+        section.package_mirror.setCurrentIndex(index)
+        assert saved == ["mirrors.ustc.edu.cn"]
+        assert section.package_mirror_key() == "mirrors.ustc.edu.cn"
+
+        section._apply_status(_initenv.EnvStatus())
+        section._set_all(False)
+        section.checks["uv"].setChecked(True)
+        seen: list[tuple[tuple[str, str], ...]] = []
+
+        def fake_submit(fn: Any, *, on_done: Any = None, on_error: Any = None, on_finished: Any = None) -> None:
+            if on_done is not None:
+                on_done(fn())
+            if on_finished is not None:
+                on_finished()
+
+        monkeypatch.setattr(_wslmanw_qt, "submit_daemon", fake_submit)
+        monkeypatch.setattr(section, "refresh_status", lambda: None)
+        monkeypatch.setattr(
+            section,
+            "_execute",
+            lambda steps: seen.append(tuple((step.label, step.script) for step in steps)) or "初始化完成",
+        )
+        section._run_selected()
+        assert len(seen) == 1 and len(seen[0]) == 3
+        # 先同步软件包源（只写 pip / uv 配置，不重装 uv），再跑勾选的 uv 安装。
+        assert seen[0][0][0] == "配置软件包镜像"
+        assert "index='https://mirrors.ustc.edu.cn/pypi/simple'" in seen[0][0][1]
+        assert "uv_toml.tmp" in seen[0][0][1]
+        assert "pip install --user" not in seen[0][0][1]
+        assert "/etc/apt/sources.list" not in seen[0][0][1]
+        assert "index='https://mirrors.ustc.edu.cn/pypi/simple'" in seen[0][2][1]
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_init_env_package_mirror_mismatch_reruns_config_only(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """软件包源已改、但 Python / uv 已就绪时，仍要单独更新 pip / uv 配置。"""
+    owner = QWidget()
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"), package_mirror="mirrors.ustc.edu.cn")
+    try:
+        section._apply_status(
+            _initenv.EnvStatus(
+                mirror="mirrors.aliyun.com",
+                ssh_public_key="ssh-ed25519 AAAA",
+                python="3.12.3",
+                uv="0.5.14",
+                node="20.11.0",
+                nvm="yes",
+                bun="1.2.0",
+                rust="1.80.0",
+                pip_index="https://pypi.tuna.tsinghua.edu.cn/simple",
+                uv_index="https://pypi.tuna.tsinghua.edu.cn/simple",
+                npm_registry="https://registry.npmmirror.com/",
+                bun_registry="https://registry.npmmirror.com",
+            )
+        )
+        assert section._package_mirror_dirty is True
+        assert section.run_button.isEnabled() is True
+        assert "软件包源已修改" in section.run_button.toolTip()
+        seen: list[tuple[str, ...]] = []
+
+        def fake_submit(fn: Any, *, on_done: Any = None, on_error: Any = None, on_finished: Any = None) -> None:
+            if on_done is not None:
+                on_done(fn())
+            if on_finished is not None:
+                on_finished()
+
+        monkeypatch.setattr(_wslmanw_qt, "submit_daemon", fake_submit)
+        monkeypatch.setattr(section, "refresh_status", lambda: None)
+        monkeypatch.setattr(
+            section, "_execute", lambda steps: seen.append(tuple(step.label for step in steps)) or "初始化完成"
+        )
+        section._run_selected()
+        assert seen == [("配置软件包镜像",)]
+        assert section._package_mirror_dirty is False
+        assert section.run_button.isEnabled() is False
     finally:
         section.deleteLater()
         owner.deleteLater()
@@ -3948,6 +4047,93 @@ def test_settings_page_detects_once_per_instance(home: Path, monkeypatch: pytest
         window._opener_detections["Ubuntu"] = (empty_host, empty_wsl)
         window.show_page("settings")
         assert calls == [False]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def _ssh_snapshot() -> Any:
+    """一份可直接回显的 SSH 迁移状态（模拟上次扫描结果）。"""
+    return _sshfiles.build_snapshot(
+        (_sshfiles.SshFile("id_ed25519", 10, "private"),),
+        _sshfiles.SshTarget(dir="/home/me/.ssh", files=(_sshfiles.RemoteFile("id_ed25519", "600", 10),)),
+        _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", r"C:\Users\me\.ssh"),
+        stamp=1700000000.0,
+    )
+
+
+def test_ssh_migrate_section_shows_cached_status_without_scanning(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """打开配置直接回显上次扫描状态：不启动实例、不重扫来源。"""
+    owner = QWidget()
+    snapshot = _ssh_snapshot()
+    monkeypatch.setattr(_wslmanw_qt, "submit_daemon", lambda *args, **kwargs: pytest.fail("回显缓存不应扫描"))
+    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu", "stopped"), status=snapshot)
+    try:
+        assert section.state_tag.isHidden() is False
+        assert section.state_tag.text() == "已完成迁移"
+        assert section.state_tag.tone() == "success"
+        assert "上次扫描" in section.state_tag.toolTip()
+        assert section.summary.fullText() == "Windows 宿主 1 个文件 · 实例内 1 个文件"
+        assert section.collapsed_hint.text() == "Windows 宿主 1 个文件"
+        assert "上次扫描结果" in section.file_hint.fullText()
+        assert "显示上次扫描结果" in section.log.toPlainText()
+        # 只回显状态，不恢复文件清单：迁移前必须重新扫描确认冲突与权限。
+        assert section.migrate_button.isEnabled() is False
+        assert section._boxes == {}
+        assert section._target is None
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_ssh_migrate_section_reports_scan_result_for_persisting(home: Path) -> None:
+    """每次扫描结束把结果交给回调（窗口据此写进 wslmanw.json）。"""
+    owner = QWidget()
+    seen: list[Any] = []
+    section = _wslmanw_qt._SshMigrateSection(owner, _distro("Ubuntu"), on_scanned=seen.append)
+    try:
+        source = _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", "/home/me/.ssh-win")
+        files = (_sshfiles.SshFile("config", 5, "config"),)
+        target = _sshfiles.SshTarget(dir="/home/me/.ssh", files=())
+        section._scan_done((files, target, source))
+        assert len(seen) == 1
+        snapshot = seen[0]
+        assert snapshot.state.label == "未迁移"
+        assert (snapshot.source_count, snapshot.target_count) == (1, 0)
+        assert snapshot.source_path == "/home/me/.ssh-win"
+        assert snapshot.target_summary
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_ssh_status_cache_survives_other_settings_saves(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SSH 迁移状态写盘后不被其它设置保存冲掉（回归：白名单式构造会丢缓存字段）。"""
+    view = _view(_distro("Ubuntu", "stopped"))
+    monkeypatch.setattr(cli, "_view", lambda env: view)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        snapshot = _ssh_snapshot()
+        window._save_ssh_status("Ubuntu", snapshot)
+        window._save_env_status("Ubuntu", _initenv.EnvStatus(python="3.12.3"))
+        window._persist_settings(window.geometry_text())
+
+        saved = wslmanw.load_settings()
+        assert wslmanw.ssh_status_for(saved, "Ubuntu") == snapshot
+        assert wslmanw.ssh_status_for(saved, "Debian") is None
+        cached_env = wslmanw.env_status_for(saved, "Ubuntu")
+        assert cached_env is not None and cached_env.python == "3.12.3"
+
+        # 打开配置对话框时直接回显缓存，不发起任何扫描。
+        monkeypatch.setattr(_wslmanw_qt, "submit_daemon", lambda *args, **kwargs: pytest.fail("回显缓存不应扫描"))
+        dialog = _wslmanw_qt._DistroConfigDialog(window, _distro("Ubuntu", "stopped"), "~")
+        try:
+            assert dialog.ssh_migrate.state_tag.text() == "已完成迁移"
+            assert dialog.ssh_migrate.state_tag.isHidden() is False
+        finally:
+            dialog.deleteLater()
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
