@@ -3089,7 +3089,12 @@ def test_files_page_opens_workbuddy_with_unc_path(home: Path, monkeypatch: pytes
         window._files_open_with(_open.KIND_IDE)
         expected = str(_wslmanw_qt._files.to_local(str(root), "/home/me/proj"))
         assert spawned == [("workbuddy", expected)]
-        assert "\\home\\me\\proj" in expected
+        # Windows 根（UNC / 盘符）拼出反斜杠路径；非 Windows 的 POSIX 根按本地分隔符拼接，
+        # UNC → 反斜杠的转换本身由 test_posix_unc_mapping_round_trip 覆盖。
+        if os.name == "nt":
+            assert expected.endswith("\\home\\me\\proj")
+        else:
+            assert expected.endswith("/home/me/proj")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
