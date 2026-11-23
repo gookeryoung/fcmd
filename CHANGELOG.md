@@ -7,6 +7,9 @@
 
 ### 变更
 
+- 表单路径输入新增 `PathInputMixin`：`PathRow` / `PathField` 共用 `value` /
+  `set_value` 与目录 / 文件选择对话框，各自只保留选中后的落地差异（提交信号 /
+  路径提示）。
 - 新增通用 `ProgressBar`：统一隐藏百分比、忙碌态切换与按比例 / 百分比写入
   （内部按 `maximum` 折算，避免大字节数溢出）；`LoadingBar`、`ProgressRow`、
   `DiskTile` 以及 filescan / ncmconvertw / llmw 模型下载改用，不再各自

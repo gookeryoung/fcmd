@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from fcmd.gui.widgets.buttons import button
 from fcmd.gui.widgets.text import ElidedLabel
 
-__all__ = ["FormGrid", "PathField", "PathRow"]
+__all__ = ["FormGrid", "PathField", "PathInputMixin", "PathRow"]
 
 
 class FormGrid(QWidget):  # pragma: no cover - Qt 控件
@@ -61,7 +61,37 @@ class FormGrid(QWidget):  # pragma: no cover - Qt 控件
         return self._row
 
 
-class PathRow(QWidget):  # pragma: no cover - Qt 控件
+class PathInputMixin:
+    """路径输入复用：``value`` / ``set_value`` 与目录 / 文件选择对话框。
+
+    与 ``QWidget`` 组合使用；子类提供 ``edit`` 输入框以及 ``_directory`` /
+    ``_title`` / ``_pattern`` 三个配置。选择结果由子类决定怎么落地（PathRow
+    还会发 ``committed``，PathField 则刷新下方路径提示），这里只负责弹框与取值。
+    """
+
+    edit: QLineEdit
+    _directory: bool
+    _title: str
+    _pattern: str
+
+    def value(self) -> str:
+        """当前输入文本（已去除首尾空白）。"""
+        return self.edit.text().strip()
+
+    def set_value(self, text: str) -> None:
+        """写入输入文本（不触发额外副作用）。"""
+        self.edit.setText(text)
+
+    def _choose_path(self) -> str:  # pragma: no cover - 需要真实对话框
+        """按目录 / 文件模式弹出选择框；取消时返回空串。"""
+        if self._directory:
+            return QFileDialog.getExistingDirectory(self, self._title, self.value())
+        filters = f"{self._pattern};;所有文件 (*.*)" if self._pattern else "所有文件 (*.*)"
+        chosen, _ = QFileDialog.getOpenFileName(self, self._title, self.value(), filters)
+        return chosen
+
+
+class PathRow(PathInputMixin, QWidget):  # pragma: no cover - Qt 控件
     """路径输入行：输入框 + 选择按钮（默认「浏览…」）+「恢复默认」按钮。"""
 
     changed = Signal(str)
@@ -79,6 +109,8 @@ class PathRow(QWidget):  # pragma: no cover - Qt 控件
     ) -> None:
         super().__init__(parent)
         self._directory = directory
+        self._title = "选择目录" if directory else "选择文件"
+        self._pattern = ""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -95,25 +127,14 @@ class PathRow(QWidget):  # pragma: no cover - Qt 控件
             self.reset.setVisible(False)
             layout.addWidget(self.reset)
 
-    def value(self) -> str:
-        """当前输入文本（已去除首尾空白）。"""
-        return self.edit.text().strip()
-
-    def set_value(self, text: str) -> None:
-        """写入输入文本（不触发额外副作用）。"""
-        self.edit.setText(text)
-
     def _pick(self) -> None:  # pragma: no cover - 需要真实对话框
-        if self._directory:
-            path = QFileDialog.getExistingDirectory(self, "选择目录", self.value())
-        else:
-            path, _ = QFileDialog.getOpenFileName(self, "选择文件", self.value())
+        path = self._choose_path()
         if path:
             self.edit.setText(path)
             self.committed.emit(self.value())
 
 
-class PathField(QWidget):  # pragma: no cover - Qt 控件
+class PathField(PathInputMixin, QWidget):  # pragma: no cover - Qt 控件
     """带路径提示的输入行：输入框 + 浏览按钮 + 第二行省略路径。
 
     与 :class:`PathRow` 的区别是下方多一行 ``ElidedLabel``，用于表单里显示
@@ -154,22 +175,10 @@ class PathField(QWidget):  # pragma: no cover - Qt 控件
         self.edit.textChanged.connect(self._refresh_hint)
         self._refresh_hint(self.edit.text())
 
-    def value(self) -> str:
-        """当前输入文本（去首尾空白）。"""
-        return self.edit.text().strip()
-
-    def set_value(self, text: str) -> None:
-        """写入输入文本。"""
-        self.edit.setText(text)
-
     def _refresh_hint(self, text: str) -> None:
         self.hint.setText(str(Path(text).expanduser()) if text.strip() else "未选择")
 
     def _pick(self) -> None:  # pragma: no cover - 需要真实对话框
-        if self._directory:
-            chosen = QFileDialog.getExistingDirectory(self, self._title, self.value())
-        else:
-            filters = f"{self._pattern};;所有文件 (*.*)" if self._pattern else "所有文件 (*.*)"
-            chosen, _ = QFileDialog.getOpenFileName(self, self._title, self.value(), filters)
+        chosen = self._choose_path()
         if chosen:
             self.edit.setText(chosen)

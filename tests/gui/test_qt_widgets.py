@@ -51,6 +51,8 @@ from fcmd.gui.widgets import (
     LogView,
     MetricGrid,
     MonoLabel,
+    PathField,
+    PathInputMixin,
     PathRow,
     PillTabBar,
     ProgressBar,
@@ -240,6 +242,33 @@ def test_path_row_commits_on_editing_finished() -> None:
     assert seen == []
     row.edit.editingFinished.emit()
     assert seen == ["D:/models2"]
+
+
+def test_path_inputs_share_value_and_chooser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PathRow / PathField 共用取值与选择逻辑，各自只处理选中后的落地方式。"""
+    row = PathRow(value=" D:/models ", show_reset=True)
+    field = PathField(value="", directory=False, pattern="*.txt")
+    try:
+        assert PathInputMixin in type(row).__mro__
+        assert PathInputMixin in type(field).__mro__
+        assert row.value() == "D:/models"
+        field.set_value("  /tmp/a.txt  ")
+        assert field.value() == "/tmp/a.txt"
+
+        monkeypatch.setattr(row, "_choose_path", lambda: "D:/models2")
+        committed: list[str] = []
+        row.committed.connect(committed.append)
+        row._pick()
+        assert row.value() == "D:/models2"
+        assert committed == ["D:/models2"]
+
+        monkeypatch.setattr(field, "_choose_path", lambda: "/tmp/b.txt")
+        field._pick()
+        assert field.value() == "/tmp/b.txt"
+        assert field.hint.fullText() == "/tmp/b.txt"
+    finally:
+        row.deleteLater()
+        field.deleteLater()
 
 
 def test_icon_button_height_matches_default_button() -> None:

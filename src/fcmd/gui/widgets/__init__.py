@@ -54,7 +54,7 @@ from fcmd.gui.widgets.cards import (
     PageScroll,
     fit_dialog_to_content,
 )
-from fcmd.gui.widgets.forms import FormGrid, PathField, PathRow
+from fcmd.gui.widgets.forms import FormGrid, PathField, PathInputMixin, PathRow
 from fcmd.gui.widgets.layouts import FlowLayout
 from fcmd.gui.widgets.log import LogView
 from fcmd.gui.widgets.metrics import (
@@ -120,6 +120,7 @@ __all__ = [
     "MonoLabel",
     "PageScroll",
     "PathField",
+    "PathInputMixin",
     "PathRow",
     "PillTabBar",
     "ProgressBar",
