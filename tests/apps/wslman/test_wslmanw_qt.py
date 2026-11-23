@@ -2841,18 +2841,31 @@ def test_settings_openers_card_lists_builtins_and_persists(
         assert [ide.itemText(index) for index in range(ide.count())] == [
             "VSCode（内置）",
             "Trae（内置）",
+            "TRAE CN（国内版）（内置）",
             "Qoder（内置）",
+            "QODER CN（国内版）（内置）",
             "WorkBuddy（内置）",
         ]
         agent = window.opener_combos[_open.KIND_AGENT]
-        assert [agent.itemText(index) for index in range(agent.count())] == ["PI（内置）", "OpenCode（内置）"]
+        assert [agent.itemText(index) for index in range(agent.count())] == [
+            "PI（内置）",
+            "OpenCode（内置）",
+            "DeepSeek Harness（内置）",
+        ]
         assert window.opener_tags[_open.KIND_IDE].text() == _open.HOST_LABELS[_open.HOST_WINDOWS]
         assert window.opener_tags[_open.KIND_AGENT].text() == _open.HOST_LABELS[_open.HOST_WSL]
 
         ide.setCurrentIndex(1)
         saved = wslmanw.load_settings()
         assert saved.ide_opener == "trae"
-        assert [item.key for item in saved.ide_openers] == ["vscode", "trae", "qoder", "workbuddy"]
+        assert [item.key for item in saved.ide_openers] == [
+            "vscode",
+            "trae",
+            "trae-cn",
+            "qoder",
+            "qoder-cn",
+            "workbuddy",
+        ]
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

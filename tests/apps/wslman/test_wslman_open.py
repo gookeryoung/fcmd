@@ -16,12 +16,18 @@ UNC = r"\\wsl.localhost\Ubuntu\home\me\proj"
 def test_builtin_presets_cover_expected_tools() -> None:
     """内置 IDE / Agent 的 key 与顺序固定；未知类型没有预设。"""
     ide = _open.default_openers(_open.KIND_IDE)
-    assert [item.key for item in ide] == ["vscode", "trae", "qoder", "workbuddy"]
+    assert [item.key for item in ide] == ["vscode", "trae", "trae-cn", "qoder", "qoder-cn", "workbuddy"]
     agent = _open.default_openers(_open.KIND_AGENT)
-    assert [item.key for item in agent] == ["pi", "opencode"]
+    assert [item.key for item in agent] == ["pi", "opencode", "deepseek-harness"]
     assert all(item.builtin for item in ide + agent)
     assert all(item.note for item in ide + agent)
     assert _open.default_openers("other") == ()
+    # 国内版与海外版名称必须能区分，不能只靠下拉顺序。
+    names = {item.key: item.name for item in ide}
+    assert names["trae"] != names["trae-cn"]
+    assert names["qoder"] != names["qoder-cn"]
+    assert "国内版" in names["trae-cn"]
+    assert "国内版" in names["qoder-cn"]
 
 
 def test_mapping_roundtrip_keeps_editable_fields() -> None:
@@ -208,6 +214,54 @@ def test_windows_candidates_cover_common_roots(tmp_path: Path) -> None:
     assert str(tmp_path / "roaming" / "npm" / "opencode.cmd") in candidates
     assert str(tmp_path / "local" / "npm" / "opencode.cmd") in candidates
     assert str(tmp_path / "pf" / "npm" / "opencode.cmd") in candidates
+
+
+def test_detect_host_keeps_domestic_and_overseas_ides_apart(tmp_path: Path) -> None:
+    """国内版走独立可执行名与独立安装目录，不能和海外版混成一条。"""
+    installed = tmp_path / "Programs" / "Trae CN" / "Trae CN.exe"
+    installed.parent.mkdir(parents=True)
+    installed.write_text("")
+    env = {"LOCALAPPDATA": str(tmp_path)}
+    which = lambda _name: None  # noqa: E731 - 测试替身
+
+    domestic = _open.detect_host("trae-cn", env=env, which=which)
+    assert domestic.found is True
+    assert domestic.path == str(installed)
+    assert domestic.command.startswith(f'"{installed}"')
+    assert "--remote wsl+{distro}" in domestic.command
+    # 只装了国内版时，海外版条目不应被这条路径命中。
+    assert _open.detect_host("trae", env=env, which=which).found is False
+
+    overseas = [str(item) for item in _open.windows_candidates("trae", env)]
+    cn = [str(item) for item in _open.windows_candidates("trae-cn", env)]
+    assert cn and all("Trae CN" in item for item in cn)
+    assert all("Trae CN" not in item for item in overseas)
+    assert all("Qoder CN" in item for item in (str(p) for p in _open.windows_candidates("qoder-cn", env)))
+
+
+def test_detect_deepseek_harness_covers_both_cli_names(tmp_path: Path) -> None:
+    """DeepSeek Harness 的 dsh / deepseek-harness 两个可执行名都要能认出。"""
+    host = _open.detect_host(
+        "deepseek-harness", env={}, which=lambda name: r"C:\npm\dsh.cmd" if name == "dsh" else None
+    )
+    assert host.found is True
+    assert host.command == r"C:\npm\dsh.cmd"
+
+    npm = tmp_path / "npm" / "deepseek-harness.cmd"
+    npm.parent.mkdir(parents=True)
+    npm.write_text("")
+    installed = _open.detect_host("deepseek-harness", env={"APPDATA": str(tmp_path)}, which=lambda _name: None)
+    assert installed.path == str(npm)
+    assert installed.command == str(npm)
+
+    wsl = _open.detect_wsl("deepseek-harness", {"dsh": "/usr/bin/dsh"})
+    assert wsl.found is True
+    assert wsl.host == _open.HOST_WSL
+    assert wsl.command == "/usr/bin/dsh"
+
+    script = _open.detect_script()
+    for name in ("dsh", "deepseek-harness", "trae-cn", "qoder-cn"):
+        assert name in script
 
 
 def test_parse_detect_and_detect_wsl() -> None:

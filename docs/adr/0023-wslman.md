@@ -522,9 +522,14 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
   可不含占位符（在实例内直接执行）。
 - 内置默认值（`note` 里同时标注不确定项）：
   - IDE：VSCode `code --remote wsl+{distro} "{dir}"`；Trae / Qoder 同参数（按 VS Code 系
-    remote 参数估计）；WorkBuddy `workbuddy "{unc}"`（未确认官方 CLI）。
-  - AI Agent：PI `pi`（命令名未确认）；OpenCode `opencode`（已确认 TUI）。
-  - 默认选中 VSCode / OpenCode；内置项可编辑 / 删除，也可自行添加。
+    remote 参数估计）；TRAE CN / QODER CN（国内版）各自独立一条，命令名按
+    `trae-cn` / `qoder-cn` 估计，安装目录按 `Programs\Trae CN` / `Programs\Qoder CN`
+    估计，与海外版不共用探测名；WorkBuddy `workbuddy "{unc}"`（未确认官方 CLI）。
+  - AI Agent：PI `pi`（命令名未确认）；OpenCode `opencode`（已确认 TUI）；
+    DeepSeek Harness `dsh`（按官方 npm 包 `@deepseek-ai/dsh` 的 CLI 名，检测同时覆盖
+    `deepseek-harness` 可执行名）。
+  - 智能检测按条目的可执行名与常见安装目录匹配（国内版与海外版可能同名不同路径，
+    因此分条维护）；默认选中 VSCode / OpenCode；内置项可编辑 / 删除，也可自行添加。
 - Windows 宿主机：`shutil.which` 预检后按 argv 无窗口启动，`.cmd/.bat` 经
   `cmd.exe /d /s /c` 包装（避免 WinError 193）；WSL 内：先在实例内
   `bash -lc 'command -v <命令>'` 预检，再经终端 `wsl.exe -d <实例> --cd <目录>

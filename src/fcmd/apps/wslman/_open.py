@@ -122,6 +122,16 @@ BUILTINS: dict[str, tuple[Opener, ...]] = {
             "按 VS Code 系 remote 参数估计；若 Trae 的 CLI 参数不同，请在设置里改模板。",
         ),
         Opener(
+            "trae-cn",
+            "TRAE CN（国内版）",
+            KIND_IDE,
+            HOST_WINDOWS,
+            'trae-cn --remote wsl+{distro} "{dir}"',
+            True,
+            "国内版与海外版分开配置，不共用同一条：命令名按 trae-cn 估计，安装目录按 "
+            "Programs\\Trae CN 估计，均未逐一确认；若本机实际不同，请在设置里改模板。",
+        ),
+        Opener(
             "qoder",
             "Qoder",
             KIND_IDE,
@@ -129,6 +139,16 @@ BUILTINS: dict[str, tuple[Opener, ...]] = {
             'qoder --remote wsl+{distro} "{dir}"',
             True,
             "按 VS Code 系 remote 参数估计；若 Qoder 的 CLI 参数不同，请在设置里改模板。",
+        ),
+        Opener(
+            "qoder-cn",
+            "QODER CN（国内版）",
+            KIND_IDE,
+            HOST_WINDOWS,
+            'qoder-cn --remote wsl+{distro} "{dir}"',
+            True,
+            "国内版与海外版分开配置，不共用同一条：命令名按 qoder-cn 估计，安装目录按 "
+            "Programs\\Qoder CN 估计，均未逐一确认；若本机实际不同，请在设置里改模板。",
         ),
         Opener(
             "workbuddy",
@@ -158,6 +178,16 @@ BUILTINS: dict[str, tuple[Opener, ...]] = {
             "opencode",
             True,
             "在实例内以当前目录启动 OpenCode TUI。",
+        ),
+        Opener(
+            "deepseek-harness",
+            "DeepSeek Harness",
+            KIND_AGENT,
+            HOST_WSL,
+            "dsh",
+            True,
+            "按官方 CLI dsh（npm 包 @deepseek-ai/dsh）处理；可执行名也可能是 "
+            "deepseek-harness，检测两者都会覆盖。若本机命令不同，请在设置里改模板。",
         ),
     ),
 }
@@ -253,22 +283,35 @@ class Detection:
 _EXE_NAMES: dict[str, tuple[str, ...]] = {
     "vscode": ("code",),
     "trae": ("trae",),
+    "trae-cn": ("trae-cn",),
     "qoder": ("qoder",),
+    "qoder-cn": ("qoder-cn",),
     "workbuddy": ("workbuddy",),
     "pi": ("pi",),
     "opencode": ("opencode",),
+    "deepseek-harness": ("dsh", "deepseek-harness"),
 }
-"""内置条目对应的可执行文件名（PATH / ``command -v`` 探测用）。"""
+"""内置条目对应的可执行文件名（PATH / ``command -v`` 探测用）。
+
+国内版与海外版各用各自的别名，不共享探测名：同名可执行文件（如都叫 ``trae``）
+会分不清是哪一版，宁可让国内版落到安装目录探测。
+"""
 
 _WINDOWS_INSTALLS: dict[str, tuple[str, ...]] = {
     "vscode": (r"Programs\Microsoft VS Code\bin\code.cmd", r"Microsoft VS Code\bin\code.cmd"),
     "trae": (r"Programs\Trae\Trae.exe", r"Programs\Trae\bin\trae.cmd"),
+    "trae-cn": (r"Programs\Trae CN\Trae CN.exe", r"Programs\Trae CN\bin\trae-cn.cmd"),
     "qoder": (r"Programs\Qoder\Qoder.exe", r"Programs\Qoder\bin\qoder.cmd"),
+    "qoder-cn": (r"Programs\Qoder CN\Qoder CN.exe", r"Programs\Qoder CN\bin\qoder-cn.cmd"),
     "workbuddy": (r"Programs\WorkBuddy\WorkBuddy.exe", r"WorkBuddy\WorkBuddy.exe"),
     "pi": (r"npm\pi.cmd",),
     "opencode": (r"npm\opencode.cmd",),
+    "deepseek-harness": (r"npm\dsh.cmd", r"npm\deepseek-harness.cmd"),
 }
-"""常见安装位置（相对常见安装根目录）；PATH 里没有时再按这些候选逐一确认。"""
+"""常见安装位置（相对常见安装根目录）；PATH 里没有时再按这些候选逐一确认。
+
+国内版走 ``Trae CN`` / ``Qoder CN`` 独立目录，避免与海外版同名路径混成一条。
+"""
 
 
 def _template_of(key: str) -> str:
