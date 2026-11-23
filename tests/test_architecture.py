@@ -180,8 +180,6 @@ LEGACY_LARGE = {
     "apps/reshack/_reshackw_qt.py",
     "apps/wslman/wslman.py",
     "apps/wslman/wslmanw.py",
-    "gui/style.py",
-    "infras/media.py",
     "tools/dev/pyprof.py",
     "tools/pdf/pdfbase.py",
     "tools/system/fonttool.py",

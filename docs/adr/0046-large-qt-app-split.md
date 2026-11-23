@@ -1,6 +1,6 @@
 # 0046 大型 Qt 应用拆分：wslman / llmw 的页面化与窗口瘦身（立项）
 
-- 状态：P0–P3 已落地（wslman Qt 层完成拆分）；P4–P5 待办
+- 状态：P0–P4（模型页）已落地；RunPage 与 P5 清理待办
 - 日期：2026-11-26
 - 关联：[0003](0003-package-layout.md)（布局不变量）、[0034](0034-qt-full-gui-migration.md)（Qt 迁移）、
   [0038](0038-shared-qt-widget-boundaries.md)（共享控件边界）、[0042](0042-shared-gui-shell-and-theme.md)（窗口外壳 / 页面基类）
@@ -144,7 +144,10 @@ MAX_DIR_LEVELS = {"apps": 3, "default": 2}
 - P2/P3：`WslmanQtWindow` 的方法按页面拆到 `apps/wslman/qt/{files,images_page,images_manage,images_download,settings,tasks,distros,actions,lifecycle,logging}.py`（mixin 组合，172 个方法），
   行卡/详情迁到 `qt/rows.py`，初始化/SSH 段落迁到 `qt/initenv.py` / `qt/ssh.py`，
   `_wslmanw_qt.py` 从约 5.3k 行降到约 480 行并保留公开 re-export。
-- P4–P5：llmw 页面拆分与最终清理待办。
+- P4：llmw 模型页 `_BrowsePanel` 的 88 个方法拆到 `apps/llm/qt/{models_browse,models_installed,models_search,models_jobs}.py`；
+  `_llmw_qt_center.py` 约 2.3k → 1.06k 行；`RunPage` 拆分与 P5 清理待办。
+- P5：wslman `_wslmanw_qt.py` 已移出行数白名单；`gui/style.py` / `infras/media.py`
+  等过期白名单项已清理。
 
 ## 交接
 

@@ -53,4 +53,5 @@
 - [x] 未决问题全部有结论
 - [x] P0 布局例外与 `apps/*/qt/` 骨架已落地（ADR 0046）
 - [x] P1–P3：wslman 对话框 / 页面 mixin / 行卡 / 初始化 / SSH 迁移完成
-- [ ] P4–P5：llmw 页面拆分与最终清理
+- [x] P4（模型页）：`_BrowsePanel` 方法拆到 `apps/llm/qt/models_*.py`
+- [ ] P4（RunPage）与 P5 清理
