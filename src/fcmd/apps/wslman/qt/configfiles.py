@@ -207,11 +207,16 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         self.select_none.clicked.connect(lambda: self._set_all(False))
         actions.addWidget(self.select_none)
         actions.addStretch(1)
-        self.restore_button = _owner.button("还原上次迁移", kind="ghost")
-        self.restore_button.setToolTip("把实例配置恢复到上次迁移之前：覆盖过的从备份恢复，新增的删除")
+        self.restore_button = _owner.button("还原上次操作", kind="ghost")
+        self.restore_button.setToolTip("把实例配置恢复到上次迁移 / 初始化之前：备份恢复，新增的删除")
         self.restore_button.clicked.connect(self._restore_last)
         self.restore_button.setEnabled(False)
         actions.addWidget(self.restore_button)
+        self.init_button = _owner.button("初始化配置", kind="ghost")
+        self.init_button.setToolTip("把实例内受管的 SSH / Git / Shell 配置移到备份目录，回到初始状态")
+        self.init_button.clicked.connect(self._initialize_config)
+        self.init_button.setEnabled(False)
+        actions.addWidget(self.init_button)
         self.scan_button = _owner.button("扫描")
         self.scan_button.clicked.connect(self.refresh)
         actions.addWidget(self.scan_button)
@@ -280,13 +285,13 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         record = self._restore_record
         if record is None or not record.entries:
             self.restore_hint.setVisible(False)
-            self.restore_button.setToolTip("没有可还原的迁移记录")
+            self.restore_button.setToolTip("没有可还原的迁移 / 初始化记录")
             return
-        text = f"可还原上次迁移：{record.summary}"
+        text = f"可还原上次操作：{record.summary}"
         self.restore_hint.setText(text)
         self.restore_hint.setToolTip(text)
         self.restore_hint.setVisible(True)
-        self.restore_button.setToolTip(f"恢复 {record.summary} 前的实例配置；迁移后被修改的新增文件会跳过")
+        self.restore_button.setToolTip(f"恢复 {record.summary} 前的实例配置；操作后被修改的新增文件会跳过")
 
     def _persist_restore(self) -> None:
         """把本次迁移的还原记录交给窗口持久化（失败也会记录已完成部分）。"""
@@ -645,6 +650,7 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         self._busy = busy
         self.scan_button.setEnabled(not busy)
         self.restore_button.setEnabled(not busy and self._restore_record is not None)
+        self.init_button.setEnabled(not busy and bool(self._target_paths()))
         # 扫描 / 迁移期间锁住来源选择，避免结果回来时来源已经换了。
         self.source_kind.setEnabled(not busy)
         self.source_instance.setEnabled(not busy)
@@ -665,6 +671,7 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
         else:
             self.migrate_button.setToolTip("")
         self.restore_button.setEnabled(not self._busy and self._restore_record is not None)
+        self.init_button.setEnabled(not self._busy and bool(self._target_paths()))
         self.select_all.setEnabled(not self._busy)
         self.select_none.setEnabled(not self._busy)
 
@@ -821,6 +828,88 @@ class _ConfigMigrateSection(Card):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 还原
     # ------------------------------------------------------------------ #
+    def _target_paths(self) -> list[str]:
+        """实例里当前存在的受管配置文件（初始化操作的对象）。"""
+        if self._target is None:
+            return []
+        return [item.path for item in self._target.files if _owner._configfiles.group_for_path(item.path) is not None]
+
+    def _initialize_config(self) -> None:
+        """把实例内已有的受管配置移进备份目录，回到「没有个人配置」的初始状态。"""
+        paths = self._target_paths()
+        if not paths:
+            _owner.QMessageBox.information(self, "没有可初始化的配置", "先点「扫描」确认实例内的受管配置。")
+            return
+        listing = "\n".join(f"· {path}" for path in paths)
+        text = (
+            "将把实例内以下配置移进备份目录，实例回到初始状态：\n\n"
+            f"{listing}\n\n"
+            "文件不会直接删除，可用「还原上次操作」恢复。继续？"
+        )
+        if not _owner.confirm(self, "初始化目标配置", text):
+            return
+        self._set_busy(True)
+        self._refresh_after_run = False
+        self._pending_restore = None
+        self._append_log("开始初始化目标配置：" + "、".join(paths))
+        _owner.submit_daemon(
+            lambda: self._run_initialize(paths),
+            on_done=self._initialize_done,
+            on_error=self._initialize_error,
+            on_finished=self._initialize_finished,
+        )
+
+    def _run_initialize(self, paths: Sequence[str]) -> str:
+        env = _owner.cli._build_environment()
+        wsl_path = _owner.cli._require_wsl(env)
+        stamp = _owner.time.time()
+        stamp_text = _owner.time.strftime("%Y-%m-%d %H:%M:%S", _owner.time.localtime(stamp))
+        moved: list[tuple[str, str]] = []
+        for path in paths:
+            group = _owner._configfiles.group_for_path(path)
+            if group is None:
+                continue
+            moved.append((path, _owner._configfiles.backup_root(group.key, stamp)))
+        script = _owner._configio.initialize_script(moved)
+        result = env.runner.run(
+            [wsl_path, "-d", self._distro.name, "--exec", "bash", "-lc", script],
+            timeout=180.0,
+        )
+        text = _owner.decode_console(result.stdout + result.stderr).strip()
+        for line in _owner._initenv.tail_lines(text):
+            self._bridge.event.emit(line)
+        pairs = _owner._configio.parse_init_result(text)
+        if pairs:
+            entries = tuple(_owner._configfiles.RestoreEntry(path, backup, 0) for path, backup in pairs)
+            self._pending_restore = _owner._configfiles.RestoreRecord(stamp_text, "初始化配置", entries)
+        if result.returncode != 0:
+            tail = _owner._initenv.tail_lines(text, 3)
+            raise _owner.runtime_error(
+                f"初始化配置失败（退出码 {result.returncode}）",
+                hint=tail[-1] if tail else "查看日志；已移走的文件仍可用「还原上次操作」恢复",
+            )
+        return f"已初始化 {len(pairs)} 个文件"
+
+    def _initialize_done(self, message: str) -> None:
+        self._refresh_after_run = True
+        self._persist_restore()
+        self._append_log(message)
+        self.summary.setText("初始化完成，正在刷新…")
+
+    def _initialize_error(self, message: str) -> None:
+        self._refresh_after_run = True
+        self._persist_restore()
+        self._append_log(f"初始化失败：{message}")
+        self.summary.setText("初始化失败")
+        _owner.QMessageBox.critical(self, "初始化失败", message)
+
+    def _initialize_finished(self) -> None:
+        if self._closing:
+            return
+        self._set_busy(False)
+        if self._refresh_after_run:
+            self.refresh()
+
     def _restore_last(self) -> None:
         record = self._restore_record
         if record is None or not record.entries or self._busy:

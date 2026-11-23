@@ -11,6 +11,7 @@ import base64
 import binascii
 import posixpath
 import shlex
+from typing import TYPE_CHECKING
 
 from fcmd.apps.wslman._configfiles import (
     _DEFAULT_DIR_MODE,
@@ -25,9 +26,15 @@ from fcmd.apps.wslman._configfiles import (
 )
 from fcmd.apps.wslman._errors import runtime_error
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 __all__ = [
     "BACKUP_PREFIX",
+    "INIT_PREFIX",
+    "initialize_script",
     "parse_backup_path",
+    "parse_init_result",
     "parse_probe",
     "parse_write_meta",
     "parse_write_result",
@@ -39,6 +46,9 @@ __all__ = [
 
 BACKUP_PREFIX = "WSLCFG_BACKUP="
 """写入脚本覆盖前备份时输出的一行：备份路径（相对 ``$HOME``，base64）。"""
+
+INIT_PREFIX = "WSLCFG_INIT="
+"""初始化脚本每移走一个文件输出的一行：``<路径>|<备份路径>``（两者都 base64）。"""
 
 
 def remote_read_argv(path: str) -> tuple[str, str, str]:
@@ -239,6 +249,56 @@ def parse_backup_path(text: str) -> str:
         if line.startswith(BACKUP_PREFIX):
             return _decode(line[len(BACKUP_PREFIX) :])
     return ""
+
+
+def initialize_script(entries: Sequence[tuple[str, str]]) -> str:
+    """生成「初始化配置」脚本：把目标实例已有的受管配置移进备份目录（不直接删除）。
+
+    ``entries`` 是 ``(相对路径, 备份目录)``；备份目录相对 ``$HOME``。脚本每成功移走
+    一个文件就输出一条 ``WSLCFG_INIT=``，界面据此生成可撤销的还原记录。
+    """
+    lines = [
+        "set -euo pipefail",
+        'home="$HOME"',
+        "umask 022",
+        "move_one() {",
+        '    rel="$1"',
+        '    root="$2"',
+        '    target="$home/$rel"',
+        '    if [ ! -e "$target" ] && [ ! -L "$target" ]; then return 0; fi',
+        '    case "$rel" in',
+        '        .ssh/*) backup_rel="${rel#.ssh/}" ;;',
+        '        *) backup_rel="$rel" ;;',
+        "    esac",
+        '    backup="$home/$root/$backup_rel"',
+        "    n=1",
+        '    while [ -e "$backup" ]; do',
+        '        backup="$home/$root/$backup_rel-$n"',
+        "        n=$((n + 1))",
+        "    done",
+        '    mkdir -p "$(dirname "$backup")"',
+        '    chmod 700 "$(dirname "$backup")"',
+        '    mv "$target" "$backup"',
+        '    backup_rel_path="${backup#"$home"/}"',
+        '    printf "WSLCFG_INIT=%s|%s\\n" "$(printf \'%s\' "$rel" | base64 | tr -d \'\\n\')" "$(printf \'%s\' "$backup_rel_path" | base64 | tr -d \'\\n\')"',
+        "}",
+        *(f"move_one {shlex.quote(path)} {shlex.quote(backup)}" for path, backup in entries),
+    ]
+    return "\n".join(lines)
+
+
+def parse_init_result(text: str) -> tuple[tuple[str, str], ...]:
+    """解析初始化脚本输出：``(路径, 备份路径)`` 列表。"""
+    found: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        if not line.startswith(INIT_PREFIX):
+            continue
+        raw_path, _, raw_backup = line[len(INIT_PREFIX) :].partition("|")
+        path = _decode(raw_path)
+        backup = _decode(raw_backup)
+        if path and backup:
+            found.append((path, backup))
+    return tuple(found)
 
 
 def restore_script(record: RestoreRecord) -> str:

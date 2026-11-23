@@ -305,7 +305,8 @@ class RestoreRecord:
 
     @property
     def summary(self) -> str:
-        return f"{self.stamp} 迁移的 {len(self.entries)} 个文件（新增 {self.created} · 覆盖 {self.overwritten}）"
+        action = self.source or "操作"
+        return f"{self.stamp} {action}的 {len(self.entries)} 个文件（新增 {self.created} · 备份 {self.overwritten}）"
 
     def to_mapping(self) -> dict[str, str]:
         rows = [[item.path, item.backup, str(item.size)] for item in self.entries]
@@ -844,14 +845,42 @@ def target_dir_mode(group: ConfigGroup) -> int:
     return group.dir_mode if group.ssh else _DEFAULT_DIR_MODE
 
 
-# 探测与写入脚本独立在 _configio，避免单个模块超过行数预算；这里保留同一套导出名。
-from fcmd.apps.wslman._configio import (  # noqa: E402
-    parse_backup_path,
-    parse_probe,
-    parse_write_meta,
-    parse_write_result,
-    probe_script,
-    remote_read_argv,
-    restore_script,
-    write_script,
+# 探测 / 写入 / 还原脚本独立在 _configio，避免单个模块超过行数预算；这里按需转发导出名，
+# 既保留 ``_configfiles.write_script`` 这套旧调用，又避免两个模块在导入期互相依赖。
+_LAZY_EXPORTS = frozenset(
+    {
+        "initialize_script",
+        "parse_backup_path",
+        "parse_init_result",
+        "parse_probe",
+        "parse_write_meta",
+        "parse_write_result",
+        "probe_script",
+        "remote_read_argv",
+        "restore_script",
+        "write_script",
+    }
 )
+
+
+if TYPE_CHECKING:
+    from fcmd.apps.wslman._configio import (  # noqa: F401
+        initialize_script,
+        parse_backup_path,
+        parse_init_result,
+        parse_probe,
+        parse_write_meta,
+        parse_write_result,
+        probe_script,
+        remote_read_argv,
+        restore_script,
+        write_script,
+    )
+
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY_EXPORTS:
+        from fcmd.apps.wslman import _configio
+
+        return getattr(_configio, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

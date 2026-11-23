@@ -468,7 +468,7 @@ from PySide6.QtWidgets import (  # noqa: F401, E402
     QVBoxLayout,
 )
 
-from fcmd.apps.wslman import _configadapt, _configfiles, _sshfiles  # noqa: F401, E402
+from fcmd.apps.wslman import _configadapt, _configfiles, _configio, _sshfiles  # noqa: F401, E402
 from fcmd.gui import icons as _qt_icons  # noqa: F401, E402
 from fcmd.gui.widgets import PathRow, icon_button, set_button_kind  # noqa: F401, E402
 

@@ -2975,6 +2975,69 @@ def test_config_migrate_section_scans_confirms_and_writes(
         owner.deleteLater()
 
 
+def test_config_migrate_initializes_target_and_records_restore(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """初始化目标配置：只移动不删除，并生成可还原的记录。"""
+    owner = QWidget()
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"))
+    try:
+        section._target = _configfiles.ConfigTarget(
+            home="/home/me",
+            files=(
+                _configfiles.RemoteFile(".ssh/id_ed25519", "600", 10),
+                _configfiles.RemoteFile(".gitconfig", "644", 5),
+                _configfiles.RemoteFile("notes.txt", "644", 1),
+            ),
+        )
+        assert section._target_paths() == [".ssh/id_ed25519", ".gitconfig"]
+        seen: list[list[str]] = []
+        marker = "\n".join(
+            [
+                "WSLCFG_INIT="
+                + base64.b64encode(b".ssh/id_ed25519").decode()
+                + "|"
+                + base64.b64encode(b".ssh/fcmd-ssh-backup-1/id_ed25519").decode(),
+                "WSLCFG_INIT="
+                + base64.b64encode(b".gitconfig").decode()
+                + "|"
+                + base64.b64encode(b"fcmd-config-backup-1/.gitconfig").decode(),
+            ]
+        )
+
+        class _Runner:
+            def run(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+            ) -> CommandResult:
+                seen.append(list(argv))
+                return CommandResult(tuple(argv), 0, marker.encode(), b"", 1)
+
+        class _FakeEnv:
+            runner = _Runner()
+
+        monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+        monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+        saved: list[Any] = []
+        section._on_restored = saved.append
+        assert section._run_initialize([".ssh/id_ed25519", ".gitconfig"]) == "已初始化 2 个文件"
+        assert seen and seen[0][:4] == ["wsl.exe", "-d", "Ubuntu", "--exec"]
+        assert "move_one .ssh/id_ed25519" in seen[0][-1]
+        record = section._pending_restore
+        assert record is not None
+        assert record.source == "初始化配置"
+        assert [entry.path for entry in record.entries] == [".ssh/id_ed25519", ".gitconfig"]
+        assert record.entries[0].backup == ".ssh/fcmd-ssh-backup-1/id_ed25519"
+        section._initialize_done("已初始化 2 个文件")
+        assert saved and saved[-1] is record
+        assert section._restore_record is record
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
 def test_config_migrate_section_surfaces_write_failures(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

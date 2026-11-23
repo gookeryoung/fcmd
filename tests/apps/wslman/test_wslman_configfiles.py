@@ -489,6 +489,44 @@ def test_write_script_rejects_paths_outside_managed_home() -> None:
         assert bad.value.code == "RUNTIME_ERROR"
 
 
+def test_initialize_script_moves_managed_files_and_parses_result() -> None:
+    """初始化配置把文件移进备份目录，并回传 (路径, 备份) 供生成还原记录。"""
+    script = _configfiles.initialize_script(
+        [
+            (".ssh/id_ed25519", ".ssh/fcmd-ssh-backup-1"),
+            (".gitconfig", "fcmd-config-backup-1"),
+        ]
+    )
+    assert script.startswith("set -euo pipefail")
+    assert "move_one .ssh/id_ed25519 .ssh/fcmd-ssh-backup-1" in script
+    assert "move_one .gitconfig fcmd-config-backup-1" in script
+    assert 'backup_rel="${rel#.ssh/}"' in script
+    assert "WSLCFG_INIT=" in script
+    assert "rm -f" not in script.split("move_one")[1]  # 只移动，不直接删除
+
+    path = ".ssh/id_ed25519"
+    backup = ".ssh/fcmd-ssh-backup-1/id_ed25519"
+    text = (
+        "WSLCFG_INIT="
+        + base64.b64encode(path.encode()).decode()
+        + "|"
+        + base64.b64encode(backup.encode()).decode()
+        + "\nignored\n"
+    )
+    assert _configfiles.parse_init_result(text) == ((path, backup),)
+    assert _configfiles.parse_init_result("") == ()
+
+
+def test_restore_record_summary_mentions_operation() -> None:
+    record = _configfiles.RestoreRecord(
+        "2026-01-01 12:00:00",
+        "初始化配置",
+        (_configfiles.RestoreEntry(".gitconfig", "fcmd-config-backup-1/.gitconfig", 0),),
+    )
+    assert "初始化配置" in record.summary
+    assert "备份 1" in record.summary
+
+
 def test_parse_write_result_reads_last_marker() -> None:
     text = "已写入 ~/.ssh/id_ed25519（权限 600）\nWSLCFG_WRITTEN=600|me\nWSLCFG_WRITTEN=640|me\n"
     assert _configfiles.parse_write_result(text) == ("640", "me")
