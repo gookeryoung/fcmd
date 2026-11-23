@@ -32,6 +32,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+from fcmd.apps.wslman._initenv_display import (
+    CJK_FONT_PACKAGES,
+    DISPLAY_PACKAGES,
+    font_cache_script,
+    probe_lines,
+)
 from fcmd.apps.wslman._initenv_pkg import (
     PACKAGE_MIRROR_AUTO,
     PACKAGE_MIRROR_CHOICES,
@@ -126,6 +132,10 @@ class EnvStatus:
     nvm: str = ""
     bun: str = ""
     rust: str = ""
+    gui_libs: str = ""
+    """``ok`` 表示显示依赖库齐全；否则为缺失的库名（空格分隔）。"""
+    cjk_font: str = ""
+    """探测到的中文字体族名；空串表示未安装。"""
     pip_index: str = ""
     uv_index: str = ""
     npm_registry: str = ""
@@ -458,6 +468,22 @@ TASKS: tuple[InitTask, ...] = (
             InitStep("安装 Rust 工具链", _rust_script()),
         ),
     ),
+    InitTask(
+        "gui",
+        "安装显示依赖库",
+        "补装 Qt / GTK 窗口在 WSLg 下显示所需的 EGL、XCB、Wayland 与字体配置库；"
+        "PySide6 的 wheel 自带 Qt 库，但缺这些系统库时窗口会报「Qt 前端已安装但加载失败」。",
+        (InitStep("安装显示依赖库", _apt_script(*DISPLAY_PACKAGES), root=True),),
+    ),
+    InitTask(
+        "fonts",
+        "安装中文字体",
+        "安装 fontconfig、Noto CJK 中文字体与彩色 Emoji，并刷新字体缓存，避免窗口中文显示成方块。",
+        (
+            InitStep("安装中文字体", _apt_script(*CJK_FONT_PACKAGES), root=True),
+            InitStep("刷新字体缓存", font_cache_script()),
+        ),
+    ),
 )
 
 
@@ -474,6 +500,8 @@ _TASK_SHORT: dict[str, str] = {
     "node": "Node.js",
     "bun": "Bun",
     "rust": "Rust",
+    "gui": "显示库",
+    "fonts": "字体",
 }
 
 
@@ -553,6 +581,7 @@ def probe_script() -> str:
             '[ -z "$bun_bin" ] && [ -x "$HOME/.local/bin/bun" ] && bun_bin="$HOME/.local/bin/bun"',
             'printf "WSLMAN_BUN=%s\\n" "$([ -n "$bun_bin" ] && "$bun_bin" --version 2>/dev/null)"',
             'printf "WSLMAN_RUST=%s\\n" "$(rustc --version 2>/dev/null | awk \'{print $2}\')"',
+            *probe_lines(),
             'printf "WSLMAN_PIP_INDEX=%s\\n" "$(python3 -m pip config get global.index-url 2>/dev/null)"',
             'printf "WSLMAN_UV_INDEX=%s\\n" "$(sed -n \'s/^index-url *= *"\\(.*\\)"/\\1/p\' "$HOME/.config/uv/uv.toml" 2>/dev/null | head -1)"',
             'printf "WSLMAN_NPM_REGISTRY=%s\\n" "$(sed -n \'s/^registry *= *//p\' "$HOME/.npmrc" 2>/dev/null | head -1)"',
@@ -594,6 +623,8 @@ def parse_status(text: str) -> EnvStatus:
         nvm=values.get("NVM", ""),
         bun=values.get("BUN", ""),
         rust=values.get("RUST", ""),
+        gui_libs=values.get("GUI_LIBS", ""),
+        cjk_font=values.get("CJK_FONT", ""),
         pip_index=values.get("PIP_INDEX", ""),
         uv_index=values.get("UV_INDEX", ""),
         npm_registry=values.get("NPM_REGISTRY", ""),
@@ -614,6 +645,8 @@ _STATUS_FIELDS: tuple[str, ...] = (
     "nvm",
     "bun",
     "rust",
+    "gui_libs",
+    "cjk_font",
     "pip_index",
     "uv_index",
     "npm_registry",
@@ -660,6 +693,10 @@ def present(key: str, status: EnvStatus) -> bool:  # noqa: PLR0911 - 每个初�
         return bool(status.bun)
     if key == "rust":
         return bool(status.rust)
+    if key == "gui":
+        return status.gui_libs == "ok"
+    if key == "fonts":
+        return bool(status.cjk_font)
     return False
 
 
@@ -691,6 +728,17 @@ def _pair_value(primary: str, secondary: str) -> str:
     return primary or secondary or "未配置"
 
 
+def _gui_libs_value(value: str) -> str:
+    """显示依赖库的状态文案：齐全 / 未检测 / 缺 N 个库（前缀若干库名）。"""
+    if value == "ok":
+        return "已就绪"
+    if not value:
+        return "未检测"
+    missing = value.split()
+    shown = " ".join(missing[:3]) + (" …" if len(missing) > 3 else "")
+    return f"缺 {len(missing)} 个：{shown}"
+
+
 def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
     """环境详情区逐项 ``(字段, 值, 是否就绪)``，供界面统一着色。"""
     node_ready = bool(status.node) and status.nvm == "yes"
@@ -719,6 +767,8 @@ def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
             _pair_value(status.npm_registry, status.bun_registry),
             bool(status.npm_registry) and bool(status.bun_registry),
         ),
+        ("显示依赖库", _gui_libs_value(status.gui_libs), status.gui_libs == "ok"),
+        ("中文字体", status.cjk_font or "未安装", bool(status.cjk_font)),
     )
 
 
@@ -734,5 +784,7 @@ def summary_text(status: EnvStatus) -> str:
         f"Python {python}",
         f"Node.js {node}",
         f"Rust {status.rust or '✗'}",
+        f"显示库 {'✓' if status.gui_libs == 'ok' else '✗'}",
+        f"字体 {'✓' if status.cjk_font else '✗'}",
     ]
     return " · ".join(parts)

@@ -7,6 +7,13 @@
 
 ### 变更
 
+- `wslmanw`「初始化环境」新增「安装显示依赖库」与「安装中文字体」两个独立项目：
+  用 APT 补装 WSLg 下跑 Qt / GTK 窗口所需的 EGL / GL / XCB / Wayland / fontconfig
+  系统库，以及 `fonts-noto-cjk` + 彩色 Emoji 并刷新字体缓存；探测分别用
+  `ldconfig -p` 与 `fc-list :lang=zh` 判定，状态区缺库时列出具体库名。
+- 修复 Qt 窗口入口在缺系统库（如 Kali 缺 `libEGL.so.1`）时误报「未安装 Qt 前端」：
+  `fcmd.gui.compat.qt_import_failure` 区分「绑定未安装」与「已安装但加载失败」，
+  后者的提示附带底层错误与 Linux `apt install` 命令。
 - `wslmanw`「初始化环境」在 uv 之后新增独立项目「安装 auto-uv-env」：走官方安装脚本
   （域名不可达时回退 GitHub），把 shell 集成幂等写进 rc，进入含 `pyproject.toml`
   的目录时自动用 uv 创建 / 激活 `.venv`；探测与状态区同步显示其版本。

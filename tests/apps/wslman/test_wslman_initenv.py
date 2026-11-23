@@ -10,11 +10,13 @@ from fcmd.apps.wslman import _initenv
 def test_tasks_cover_required_items() -> None:
     keys = [task.key for task in _initenv.TASKS]
     # uv / Bun 各自独立成项：没有 uv 不能让「Python」显示未初始化。
-    assert keys == ["mirror", "ssh", "python", "uv", "auto_uv_env", "node", "bun", "rust"]
+    assert keys == ["mirror", "ssh", "python", "uv", "auto_uv_env", "node", "bun", "rust", "gui", "fonts"]
     assert _initenv.task_by_key("python") is not None
     assert _initenv.task_by_key("uv") is not None
     assert _initenv.task_by_key("auto_uv_env") is not None
     assert _initenv.task_by_key("bun") is not None
+    assert _initenv.task_by_key("gui") is not None
+    assert _initenv.task_by_key("fonts") is not None
     assert _initenv.task_by_key("missing") is None
 
 
@@ -28,6 +30,8 @@ def test_short_label_covers_all_tasks_and_falls_back() -> None:
         "Node.js",
         "Bun",
         "Rust",
+        "显示库",
+        "字体",
     )
     assert _initenv.short_label("unknown") == "unknown"
 
@@ -215,6 +219,8 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
             "WSLMAN_NVM=yes",
             "WSLMAN_BUN=1.2.0",
             "WSLMAN_RUST=1.80.0",
+            "WSLMAN_GUI_LIBS=ok",
+            "WSLMAN_CJK_FONT=Noto Sans CJK SC",
             "WSLMAN_PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple",
             "WSLMAN_UV_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple",
             "WSLMAN_NPM_REGISTRY=https://registry.npmmirror.com/",
@@ -235,6 +241,8 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
     assert status.nvm == "yes"
     assert status.bun == "1.2.0"
     assert status.rust == "1.80.0"
+    assert status.gui_libs == "ok"
+    assert status.cjk_font == "Noto Sans CJK SC"
     assert status.pip_index.endswith("/simple")
     assert status.uv_index.endswith("/simple")
     assert status.npm_registry.endswith("/")
@@ -271,6 +279,8 @@ def test_present_and_default_checked() -> None:
         nvm="yes",
         bun="1.2.0",
         rust="1.80.0",
+        gui_libs="ok",
+        cjk_font="Noto Sans CJK SC",
     )
     assert all(_initenv.present(task.key, ready) for task in _initenv.TASKS)
     assert not any(_initenv.default_checked(task.key, ready) for task in _initenv.TASKS)
@@ -319,13 +329,54 @@ def test_status_rows_and_summary_reflect_state() -> None:
     assert rows["Rust"] == ("未安装", False)
     assert rows["pip / uv 镜像"] == ("未配置", False)
     assert rows["npm / bun 镜像"] == ("未配置", False)
-    assert len(rows) == 10
+    assert rows["显示依赖库"] == ("未检测", False)
+    assert rows["中文字体"] == ("未安装", False)
+    assert len(rows) == 12
 
     summary = _initenv.summary_text(status)
     assert "镜像源 ✗" in summary
     assert "SSH ✓" in summary
     assert "Python 3.12.3 / uv 0.5.14" in summary
     assert "Rust ✗" in summary
+    assert "显示库 ✗" in summary
+    assert "字体 ✗" in summary
+
+
+def test_display_libs_and_fonts_detect_and_report() -> None:
+    """缺库 / 缺字体各自成项：探测结果要能显示缺了哪些库和已装字体族。"""
+    missing = _initenv.parse_status("WSLMAN_GUI_LIBS=libEGL.so.1 libxcb-cursor.so.0\n")
+    assert _initenv.present("gui", missing) is False
+    assert _initenv.default_checked("gui", missing) is True
+    rows = {label: (value, ok) for label, value, ok in _initenv.status_rows(missing)}
+    assert rows["显示依赖库"] == ("缺 2 个：libEGL.so.1 libxcb-cursor.so.0", False)
+
+    ready = _initenv.parse_status("WSLMAN_GUI_LIBS=ok\nWSLMAN_CJK_FONT=Noto Sans CJK SC\n")
+    assert _initenv.present("gui", ready) is True
+    assert _initenv.present("fonts", ready) is True
+    rows = {label: (value, ok) for label, value, ok in _initenv.status_rows(ready)}
+    assert rows["显示依赖库"] == ("已就绪", True)
+    assert rows["中文字体"] == ("Noto Sans CJK SC", True)
+
+    no_font = _initenv.parse_status("WSLMAN_GUI_LIBS=ok\nWSLMAN_CJK_FONT=\n")
+    assert _initenv.present("fonts", no_font) is False
+    assert _initenv.default_checked("fonts", no_font) is True
+
+
+def test_display_and_font_tasks_install_expected_packages() -> None:
+    """显示库与中文字体各是一条 root apt 步骤；字体额外刷新缓存。"""
+    gui_steps = _initenv.steps_for(["gui"])
+    assert len(gui_steps) == 1
+    assert gui_steps[0].root is True
+    for package in ("libegl1", "libxcb-cursor0", "libxcb-icccm4", "libwayland-cursor0", "libgl1"):
+        assert package in gui_steps[0].script
+
+    font_steps = _initenv.steps_for(["fonts"])
+    assert [step.label for step in font_steps] == ["安装中文字体", "刷新字体缓存"]
+    assert font_steps[0].root is True
+    assert "fonts-noto-cjk" in font_steps[0].script
+    assert "fonts-noto-color-emoji" in font_steps[0].script
+    assert "fc-cache -f" in font_steps[1].script
+    assert font_steps[1].root is False
 
 
 def test_status_rows_distinguish_nvm_and_merge_mirrors() -> None:
