@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtWidgets import QListWidgetItem
+from PySide6.QtWidgets import QListWidgetItem, QWidget
 
 from fcmd.apps.llm import _llmw_models
 from fcmd.gui.widgets import ItemRow
@@ -37,6 +37,7 @@ __all__ = [
     "Path",
     "ProgressEvent",
     "QListWidgetItem",
+    "QWidget",
     "QuantOption",
     "Sequence",
     "_llmw_models",

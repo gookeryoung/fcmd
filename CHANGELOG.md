@@ -12,7 +12,8 @@
 - 推进 ADR 0046 P2/P3：`WslmanQtWindow` 方法拆为 10 个 `qt/*.py` mixin，行卡/详情、
   初始化环境、SSH 迁移段落独立成模块；`_wslmanw_qt.py` 约 5.3k → 480 行。
 - 推进 ADR 0046 P4：llmw 模型页 `_BrowsePanel` 方法拆到 `apps/llm/qt/models_*.py`，
-  `_llmw_qt_center.py` 约 2.3k → 1.06k 行；清理已失效的行数白名单项。
+  `_llmw_qt_center.py` 约 2.3k → 499 行；P4 续拆 `RunPage` 到 `apps/llm/qt/run_*.py`，
+  `_llmw_qt_run.py` 约 2.2k → 771 行；清理已失效的行数白名单项。
 - 补完 P4/P5 收尾：`gui/style.py` 拆为 `gui/style/{qss,tokens,state,apply}.py`，`gui/theme.py` 拆为
   `gui/theme/{palette,fonts,builtin,registry}.py`；
   `filescanw` / `filesyncw` / `pevieww` / `renamerw` / `reshackw` / `wslmanw` /
