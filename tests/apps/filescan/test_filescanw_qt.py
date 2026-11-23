@@ -554,3 +554,63 @@ def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> No
         assert window._current_settings().use_cache is False
     finally:
         window.deleteLater()
+
+
+def test_result_context_is_fully_shown_and_match_is_highlighted(home: Path) -> None:
+    """结果树上下文列：单元格保留完整（打码）上下文，命中段单独上底色并随列宽换行。"""
+    from PySide6.QtGui import QTextCursor
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanResult, ScanStats
+    from fcmd.apps.filescan._filescanw_qt import _CONTEXT_ROLE
+    from fcmd.apps.filescan._report import render_context
+
+    long_context = "客户联系电话 13800138000 请勿外传，仅限内部核对使用"
+    match = RuleMatch(
+        rule_id="cn_phone",
+        rule_name="手机号",
+        line_no=3,
+        start=7,
+        end=18,
+        excerpt="13800138000",
+        context=long_context,
+        context_start=7,
+    )
+    result = ScanResult(
+        roots=(Path("sample"),),
+        stats=ScanStats(hit_files=1, hit_count=1),
+        hits=[FileHit(path=Path("sample/notes.txt"), size=120, encoding="utf-8", matches=[match])],
+    )
+    window = _window()
+    try:
+        window._render_result(result)
+        child = window._tree.topLevelItem(0).child(0)
+        assert child.text(3) == render_context(match, False)
+        masked = "13" + "*" * 7 + "00"
+        assert child.text(3) == long_context.replace("13800138000", masked)
+        assert child.data(3, _CONTEXT_ROLE) == ("客户联系电话 ", masked, " 请勿外传，仅限内部核对使用")
+
+        option = QStyleOptionViewItem()
+        option.widget = window._tree
+        option.font = window._tree.font()
+        index = window._tree.indexFromItem(child, 3)
+        window._tree.setColumnWidth(3, 120)
+        narrow = window._context_delegate.sizeHint(option, index)
+        window._tree.setColumnWidth(3, 900)
+        wide = window._context_delegate.sizeHint(option, index)
+        # 换行后行高随内容增长，不再按固定单行截断。
+        assert narrow.height() > wide.height()
+        assert wide.height() > window._tree.fontMetrics().height()
+
+        window._tree.setColumnWidth(3, 300)
+        document = window._context_delegate._document(index, 292, selected=False, font=window._tree.font())
+        assert document is not None
+        cursor = QTextCursor(document)
+        cursor.setPosition(8)
+        cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+        assert cursor.charFormat().background().color().name() == _guitheme.resolve_theme("dark-blue").palette.warning
+        cursor.setPosition(0)
+        cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+        assert cursor.charFormat().foreground().color().name() == _guitheme.resolve_theme("dark-blue").palette.text
+    finally:
+        window.deleteLater()

@@ -191,8 +191,9 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
    展示的结果，未产生结果时置灰显示「暂无任务结果」；菜单选取后自动关闭，不会残留展开态。移除 / 清空会同时删掉对应结果条目，
    不删除磁盘目录。
 2. **结果**：结果树按文件聚合（父节点路径 + 命中数，子节点规则/行号/上下文），
-   支持按规则与路径筛选；导出 CSV/JSON/文本（「导出原文」开关只作用于导出），
-   扫描结束后自动切到本页。
+   上下文列按列宽换行完整显示（行高随内容增长，不再省略成「…」），命中片段用
+   主题 warning 底色 + `on_accent` 前景单独标出；支持按规则与路径筛选；导出
+   CSV/JSON/文本（「导出原文」开关只作用于导出），扫描结束后自动切到本页。
 3. **规则**：规则表（启用、分组、名称、类型、表达式摘要；双击行直接编辑）、
    新增/编辑/删除、启用/禁用、载入内置、清空、导入/导出/保存规则集、
    表达式输入框与校验。
@@ -602,6 +603,9 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   `files_skipped_size_time`，属「范围外」）。
 - 扫描缓存：已落地（`_cache.py` + CLI `--no-cache`/`--clear-cache` + GUI 开关与
   清理，选型 / 指纹 / 并发与损坏降级 / 实测见 D11）。
+- 结果页上下文展示：已落地（`_report.context_segments` 把上下文切成「命中前 /
+  命中 / 命中后」三段，与 `render_context` 共用打码口径；`_ContextDelegate` 按列宽
+  换行完整显示并给命中段加 warning 底色，行高随内容增长，列宽变化时重排版）。
 - 结果聚合口径：已落地（`ScanStats.files_out_of_scope` / `files_skipped_after_read`
   + `_report.scan_summary` / `no_hit_hint` + GUI `scan_status_text` 共用，
   0 命中诊断与真实复现见 D12）。

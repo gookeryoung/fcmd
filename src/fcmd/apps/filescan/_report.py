@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "REPORT_FORMATS",
+    "context_segments",
     "filter_result",
     "format_text_report",
     "mask_text",
@@ -46,14 +47,23 @@ def mask_text(text: str) -> str:
     return f"{text[:2]}{'*' * (len(text) - 4)}{text[-2:]}"
 
 
-def render_context(match: RuleMatch, include_raw: bool = False) -> str:
-    """返回上下文字符串；默认把上下文中的命中区间替换为打码文本。"""
-    if include_raw:
-        return match.context
-    masked = mask_text(match.excerpt)
+def context_segments(match: RuleMatch, include_raw: bool = False) -> tuple[str, str, str]:
+    """把上下文切成「命中前 / 命中 / 命中后」三段，文本与富文本共用同一口径。
+
+    默认中间段是打码文本，``include_raw=True`` 时是原文。三段拼起来等于
+    :func:`render_context` 的结果，GUI 因此可以在中间段单独加底色而不重复实现
+    打码逻辑。
+    """
     start = match.context_start
     end = start + len(match.excerpt)
-    return f"{match.context[:start]}{masked}{match.context[end:]}"
+    excerpt = match.excerpt if include_raw else mask_text(match.excerpt)
+    return match.context[:start], excerpt, match.context[end:]
+
+
+def render_context(match: RuleMatch, include_raw: bool = False) -> str:
+    """返回上下文字符串；默认把上下文中的命中区间替换为打码文本。"""
+    before, excerpt, after = context_segments(match, include_raw)
+    return f"{before}{excerpt}{after}"
 
 
 def _match_to_mapping(match: RuleMatch, include_raw: bool) -> dict[str, Any]:

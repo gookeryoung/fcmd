@@ -9,7 +9,8 @@
   结果；扫描按钮排在行内动作首位并加宽，最近扫描时间紧挨目录显示；当前选项用
   只读标签放在卡片标题行，进设置页修改；
 - **结果**（按文件聚合命中、规则 / 路径筛选、打码导出）：表格吃满页面高度，
-  标题胶囊标明当前结果所属任务，扫描结束自动切到本页；
+  标题胶囊标明当前结果所属任务，扫描结束自动切到本页；上下文列按列宽换行完整
+  显示，命中片段用主题 warning 底色单独标出；
 - **规则**（规则表、表达式校验与规则集导入导出）；
 - **设置**（扫描范围表单、后缀白名单、缓存 / 配置导入导出）：三张卡片纵向排布
   并套 :class:`~fcmd.gui.widgets.PageScroll`，窗口压矮时滚动而不是裁掉底部动作行。
@@ -35,9 +36,11 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -52,6 +55,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSpinBox,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -78,7 +84,7 @@ from fcmd.apps.filescan._engine import (
     parse_ext_text,
     scan_paths,
 )
-from fcmd.apps.filescan._report import filter_result, render_context, write_report
+from fcmd.apps.filescan._report import context_segments, filter_result, render_context, write_report
 from fcmd.apps.filescan._rules import (
     MATCH_KEYWORD,
     MATCH_REGEX,
@@ -91,6 +97,7 @@ from fcmd.apps.filescan._rules import (
     resolve_expression,
     save_ruleset,
 )
+from fcmd.gui import style as _qt_theme
 from fcmd.gui.page import AppPage, PageSpec
 from fcmd.gui.widgets import (
     ButtonStateMixin,
@@ -560,6 +567,131 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         return self._result
 
 
+_CONTEXT_ROLE = Qt.ItemDataRole.UserRole + 11
+_CONTEXT_PADDING = 4
+"""结果树上下文列的数据角色与内边距（像素）。"""
+
+
+def _context_parts(index: QModelIndex | QPersistentModelIndex) -> tuple[str, str, str] | None:
+    """读取单元格存的三段上下文（命中前 / 命中 / 命中后）；未存时返回 ``None``。"""
+    data = index.data(_CONTEXT_ROLE)
+    if isinstance(data, tuple) and len(data) == 3 and all(isinstance(part, str) for part in data):
+        return data
+    return None
+
+
+def _utf16_units(text: str) -> int:
+    """Python 字符数 → QTextDocument 位置单位（UTF-16，emoji 占两格）。"""
+    return len(text.encode("utf-16-le")) // 2
+
+
+class _ContextDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
+    """结果树「上下文」列：按列宽换行完整显示，命中片段用强调底色标出。
+
+    默认 delegate 只在固定列宽内省略文本（``…``），长上下文必须靠悬停提示才能
+    看全。这里改用 ``QTextDocument`` 排版：按列宽自动换行、行高随内容增长，命中段
+    单独加底色，保证「整段相关上下文」和「命中位置」在同一行里同时可见；换行只
+    影响这一列，其它列仍是单行。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._documents: dict[tuple[int, int, bool, str], QTextDocument] = {}
+        self._width = 0
+
+    def reset(self) -> None:
+        """结果树重建时清掉排版缓存，避免旧命中的文档对象继续驻留。"""
+        self._documents.clear()
+        self._width = 0
+
+    def _column_width(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> int:
+        """单元格可用文本宽度：减去内边距，列宽未知时退回 ``option.rect``。"""
+        widget = option.widget
+        width = widget.columnWidth(index.column()) if widget is not None and hasattr(widget, "columnWidth") else 0
+        if width <= 0:
+            width = option.rect.width()
+        return max(width - _CONTEXT_PADDING * 2, 1)
+
+    def _document(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        width: int,
+        *,
+        selected: bool,
+        font: QFont,
+    ) -> QTextDocument | None:
+        parts = _context_parts(index)
+        if parts is None:
+            return None
+        theme = _qt_theme.active_theme()
+        key = (id(parts), width, selected, theme.name)
+        cached = self._documents.get(key)
+        if cached is not None:
+            return cached
+        if width != self._width:
+            # 窗口 / 列宽变化后旧排版的换行位置全部失效，直接丢弃重排。
+            self._documents.clear()
+            self._width = width
+        before, matched, after = parts
+        document = QTextDocument()
+        document.setDocumentMargin(0)
+        document.setDefaultFont(font)
+        document.setPlainText(f"{before}{matched}{after}")
+        cursor = QTextCursor(document)
+        cursor.select(QTextCursor.SelectionType.Document)
+        base = QTextCharFormat()
+        base.setForeground(QColor(theme.palette.select_fg if selected else theme.palette.text))
+        cursor.mergeCharFormat(base)
+        highlight = QTextCharFormat()
+        highlight.setBackground(QColor(theme.palette.warning))
+        highlight.setForeground(QColor(theme.palette.on_accent))
+        start = _utf16_units(before)
+        cursor.setPosition(start)
+        cursor.setPosition(start + _utf16_units(matched), QTextCursor.MoveMode.KeepAnchor)
+        cursor.mergeCharFormat(highlight)
+        document.setTextWidth(width)
+        self._documents[key] = document
+        return document
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        if _context_parts(index) is None:
+            # 父节点摘要 / 跳过与错误行仍是普通单行文本，交回默认绘制。
+            super().paint(painter, option, index)
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        width = self._column_width(opt, index)
+        document = self._document(index, width, selected=selected, font=opt.font)
+        if document is None:
+            return
+        rect = opt.rect.adjusted(_CONTEXT_PADDING, _CONTEXT_PADDING, -_CONTEXT_PADDING, -_CONTEXT_PADDING)
+        painter.save()
+        painter.setClipRect(rect)
+        painter.translate(rect.topLeft())
+        document.drawContents(painter, QRectF(0, 0, rect.width(), rect.height()))
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
+        base = super().sizeHint(option, index)
+        if _context_parts(index) is None:
+            return base
+        width = self._column_width(option, index)
+        document = self._document(index, width, selected=False, font=option.font)
+        if document is None:
+            return base
+        height = int(document.size().height()) + _CONTEXT_PADDING * 2
+        return QSize(base.width(), max(base.height(), height))
+
+
 class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """敏感内容扫描窗口：侧边栏分页（扫描 / 结果 / 规则 / 设置）+ 状态栏 + 任务日志。"""
 
@@ -811,6 +943,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._tree.setColumnWidth(2, 70)
         self._tree.header().setStretchLastSection(True)
         self._tree.setMinimumHeight(240)
+        # 上下文列换行完整显示 + 命中底色；其余列继续用默认 delegate 单行绘制。
+        self._context_delegate = _ContextDelegate(self._tree)
+        self._tree.setItemDelegateForColumn(3, self._context_delegate)
+        # 列宽变化后旧排版的换行位置失效：清缓存并重算行高，避免行高停在首帧宽度上。
+        self._tree.header().sectionResized.connect(self._context_layout_changed)
         card.body.addWidget(self._tree, 1)
         layout.addWidget(card, 1)
 
@@ -1541,6 +1678,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
 
     def _render_result(self, result: ScanResult) -> None:
         self._tree.clear()
+        self._context_delegate.reset()
         for index, hit in enumerate(result.hits):
             parent = QTreeWidgetItem(
                 [
@@ -1553,14 +1691,19 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             parent.setToolTip(0, str(hit.path))
             self._tree.addTopLevelItem(parent)
             for match in hit.matches:
+                rendered = render_context(match, False)
                 child = QTreeWidgetItem(
                     [
                         match.rule_name,
                         match.rule_name,
                         str(match.location or match.line_no),
-                        render_context(match, False),
+                        rendered,
                     ]
                 )
+                # 单元格文本仍是完整打码上下文（复制 / 悬停 / 测试可读）；
+                # 富文本绘制由 delegate 按三段重新排版，命中段另外上底色。
+                child.setData(3, _CONTEXT_ROLE, context_segments(match, False))
+                child.setToolTip(3, rendered)
                 parent.addChild(child)
             parent.setExpanded(True)
             if index >= 5000:  # 极端结果集下不再逐项展开，避免长时间占用 GUI 线程
@@ -1573,6 +1716,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             entry = QTreeWidgetItem([str(item.path), "", "", f"错误：{item.message}"])
             entry.setToolTip(0, str(item.path))
             self._tree.addTopLevelItem(entry)
+
+    def _context_layout_changed(self, *_args: object) -> None:
+        """列宽变化后重排上下文列：行高随换行结果重新计算。"""
+        self._context_delegate.reset()
+        self._tree.scheduleDelayedItemsLayout()
 
     def _sync_result_switcher(self) -> None:
         """更新任务切换按钮：只列本次会话已有结果的任务。"""

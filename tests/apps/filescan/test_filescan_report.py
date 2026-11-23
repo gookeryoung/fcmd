@@ -10,6 +10,7 @@ import pytest
 
 from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanError, ScanResult, ScanStats, SkipRecord
 from fcmd.apps.filescan._report import (
+    context_segments,
     filter_result,
     format_text_report,
     mask_text,
@@ -97,6 +98,19 @@ def test_render_context_masks_only_match_span() -> None:
 def test_render_context_handles_short_match() -> None:
     match = _match(excerpt="ab", context="xx ab yy", context_start=3)
     assert render_context(match) == "xx *** yy"
+
+
+def test_context_segments_split_match_and_keep_mask() -> None:
+    match = _match()
+    before, excerpt, after = context_segments(match)
+    assert (before, excerpt, after) == ("tel ", "13*******78", " end")
+    assert f"{before}{excerpt}{after}" == render_context(match)
+    assert context_segments(match, include_raw=True) == ("tel ", "13812345678", " end")
+
+
+def test_context_segments_handle_short_match() -> None:
+    match = _match(excerpt="ab", context="xx ab yy", context_start=3)
+    assert context_segments(match) == ("xx ", "***", " yy")
 
 
 # ---------------------------------------------------------------------- #
