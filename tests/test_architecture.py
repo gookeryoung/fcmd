@@ -178,7 +178,6 @@ LEGACY_LARGE = {
     "apps/renamer/_core.py",
     "apps/renamer/_renamerw_qt.py",
     "apps/reshack/_reshackw_qt.py",
-    "apps/wslman/_wslmanw_qt.py",
     "apps/wslman/wslman.py",
     "apps/wslman/wslmanw.py",
     "gui/style.py",

@@ -9,6 +9,8 @@
 
 - 推进 ADR 0046：wslman 六个对话框迁至 `apps/wslman/qt/dialogs.py`，
   `_wslmanw_qt.py` 保留同名 re-export；布局守卫支持 `apps/<app>/qt/` 三层。
+- 推进 ADR 0046 P2/P3：`WslmanQtWindow` 方法拆为 10 个 `qt/*.py` mixin，行卡/详情、
+  初始化环境、SSH 迁移段落独立成模块；`_wslmanw_qt.py` 约 5.3k → 480 行。
 - 补完 P4/P5 收尾：`gui/style.py` 拆为 `gui/style/{qss,tokens,state,apply}.py`，`gui/theme.py` 拆为
   `gui/theme/{palette,fonts,builtin,registry}.py`；
   `filescanw` / `filesyncw` / `pevieww` / `renamerw` / `reshackw` / `wslmanw` /
