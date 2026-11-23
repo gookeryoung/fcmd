@@ -16,6 +16,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -138,6 +139,23 @@ def fcmd(tmp_path: Path, tmp_home: Path) -> Callable[..., CmdResult]:
         return result
 
     return run
+
+
+@pytest.fixture(autouse=True)
+def _forbid_wsl_distro_start() -> Any:
+    """全局守卫：任何测试都不允许真正启动 / 改动 WSL 实例。
+
+    起因：``llmw`` 的 vLLM 平台探测会对每个发行版执行 ``wsl -d <名称>``，而窗口
+    构造就会调用它——跑测试（或打开 llmw）会把开发机上的 Ubuntu / kali-linux
+    一个个启动起来。只读命令（``--version`` / ``-l -v`` / ``--status``）放行；
+    带 ``-d`` / ``--exec`` / ``--terminate`` / ``--import`` 等的调用直接失败，
+    逼用例注入假执行器，防止以后再次引入隐式启动。
+    """
+    from tests.helpers import forbid_wsl_distro_start
+
+    restore = forbid_wsl_distro_start()
+    yield
+    restore()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

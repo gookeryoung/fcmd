@@ -20,11 +20,9 @@ import json
 import os
 import re
 import shlex
-import shutil
-import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 from fcmd.apps.llm import _llmconfig, llmenv
 from fcmd.apps.llm.llmbase import (
@@ -33,7 +31,6 @@ from fcmd.apps.llm.llmbase import (
     PROFILES,
     EngineInfo,
     LaunchPlan,
-    Runner,
     ServeError,
     ServeState,
     format_returncode,
@@ -62,7 +59,9 @@ __all__ = [
     "make_plan",
     "parse_versions",
     "parse_wsl_distros",
+    "parse_wsl_rows",
     "python_supported",
+    "reset_platform_cache",
     "resolve_engine",
     "scan_hf_models",
     "stop_engine",
@@ -73,224 +72,27 @@ __all__ = [
 ENGINE_KIND = "vllm"
 """服务状态里的引擎类型标记；停止时据此追加 WSL 侧清理。"""
 
-MIN_PYTHON: Final[tuple[int, int]] = (3, 10)
-MAX_PYTHON: Final[tuple[int, int]] = (3, 13)
-"""vLLM 轮子覆盖的 Python 版本区间（含下界，不含上界）。"""
 
 _PYPI_URL: Final[str] = "https://pypi.org/pypi/vllm/json"
 _TAG_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9][0-9A-Za-z.+-]*$")
 _VERSION_RE: Final[re.Pattern[str]] = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\.post\d+)?$")
-_WSL_EXE: Final[str] = "wsl.exe"
-_DISTRO_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_PLATFORM_TTL: Final[float] = 60.0
 _SKIP_DIRS: Final[frozenset[str]] = frozenset({".git", "__pycache__", "node_modules"})
 
-PlatformKind = Literal["linux", "wsl", "none"]
-
 
 # ---------------------------------------------------------------------- #
-# 平台探测
+# 平台探测（实现在 :mod:`fcmd.apps.llm._llmvllm_platform`，这里 re-export 保持既有导入路径）
 # ---------------------------------------------------------------------- #
-@dataclass(frozen=True, slots=True)
-class VllmInterpreter:
-    """一个可用于安装 vLLM 的 Python 解释器。
-
-    ``distro`` 为空表示本机 Linux；否则是 WSL 发行版名。``home`` 是安装
-    venv 的目标根（WSL 内为 ``$HOME``，Linux 为本机 home），只用于拼目录。
-    """
-
-    python: str
-    version: str
-    distro: str = ""
-    home: str = ""
-    gpu: str = ""
-
-    @property
-    def label(self) -> str:
-        """展示名：``WSL: Ubuntu-24.04 · Python 3.12`` / ``本机 · Python 3.12``。"""
-        where = f"WSL: {self.distro}" if self.distro else "本机"
-        return f"{where} · Python {self.version}"
-
-
-@dataclass(frozen=True, slots=True)
-class VllmPlatform:
-    """vLLM 在当前机器上的可用性快照。"""
-
-    kind: PlatformKind
-    supported: bool
-    reason: str
-    interpreters: tuple[VllmInterpreter, ...] = ()
-
-    @property
-    def ready(self) -> bool:
-        """是否有可用解释器（决定「安装」按钮是否可用）。"""
-        return bool(self.interpreters)
-
-    @property
-    def primary(self) -> VllmInterpreter | None:
-        """默认解释器（探测顺序的第一个）。"""
-        return self.interpreters[0] if self.interpreters else None
-
-
-def parse_wsl_distros(text: str) -> list[str]:
-    """解析 ``wsl.exe --list --verbose`` 输出，默认发行版排在最前。
-
-    WSL 在 Windows 控制台返回 UTF-16LE，经按本地编码解码后会夹杂 ``\\x00``；
-    这里先去掉空字符再按行解析，避免发行版名被拆成单字符。错误信息
-    （``wsl: ...``）与表头在名称正则处被过滤掉。
-    """
-    cleaned = text.replace("\x00", "")
-    default = ""
-    others: list[str] = []
-    for line in cleaned.splitlines():
-        parts = line.split()
-        if not parts or parts[0] in {"NAME", "名称", "*"}:
-            if parts[:1] == ["*"] and len(parts) >= 2:
-                default = parts[1]
-            continue
-        name = parts[0]
-        if _DISTRO_RE.match(name) is None:
-            continue
-        others.append(name)
-    ordered = ([default] if default else []) + others
-    return list(dict.fromkeys(item for item in ordered if item))
-
-
-def python_supported(version: str) -> bool:
-    """Python 版本是否落在 vLLM 轮子支持的区间内。"""
-    parts = _version_tuple(version)
-    return MIN_PYTHON <= parts[:2] < MAX_PYTHON
-
-
-def _version_tuple(text: str) -> tuple[int, int, int]:
-    match = _VERSION_RE.match(text.strip().split("+", 1)[0])
-    if match is None:
-        return (0, 0, 0)
-    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
-
-
-def _clean(text: str) -> str:
-    return text.replace("\x00", "").strip()
-
-
-def _probe_wsl(runner: Runner, distro: str) -> VllmInterpreter | None:
-    """探测单个 WSL 发行版：``$HOME`` / Python / GPU。"""
-    home = _clean(runner([_WSL_EXE, "-d", distro, "--", "sh", "-lc", 'printf %s "$HOME"'], 10.0).stdout)
-    if not home:
-        return None
-    which = "command -v python3.12 || command -v python3.11 || command -v python3.10 || command -v python3"
-    python = _clean(runner([_WSL_EXE, "-d", distro, "--", "sh", "-lc", which], 15.0).stdout)
-    if not python:
-        return None
-    version = _clean(
-        runner(
-            [_WSL_EXE, "-d", distro, "--", python, "-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"],
-            15.0,
-        ).stdout
-    )
-    if not python_supported(version):
-        return None
-    gpu = _clean(
-        runner(
-            [
-                _WSL_EXE,
-                "-d",
-                distro,
-                "--",
-                "sh",
-                "-lc",
-                "/usr/lib/wsl/lib/nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1",
-            ],
-            15.0,
-        ).stdout
-    ).splitlines()
-    return VllmInterpreter(python=python, version=version, distro=distro, home=home, gpu=gpu[0] if gpu else "")
-
-
-def _probe_linux(runner: Runner) -> VllmInterpreter | None:
-    """探测本机 Linux 的 python3。"""
-    python = shutil.which("python3") or ""
-    if not python:
-        return None
-    result = runner([python, "-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"], 15.0)
-    version = _clean(result.stdout or result.stderr)
-    if not python_supported(version):
-        return None
-    gpu = _clean(runner(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], 10.0).stdout).splitlines()
-    return VllmInterpreter(python=python, version=version, home=str(Path.home()), gpu=gpu[0] if gpu else "")
-
-
-_PLATFORM_CACHE: dict[str, tuple[float, VllmPlatform]] = {}
-
-
-def detect_platform(
-    runner: Runner = run_command,
-    *,
-    use_cache: bool = True,
-    home: Path | None = None,
-) -> VllmPlatform:
-    """探测 vLLM 平台可用性（Windows 依次尝试各 WSL 发行版）。
-
-    ``supported`` 表示操作系统层面能跑 vLLM（Linux / WSL2）；``ready`` 表示
-    还找到了可安装的 Python 解释器。Windows 没有 WSL 或非 Linux 平台返回
-    ``supported=False``，UI 据此折叠并禁用配置。
-    """
-    cache_key = "nt" if os.name == "nt" else os.name
-    if use_cache:
-        cached = _PLATFORM_CACHE.get(cache_key)
-        if cached is not None and time.monotonic() - cached[0] < _PLATFORM_TTL:
-            return cached[1]
-    platform = _detect_platform_uncached(runner, home)
-    _PLATFORM_CACHE[cache_key] = (time.monotonic(), platform)
-    return platform
-
-
-def reset_platform_cache() -> None:
-    """清空平台探测缓存（测试与设置页「重新检测」使用）。"""
-    _PLATFORM_CACHE.clear()
-
-
-def _detect_platform_uncached(runner: Runner, home: Path | None) -> VllmPlatform:
-    del home
-    if os.name == "nt":
-        listing = runner([_WSL_EXE, "--list", "--verbose"], 15.0)
-        distros = parse_wsl_distros(f"{listing.stdout}\n{listing.stderr}")
-        if not distros:
-            return VllmPlatform(
-                "none",
-                False,
-                "Windows 需要 WSL2：未检测到已安装的 WSL 发行版（wsl --install）",
-            )
-        interpreters: list[VllmInterpreter] = []
-        for distro in distros:
-            found = _probe_wsl(runner, distro)
-            if found is not None:
-                interpreters.append(found)
-        if not interpreters:
-            return VllmPlatform(
-                "wsl",
-                True,
-                "WSL2 可用，但发行版中没有 Python 3.10–3.12（vLLM 轮子要求）；可在 WSL 内安装 python3.12 后重新检测",
-            )
-        primary = interpreters[0]
-        gpu_note = f" · GPU: {primary.gpu}" if primary.gpu else " · 未检测到 GPU（CPU 推理会非常慢）"
-        return VllmPlatform(
-            "wsl",
-            True,
-            f"WSL2 · {primary.distro} · Python {primary.version}{gpu_note}",
-            tuple(interpreters),
-        )
-    if os.name == "posix":
-        found = _probe_linux(runner)
-        if found is None:
-            return VllmPlatform(
-                "linux",
-                True,
-                "Linux 可用，但未找到 Python 3.10–3.12；安装对应版本后重新检测",
-            )
-        gpu_note = f" · GPU: {found.gpu}" if found.gpu else " · 未检测到 GPU"
-        return VllmPlatform("linux", True, f"Linux · Python {found.version}{gpu_note}", (found,))
-    return VllmPlatform("none", False, f"当前系统（{os.name}）不支持 vLLM：需要 Linux 或 Windows + WSL2")
+from fcmd.apps.llm._llmvllm_platform import (  # noqa: E402 - 放在常量之后以保持文件结构
+    _WSL_EXE,
+    VllmInterpreter,
+    VllmPlatform,
+    _version_tuple,
+    detect_platform,
+    parse_wsl_distros,
+    parse_wsl_rows,
+    python_supported,
+    reset_platform_cache,
+)
 
 
 # ---------------------------------------------------------------------- #
@@ -505,7 +307,8 @@ def install_engine(  # noqa: PLR0913 - 可注入平台 / 执行器，便于设�
     """
     if not _TAG_RE.fullmatch(tag):
         raise ServeError(f"vLLM 版本号不合法: {tag!r}")
-    platform = detect_platform(use_cache=False)
+    # 安装必然要在实例里跑命令（等于启动它）：调用方已确认，允许探测已停止实例。
+    platform = detect_platform(use_cache=False, allow_start=True)
     if not platform.supported:
         raise ServeError(platform.reason)
     chosen = interpreter or platform.primary

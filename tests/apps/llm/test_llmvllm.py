@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -273,3 +274,98 @@ def test_engine_options_reflect_platform() -> None:
     assert supported[1][0] == "vllm"
     assert supported[1][2] == "HF safetensors · WSL2 / Linux"
     assert unsupported[1][2] == "当前系统不可用"
+
+
+def _wsl_rows(listing: str) -> Any:
+    """构造一个只回 `wsl -l -v` 列表的假执行器，记录被探测的发行版。"""
+    probed: list[str] = []
+    from fcmd.apps.llm.llmbase import CommandResult as _Result
+
+    def fake_run(cmd: list[str], timeout: float = 15.0) -> Any:
+        if cmd[:3] == ["wsl.exe", "--list", "--verbose"]:
+            return _Result(0, listing, "")
+        if cmd[:2] == ["wsl.exe", "-d"]:
+            distro = cmd[2]
+            if distro not in probed:
+                probed.append(distro)
+            script = cmd[-1]
+            if 'printf %s "$HOME"' in script:
+                return _Result(0, f"/home/{distro}", "")
+            if "command -v python3" in script:
+                return _Result(0, "/usr/bin/python3", "")
+            if "sys.version_info" in script:
+                return _Result(0, "3.12.3", "")
+        return _Result(1, "", "nope")
+
+    return fake_run, probed
+
+
+def test_parse_wsl_rows_reads_running_state() -> None:
+    """状态列只认 running / 运行；认不出的一律按未运行（宁可不探测，也不隐式启动）。"""
+    text = (
+        "  NAME            STATE           VERSION\n"
+        "* Ubuntu          Running         2\n"
+        "  kali-linux      Stopped         2\n"
+        "  Debian          运行中          2\n"
+        "  Alpine          已停止          1\n"
+    )
+    assert _llmvllm.parse_wsl_rows(text) == [
+        ("Ubuntu", True),
+        ("kali-linux", False),
+        ("Debian", True),
+        ("Alpine", False),
+    ]
+    assert _llmvllm.parse_wsl_rows("") == []
+    # 认不出的状态按未运行处理，避免探测阶段把实例拉起来。
+    assert _llmvllm.parse_wsl_rows("  NAME STATE VERSION\n  Ubuntu ??? 2\n") == [("Ubuntu", False)]
+
+
+def test_detect_platform_skips_stopped_distros_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认只探测运行中的实例：`wsl -d` 会启动实例，不能隐式执行。"""
+    monkeypatch.setattr(_llmvllm.os, "name", "nt")
+    _llmvllm.reset_platform_cache()
+    fake_run, probed = _wsl_rows("  NAME STATE VERSION\n* Ubuntu Running 2\n  kali-linux Stopped 2\n")
+    platform = _llmvllm.detect_platform(fake_run, use_cache=False)
+    assert probed == ["Ubuntu"]
+    assert platform.ready is True
+    assert platform.primary is not None and platform.primary.distro == "Ubuntu"
+    assert platform.stopped == ("kali-linux",)
+    assert "kali-linux" in platform.reason
+
+
+def test_detect_platform_allow_start_probes_stopped_distros(monkeypatch: pytest.MonkeyPatch) -> None:
+    """显式允许（安装 vLLM 前确认过）时才探测已停止实例。"""
+    monkeypatch.setattr(_llmvllm.os, "name", "nt")
+    _llmvllm.reset_platform_cache()
+    fake_run, probed = _wsl_rows("  NAME STATE VERSION\n  Ubuntu Stopped 2\n  kali-linux Stopped 2\n")
+    platform = _llmvllm.detect_platform(fake_run, use_cache=False, allow_start=True)
+    assert probed == ["Ubuntu", "kali-linux"]
+    assert platform.stopped == ()
+    assert [item.distro for item in platform.interpreters] == ["Ubuntu", "kali-linux"]
+
+
+def test_detect_platform_reports_stopped_instances(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全都没运行时不启动任何实例，只把实例名交给界面提示。"""
+    monkeypatch.setattr(_llmvllm.os, "name", "nt")
+    _llmvllm.reset_platform_cache()
+    fake_run, probed = _wsl_rows("  NAME STATE VERSION\n  Ubuntu Stopped 2\n  kali-linux Stopped 2\n")
+    platform = _llmvllm.detect_platform(fake_run, use_cache=False)
+    assert probed == []
+    assert platform.supported is True
+    assert platform.ready is False
+    assert platform.stopped == ("Ubuntu", "kali-linux")
+    assert "检测会启动" in platform.reason
+
+
+def test_install_vllm_allows_starting_stopped_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """安装本身必须在实例里跑命令：这里允许探测已停止实例（此前已确认）。"""
+    seen: list[bool] = []
+
+    def fake_detect(runner: Any = None, **kwargs: Any) -> Any:
+        seen.append(bool(kwargs.get("allow_start")))
+        return _llmvllm.VllmPlatform("none", False, "测试环境不支持 vLLM")
+
+    monkeypatch.setattr(_llmvllm, "detect_platform", fake_detect)
+    with pytest.raises(_llmvllm.ServeError):
+        _llmvllm.install_engine("0.11.0")
+    assert seen == [True]

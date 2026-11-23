@@ -93,6 +93,20 @@ def build_vllm_engine_card(
 
     def install(card_widget: EngineCard) -> None:
         latest = _llmvllm.detect_platform(use_cache=False)
+        if not latest.ready and latest.stopped:
+            # 探测已停止的实例等于启动它（wsl -d），必须先让用户确认。
+            names = "、".join(latest.stopped)
+            answer = QMessageBox.question(
+                card_widget,
+                "启动 WSL 实例",
+                f"检测 vLLM 需要启动以下已停止的实例：\n{names}\n\n"
+                "启动后会在实例内探测 Python（不会改动实例内容）。继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            latest = _llmvllm.detect_platform(use_cache=False, allow_start=True)
         if not latest.ready:
             QMessageBox.warning(card_widget, "无法安装", latest.reason)
             return

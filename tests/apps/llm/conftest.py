@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -25,3 +26,15 @@ def _drain_qt_tasks() -> Iterator[None]:
     qtcore = sys.modules.get("PySide6.QtCore")
     if qtcore is not None:
         qtcore.QThreadPool.globalInstance().waitForDone(5000)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_vllm() -> Any:
+    """vLLM 平台探测不碰真实宿主机（否则 `wsl -d` 会把开发机的实例启动起来）。"""
+    from tests.helpers import forbid_wsl_distro_start, hermetic_vllm_platform
+
+    restore_platform = hermetic_vllm_platform()
+    restore_guard = forbid_wsl_distro_start()
+    yield
+    restore_guard()
+    restore_platform()
