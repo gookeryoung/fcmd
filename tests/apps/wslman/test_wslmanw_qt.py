@@ -1692,6 +1692,38 @@ def test_image_row_actions_follow_state(home: Path, monkeypatch: pytest.MonkeyPa
         window.deleteLater()
 
 
+def test_image_row_cancel_button_reaches_active_task(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """忙态下该行按钮变「取消」，点击要取消当前任务，而不是再触发一次下载。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entry = _image_entry("Ubuntu")
+        started: list[str] = []
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_download_entry", lambda self, name: started.append(name))
+        window._apply_images((_catalog((entry,)), (entry,)))
+        window._busy = True
+        window._active_entry = entry.name
+        window._label = "下载"
+        window._task_page = "images"
+        window._cancel = threading.Event()
+        window._render_images()
+
+        row = _image_row(window, 0)
+        assert row.download_button is not None
+        assert row.download_button.text() == "取消"
+        row.download_button.click()
+
+        assert window._cancel.is_set()
+        assert started == []
+        assert "取消中" in window.page_status("images")
+    finally:
+        window._busy = False
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_install_archive_creates_missing_target_parents(
     home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

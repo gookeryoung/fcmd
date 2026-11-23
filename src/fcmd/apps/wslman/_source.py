@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import platform
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -303,6 +305,109 @@ def _read_meta(path: Path) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+_CANCEL_POLL_S = 0.2
+"""看门狗轮询间隔：取消 / 停滞的判定粒度，也是取消后最长的响应延迟。"""
+
+_STALL_TIMEOUT_S = 30.0
+"""连续多久没有收到新数据就判定连接卡死；``urlopen`` 的读超时要等满 60 秒，
+而且超时后连接也不能继续用，所以用它把「卡住」提前变成明确错误。"""
+
+
+class _StallWatch:
+    """下载读循环的看门狗：取消或长时间无数据时主动 ``close()`` 响应。
+
+    ``urllib`` 的 ``read`` 只受 socket 超时约束；连接卡住时读循环会一直阻塞，
+    取消标记也没机会被检查到。旁路线程每 :data:`_CANCEL_POLL_S` 秒检查一次，
+    一旦取消就把响应关掉，阻塞中的 ``read`` 立刻返回 / 抛错，调用方再按
+    ``reason`` 区分「用户取消」与「连接停滞」。
+    """
+
+    def __init__(
+        self,
+        response: _Response,
+        *,
+        cancelled: Callable[[], bool] | None,
+        stall_timeout: float,
+    ) -> None:
+        self._response = response
+        self._cancelled = cancelled
+        self._stall_timeout = max(stall_timeout, 0.0)
+        self._last = time.monotonic()
+        self._stop = threading.Event()
+        self.reason = ""
+        self._thread = threading.Thread(target=self._loop, name="wslman-download-watch", daemon=True)
+
+    def touch(self) -> None:
+        """读循环收到数据时调用，重置停滞计时。"""
+        self._last = time.monotonic()
+
+    def __enter__(self) -> _StallWatch:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+
+    def _loop(self) -> None:
+        while not self._stop.wait(_CANCEL_POLL_S):
+            if self._cancelled is not None and self._cancelled():
+                self.reason = "cancelled"
+            elif time.monotonic() - self._last > self._stall_timeout:
+                self.reason = "stalled"
+            else:
+                continue
+            close = getattr(self._response, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
+            return
+
+
+def _open_response(
+    open_fn: _Opener,
+    request: urllib.request.Request,
+    timeout: float,
+    cancelled: Callable[[], bool] | None,
+) -> _Response:
+    """建立连接；有取消标记时不让阻塞的 ``open`` 把取消拖到超时之后。
+
+    ``opener.open`` 在建连 / 等响应头的阶段不受读循环控制，网络卡住时会一直
+    占用到 ``timeout``。把这一步放进旁路守护线程，调用线程每
+    :data:`_CANCEL_POLL_S` 秒检查一次取消；取消后不再等它，迟到的响应由线程
+    自己关掉，避免半开连接泄漏。
+    """
+    if cancelled is None:
+        return open_fn(request, timeout)
+    if cancelled():
+        raise KeyboardInterrupt
+    box: dict[str, Any] = {}
+    done = threading.Event()
+    abandoned = threading.Event()
+
+    def run() -> None:
+        try:
+            box["response"] = open_fn(request, timeout)
+        except BaseException as exc:  # 交给调用线程按原类型重新抛出
+            box["error"] = exc
+        finally:
+            done.set()
+            response = box.get("response")
+            close = getattr(response, "close", None)
+            if abandoned.is_set() and callable(close):
+                with contextlib.suppress(Exception):
+                    close()
+
+    threading.Thread(target=run, name="wslman-download-connect", daemon=True).start()
+    while not done.wait(_CANCEL_POLL_S):
+        if cancelled():
+            abandoned.set()
+            raise KeyboardInterrupt
+    if "error" in box:
+        raise box["error"]
+    return box["response"]
+
+
 def download(  # noqa: PLR0912, PLR0913
     url: str,
     target: Path,
@@ -314,6 +419,7 @@ def download(  # noqa: PLR0912, PLR0913
     label: str = "下载",
     cancelled: Callable[[], bool] | None = None,
     progress: ProgressCallback | None = None,
+    stall_timeout: float = _STALL_TIMEOUT_S,
 ) -> DownloadResult:
     """下载到 ``<target>.part``，支持 Range 续传，校验后原子改名。
 
@@ -322,6 +428,11 @@ def download(  # noqa: PLR0912, PLR0913
 
     ``progress(done, total)`` 按约 0.1 秒的节奏回报累计字节数与总量（总量未知
     时为 ``None``），GUI 用它显示进度 / 速度；CLI 不传就保持原来的 stderr 进度。
+
+    读循环按 ``read1`` / 小块读取，避免一次 ``read(1 MiB)`` 在慢速或卡住的连接上
+    长时间不返回、进度看起来完全不动。``cancelled`` 每轮检查一次，旁路看门狗会在
+    取消时关闭响应，让阻塞中的读立刻结束；连续 ``stall_timeout`` 秒没有新数据则按
+    「停滞」报错，不再等 socket 自己超时。
     """
     target = Path(target)
     part = part_path(target)
@@ -339,8 +450,9 @@ def download(  # noqa: PLR0912, PLR0913
 
     request = urllib.request.Request(_require_https(url, field="url"), headers=headers)
     resumed = False
+    watch: _StallWatch | None = None
     try:
-        response = (opener or _default_open)(request, timeout)
+        response = _open_response(opener or _default_open, request, timeout, cancelled)
         try:
             total = _response_total(response, start)
             if start and response.status != 206:
@@ -362,27 +474,39 @@ def download(  # noqa: PLR0912, PLR0913
             )
             reporter = ProgressReporter(part, total, label=label)
             reporter.start()
+            read1 = getattr(response, "read1", None)
+            read = read1 if callable(read1) else response.read
             written = start
             last_report = 0.0
             if progress is not None:
                 progress(written, total)
-            try:
-                with part.open("ab" if resumed else "wb") as handle:
-                    while True:
-                        if cancelled is not None and cancelled():
-                            raise KeyboardInterrupt
-                        data = response.read(chunk)
-                        if not data:
-                            break
-                        handle.write(data)
-                        written += len(data)
-                        if progress is not None:
-                            now = time.monotonic()
-                            if now - last_report >= _PROGRESS_INTERVAL_S:
-                                last_report = now
-                                progress(written, total)
-            finally:
-                reporter.stop()
+            with _StallWatch(response, cancelled=cancelled, stall_timeout=stall_timeout) as watch:
+                try:
+                    with part.open("ab" if resumed else "wb") as handle:
+                        while True:
+                            if cancelled is not None and cancelled():
+                                raise KeyboardInterrupt
+                            data = read(chunk)
+                            if not data:
+                                break
+                            watch.touch()
+                            handle.write(data)
+                            written += len(data)
+                            if progress is not None:
+                                now = time.monotonic()
+                                if now - last_report >= _PROGRESS_INTERVAL_S:
+                                    last_report = now
+                                    progress(written, total)
+                finally:
+                    reporter.stop()
+                # 看门狗可能刚刚关掉响应（读循环因此以 EOF / 异常收尾），这里统一定性。
+                if watch.reason == "cancelled" or (cancelled is not None and cancelled()):
+                    raise KeyboardInterrupt
+                if watch.reason == "stalled":
+                    raise runtime_error(
+                        f"下载停滞：连续 {stall_timeout:g} 秒没有收到新数据",
+                        hint=f"已保留 {part}；检查网络或换一个下载源后重试会尝试续传",
+                    )
             if progress is not None:
                 progress(written, total)
         finally:
@@ -393,16 +517,26 @@ def download(  # noqa: PLR0912, PLR0913
         raise
     except WslmanError:
         raise
-    except urllib.error.HTTPError as exc:
-        raise runtime_error(
-            f"下载失败（HTTP {exc.code}）：{url}",
-            hint=f"保留的临时文件：{part}；重试或改用 --source file",
-        ) from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise runtime_error(
-            f"下载失败：{exc}",
-            hint=f"保留的临时文件：{part}；网络恢复后重试会尝试续传",
-        ) from exc
+    except Exception as exc:
+        cancelled_now = cancelled is not None and cancelled()
+        if (watch is not None and watch.reason == "cancelled") or cancelled_now:
+            raise KeyboardInterrupt from exc
+        if (watch is not None and watch.reason == "stalled") or isinstance(exc, TimeoutError):
+            raise runtime_error(
+                f"下载超时：连接长时间没有响应（{stall_timeout:g} 秒无新数据）",
+                hint=f"已保留 {part}；检查网络或换一个下载源后重试会尝试续传",
+            ) from exc
+        if isinstance(exc, urllib.error.HTTPError):
+            raise runtime_error(
+                f"下载失败（HTTP {exc.code}）：{url}",
+                hint=f"保留的临时文件：{part}；重试或改用 --source file",
+            ) from exc
+        if isinstance(exc, (urllib.error.URLError, OSError)):
+            raise runtime_error(
+                f"下载失败：{exc}",
+                hint=f"保留的临时文件：{part}；网络恢复后重试会尝试续传",
+            ) from exc
+        raise
 
     written = part.stat().st_size
     if total is not None and written < total:
@@ -461,6 +595,8 @@ def download_mirrored(  # noqa: PLR0913
     for index, candidate in enumerate(candidates):
         last_candidate = index == len(candidates) - 1
         for _attempt in range(_MAX_RESUME_ATTEMPTS):
+            if cancelled is not None and cancelled():
+                raise KeyboardInterrupt
             before = part.stat().st_size if part.is_file() else 0
             try:
                 result = download(

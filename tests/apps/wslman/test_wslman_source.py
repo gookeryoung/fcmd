@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import threading
+import time
 import urllib.error
 import urllib.request
 from email.message import Message
@@ -280,7 +282,8 @@ def test_download_cancelled_keeps_part_for_resume(tmp_path: Path) -> None:
     """GUI 取消信号等价于中断：保留 .part，目标文件未生成，可续传。"""
     target = tmp_path / "u.tar"
     opener, _requests = _opener(_FakeResponse(b"chunk", headers={"Content-Length": "10"}))
-    flags = iter([False, True])
+    # 连接前一次、读循环第一轮一次都不取消；读完这块后第二轮才取消。
+    flags = iter([False, False, True])
 
     with pytest.raises(KeyboardInterrupt):
         _source.download(
@@ -293,6 +296,93 @@ def test_download_cancelled_keeps_part_for_resume(tmp_path: Path) -> None:
     part = _transfer.part_path(target)
     assert part.exists()
     assert part.read_bytes() == b"chunk"
+    assert not target.exists()
+
+
+class _BlockingResponse:
+    """读会一直阻塞到 ``close()`` 的假响应：模拟连上之后不再来数据的连接。"""
+
+    def __init__(self, *, headers: dict[str, str] | None = None) -> None:
+        self.status = 200
+        self.headers = headers or {"Content-Length": "100"}
+        self.entered = threading.Event()
+        self.closed = threading.Event()
+
+    def read(self, size: int = -1) -> bytes:
+        self.entered.set()
+        self.closed.wait(10)
+        raise ValueError("I/O operation on closed file")
+
+    def close(self) -> None:
+        self.closed.set()
+
+
+def test_download_cancel_interrupts_blocked_read(tmp_path: Path) -> None:
+    """读卡住时取消要立刻关闭响应并退出，不能等 socket 自己超时。"""
+    target = tmp_path / "u.tar"
+    response = _BlockingResponse()
+    opener, _requests = _opener(response)
+    cancel = threading.Event()
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            _source.download("https://example.com/u.tar", target, opener=opener, cancelled=cancel.is_set)
+        except BaseException as exc:  # 测试里统一记录，包含取消用的 KeyboardInterrupt
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert response.entered.wait(2), "下载应先开始读"
+    started = time.monotonic()
+    cancel.set()
+    worker.join(5)
+
+    assert not worker.is_alive()
+    assert time.monotonic() - started < 2
+    assert len(errors) == 1 and isinstance(errors[0], KeyboardInterrupt)
+    assert _transfer.part_path(target).exists()
+    assert not target.exists()
+
+
+def test_download_cancel_interrupts_blocked_connect(tmp_path: Path) -> None:
+    """连接阶段卡住时同样能被取消：不必等 ``opener.open`` 的超时。"""
+    cancel = threading.Event()
+
+    def slow_open(_request: urllib.request.Request, _timeout: float) -> _FakeResponse:
+        cancel.wait(5)
+        return _FakeResponse(b"", headers={"Content-Length": "0"})
+
+    timer = threading.Timer(0.1, cancel.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            _source.download(
+                "https://example.com/u.tar",
+                tmp_path / "u.tar",
+                opener=slow_open,
+                cancelled=cancel.is_set,
+            )
+    finally:
+        timer.cancel()
+    assert time.monotonic() - started < 2
+
+
+def test_download_stall_times_out_with_clear_error(tmp_path: Path) -> None:
+    """长时间收不到数据按「停滞」报错，保留 .part 供续传，不等默认读超时。"""
+    target = tmp_path / "u.tar"
+    response = _BlockingResponse()
+    opener, _requests = _opener(response)
+
+    started = time.monotonic()
+    with pytest.raises(WslmanError) as excinfo:
+        _source.download("https://example.com/u.tar", target, opener=opener, stall_timeout=0.2)
+
+    assert excinfo.value.code == "RUNTIME_ERROR"
+    assert "超时" in str(excinfo.value) or "停滞" in str(excinfo.value)
+    assert time.monotonic() - started < 5
+    assert _transfer.part_path(target).exists()
     assert not target.exists()
 
 

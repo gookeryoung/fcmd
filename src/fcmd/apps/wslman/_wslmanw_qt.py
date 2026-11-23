@@ -350,6 +350,8 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.entry = entry
         self.setToolTip(entry.name)
         self.title_label.setToolTip(entry.name)
+        self._busy = False
+        self._active = False
         for text, tone in w.image_marks(entry):
             self.add_tag(StatusTag(text, tone=tone, parent=self.header))
         self.set_metrics(metrics)
@@ -387,6 +389,11 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
         return "下载镜像归档；完成后该行变为「已下载」，可直接安装"
 
     def _on_action(self) -> None:
+        # 按钮在任务进行中会变成「取消」：此时必须发取消信号，而不是再发一次
+        # 下载 / 安装（后者会被窗口的忙态挡下，用户会觉得点了没反应）。
+        if self._busy and self._active:
+            self.cancelRequested.emit()
+            return
         if self.action == "install":
             self.installRequested.emit(self.entry.name)
         else:
@@ -394,11 +401,13 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
 
     def set_download_state(self, *, busy: bool, active: bool = False) -> None:
         """任务进行中：正在跑的这一行按钮变「取消」，其它行禁用。"""
+        self._busy = busy
+        self._active = busy and active
         if self.download_button is None:
             return
-        if busy and active:
+        if self._active:
             self.download_button.setText("取消")
-            self.download_button.setToolTip("取消本次任务（已下载的部分按配置保留 .part）")
+            self.download_button.setToolTip("取消本次任务（已下载的部分保留 .part，可续传）")
             self.download_button.setEnabled(True)
             return
         self.download_button.setText(self._action_text())
@@ -1856,13 +1865,14 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._export_meter.reset()
         self.show_loading(f"{label}…")
 
-        def runner(cancel: threading.Event) -> tuple[bool, str]:
+        def runner(cancel: threading.Event) -> tuple[str, str]:
             try:
-                return True, work(cancel)
+                return "ok", work(cancel)
             except KeyboardInterrupt:
-                return False, "已取消；未完成的 .part 按配置保留或清理"
+                # 取消不是失败：单独的终态，避免弹「下载失败」并让行内进度残留。
+                return "cancelled", "已取消；未完成的 .part 保留在下载目录，可续传"
             except Exception as exc:  # 统一把失败转成可读文案
-                return False, w._error_text(exc)
+                return "failed", w._error_text(exc)
 
         submit(
             runner,
@@ -1872,9 +1882,14 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             on_finished=self._task_finished,
         )
 
-    def _task_done(self, label: str, payload: tuple[bool, str]) -> None:
-        ok, message = payload
-        if not ok:
+    def _task_done(self, label: str, payload: tuple[str, str]) -> None:
+        status, message = payload
+        if status == "cancelled":
+            self._log(f"[{label}] {message}")
+            self._set_task_status(f"{label}已取消")
+            self._refresh_image_states()
+            return
+        if status != "ok":
             self._log(f"[{label}] {message}")
             self._set_task_status(f"{label}失败")
             QMessageBox.critical(self, label, message)
