@@ -489,6 +489,26 @@ GUI 与 CLI 的默认落盘位置统一到**一个工作目录** `${FCMD_HOME:-~
 - 设置页新增「工作目录」卡片：根目录（带「打开」）+ 下载 / 安装 / 备份三个子目录的只读
   展示，配合上方「下载」卡片的可覆盖下载目录，解释「默认写到哪里」。
 
+### D10.2 用 IDE / AI Agent 打开当前目录
+
+- 文件页两个入口「用 IDE 打开」「用 AI Agent 打开」作用于当前浏览目录；纯逻辑在
+  `_open.py`，设置页「打开方式」卡片管理条目（下拉 + 运行位置 `StatusTag` +
+  添加 / 编辑 / 删除），条目与选中项持久化到 `wslmanw.json` 的 `openers`。
+- 条目 = 名称 + 运行位置（`windows` 宿主机 / `wsl` 实例内）+ 命令模板；占位符
+  `{dir}`（实例内 POSIX 路径）、`{unc}`（Windows UNC 路径）、`{distro}`（实例名）、
+  `{home}`（实例家目录）。Windows 宿主机条目必须含 `{dir}` 或 `{unc}`，WSL 内条目
+  可不含占位符（在实例内直接执行）。
+- 内置默认值（`note` 里同时标注不确定项）：
+  - IDE：VSCode `code --remote wsl+{distro} "{dir}"`；Trae / Qoder 同参数（按 VS Code 系
+    remote 参数估计）；WorkBuddy `workbuddy "{unc}"`（未确认官方 CLI）。
+  - AI Agent：PI `pi`（命令名未确认）；OpenCode `opencode`（已确认 TUI）。
+  - 默认选中 VSCode / OpenCode；内置项可编辑 / 删除，也可自行添加。
+- Windows 宿主机：`shutil.which` 预检后按 argv 无窗口启动，`.cmd/.bat` 经
+  `cmd.exe /d /s /c` 包装（避免 WinError 193）；WSL 内：先在实例内
+  `bash -lc 'command -v <命令>'` 预检，再经终端 `wsl.exe -d <实例> --cd <目录>
+  --exec bash -lc <模板>`（`_terminal.build_command` 的 `run` 参数）启动。
+- 工具未安装 / 启动失败都会弹窗并在文件页状态行写明原因与处理建议，不静默失败。
+
 ### D11 配置
 
 `~/.fcmd/wslman.json`（CLI 与 GUI 共用），字段级容错：

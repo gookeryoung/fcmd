@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.apps.wslman import _images, _initenv, _mirrors
+from fcmd.apps.wslman import _images, _initenv, _mirrors, _open
 from fcmd.apps.wslman._disk import format_bytes
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError
@@ -51,9 +51,11 @@ __all__ = [
     "init_task_keys",
     "load_settings",
     "main",
+    "openers_for",
     "pick_download",
     "resolve_geometry",
     "save_settings",
+    "selected_opener",
     "settings_from_mapping",
     "settings_to_mapping",
     "shutdown_confirm_enabled",
@@ -211,6 +213,14 @@ class WslmanwSettings:
     """按对话框名保存的几何：下次打开还原上次的尺寸与位置。"""
     distro_init_tasks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     """按实例名保存的初始化勾选；未记录时按探测结果默认勾选。"""
+    ide_openers: tuple[_open.Opener, ...] = field(default_factory=lambda: _open.default_openers(_open.KIND_IDE))
+    """IDE 打开方式条目；默认是内置的 VSCode / Trae / Qoder / WorkBuddy。"""
+    agent_openers: tuple[_open.Opener, ...] = field(default_factory=lambda: _open.default_openers(_open.KIND_AGENT))
+    """AI Agent 打开方式条目；默认是内置的 PI / OpenCode。"""
+    ide_opener: str = "vscode"
+    """当前选用的 IDE 条目 key。"""
+    agent_opener: str = "opencode"
+    """当前选用的 AI Agent 条目 key。"""
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -226,6 +236,11 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "distro_terminal_dirs": dict(settings.distro_terminal_dirs),
         "dialog_geometry": dict(settings.dialog_geometry),
         "distro_init_tasks": {name: list(keys) for name, keys in settings.distro_init_tasks.items()},
+        "openers": {
+            "ide": [_open.to_mapping(item) for item in settings.ide_openers],
+            "agent": [_open.to_mapping(item) for item in settings.agent_openers],
+            "selected": {"ide": settings.ide_opener, "agent": settings.agent_opener},
+        },
     }
 
 
@@ -233,6 +248,12 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
     # 旧版本写过 manifest_url / download_source / auto_refresh：按未知字段忽略。
     mirror = _str(raw, "mirror")
     collapsed = raw.get("sidebar_collapsed")
+    openers = raw.get("openers")
+    openers_map = openers if isinstance(openers, Mapping) else {}
+    ide_openers = _openers(openers_map.get("ide"), _open.KIND_IDE)
+    agent_openers = _openers(openers_map.get("agent"), _open.KIND_AGENT)
+    selected = openers_map.get("selected")
+    selected_map = selected if isinstance(selected, Mapping) else {}
     return WslmanwSettings(
         geometry=_guiconfig.valid_geometry(_str(raw, "geometry")),
         download_dir=_str(raw, "download_dir"),
@@ -245,7 +266,54 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         distro_terminal_dirs=_terminal_dirs(raw.get("distro_terminal_dirs")),
         dialog_geometry=_dialog_geometries(raw.get("dialog_geometry")),
         distro_init_tasks=_init_tasks(raw.get("distro_init_tasks")),
+        ide_openers=ide_openers,
+        agent_openers=agent_openers,
+        ide_opener=_selected_key(selected_map.get("ide"), ide_openers, kind=_open.KIND_IDE),
+        agent_opener=_selected_key(selected_map.get("agent"), agent_openers, kind=_open.KIND_AGENT),
     )
+
+
+def _openers(raw: Any, kind: str) -> tuple[_open.Opener, ...]:
+    """缺字段（旧设置文件）回落内置预设；显式空列表表示用户删光了。"""
+    if not isinstance(raw, list):
+        return _open.default_openers(kind)
+    return _open.parse_mappings(raw, kind)
+
+
+def _selected_key(raw: Any, openers: Sequence[_open.Opener], *, kind: str) -> str:
+    """选中项：保存值有效就用它；否则优先内置默认条目，再回落第一个。"""
+    keys = [item.key for item in openers]
+    if isinstance(raw, str) and raw in keys:
+        return raw
+    preferred = _open.DEFAULT_KEYS.get(kind, "")
+    if preferred in keys:
+        return preferred
+    return keys[0] if keys else ""
+
+
+def openers_for(settings: WslmanwSettings, kind: str) -> tuple[_open.Opener, ...]:
+    return settings.ide_openers if kind == _open.KIND_IDE else settings.agent_openers
+
+
+def selected_opener(settings: WslmanwSettings, kind: str) -> _open.Opener | None:
+    """当前选用的条目；设置里的 key 失效时回落到第一个，列表为空时返回 ``None``。"""
+    openers = openers_for(settings, kind)
+    key = settings.ide_opener if kind == _open.KIND_IDE else settings.agent_opener
+    return next((item for item in openers if item.key == key), openers[0] if openers else None)
+
+
+def with_openers(
+    settings: WslmanwSettings,
+    kind: str,
+    openers: Sequence[_open.Opener],
+    selected: str,
+) -> WslmanwSettings:
+    """写回某一类的条目与选中项；选中项失效时回落到第一个（列表为空则留空）。"""
+    items = tuple(openers)
+    key = _selected_key(selected, items, kind=kind)
+    if kind == _open.KIND_IDE:
+        return replace(settings, ide_openers=items, ide_opener=key)
+    return replace(settings, agent_openers=items, agent_opener=key)
 
 
 def _choice(raw: Mapping[str, Any], key: str, options: Sequence[tuple[str, str]], default: str) -> str:

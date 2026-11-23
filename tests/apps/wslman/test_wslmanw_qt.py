@@ -20,7 +20,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
-from fcmd.apps.wslman import _initenv, _sshfiles, _wslmanw_qt, wslmanw
+from fcmd.apps.wslman import _initenv, _open, _sshfiles, _wslmanw_qt, wslmanw
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman._config import WslmanConfig, default_path
 from fcmd.apps.wslman._distro import Distro, DistroView
@@ -2397,6 +2397,339 @@ def test_files_page_reports_unc_failure(home: Path, monkeypatch: pytest.MonkeyPa
         assert window.files_upload.isEnabled() is False
         assert window.files_mkdir.isEnabled() is False
         assert window.files_download.isEnabled() is False
+        assert window.files_open_ide.isEnabled() is False
+        assert window.files_open_agent.isEnabled() is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+# ---------------------------------------------------------------------- #
+# 打开方式：设置卡片 + 文件页「用 IDE / AI Agent 打开当前目录」
+# ---------------------------------------------------------------------- #
+def _prepare_openers_page(
+    monkeypatch: pytest.MonkeyPatch,
+    root: Path,
+    *,
+    probe: tuple[int, bytes] = (0, b"/usr/bin/opencode\n"),
+) -> None:
+    """文件页探测照旧；另外让「WSL 内启动」拿得到 config 与可记录的 runner。"""
+    from types import SimpleNamespace
+
+    _enable_files_page(monkeypatch, root)
+
+    class _Runner:
+        def run(
+            self,
+            argv: Any,
+            *,
+            timeout: float | None = None,
+            env: Any = None,
+            stdin: bytes | None = None,
+        ) -> CommandResult:
+            if any("command -v" in str(part) for part in argv):
+                return CommandResult(
+                    argv=tuple(argv),
+                    returncode=probe[0],
+                    stdout=probe[1],
+                    stderr=b"" if probe[0] == 0 else b"not found\n",
+                    duration_ms=1,
+                )
+            return CommandResult(
+                argv=tuple(argv),
+                returncode=0,
+                stdout=b"WSLFILES_USER=me\nWSLFILES_HOME=/home/me\n",
+                stderr=b"",
+                duration_ms=1,
+            )
+
+    config = WslmanConfig(path=default_path(), terminal_program="conhost")
+    monkeypatch.setattr(
+        cli,
+        "_build_environment",
+        lambda *args, **kwargs: SimpleNamespace(runner=_Runner(), config=config),
+    )
+    monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+
+
+def _open_window(home: Path, monkeypatch: pytest.MonkeyPatch, root: Path) -> _wslmanw_qt.WslmanQtWindow:
+    """建窗并进入文件页的项目目录；返回已就绪的窗口。"""
+    project = root / "home" / "me" / "proj"
+    project.mkdir(parents=True, exist_ok=True)
+    window = _wslmanw_qt.WslmanQtWindow()
+    _wait_idle(window)
+    window.show_page("files")
+    _wait_files(window)
+    window._files_load("Ubuntu", "/home/me/proj")
+    _wait_files(window)
+    assert window.files_path.text() == "~/proj"
+    return window
+
+
+def test_settings_openers_card_lists_builtins_and_persists(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """设置页列出内置预设；选中项立即写盘，重启后沿用。"""
+    _enable_files_page(monkeypatch, tmp_path)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        ide = window.opener_combos[_open.KIND_IDE]
+        assert [ide.itemText(index) for index in range(ide.count())] == [
+            "VSCode（内置）",
+            "Trae（内置）",
+            "Qoder（内置）",
+            "WorkBuddy（内置）",
+        ]
+        agent = window.opener_combos[_open.KIND_AGENT]
+        assert [agent.itemText(index) for index in range(agent.count())] == ["PI（内置）", "OpenCode（内置）"]
+        assert window.opener_tags[_open.KIND_IDE].text() == _open.HOST_LABELS[_open.HOST_WINDOWS]
+        assert window.opener_tags[_open.KIND_AGENT].text() == _open.HOST_LABELS[_open.HOST_WSL]
+
+        ide.setCurrentIndex(1)
+        saved = wslmanw.load_settings()
+        assert saved.ide_opener == "trae"
+        assert [item.key for item in saved.ide_openers] == ["vscode", "trae", "qoder", "workbuddy"]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_files_page_opens_ide_with_wsl_remote_path(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """VSCode 走 Windows 宿主机：argv 带 ``--remote wsl+<实例>`` 与实例内 POSIX 路径。"""
+    root = tmp_path / "unc"
+    _prepare_openers_page(monkeypatch, root)
+    spawned: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_wslmanw_qt, "spawn_detached", lambda argv: spawned.append(tuple(argv)) or 1)
+    monkeypatch.setattr(_wslmanw_qt.shutil, "which", lambda name: r"C:\tools\code.exe")
+    window = _open_window(home, monkeypatch, root)
+    try:
+        assert window.files_open_ide.isEnabled() is True
+        window._files_open_with(_open.KIND_IDE)
+        assert spawned == [("code", "--remote", "wsl+Ubuntu", "/home/me/proj")]
+        assert "VSCode" in window.files_status.fullText()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_files_page_opens_workbuddy_with_unc_path(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """只认 UNC 的 Windows 程序拿到当前目录的 UNC 路径。"""
+    root = tmp_path / "unc"
+    _prepare_openers_page(monkeypatch, root)
+    spawned: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_wslmanw_qt, "spawn_detached", lambda argv: spawned.append(tuple(argv)) or 1)
+    monkeypatch.setattr(_wslmanw_qt.shutil, "which", lambda name: r"C:\tools\workbuddy.exe")
+    window = _open_window(home, monkeypatch, root)
+    try:
+        window.settings = wslmanw.with_openers(
+            window.settings,
+            _open.KIND_IDE,
+            wslmanw.openers_for(window.settings, _open.KIND_IDE),
+            "workbuddy",
+        )
+        window._sync_files_actions()
+        window._files_open_with(_open.KIND_IDE)
+        expected = str(_wslmanw_qt._files.to_local(str(root), "/home/me/proj"))
+        assert spawned == [("workbuddy", expected)]
+        assert "\\home\\me\\proj" in expected
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_files_page_reports_missing_windows_tool(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Windows 侧命令不在 PATH 时明确报错，不静默失败。"""
+    root = tmp_path / "unc"
+    _prepare_openers_page(monkeypatch, root)
+    monkeypatch.setattr(_wslmanw_qt.shutil, "which", lambda name: None)
+    errors: list[Any] = []
+    monkeypatch.setattr(_wslmanw_qt.QMessageBox, "critical", lambda *args, **kwargs: errors.append(args))
+    window = _open_window(home, monkeypatch, root)
+    try:
+        window._files_open_with(_open.KIND_IDE)
+        assert errors
+        assert "没有找到 code" in window.files_status.fullText()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_files_page_starts_agent_inside_distro(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """AI Agent 走实例内：先探测命令存在，再用终端 ``--cd 当前目录`` 启动。"""
+    root = tmp_path / "unc"
+    _prepare_openers_page(monkeypatch, root)
+    window = _open_window(home, monkeypatch, root)
+    try:
+        launched: list[Any] = []
+
+        class _Recorder:
+            def launch(self, command: Any, **_kwargs: Any) -> int:
+                launched.append(command)
+                return 1
+
+        window.launcher = cast(Any, _Recorder())
+        window._files_open_with(_open.KIND_AGENT)
+        _wait_files(window)
+        assert len(launched) == 1
+        assert launched[0].argv == (
+            "wsl.exe",
+            "-d",
+            "Ubuntu",
+            "--cd",
+            "/home/me/proj",
+            "--exec",
+            "bash",
+            "-lc",
+            "opencode",
+        )
+        assert "OpenCode" in window.files_status.fullText()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_files_page_reports_missing_agent_in_distro(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """实例内命令不存在时给出安装 / 改模板的提示。"""
+    root = tmp_path / "unc"
+    _prepare_openers_page(monkeypatch, root, probe=(127, b""))
+    errors: list[Any] = []
+    monkeypatch.setattr(_wslmanw_qt.QMessageBox, "critical", lambda *args, **kwargs: errors.append(args))
+    window = _open_window(home, monkeypatch, root)
+    try:
+        window._files_open_with(_open.KIND_AGENT)
+        _wait_files(window)
+        assert errors
+        assert "找不到 opencode" in window.files_status.fullText()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_files_page_prompts_when_no_opener_configured(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """条目被删光后按钮禁用；直接调用时弹提示而不是静默返回。"""
+    root = tmp_path / "unc"
+    _prepare_openers_page(monkeypatch, root)
+    window = _open_window(home, monkeypatch, root)
+    try:
+        window.settings = wslmanw.with_openers(window.settings, _open.KIND_IDE, (), "")
+        window._sync_files_actions()
+        assert window.files_open_ide.isEnabled() is False
+        prompts: list[Any] = []
+        monkeypatch.setattr(_wslmanw_qt.QMessageBox, "information", lambda *args, **kwargs: prompts.append(args))
+        window._files_open_with(_open.KIND_IDE)
+        assert prompts
+        assert window.files_open_agent.isEnabled() is True
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_smart_detect_fills_builtins_but_keeps_user_edits(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """检测补全内置条目，手改过的命令保持不变；选择与补全都落盘。"""
+    _enable_files_page(monkeypatch, tmp_path)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        openers = wslmanw.openers_for(window.settings, _open.KIND_IDE)
+        edited = _open.Opener(
+            "vscode",
+            "VSCode",
+            _open.KIND_IDE,
+            _open.HOST_WINDOWS,
+            'my-code "{dir}"',
+            True,
+            "note",
+            _open.ORIGIN_USER,
+        )
+        window.settings = wslmanw.with_openers(window.settings, _open.KIND_IDE, (edited, *openers[1:]), "trae")
+        host = {
+            "vscode": _open.Detection(
+                "vscode", _open.HOST_WINDOWS, r"C:\code.cmd", r'C:\code.cmd --remote wsl+{distro} "{dir}"'
+            ),
+            "trae": _open.Detection(
+                "trae", _open.HOST_WINDOWS, r"C:\trae.exe", r'C:\trae.exe --remote wsl+{distro} "{dir}"'
+            ),
+        }
+        window._apply_detections((host, {}), log=False)
+
+        saved = {item.key: item for item in wslmanw.openers_for(window.settings, _open.KIND_IDE)}
+        assert saved["vscode"].command == 'my-code "{dir}"'
+        assert saved["vscode"].origin == _open.ORIGIN_USER
+        assert saved["trae"].command == r'C:\trae.exe --remote wsl+{distro} "{dir}"'
+        assert saved["trae"].origin == _open.ORIGIN_DETECTED
+        assert wslmanw.load_settings().ide_opener == "trae"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_smart_detect_tags_reflect_host_and_wsl_state(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """每条标签区分宿主机 / WSL 内是否已安装；两侧都没有时明确「未安装」。"""
+    _enable_files_page(monkeypatch, tmp_path)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window._opener_detections["Ubuntu"] = (
+            {"vscode": _open.Detection("vscode", _open.HOST_WINDOWS, r"C:\code.cmd", "code")},
+            {"opencode": _open.Detection("opencode", _open.HOST_WSL, "/usr/bin/opencode", "opencode")},
+        )
+        window._reload_opener_combo(_open.KIND_IDE)
+        assert window.opener_tags[_open.KIND_IDE].text() == "Windows 宿主机已安装"
+        assert r"C:\code.cmd" in window.opener_tags[_open.KIND_IDE].toolTip()
+        window._reload_opener_combo(_open.KIND_AGENT)
+        assert window.opener_tags[_open.KIND_AGENT].text() == "WSL 实例内已安装"
+        assert "/usr/bin/opencode" in window.opener_tags[_open.KIND_AGENT].toolTip()
+
+        openers = wslmanw.openers_for(window.settings, _open.KIND_IDE)
+        window.settings = wslmanw.with_openers(window.settings, _open.KIND_IDE, openers, "trae")
+        window._reload_opener_combo(_open.KIND_IDE)
+        assert window.opener_tags[_open.KIND_IDE].text() == "未安装"
+
+        # 条目的运行位置在宿主机，但只在 WSL 内找到：提示可能改运行位置。
+        window._opener_detections["Ubuntu"] = (
+            {"vscode": _open.Detection("vscode", _open.HOST_WINDOWS)},
+            {"vscode": _open.Detection("vscode", _open.HOST_WSL, "/usr/bin/code", "code")},
+        )
+        window.settings = wslmanw.with_openers(window.settings, _open.KIND_IDE, openers, "vscode")
+        window._reload_opener_combo(_open.KIND_IDE)
+        tag = window.opener_tags[_open.KIND_IDE]
+        assert tag.text() == "仅WSL 内已安装"
+        assert "可编辑条目切换运行位置" in tag.toolTip()
+
+        # 检测进行中且还没有结果：标签显示「检测中」。
+        window._opener_detections.clear()
+        window._detecting = True
+        window._reload_opener_combo(_open.KIND_IDE)
+        assert window.opener_tags[_open.KIND_IDE].text() == "检测中"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_settings_page_detects_once_per_instance(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """进设置页触发一次检测；已有该实例缓存时只刷新标签，不重复扫描。"""
+    _enable_files_page(monkeypatch, tmp_path)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        calls: list[bool] = []
+        monkeypatch.setattr(window, "_detect_openers", lambda force=False: calls.append(force))
+        window.show_page("settings")
+        assert calls == [False]
+        assert window._opener_detections == {}
+
+        window._opener_detections["Ubuntu"] = ({}, {})
+        window.show_page("settings")
+        assert calls == [False]
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

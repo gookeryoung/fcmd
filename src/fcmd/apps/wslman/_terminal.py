@@ -142,17 +142,20 @@ def build_command(  # noqa: PLR0913 - argv 构造按 ADR 逐项展开，保持�
     program: str = "auto",
     extra_args: Sequence[str] = (),
     wt_path: str | None = None,
+    run: Sequence[str] = (),
 ) -> TerminalCommand:
     """构造启动命令；``program`` 为配置里的 ``terminal.program``（auto/wt/conhost）。
 
     ``extra_args`` 只作用于 ``wt.exe``（插在 ``new-tab`` 之后），回退路径没有对应的
-    扩展点。
+    扩展点。``run`` 追加到 ``wsl.exe`` 的 argv 末尾，用于 ``--exec <程序>`` 之类的
+    场景（例如在实例内以当前目录启动 AI Agent）；它对两种终端形态都生效。
     """
     inner = [wsl_path, "-d", distro]
     if cwd:
         inner.extend(["--cd", cwd])
     if user:
         inner.extend(["-u", user])
+    inner.extend(run)
 
     if program == "wt":
         resolved = wt_path if wt_path is not None else find_wt()

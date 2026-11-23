@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.wslman import _files, _images, _initenv, _mirrors, _sshfiles
+from fcmd.apps.wslman import _files, _images, _initenv, _mirrors, _open, _sshfiles
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman import wslmanw as w
 from fcmd.apps.wslman._config import (
@@ -463,6 +463,10 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._images_note = ""
         self._busy = False
         self._refresh_pending = False
+        self._opener_detections: dict[str, tuple[dict[str, _open.Detection], dict[str, _open.Detection]]] = {}
+        self._detecting = False
+        self._detect_token = 0
+        self._settings_seen = False
         self._label = ""
         self._cancel = threading.Event()
         self._status_busy = False
@@ -554,6 +558,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             self._open_images_page()
         elif key == "files":
             self._open_files_page()
+        elif key == "settings":
+            self._open_settings_page()
 
     def _open_images_page(self) -> None:
         """镜像页入口：磁盘缓存秒开（有就画），随后按需后台更新。
@@ -691,6 +697,15 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(6)
+        self.files_open_ide = button("用 IDE 打开", kind="ghost", icon="code")
+        self.files_open_ide.setToolTip("在当前目录启动设置里选用的 IDE")
+        self.files_open_ide.clicked.connect(lambda: self._files_open_with(_open.KIND_IDE))
+        actions.addWidget(self.files_open_ide)
+        self.files_open_agent = button("用 AI Agent 打开", kind="ghost", icon="bot")
+        self.files_open_agent.setToolTip("在当前目录启动设置里选用的 AI Agent")
+        self.files_open_agent.clicked.connect(lambda: self._files_open_with(_open.KIND_AGENT))
+        actions.addWidget(self.files_open_agent)
+        actions.addSpacing(8)
         self.files_upload = button("上传…", kind="primary", icon="upload")
         self.files_upload.setToolTip("把 Windows 上的文件复制到当前目录")
         self.files_upload.clicked.connect(self._files_upload)
@@ -899,6 +914,148 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self.files_download.setEnabled(entry is not None and not busy)
         self.files_rename.setEnabled(entry is not None and not busy)
         self.files_delete.setEnabled(entry is not None and not busy)
+        for kind, widget in (
+            (_open.KIND_IDE, self.files_open_ide),
+            (_open.KIND_AGENT, self.files_open_agent),
+        ):
+            opener = w.selected_opener(self.settings, kind)
+            widget.setEnabled(opener is not None and loaded and not busy)
+            widget.setToolTip(self._open_tooltip(kind, opener))
+
+    def _open_tooltip(self, kind: str, opener: _open.Opener | None) -> str:
+        label = _open.KIND_LABELS[kind]
+        if opener is None:
+            return f"还没有{label}打开方式：到「设置 → 打开方式」添加"
+        where = _open.HOST_LABELS[opener.host]
+        return f"用 {opener.name} 打开当前目录（{where}）\n命令模板：{opener.command}"
+
+    def _files_open_with(self, kind: str) -> None:
+        """按当前选中条目在正在浏览的目录打开 IDE / AI Agent。
+
+        Windows 宿主机的 GUI 程序直接按 argv 启动；WSL 内的终端程序先确认命令
+        存在，再通过终端 + ``--cd`` 进入当前目录。两条路径失败都弹窗说明原因，
+        不静默失败。
+        """
+        if self._closing or self._files_busy or self._files_loading:
+            return
+        distro = self._files_loaded or self.files_distro.currentText()
+        directory = self._files_dir
+        opener = w.selected_opener(self.settings, kind)
+        if opener is None:
+            QMessageBox.information(
+                self,
+                f"尚未配置{_open.KIND_LABELS[kind]}打开方式",
+                f"到「设置 → 打开方式」添加或选中一个{_open.KIND_LABELS[kind]}条目后再试。",
+            )
+            return
+        if not distro or not directory:
+            return
+        root = self._files_root
+        if not root:
+            try:
+                root = _files.pick_unc_root(distro)
+            except WslmanError as exc:
+                QMessageBox.critical(self, "打开失败", w._error_text(exc))
+                return
+            self._files_roots[distro] = root
+        unc = str(_files.to_local(root, directory))
+        home = self._files_home or "/"
+        label = f"用 {_open.KIND_LABELS[kind]} 打开"
+        if opener.host == _open.HOST_WINDOWS:
+            self._files_open_windows(opener, label, directory=directory, unc=unc, distro=distro, home=home)
+            return
+        self._set_files_status(f"{label}：正在 {distro} 里启动 {opener.name}…")
+        self._files_busy = True
+        self._sync_files_actions()
+
+        def work() -> str:
+            env = cli._build_environment()
+            wsl_path = cli._require_wsl(env)
+            probe = env.runner.run(
+                [
+                    wsl_path,
+                    "-d",
+                    distro,
+                    "--exec",
+                    "bash",
+                    "-lc",
+                    _open.probe_script(opener, dir=directory, unc=unc, distro=distro, home=home),
+                ],
+                timeout=60.0,
+            )
+            found = decode_console(probe.stdout + probe.stderr).strip()
+            exe = _open.command_name(opener, dir=directory, unc=unc, distro=distro, home=home)
+            if probe.returncode != 0 or not found:
+                raise runtime_error(
+                    f"{distro} 里找不到 {exe}",
+                    hint=f"先在实例里安装 {opener.name}，或在「设置 → 打开方式」把命令模板改成实际可用的命令",
+                )
+            command = build_command(
+                wsl_path=wsl_path,
+                distro=distro,
+                cwd=directory,
+                program=env.config.terminal_program,
+                extra_args=env.config.terminal_extra_args,
+                run=(
+                    "--exec",
+                    "bash",
+                    "-lc",
+                    _open.wsl_command(opener, dir=directory, unc=unc, distro=distro, home=home),
+                ),
+            )
+            self.launcher.launch(command)
+            return f"已在 {distro}:{directory} 启动 {opener.name}"
+
+        def runner() -> tuple[bool, str]:
+            try:
+                return True, work()
+            except Exception as exc:  # 后台任务统一转成界面文案
+                return False, w._error_text(exc)
+
+        submit_daemon(
+            runner,
+            on_done=lambda payload: self._files_open_done(label, payload),
+            on_finished=self._files_task_finished,
+        )
+
+    def _files_open_windows(  # noqa: PLR0913 - 目标信息按目录 / UNC / 实例 / 家目录逐项展开
+        self,
+        opener: _open.Opener,
+        label: str,
+        *,
+        directory: str,
+        unc: str,
+        distro: str,
+        home: str,
+    ) -> None:
+        """Windows 宿主机程序：先确认可执行文件在 PATH，再按 argv 无窗口启动。"""
+        try:
+            argv = _open.windows_argv(opener, dir=directory, unc=unc, distro=distro, home=home)
+            exe = argv[0]
+            if shutil.which(exe) is None and not Path(exe).is_file():
+                raise runtime_error(
+                    f"没有找到 {exe}",
+                    hint=f"确认 {opener.name} 已安装并加入 PATH；或在「设置 → 打开方式」把命令模板改成完整路径",
+                )
+            spawn_detached(_open.wrap_windows_argv(argv))
+        except (WslmanError, LaunchError, OSError) as exc:
+            message = w._error_text(exc)
+            self._set_files_status(f"{label}失败：{message}")
+            QMessageBox.critical(self, label, message)
+            return
+        self._set_files_status(f"{label}：{opener.name} 正在打开 {distro}:{directory}")
+        self._log(f"[文件] 用 {opener.name} 打开 {distro}:{directory}")
+
+    def _files_open_done(self, label: str, payload: tuple[bool, str]) -> None:
+        if self._closing:
+            return
+        ok, message = payload
+        if not ok:
+            self._set_files_status(f"{label}失败：{message}")
+            QMessageBox.critical(self, label, message)
+            return
+        self._set_files_status(f"{label}完成：{message}")
+        self._log(f"[文件] {message}")
 
     def _set_files_status(self, text: str) -> None:
         self.files_status.setText(text)
@@ -1272,46 +1429,353 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         files.body.addWidget(files_form)
         files.body.addWidget(hint_label("界面设置保存下载目录 / 下载源 / 筛选等；命令行配置与 wslman CLI 共用。"))
         layout.addWidget(files)
-        layout.addWidget(self._build_work_dirs())
+        layout.addWidget(self._build_openers_card())
         layout.addStretch(1)
         return page
 
-    def _build_work_dirs(self) -> Card:
-        """工作目录卡片：默认根 ``~/.fcmd/wsl`` 与下载 / 安装 / 备份三个用途子目录。"""
-        card = Card("工作目录")
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
-        row.addWidget(hint_label("根目录", wrap=False))
-        root = work_root()
-        root_label = ElidedLabel(str(root), parent=card)
-        root_label.setObjectName("Hint")
-        root_label.setToolTip(str(root))
-        row.addWidget(root_label, 1)
-        open_button = button("打开", kind="ghost")
-        open_button.setToolTip("在文件管理器中打开默认工作目录")
-        open_button.clicked.connect(lambda: self._open_work_root(root))
-        row.addWidget(open_button)
-        card.body.addLayout(row)
+    def _build_openers_card(self) -> Card:
+        """「打开方式」卡片：IDE / AI Agent 两类的当前条目与增删改。
 
-        grid = FormGrid(card)
-        for label, path, tip in (
-            ("下载", default_download_dir(), "镜像归档（.wsl / .tar）默认保存位置"),
-            ("安装", default_install_root(), "安装镜像时的默认目录根，每个实例一个子目录"),
-            ("备份", default_backups_dir(), "导出 / 备份的 .tar 默认保存位置"),
-        ):
-            value = ElidedLabel(str(path), mode=Qt.TextElideMode.ElideMiddle, parent=card)
-            value.setObjectName("Mono")
-            value.setToolTip(f"{tip}\n{path}")
-            grid.add_row(label, value)
-        card.body.addWidget(grid)
+        条目在设置页维护，文件页只按当前选中的条目启动；选择与自定义模板都写进
+        ``wslmanw.json``，下次启动直接沿用。右上「智能检测」扫描宿主机与当前实例，
+        只补全没被用户手改过的条目。
+        """
+        card = Card("打开方式")
+        self.opener_detect_button = button("智能检测", kind="ghost", icon="search")
+        self.opener_detect_button.setToolTip(
+            "在 Windows 宿主机（PATH 与常见安装目录）和当前 WSL 实例内（command -v）"
+            "查找已安装的 IDE / AI Agent，补全没被手动改过的命令；手动改过的条目不会被覆盖。"
+        )
+        self.opener_detect_button.clicked.connect(lambda: self._detect_openers(force=True))
+        card.add_title_action(self.opener_detect_button)
+        form = FormGrid(card)
+        self.opener_combos: dict[str, QComboBox] = {}
+        self.opener_tags: dict[str, StatusTag] = {}
+        self.opener_edit_buttons: dict[str, QPushButton] = {}
+        self.opener_delete_buttons: dict[str, QPushButton] = {}
+        for kind in _open.KINDS:
+            row = QWidget(card)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+            combo = QComboBox(row)
+            combo.setMinimumWidth(220)
+            combo.setToolTip(f"文件页「用 {_open.KIND_LABELS[kind]} 打开」使用的条目")
+            combo.currentIndexChanged.connect(lambda _index, item=kind: self._on_opener_selected(item))
+            row_layout.addWidget(combo, 1)
+            tag = StatusTag("", tone="muted", parent=row)
+            tag.setVisible(False)
+            row_layout.addWidget(tag)
+            add = button("添加…", kind="ghost")
+            add.setToolTip(f"新增自定义 {_open.KIND_LABELS[kind]}打开方式")
+            add.clicked.connect(lambda _checked=False, item=kind: self._opener_add(item))
+            row_layout.addWidget(add)
+            edit = button("编辑…", kind="ghost")
+            edit.setToolTip("修改选中条目的名称、运行位置或命令模板")
+            edit.clicked.connect(lambda _checked=False, item=kind: self._opener_edit(item))
+            row_layout.addWidget(edit)
+            remove = button("删除", kind="danger")
+            remove.setToolTip("删除选中的条目（内置项也可以删除）")
+            remove.clicked.connect(lambda _checked=False, item=kind: self._opener_delete(item))
+            row_layout.addWidget(remove)
+            form.add_row(_open.KIND_LABELS[kind], row)
+            self.opener_combos[kind] = combo
+            self.opener_tags[kind] = tag
+            self.opener_edit_buttons[kind] = edit
+            self.opener_delete_buttons[kind] = remove
+            self._reload_opener_combo(kind)
+        card.body.addWidget(form)
         card.body.addWidget(
             hint_label(
-                "下载 / 安装 / 备份默认都写在这里；下载 / 备份目录可在上方「下载」卡片覆盖，"
-                "留空时回退到 wslman.json 的对应配置。"
+                "模板占位符：{dir} 实例内绝对路径、{unc} Windows UNC 路径、{distro} 实例名、{home} 实例家目录。"
+                "Windows 宿主机条目需要 {dir} 或 {unc}；WSL 内条目以当前目录启动，可不写占位符。"
             )
         )
+        self.opener_detect_hint = hint_label("智能检测会检查宿主机与本页当前实例；切换实例后自动重检。")
+        card.body.addWidget(self.opener_detect_hint)
+        self._sync_opener_actions()
         return card
+
+    def _reload_opener_combo(self, kind: str) -> None:
+        combo = self.opener_combos[kind]
+        current = w.selected_opener(self.settings, kind)
+        combo.blockSignals(True)
+        combo.clear()
+        for opener in w.openers_for(self.settings, kind):
+            combo.addItem(self._opener_label(opener), opener.key)
+            combo.setItemData(combo.count() - 1, opener.command, Qt.ItemDataRole.ToolTipRole)
+        if current is not None:
+            combo.setCurrentIndex(max(combo.findData(current.key), 0))
+        combo.blockSignals(False)
+        tag = self.opener_tags[kind]
+        tag.setVisible(current is not None)
+        if current is not None:
+            label, tone, detail = self._opener_install_state(current)
+            tag.set_status(label, tone)
+            tag.setToolTip(f"{current.name} 的命令模板：{current.command}\n{detail}")
+
+    def _opener_install_state(self, opener: _open.Opener) -> tuple[str, str, str]:
+        """条目在当前环境（宿主机 / WSL 内）的安装状态：文案、色调与 tooltip。"""
+        builtin = any(item.key == opener.key for item in _open.default_openers(opener.kind))
+        if not builtin:
+            return "自定义", "muted", "自定义条目按命令模板启动；智能检测只补全内置预设。"
+        data = self._opener_detections.get(self._detect_instance_name())
+        if data is None:
+            if self._detecting:
+                return "检测中", "warning", "正在检查宿主机与当前实例…"
+            return (
+                _open.HOST_LABELS[opener.host],
+                "accent" if opener.host == _open.HOST_WINDOWS else "warning",
+                "点右上「智能检测」查看宿主机 / WSL 内是否已安装。",
+            )
+        host_map, wsl_map = data
+        if opener.host == _open.HOST_WINDOWS:
+            here, other, other_label = (
+                host_map.get(opener.key),
+                wsl_map.get(opener.key),
+                "WSL 内",
+            )
+        else:
+            here, other, other_label = (
+                wsl_map.get(opener.key),
+                host_map.get(opener.key),
+                "宿主机",
+            )
+        if here is not None and here.found:
+            return f"{_open.HOST_LABELS[opener.host]}已安装", "success", f"路径：{here.path}"
+        if other is not None and other.found:
+            return (
+                f"仅{other_label}已安装",
+                "warning",
+                f"{other_label}路径：{other.path}；当前条目的运行位置是 {_open.HOST_LABELS[opener.host]}，"
+                "可编辑条目切换运行位置。",
+            )
+        return "未安装", "muted", "宿主机与 WSL 内均未找到（可能未安装，或安装在非标准位置）。"
+
+    def _opener_label(self, opener: _open.Opener) -> str:
+        builtin = any(item.key == opener.key for item in _open.default_openers(opener.kind))
+        return f"{opener.name}（内置）" if builtin else opener.name
+
+    def _sync_opener_actions(self) -> None:
+        for kind in _open.KINDS:
+            has = bool(w.openers_for(self.settings, kind))
+            self.opener_edit_buttons[kind].setEnabled(has)
+            self.opener_delete_buttons[kind].setEnabled(has)
+            self.opener_combos[kind].setEnabled(has)
+            self.opener_combos[kind].setToolTip(
+                "还没有条目：点「添加…」创建" if not has else f"文件页「用 {_open.KIND_LABELS[kind]} 打开」使用的条目"
+            )
+
+    def _open_settings_page(self) -> None:
+        """设置页入口：按当前实例做一次智能检测（已有缓存直接复用）。"""
+        self._settings_seen = True
+        self._sync_opener_detection()
+
+    def _detect_instance_name(self) -> str:
+        """智能检测使用的实例：优先当前选中行，其次列表第一项。"""
+        distro = self._selected()
+        if distro is not None:
+            return distro.name
+        return self._rows[0][0] if self._rows else ""
+
+    def _sync_opener_detection(self) -> None:
+        """实例变化后刷新标签；没有该实例的检测缓存就重新检测。"""
+        if not self._settings_seen or not hasattr(self, "opener_detect_button"):
+            return
+        name = self._detect_instance_name()
+        if name and name not in self._opener_detections:
+            self._detect_openers()
+            return
+        for kind in _open.KINDS:
+            self._reload_opener_combo(kind)
+
+    def _detect_openers(self, *, force: bool = False) -> None:
+        """检测宿主机与当前实例内的 IDE / AI Agent；结果按实例缓存。"""
+        if self._detecting or not hasattr(self, "opener_detect_button"):
+            return
+        name = self._detect_instance_name()
+        cached = self._opener_detections.get(name)
+        if cached is not None and not force:
+            self._apply_detections(cached, log=False)
+            return
+        self._detecting = True
+        self._detect_token += 1
+        token = self._detect_token
+        self.opener_detect_button.setEnabled(False)
+        set_button_text(self.opener_detect_button, "检测中…")
+        self.opener_detect_hint.setText(f"正在检查宿主机与 {name or '当前环境'}…")
+        for kind in _open.KINDS:
+            self._reload_opener_combo(kind)
+        submit(
+            lambda: self._detect_worker(name),
+            on_done=lambda result: self._detect_done(token, name, result),
+            on_error=self._detect_error,
+            on_finished=self._detect_finished,
+        )
+
+    def _detect_worker(self, name: str) -> tuple[dict[str, _open.Detection], dict[str, _open.Detection], str]:
+        """后台探测：宿主机 PATH / 常见安装目录 + 当前实例 ``command -v``。"""
+        host: dict[str, _open.Detection] = {}
+        for kind in _open.KINDS:
+            for opener in _open.default_openers(kind):
+                host.setdefault(opener.key, _open.detect_host(opener.key))
+        wsl: dict[str, _open.Detection] = {}
+        warning = ""
+        if name:
+            try:
+                env = cli._build_environment()
+                wsl_exe = cli._require_wsl(env)
+                result = env.runner.run(
+                    [wsl_exe, "-d", name, "--exec", "bash", "-lc", _open.detect_script()],
+                    timeout=120.0,
+                )
+            except WslmanError as exc:
+                warning = str(exc)
+            else:
+                found = _open.parse_detect(decode_console(result.stdout)) if result.returncode == 0 else {}
+                if result.returncode != 0 and not found:
+                    warning = f"实例 {name} 内检测失败（退出码 {result.returncode}）"
+                for kind in _open.KINDS:
+                    for opener in _open.default_openers(kind):
+                        wsl.setdefault(opener.key, _open.detect_wsl(opener.key, found))
+        return host, wsl, warning
+
+    def _detect_done(
+        self,
+        token: int,
+        name: str,
+        result: tuple[dict[str, _open.Detection], dict[str, _open.Detection], str],
+    ) -> None:
+        if self._closing or token != self._detect_token:
+            return
+        host, wsl, warning = result
+        self._opener_detections[name] = (host, wsl)
+        self._apply_detections((host, wsl), log=True)
+        installed: list[str] = []
+        missing: list[str] = []
+        for kind in _open.KINDS:
+            for opener in _open.default_openers(kind):
+                here = (host if opener.host == _open.HOST_WINDOWS else wsl).get(opener.key)
+                (installed if here is not None and here.found else missing).append(opener.name)
+        summary = (
+            f"检测完成（宿主机 + {name or '未选择实例'}）："
+            f"{('、'.join(installed)) or '无'} 可用；{('、'.join(missing)) or '无'} 未找到。"
+        )
+        if warning:
+            summary += f" WSL 内检测未完成：{warning}（标签仅反映宿主机结果）"
+        self.opener_detect_hint.setText(summary)
+        self._log(f"[打开方式] {summary}")
+
+    def _detect_error(self, message: str) -> None:
+        if self._closing:
+            return
+        self.opener_detect_hint.setText(f"智能检测失败：{message}")
+        self._log(f"[打开方式] 智能检测失败：{message}")
+
+    def _detect_finished(self) -> None:
+        self._detecting = False
+        if not hasattr(self, "opener_detect_button"):
+            return
+        set_button_text(self.opener_detect_button, "智能检测")
+        self.opener_detect_button.setEnabled(True)
+        for kind in _open.KINDS:
+            self._reload_opener_combo(kind)
+
+    def _apply_detections(
+        self,
+        data: tuple[dict[str, _open.Detection], dict[str, _open.Detection]],
+        *,
+        log: bool,
+    ) -> None:
+        """把检测到的绝对路径补进「没被用户手改过」的内置条目。"""
+        host, wsl = data
+        for kind in _open.KINDS:
+            openers = w.openers_for(self.settings, kind)
+            current = w.selected_opener(self.settings, kind)
+            changed = False
+            updated: list[_open.Opener] = []
+            for opener in openers:
+                if not opener.builtin or opener.user_edited:
+                    updated.append(opener)
+                    continue
+                found = (host if opener.host == _open.HOST_WINDOWS else wsl).get(opener.key)
+                if found is None or not found.found or not found.command or found.command == opener.command:
+                    updated.append(opener)
+                    continue
+                updated.append(
+                    _open.Opener(
+                        opener.key,
+                        opener.name,
+                        opener.kind,
+                        opener.host,
+                        found.command,
+                        True,
+                        opener.note,
+                        _open.ORIGIN_DETECTED,
+                    )
+                )
+                changed = True
+                if log:
+                    self._log(f"[打开方式] {opener.name}：补全为 {found.host_label} 检测到的路径")
+            if changed:
+                self._store_openers(kind, tuple(updated), current.key if current is not None else "")
+        for kind in _open.KINDS:
+            self._reload_opener_combo(kind)
+
+    def _store_openers(self, kind: str, openers: Sequence[_open.Opener], selected: str) -> None:
+        """写回内存设置并立即落盘，避免关窗前异常导致选择丢失。"""
+        self.settings = w.with_openers(self.settings, kind, openers, selected)
+        self._reload_opener_combo(kind)
+        self._sync_opener_actions()
+        self._sync_files_actions()
+        try:
+            w.save_settings(self.settings, self._own_settings_path)
+        except OSError as exc:
+            QMessageBox.warning(self, "保存失败", f"打开方式已生效，但写入设置文件失败：\n{exc}")
+
+    def _on_opener_selected(self, kind: str) -> None:
+        key = self.opener_combos[kind].currentData() or ""
+        self._store_openers(kind, w.openers_for(self.settings, kind), str(key))
+
+    def _opener_add(self, kind: str) -> None:
+        dialog = _OpenerDialog(self, kind)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, host, command = dialog.values()
+        openers = w.openers_for(self.settings, kind)
+        key = _open.new_key(name, [item.key for item in openers])
+        opener = _open.Opener(key, name, kind, host, command, origin=_open.ORIGIN_USER)
+        self._store_openers(kind, (*openers, opener), key)
+
+    def _opener_edit(self, kind: str) -> None:
+        current = w.selected_opener(self.settings, kind)
+        if current is None:
+            return
+        dialog = _OpenerDialog(self, kind, current)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name, host, command = dialog.values()
+        openers = tuple(
+            # 用户改过的条目记成 user：之后的智能检测不会再覆盖这条命令。
+            _open.Opener(item.key, name, kind, host, command, item.builtin, item.note, _open.ORIGIN_USER)
+            if item.key == current.key
+            else item
+            for item in w.openers_for(self.settings, kind)
+        )
+        self._store_openers(kind, openers, current.key)
+
+    def _opener_delete(self, kind: str) -> None:
+        current = w.selected_opener(self.settings, kind)
+        if current is None:
+            return
+        if not confirm(
+            self,
+            f"删除{_open.KIND_LABELS[kind]}打开方式",
+            f"删除「{current.name}」？\n\n命令模板：{current.command}",
+        ):
+            return
+        openers = tuple(item for item in w.openers_for(self.settings, kind) if item.key != current.key)
+        self._store_openers(kind, openers, "")
 
     def _open_work_root(self, root: Path) -> None:
         """打开默认工作目录（不存在时先创建）。"""
@@ -1622,6 +2086,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         """选中行变化：只重抛光旧 / 新两行，再更新工具栏与状态栏摘要。"""
         self.distro_list.sync_selection(current)
         self._show_details()
+        # 智能检测按实例缓存：切到另一个实例时刷新安装状态标签。
+        self._sync_opener_detection()
 
     def _on_distro_double_clicked(self, item: QListWidgetItem) -> None:
         row = self.distro_list.itemWidget(item)
@@ -2397,6 +2863,10 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 distro_terminal_dirs=self.settings.distro_terminal_dirs,
                 dialog_geometry=self.settings.dialog_geometry,
                 distro_init_tasks=self.settings.distro_init_tasks,
+                ide_openers=self.settings.ide_openers,
+                agent_openers=self.settings.agent_openers,
+                ide_opener=self.settings.ide_opener,
+                agent_opener=self.settings.agent_opener,
             ),
             self._own_settings_path,
         )
@@ -3449,6 +3919,78 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         """返回 ``(是否设为默认, 终端默认目录)``；目录为空时回落 ``~``。"""
         make_default = self.make_default.isChecked() and not self._distro.default
         return make_default, self.cwd.text().strip() or w.DEFAULT_TERMINAL_CWD
+
+
+class _OpenerDialog(QDialog):  # pragma: no cover - 模态对话框
+    """新增 / 编辑打开方式：名称、运行位置与命令模板。
+
+    模板在这里就做语法与占位符校验（Windows 侧必须带 ``{dir}`` 或 ``{unc}``），
+    避免保存后在文件页点开才报错。
+    """
+
+    def __init__(self, parent: QWidget, kind: str, opener: _open.Opener | None = None) -> None:
+        super().__init__(parent)
+        self._kind = kind
+        self._values = (
+            opener.name if opener else "",
+            opener.host if opener else _open.HOST_WINDOWS,
+            opener.command if opener else "",
+        )
+        self.setWindowTitle(f"{'编辑' if opener else '添加'}{_open.KIND_LABELS[kind]}打开方式")
+        self.setModal(True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 14)
+        layout.setSpacing(8)
+
+        form = FormGrid(self)
+        self.name = QLineEdit(self._values[0], self)
+        self.name.setPlaceholderText(f"例如 {_open.KIND_LABELS[kind]} 名称")
+        form.add_row("名称", self.name)
+        self.host = QComboBox(self)
+        for value, label in _open.HOST_LABELS.items():
+            self.host.addItem(label, value)
+        index = self.host.findData(self._values[1])
+        self.host.setCurrentIndex(index if index >= 0 else 0)
+        self.host.setToolTip("Windows 宿主机里的 GUI 程序，或要在 WSL 实例内启动的终端程序")
+        form.add_row("运行位置", self.host)
+        self.command = QLineEdit(self._values[2], self)
+        self.command.setPlaceholderText('code --remote wsl+{distro} "{dir}"')
+        self.command.setToolTip("可执行命令；引号内的空格会保留")
+        form.add_row("命令模板", self.command)
+        layout.addWidget(form)
+
+        if opener is not None and opener.note:
+            layout.addWidget(hint_label(opener.note))
+        layout.addWidget(
+            hint_label(
+                "占位符：{dir} 实例内绝对路径、{unc} Windows UNC 路径、{distro} 实例名、{home} 家目录。"
+                "Windows 宿主机条目必须包含 {dir} 或 {unc}；WSL 内条目以当前目录启动，可不写占位符。"
+            )
+        )
+
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.addStretch(1)
+        cancel = button("取消")
+        cancel.clicked.connect(self.reject)
+        actions.addWidget(cancel)
+        save = button("保存", kind="primary")
+        save.clicked.connect(self._on_save)
+        actions.addWidget(save)
+        layout.addLayout(actions)
+        fit_dialog_to_content(self)
+        self.name.setFocus()
+
+    def _on_save(self) -> None:
+        try:
+            self._values = _open.validate_opener(self.name.text(), self.host.currentData(), self.command.text())
+        except WslmanError as exc:
+            QMessageBox.warning(self, "命令模板不可用", w._error_text(exc))
+            return
+        self.accept()
+
+    def values(self) -> tuple[str, str, str]:
+        return self._values
 
 
 class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
