@@ -315,7 +315,7 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `gittool` | `gitt` | Git 操作（add+commit/init/init-submodules/clean/push/pull） |
+| `gittool` | `gitt` | Git 操作（add+commit 要求已初始化仓库、`i` 初始化并提交、init-submodules/clean/push/pull） |
 | `envdev` | - | 开发环境一键配置（分组入口 lang/app/mirror/check/all，镜像按服务（pip/conda/rustup/cargo/go/maven/npm）独立自动选优：以真实构件实测下载吞吐排序并可识别限速/门户页，避免误选「延迟低但被限速」的镜像；另含教育网镜像探测（动态拉取 MirrorZ 列表）与 `mirror --service <服务>` 测速、`--apply` 自动应用，以及工具链安装，Linux 含系统依赖） |
 | `mirrortool` | - | 镜像源独立入口（薄壳，实现与 `envdev mirror` 共用）：教育网镜像站点探测；`--service <服务>` 对 pip/conda/rustup/cargo/go/maven/npm 实测下载吞吐排序并推荐最快镜像，`--apply` 立即写入对应服务配置 |
 | `mirrortoolw` | - | 镜像搜索与配置窗口版（Qt）：服务镜像测速排序与一键应用、MirrorZ 教育网镜像站点探测二合一；结果按镜像名/地址实时过滤，展示延迟与实测吞吐并高亮推荐项，配置位置随服务切换提示，设置持久化到 `~/.fcmd/ui/mirrortoolw.json` |

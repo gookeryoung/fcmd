@@ -2,12 +2,18 @@
 
 提供初始化/添加提交/初始化子目录/清理/推送/拉取等子命令。
 
-``a`` / ``i`` 为聚合入口，经隐藏任务链 ``_init`` → ``_add`` → ``_commit``
-保证顺序：已有仓库不重复 init、无更改不提交（守卫逻辑在函数内实现）。
+``a`` / ``i`` 为聚合入口，共用隐藏链 ``_init`` → ``_add`` → ``_commit``：
+
+- ``_init`` 先确认当前目录已在 Git 仓库内；不在仓库里时，只有 ``i``（或显式
+  ``a --init``）会创建仓库，单独的 ``a`` 直接报错提示先初始化；
+- ``_add`` / ``_commit`` 仍只在仓库内执行，无更改时提交步骤 no-op。
+
+``needs`` 在这里表达「必须先确认仓库可用」，而不是「自动补做 init」。
 
 示例
 ----
-    fcmd gitt a --message "feat: 新功能"   # 添加并提交（有更改时）
+    fcmd gitt a --message "feat: 新功能"   # 添加并提交（要求已是 Git 仓库）
+    fcmd gitt a --init                    # 明确允许先初始化当前目录
     fcmd gitt i                           # 初始化并提交
     fcmd gitt isub                        # 初始化所有子目录的 Git 仓库
     fcmd gitt c                           # 清理未跟踪文件（保留排除目录）并查看状态
@@ -30,16 +36,57 @@ __tool_aliases__ = ["gitt", "git"]
 
 
 # ============================================================================
+# 内部工具：Git 仓库判定 / 子进程命令
+# ============================================================================
+
+
+def _run_git(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """执行一条 git 命令（不抛错，由调用方按返回码决定后续）。"""
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+
+
+def _failure_detail(result: subprocess.CompletedProcess[str]) -> str:
+    """从失败结果里取一句可读原因（优先 stderr 最后一行）。"""
+    for stream in (result.stderr, result.stdout):
+        lines = [line.strip() for line in (stream or "").splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
+    return f"返回码 {result.returncode}"
+
+
+def _repo_root() -> Path | None:
+    """返回当前目录所属 Git 仓库根；不在任何仓库内时返回 ``None``。
+
+    用 ``git rev-parse --show-toplevel`` 而不是 ``Path(".git").exists()``：
+    后者在仓库子目录里会误判为「没有仓库」，进而 ``git init`` 出嵌套仓库。
+    """
+    result = _run_git(["git", "rev-parse", "--show-toplevel"])
+    if result.returncode != 0:
+        return None
+    text = result.stdout.strip()
+    return Path(text) if text else None
+
+
+def _has_staged_changes(cwd: Path | None = None) -> bool:
+    """暂存区是否有待提交内容；无法读取 Git 状态时抛可读错误。"""
+    result = _run_git(["git", "status", "--porcelain"], cwd=cwd)
+    if result.returncode != 0:
+        raise RuntimeError(f"读取 Git 状态失败: {_failure_detail(result)}")
+    return bool(result.stdout.strip())
+
+
+# ============================================================================
 # fn 子命令
 # ============================================================================
 
 
 @fx.tool("gittool", subcommand="isub", help="初始化子目录 Git 仓库")
 def git_init_sub_dirs(message: str = "init commit") -> None:
-    """遍历当前目录的子目录，对每个子目录执行 git init + add + commit。
+    """遍历当前目录的子目录，逐个子目录执行 git init + add + commit。
 
-    跳过非目录文件与隐藏目录（``.git`` / ``.venv`` 这类不该被当成项目）；
-    每个子目录独立初始化为 Git 仓库。
+    跳过非目录文件、隐藏目录（``.git`` / ``.venv`` 这类不该被当成项目）
+    以及已经是 Git 仓库的子目录；每一步都检查返回码，失败项收集后统一报错，
+    不再把失败伪装成「已初始化」。
 
     Parameters
     ----------
@@ -51,11 +98,34 @@ def git_init_sub_dirs(message: str = "init commit") -> None:
     if not sub_dirs:
         print("当前目录下没有可初始化的子目录")
         return
+    failed: list[str] = []
     for subdir in sub_dirs:
-        subprocess.run(["git", "init"], cwd=subdir, check=False, capture_output=True, text=True)
-        subprocess.run(["git", "add", "."], cwd=subdir, check=False, capture_output=True, text=True)
-        subprocess.run(["git", "commit", "-m", message], cwd=subdir, check=False, capture_output=True, text=True)
+        if (subdir / ".git").exists():
+            print(f"跳过: {subdir.name}（已是 Git 仓库）")
+            continue
+        init = _run_git(["git", "init"], cwd=subdir)
+        if init.returncode != 0:
+            failed.append(f"{subdir.name}: git init 失败（{_failure_detail(init)}）")
+            continue
+        add = _run_git(["git", "add", "."], cwd=subdir)
+        if add.returncode != 0:
+            failed.append(f"{subdir.name}: git add 失败（{_failure_detail(add)}）")
+            continue
+        try:
+            staged = _has_staged_changes(subdir)
+        except RuntimeError as exc:
+            failed.append(f"{subdir.name}: {exc}")
+            continue
+        if not staged:
+            print(f"已初始化: {subdir.name}（无更改可提交）")
+            continue
+        commit = _run_git(["git", "commit", "-m", message], cwd=subdir)
+        if commit.returncode != 0:
+            failed.append(f"{subdir.name}: git commit 失败（{_failure_detail(commit)}）")
+            continue
         print(f"已初始化: {subdir.name}")
+    if failed:
+        raise RuntimeError("以下子目录初始化失败: " + "；".join(failed))
 
 
 # ============================================================================
@@ -63,11 +133,23 @@ def git_init_sub_dirs(message: str = "init commit") -> None:
 # ============================================================================
 
 
-@fx.tool("gittool", subcommand="_init", help="初始化 Git 仓库（内部）", hidden=True)
-def git_init() -> None:
-    """初始化 Git 仓库（已有 ``.git`` 时 no-op）。"""
-    if Path(".git").exists():
+@fx.tool("gittool", subcommand="_init", help="确保 Git 仓库已就绪（内部）", hidden=True)
+def git_init(init: bool = False) -> None:
+    """确认当前目录在 Git 仓库内，必要时按 ``init`` 创建仓库。
+
+    - 已在仓库内（含仓库子目录）：no-op，不再重复 ``git init``；
+    - 不在仓库内且 ``init=False``：直接报错，提示先执行 ``fcmd gitt i``；
+    - 不在仓库内且 ``init=True``（``i`` / ``a --init``）：执行 ``git init``。
+
+    Parameters
+    ----------
+    init:
+        是否允许创建仓库；``a`` 默认 ``False``，``i`` 默认 ``True``
+    """
+    if _repo_root() is not None:
         return
+    if not init:
+        raise RuntimeError("当前目录不是 Git 仓库；请先运行 `fcmd gitt i` 初始化")
     subprocess.run(["git", "init"], check=True)
 
 
@@ -80,7 +162,7 @@ def git_init() -> None:
     hidden=True,
 )
 def git_add() -> None:
-    """暂存全部更改。"""
+    """暂存全部更改（前置 ``_init`` 保证仓库已就绪）。"""
 
 
 @fx.tool(
@@ -91,15 +173,14 @@ def git_add() -> None:
     hidden=True,
 )
 def git_commit(message: str = "init commit") -> None:
-    """提交暂存更改（``git status --porcelain`` 为空时提示并跳过）。
+    """提交暂存更改（暂存区为空时提示并跳过）。
 
     Parameters
     ----------
     message:
         提交信息
     """
-    status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=False)
-    if not status.stdout.strip():
+    if not _has_staged_changes():
         from fcmd.console import get_console
 
         get_console().print("  没有需要提交的更改", style="dim")
@@ -110,17 +191,18 @@ def git_commit(message: str = "init commit") -> None:
 @fx.tool(
     "gittool",
     subcommand="a",
-    help="添加并提交",
+    help="添加并提交（要求已是 Git 仓库）",
     needs=["_commit"],
-    strategy="sequential",
 )
-def add_and_commit(message: str = "chore: update") -> None:
-    """添加并提交。
+def add_and_commit(message: str = "chore: update", init: bool = False) -> None:
+    """添加并提交；不在 Git 仓库内时报错，不会自动初始化。
 
     Parameters
     ----------
     message:
         提交信息
+    init:
+        允许先初始化当前目录（一般用 ``i``；默认关闭）
     """
 
 
@@ -129,15 +211,16 @@ def add_and_commit(message: str = "chore: update") -> None:
     subcommand="i",
     help="初始化并提交",
     needs=["_commit"],
-    strategy="sequential",
 )
-def init_and_commit(message: str = "init commit") -> None:
-    """初始化并提交。
+def init_and_commit(message: str = "init commit", init: bool = True) -> None:
+    """初始化并提交（仓库已存在时不重复初始化）。
 
     Parameters
     ----------
     message:
         提交信息
+    init:
+        是否创建仓库（默认开启；传 ``--no-init`` 等价于 ``a``）
     """
 
 

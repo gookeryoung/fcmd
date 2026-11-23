@@ -315,7 +315,7 @@ HELP: dict[str, str] = {
     "folderback": "usage: folderback [-h] [--src SRC] [--dst DST] [--max-zip MAX_ZIP] [--dry-run]\n                  [-q] [--strategy STRATEGY]\n\n备份文件夹\n\noptions:\n  -h, --help           show this help message and exit\n  --src SRC            源文件夹路径（默认: 当前目录）\n  --dst DST            目标文件夹路径（默认: ./backup）\n  --max-zip MAX_ZIP    最大备份数量（默认: 5，超出时删除最旧的）\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "folderzip": "usage: folderzip [-h] [--directory DIRECTORY] [--dry-run] [-q]\n                 [--strategy STRATEGY]\n\n压缩当前目录下所有子文件夹为 zip\n\noptions:\n  -h, --help            show this help message and exit\n  --directory DIRECTORY\n                        目标目录（默认当前目录）\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
     "fonttool": "fonttool 子命令\n+----------------------------+\n| 子命令  | 说明             |\n|---------+------------------|\n| install | 下载并安装字体   |\n| list    | 列出可安装字体   |\n| remove  | 移除已安装字体   |\n| status  | 查看字体安装状态 |\n+----------------------------+\n",
-    "gittool": "gittool 子命令\n+-------------------------------------------+\n| 子命令 | 说明                             |\n|--------+----------------------------------|\n| a      | 添加并提交                       |\n| c      | 清理并查看状态                   |\n| ca     | 清理全部未跟踪文件（含排除目录） |\n| i      | 初始化并提交                     |\n| isub   | 初始化子目录 Git 仓库            |\n| p      | 推送                             |\n| pl     | 拉取                             |\n+-------------------------------------------+\n",
+    "gittool": "gittool 子命令\n+-------------------------------------------+\n| 子命令 | 说明                             |\n|--------+----------------------------------|\n| a      | 添加并提交（要求已是 Git 仓库）  |\n| c      | 清理并查看状态                   |\n| ca     | 清理全部未跟踪文件（含排除目录） |\n| i      | 初始化并提交                     |\n| isub   | 初始化子目录 Git 仓库            |\n| p      | 推送                             |\n| pl     | 拉取                             |\n+-------------------------------------------+\n",
     "hashfile": "hashfile 子命令\n+--------------------------------------------------------+\n| 子命令 | 说明                                          |\n|--------+-----------------------------------------------|\n| d      | 计算目录下所有文件哈希                        |\n| dupes  | 查找目录下内容重复的文件（只读，不删除/移动） |\n| f      | 计算单个文件哈希                              |\n+--------------------------------------------------------+\n",
     "hashtool": "hashtool 子命令\n+---------------------------+\n| 子命令 | 说明             |\n|--------+------------------|\n| md5    | 计算 MD5 哈希    |\n| sha1   | 计算 SHA1 哈希   |\n| sha256 | 计算 SHA256 哈希 |\n| sha512 | 计算 SHA512 哈希 |\n+---------------------------+\n",
     "idtool": "idtool 子命令\n+----------------------------+\n| 子命令    | 说明           |\n|-----------+----------------|\n| random    | 生成随机字符串 |\n| timestamp | 生成时间戳     |\n| uuid      | 生成 UUID      |\n+----------------------------+\n",
@@ -530,7 +530,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "6afb66b2c05f0daa0c43cc023de4fd06"
+DIGEST = "a4c4b1fd8d8a23d71f2a3f40f93feaf6"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 115

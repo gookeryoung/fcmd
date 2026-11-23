@@ -83,13 +83,17 @@ make bench-startup                                # 同上（独立 target，不
 
 ```powershell
 fcmd gitt a
-# 完成  初始化 Git 仓库  0.00s
+# 完成  确保 Git 仓库已就绪  0.00s
 # $ git add .
 # 完成  暂存全部更改  0.02s
 # [main fac721d] chore: update
 # 完成  检查并提交更改  0.05s
 # 共 3 步，用时 0.08s
 ```
+
+`gitt a` 要求当前目录已在 Git 仓库内（含仓库子目录）；不在仓库内时直接报错并提示
+先运行 `fcmd gitt i`，不会隐式创建 `.git`。需要「先初始化再提交」时用 `gitt i`，
+或显式 `gitt a --init`。
 
 - 每个步骤结束时一行 `完成 / 失败 / 跳过`，长命令在 `$ …` 之后实时输出；
 - 多步成功补一行 `共 N 步，用时 X`；单步不补；

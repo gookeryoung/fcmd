@@ -7,6 +7,13 @@
 
 ### 变更
 
+- `gitt a`（gittool 添加并提交）不再隐式初始化仓库：`needs` 只表达
+  「项目必须已在 Git 仓库内」的前置校验，非仓库目录直接报错并提示先运行
+  `fcmd gitt i`，不再静默创建 `.git`；需要先初始化时用 `gitt i` 或显式
+  `gitt a --init`。`_init` 改用 `git rev-parse --show-toplevel` 判定，在仓库
+  子目录执行 `gitt a` 会提交到外层仓库，不会创建嵌套仓库；`gitt isub` 跳过
+  已有 `.git` 的子目录并检查每一步返回码，失败时报告具体目录而不是打印
+  「已初始化」。
 - 按钮 / 开关 / 图标键的禁用态改用主题独立的 `disabled_bg` / `disabled_fg` /
   `disabled_border` 三色：原来禁用态直接复用 `muted` + `surface`，浅色主题里
   禁用按钮比可用按钮还亮、深色主题里文字仍偏亮，两种状态都不容易分辨；现在

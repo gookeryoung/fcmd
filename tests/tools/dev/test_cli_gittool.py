@@ -199,7 +199,7 @@ class TestGittoolChain:
         assert spec.func.__name__ == "git_init"
 
     def test_add_needs_init(self) -> None:
-        """_add 依赖 _init。"""
+        """_add 前先经过 _init（确认仓库可用/按需初始化）。"""
         spec = _TOOL_REGISTRY["gittool"]["_add"]
         assert "_init" in spec.needs
         assert spec.cmd == ("git", "add", ".")
@@ -214,24 +214,57 @@ class TestGittoolChain:
         assert "message" in inspect.signature(spec.func).parameters
 
     def test_aggregate_a_needs_commit_with_message(self) -> None:
-        """a 是聚合命令（needs _commit、无 cmd），声明 message 参数供链内传递。"""
+        """a 是聚合命令（needs _commit、无 cmd），声明 message/init 参数供链内传递。"""
         spec = _TOOL_REGISTRY["gittool"]["a"]
         assert spec.cmd is None
         assert "_commit" in spec.needs
-        assert "message" in inspect.signature(spec.func).parameters
+        params = inspect.signature(spec.func).parameters
+        assert "message" in params
+        # a 不自动初始化：init 默认 False，值会流入 _init 作为前置校验
+        assert params["init"].default is False
 
-    def test_a_inits_fresh_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """gittool a 在全新目录（无仓库）也会 init + 提交（链式共享 _init）。"""
+    def test_aggregate_i_allows_init(self) -> None:
+        """i 才允许初始化：init 默认 True。"""
+        params = inspect.signature(_TOOL_REGISTRY["gittool"]["i"].func).parameters
+        assert params["init"].default is True
+
+    def test_a_requires_repo(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """gittool a 在非仓库目录直接报错，不会静默创建 .git。"""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+        code = run_tool("gittool", ["a"])
+        assert code != 0
+        assert not (tmp_path / ".git").exists()
+
+    def test_a_explicit_init_flag_creates_repo(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """显式 a --init 时才初始化（与 i 的行为对齐）。"""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("GIT_AUTHOR_NAME", "test")
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@test.com")
         monkeypatch.setenv("GIT_COMMITTER_NAME", "test")
         monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@test.com")
         (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
-        code = run_tool("gittool", ["a"])
+        code = run_tool("gittool", ["a", "--init"])
         assert code == 0
         assert (tmp_path / ".git").is_dir()
         result = subprocess.run(["git", "log", "--oneline"], capture_output=True, text=True, check=True)
+        assert "chore: update" in result.stdout
+
+    def test_a_in_repo_subdir_does_not_create_nested_repo(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """在仓库子目录执行 a 时提交到外层仓库，不会 git init 出嵌套仓库。"""
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "test"], cwd=tmp_path, check=True, capture_output=True)
+        subdir = tmp_path / "sub"
+        subdir.mkdir()
+        (subdir / "a.txt").write_text("hello", encoding="utf-8")
+        monkeypatch.chdir(subdir)
+        code = run_tool("gittool", ["a"])
+        assert code == 0
+        assert not (subdir / ".git").exists(), "不应在子目录创建嵌套仓库"
+        result = subprocess.run(["git", "log", "--oneline"], cwd=tmp_path, capture_output=True, text=True, check=True)
         assert "chore: update" in result.stdout
 
 
@@ -256,7 +289,7 @@ class TestGittoolIsub:
     def test_isub_with_subdirs(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """有子目录时对每个子目录调用 git init/add/commit。"""
+        """有子目录时对每个子目录调用 git init/add/status/commit。"""
         (tmp_path / "proj_a").mkdir()
         (tmp_path / "proj_b").mkdir()
         (tmp_path / "file.txt").write_text("not a dir")
@@ -273,7 +306,8 @@ class TestGittoolIsub:
             cwd: Path | None = None,
         ) -> subprocess.CompletedProcess[str]:
             calls.append((cmd, cwd or Path.cwd()))
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+            stdout = "A  a.txt" if cmd[:2] == ["git", "status"] else ""
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
 
         monkeypatch.setattr("fcmd.tools.dev.gittool.subprocess.run", fake_run)
 
@@ -281,9 +315,49 @@ class TestGittoolIsub:
         captured = capsys.readouterr()
         assert "已初始化: proj_a" in captured.out
         assert "已初始化: proj_b" in captured.out
-        # 每个子目录 3 次 git 命令，共 6 次
-        assert len(calls) == 6
-        # 验证 cwd 正确设置
+        # 每个子目录 4 次 git 命令（init / add / status / commit）
+        assert len(calls) == 8
         proj_a_cwd = tmp_path / "proj_a"
-        proj_a_calls = [c for c in calls if c[1] == proj_a_cwd]
-        assert len(proj_a_calls) == 3  # init + add + commit
+        assert len([c for c in calls if c[1] == proj_a_cwd]) == 4
+
+    def test_isub_skips_existing_repo(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """已存在 .git 的子目录不再重复 init / 提交。"""
+        existing = tmp_path / "old_proj"
+        (existing / ".git").mkdir(parents=True)
+        (existing / "a.txt").write_text("hello", encoding="utf-8")
+        (tmp_path / "new_proj").mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[Path] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            cwd = kwargs.get("cwd")
+            assert isinstance(cwd, Path)
+            calls.append(cwd)
+            stdout = "A  a.txt" if cmd[:2] == ["git", "status"] else ""
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=stdout, stderr="")
+
+        monkeypatch.setattr("fcmd.tools.dev.gittool.subprocess.run", fake_run)
+        fcmd.tools.dev.gittool.git_init_sub_dirs()
+        captured = capsys.readouterr()
+        assert "跳过: old_proj" in captured.out
+        assert existing not in calls
+        assert "已初始化: new_proj" in captured.out
+
+    def test_isub_reports_failure(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """init 失败时不再打印「已初始化」，而是抛出汇总错误。"""
+        (tmp_path / "bad_proj").mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=cmd, returncode=128, stdout="", stderr="fatal: boom")
+
+        monkeypatch.setattr("fcmd.tools.dev.gittool.subprocess.run", fake_run)
+        with pytest.raises(RuntimeError, match="bad_proj"):
+            fcmd.tools.dev.gittool.git_init_sub_dirs()
+        captured = capsys.readouterr()
+        assert "已初始化: bad_proj" not in captured.out

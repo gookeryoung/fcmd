@@ -49,7 +49,7 @@ OK '_add' 成功 (0.025s)
 目标输出（`fcmd gitt a`）：
 
 ```
-完成  初始化 Git 仓库  0.00s
+完成  确保 Git 仓库已就绪  0.00s
 $ git add .
 完成  暂存全部更改  0.02s
 [main fac721d] chore: update
@@ -63,6 +63,9 @@ $ git add .
 - 已落地：D1–D8 全部实施，`gittool` 的「无更改」分支补一句
   `没有需要提交的更改`（避免“完成提交”与事实不符）；`gitt isub` 跳过 `.git` / `.venv`
   这类隐藏目录（原先会把 `.git` 当子项目再 init）。
+- `gitt a` 的 `_init` 步骤改为前置校验（不再隐式 `git init`），步骤名同步为
+  「确保 Git 仓库已就绪」；初始化只由 `gitt i` / `gitt a --init` 触发，
+  在仓库子目录执行也不会创建嵌套仓库。
 - 守卫测试：`tests/core/test_toolkit.py`（P19 段）覆盖内部名不外泄、`$` 回显、
   单步不补收尾行、`--quiet` 静默、`CalledProcessError` 友好化；
   `tests/core/test_engine_*` 覆盖 verbose 单行结果。
