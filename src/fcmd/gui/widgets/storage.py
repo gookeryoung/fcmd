@@ -79,13 +79,21 @@ class DiskLocation:
 
 
 class DiskTile(QFrame):  # pragma: no cover - Qt 控件
-    """单块磁盘卡片：硬盘标识 + 路径 + 容量 + 打开 / 设为主目录 / 移除。"""
+    """单块磁盘卡片：硬盘标识 + 路径 + 容量 + 更改 / 打开 / 设为主目录 / 移除。"""
 
     openRequested = Signal(str)
+    changeRequested = Signal(str)
     removeRequested = Signal(str)
     primaryRequested = Signal(str)
 
-    def __init__(self, location: DiskLocation, *, can_remove: bool, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        location: DiskLocation,
+        *,
+        can_remove: bool,
+        change_text: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.location = location
         self.setObjectName("DiskCard")
@@ -101,7 +109,7 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
         path.setToolTip(str(location.path))
         layout.addWidget(path)
         layout.addWidget(self._build_usage(location))
-        layout.addLayout(self._build_actions(location, can_remove=can_remove))
+        layout.addLayout(self._build_actions(location, can_remove=can_remove, change_text=change_text))
         layout.addStretch(1)
 
     def _build_header(self, location: DiskLocation) -> QHBoxLayout:
@@ -154,11 +162,16 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
             return "无法读取磁盘容量"
         return f"剩余 {format_bytes(location.free)} / 共 {format_bytes(location.total)}"
 
-    def _build_actions(self, location: DiskLocation, *, can_remove: bool) -> QHBoxLayout:
-        """动作行：打开 / 设为主目录 / 移除。"""
+    def _build_actions(self, location: DiskLocation, *, can_remove: bool, change_text: str = "") -> QHBoxLayout:
+        """动作行：更改（可选）/ 打开 / 设为主目录 / 移除。"""
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 0)
         row.setSpacing(6)
+        if change_text:
+            change_button = button(change_text, kind="ghost")
+            change_button.setToolTip("选择新的目录")
+            change_button.clicked.connect(lambda: self.changeRequested.emit(str(location.path)))
+            row.addWidget(change_button)
         open_button = button("打开", kind="ghost", icon="folder")
         open_button.clicked.connect(lambda: self.openRequested.emit(str(location.path)))
         row.addWidget(open_button)
@@ -189,10 +202,15 @@ class DiskAddTile(QPushButton):  # pragma: no cover - Qt 控件
 
 
 class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
-    """目录卡片网格：默认最多三列并排，超出后换行；末尾总是「添加」卡片。"""
+    """目录卡片网格：默认最多三列并排，超出后换行；末尾是「添加」卡片。
+
+    ``add_text=None`` 时不出「添加」卡片（单目录、由卡片自带「更改」按钮的场景用）；
+    ``change_text`` 给卡片的动作行加一个「更改」按钮（排在「打开」之前）。
+    """
 
     addRequested = Signal()
     openRequested = Signal(str)
+    changeRequested = Signal(str)
     removeRequested = Signal(str)
     primaryRequested = Signal(str)
 
@@ -200,12 +218,14 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
         self,
         parent: QWidget | None = None,
         *,
-        add_text: str = "添加目录",
+        add_text: str | None = "添加目录",
+        change_text: str = "",
         max_columns: int = _MAX_COLUMNS,
         min_count: int = 1,
     ) -> None:
         super().__init__(parent)
         self._add_text = add_text
+        self._change_text = change_text
         self._max_columns = max(max_columns, 1)
         self._min_count = max(min_count, 0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
@@ -224,15 +244,17 @@ class DiskGrid(QWidget):  # pragma: no cover - Qt 控件
         can_remove = len(locations) > self._min_count
         tiles: list[QWidget] = []
         for location in locations:
-            tile = DiskTile(location, can_remove=can_remove, parent=self)
+            tile = DiskTile(location, can_remove=can_remove, change_text=self._change_text, parent=self)
             tile.openRequested.connect(self.openRequested.emit)
+            tile.changeRequested.connect(self.changeRequested.emit)
             tile.removeRequested.connect(self.removeRequested.emit)
             tile.primaryRequested.connect(self.primaryRequested.emit)
             tiles.append(tile)
-        add_tile = DiskAddTile(self._add_text, self)
-        add_tile.clicked.connect(self.addRequested.emit)
-        tiles.append(add_tile)
-        columns = min(self._max_columns, len(tiles))
+        if self._add_text is not None:
+            add_tile = DiskAddTile(self._add_text, self)
+            add_tile.clicked.connect(self.addRequested.emit)
+            tiles.append(add_tile)
+        columns = min(self._max_columns, max(len(tiles), 1))
         for column in range(columns):
             self._grid.setColumnStretch(column, 1)
         for index, tile in enumerate(tiles):

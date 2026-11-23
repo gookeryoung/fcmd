@@ -7,7 +7,9 @@ import json
 import os
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -129,8 +131,9 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
         assert _distro_row(window, 0).distro.name == "Ubuntu"
         assert isinstance(_distro_row(window, 0), _wslmanw_qt.ItemRow)
         assert _distro_row(window, 1).state_tag.text() == "已停止"
-        # 与 llmw 模型行同构：副标题只放版本，右侧数值放磁盘占用。
-        assert _distro_row(window, 0).sub_label.text() == "v2"
+        # 与 llmw 模型行同构：副标题只放版本 + 所属工作目录，右侧数值放磁盘占用。
+        # 该实例的 BasePath 不在任何已配置目录下，如实标注而不是留空。
+        assert _distro_row(window, 0).sub_label.text() == "v2 · 未在已配置目录"
         metrics = _distro_row(window, 0).metrics_label
         assert metrics is not None and metrics.text() == "2.0 KiB"
 
@@ -537,7 +540,6 @@ def test_image_rows_expand_inline_detail(home: Path, monkeypatch: pytest.MonkeyP
 def test_settings_persisted(home: Path) -> None:
     window = _wslmanw_qt.WslmanQtWindow()
     try:
-        window.download_dir.set_value(r"D:\WSL\downloads")
         window.mirror.setCurrentIndex(window.mirror_ids.index("ustc"))
         window.image_filter_buttons["installed"].click()
         window.image_source.setCurrentIndex(window.image_source.findData("manifest"))
@@ -548,7 +550,10 @@ def test_settings_persisted(home: Path) -> None:
         window.deleteLater()
     raw = json.loads(_guiconfig.config_path(wslmanw.SETTINGS_NAME).read_text(encoding="utf-8"))
     assert raw["geometry"] == "980x660+10+20"
-    assert raw["download_dir"] == r"D:\WSL\downloads"
+    assert raw["work_dir"] == ""
+    # 旧版下载 / 备份目录字段保留读入兼容，但界面不再写入
+    assert raw["download_dir"] == ""
+    assert raw["backup_dir"] == ""
     assert raw["mirror"] == "ustc"
     assert raw["image_filter"] == "installed"
     assert raw["image_source"] == "manifest"
@@ -913,7 +918,7 @@ def test_images_page_has_no_bottom_action_bar(home: Path, monkeypatch: pytest.Mo
 # 设置页：下载配置从镜像页搬过来
 # ---------------------------------------------------------------------- #
 def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """下载目录 / 下载源 / 校验移入设置页；镜像页不再承担配置表单。"""
+    """下载源 / 校验留在设置页；镜像页不再承担配置表单。"""
     from fcmd.gui.widgets import PageScroll
 
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
@@ -925,8 +930,7 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
         assert settings_page is not None
         # 页面用滚动容器：窗口变矮时滚动，而不是压扁控件
         assert settings_page.findChild(PageScroll) is not None
-        # 配置项都在设置页里（含新增的备份目录）
-        for widget in (window.download_dir, window.backup_dir, window.mirror, window.expected_sha):
+        for widget in (window.mirror, window.expected_sha, window.work_grid):
             assert settings_page.isAncestorOf(widget)
         assert "64" in window.expected_sha.placeholderText()
 
@@ -934,8 +938,6 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
         window.show_page("images")
         images_page = window.page("images")
         assert images_page is not None
-        assert not images_page.isAncestorOf(window.download_dir)
-        assert not images_page.isAncestorOf(window.backup_dir)
         assert not images_page.isAncestorOf(window.mirror)
         assert window.image_filter_buttons  # 筛选胶囊仍在列表页
         assert window.images_refresh.objectName() != ""
@@ -944,9 +946,28 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
         window.deleteLater()
 
 
-def test_settings_work_dir_card_lists_subfolders(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """设置页「工作目录」卡片：根目录 + 下载 / 安装 / 备份三个用途子目录。"""
+def test_settings_page_has_no_config_file_card(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """简化后不再展示「配置文件」卡片与单独的下载 / 备份目录。"""
     from fcmd.gui.widgets import Card
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("settings")
+        page = window.page("settings")
+        assert page is not None
+        assert "配置文件" not in [card.title() for card in page.findChildren(Card)]
+        assert not hasattr(window, "download_dir")
+        assert not hasattr(window, "backup_dir")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_settings_work_dir_uses_bare_multi_disk_card(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """工作目录直接铺多磁盘卡（不套 Card 外框），可添加并指定默认目录。"""
+    from fcmd.gui.widgets import Card, DiskGrid
 
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
@@ -956,19 +977,24 @@ def test_settings_work_dir_card_lists_subfolders(home: Path, monkeypatch: pytest
         window.show_page("settings")
         page = window.page("settings")
         assert page is not None
-        titles = [card.title() for card in page.findChildren(Card)]
-        assert "工作目录" in titles
-        work = next(card for card in page.findChildren(Card) if card.title() == "工作目录")
-        values = [label.fullText() for label in work.findChildren(_wslmanw_qt.ElidedLabel)]
+        cards = page.findChildren(Card)
+        assert "工作目录" not in [card.title() for card in cards]
+        # 磁盘卡外面不再有设置卡外框。
+        assert all(card.findChild(DiskGrid) is None for card in cards)
+        assert page.findChildren(DiskGrid) == [window.work_grid]
+        buttons = window.work_grid.findChildren(_wslmanw_qt.QPushButton)
+        texts = [item.text() for item in buttons]
+        assert "打开" in texts
+        assert texts.count("添加目录") == 1
+        assert "更改工作目录…" not in texts
+        # 只有一个目录时不需要「设为主目录」/「移除」。
+        assert "设为主目录" not in texts
+        assert "移除" not in texts
+        assert not hasattr(window, "work_derived")
+        # 推演结果仍按默认工作目录生效（只是不展示）。
         root = home / "wsl"
-        assert str(root) in values
-        assert str(root / "download") in values
-        assert str(root / "install") in values
-        assert str(root / "backup") in values
-        # 下载 / 备份目录默认值分别指向工作目录的 download / backup
-        assert window.download_dir.value() == ""
-        assert window.backup_dir.value() == ""
         assert window._local_start_dir() == str(root / "download")
+        assert window._install_dir_path() == root / "install"
         assert window._backup_dir_path() == root / "backup"
     finally:
         window._poll.stop()  # type: ignore[union-attr]
@@ -1001,32 +1027,259 @@ def test_install_dialog_defaults_into_work_dir(home: Path, monkeypatch: pytest.M
         window.deleteLater()
 
 
-def test_settings_page_persists_download_dir_and_mirror(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """设置页改动立即落盘：下载目录（回车提交）与下载源（切换即保存）。"""
+def test_settings_page_persists_work_dir_and_mirror(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """添加工作目录与下载源改动都立即落盘；默认目录仍排在首位。"""
+    chosen = tmp_path / "workspace"
+    chosen.mkdir()
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(chosen))
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
         window.show_page("settings")
-        window.download_dir.set_value(r"D:\WSL\mirrors")
-        window.download_dir.committed.emit(r"D:\WSL\mirrors")
-        window.backup_dir.set_value(r"D:/WSL/backups")
-        window.backup_dir.committed.emit(r"D:/WSL/backups")
+        # 「添加目录」是磁盘卡自身的虚线卡，点了走目录选择框。
+        add = next(
+            item for item in window.work_grid.findChildren(_wslmanw_qt.QPushButton) if item.objectName() == "DiskAdd"
+        )
+        add.click()
+        assert window.settings.work_dir == str(home / "wsl")
+        assert [Path(item) for item in window.settings.work_dirs] == [home / "wsl", chosen]
         window.mirror.setCurrentIndex(window.mirror_ids.index("ustc"))
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
     raw = json.loads(_guiconfig.config_path(wslmanw.SETTINGS_NAME).read_text(encoding="utf-8"))
-    assert raw["download_dir"] == r"D:\WSL\mirrors"
-    assert raw["backup_dir"] == r"D:/WSL/backups"
+    assert raw["work_dir"] == str(home / "wsl")
+    assert raw["work_dirs"] == [str(home / "wsl"), str(chosen)]
+    assert raw["download_dir"] == ""
+    assert raw["backup_dir"] == ""
     assert raw["mirror"] == "ustc"
 
 
-def test_settings_page_restores_saved_download_dir(home: Path) -> None:
-    """启动时把 wslmanw.json 的下载目录 / 下载源回填到设置页。"""
+def test_distro_rows_show_configured_work_dir(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """实例按注册表 BasePath 归到已配置工作目录；不在任何目录下如实标注。"""
+    root = tmp_path / "work"
+    inside = replace(_distro("Ubuntu"), base_path=str(root / "install" / "Ubuntu"))
+    outside = _distro("Debian", "stopped", default=False)
+    wslmanw.save_settings(
+        wslmanw.WslmanwSettings(work_dir=str(root), work_dirs=(str(root),)),
+        _guiconfig.config_path(wslmanw.SETTINGS_NAME),
+    )
+    monkeypatch.setattr(cli, "_view", lambda env: _view(inside, outside))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        assert _distro_row(window, 0).sub_label.text() == "v2 · work"
+        assert str(root) in _distro_row(window, 0).toolTip()
+        assert _distro_row(window, 1).sub_label.text() == "v2 · 未在已配置目录"
+        assert "未在已配置目录" in _distro_row(window, 1).toolTip()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def _two_root_window(
+    home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    state: str = "stopped",
+) -> tuple[Any, Path, Path, Distro]:
+    """构造一个有两个工作目录、实例位于第一个目录下的窗口。"""
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    distro = replace(_distro("Ubuntu", state), base_path=str(first / "install" / "Ubuntu"))
+    wslmanw.save_settings(
+        wslmanw.WslmanwSettings(work_dir=str(first), work_dirs=(str(first), str(second))),
+        _guiconfig.config_path(wslmanw.SETTINGS_NAME),
+    )
+    monkeypatch.setattr(cli, "_view", lambda env: _view(distro))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    _wait_idle(window)
+    window.distro_list.setCurrentRow(0)
+    return window, first, second, distro
+
+
+def test_migrate_refuses_running_instance(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """运行中的实例直接拦下并提示先停止，不替用户停。"""
+    window, _first, _second, _distro_item = _two_root_window(home, monkeypatch, tmp_path, state="running")
+    started: list[str] = []
+    shown: list[str] = []
+    try:
+        monkeypatch.setattr(window, "_start", lambda label, work: started.append(label))
+        monkeypatch.setattr(_wslmanw_qt.QMessageBox, "information", lambda _p, title, text, *a: shown.append(text))
+        window._migrate_selected()
+        assert started == []
+        assert "先点「停止」" in shown[0]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_migrate_requires_another_work_dir(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """只有一个工作目录时提示先到设置页添加，不弹迁移确认。"""
+    root = tmp_path / "only"
+    distro = replace(_distro("Ubuntu", "stopped"), base_path=str(root / "install" / "Ubuntu"))
+    wslmanw.save_settings(
+        wslmanw.WslmanwSettings(work_dir=str(root), work_dirs=(str(root),)),
+        _guiconfig.config_path(wslmanw.SETTINGS_NAME),
+    )
+    monkeypatch.setattr(cli, "_view", lambda env: _view(distro))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    started: list[str] = []
+    shown: list[str] = []
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        monkeypatch.setattr(window, "_start", lambda label, work: started.append(label))
+        monkeypatch.setattr(_wslmanw_qt.QMessageBox, "information", lambda _p, title, text, *a: shown.append(text))
+        window._migrate_selected()
+        assert started == []
+        assert "添加另一个工作目录" in shown[0]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_migrate_selection_targets_install_subdir(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """选中目标工作目录后，迁移到它的 install/<实例>，并把目标交给后台任务。"""
+    window, _first, second, _distro_item = _two_root_window(home, monkeypatch, tmp_path)
+    started: list[tuple[str, str]] = []
+    calls: list[tuple[Path, Path]] = []
+    try:
+        monkeypatch.setattr(
+            _wslmanw_qt.QInputDialog,
+            "getItem",
+            lambda *a, **k: (f"second · {second}", True),
+        )
+        monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *a, **k: True)
+        monkeypatch.setattr(
+            window, "_migrate_worker", lambda distro, target_root, target: calls.append((target_root, target)) or "ok"
+        )
+
+        def run(label: str, work: Any) -> None:
+            started.append((label, work(threading.Event())))
+
+        monkeypatch.setattr(window, "_start", run)
+        window._migrate_selected()
+        assert started == [("迁移", "ok")]
+        assert calls == [(second, second / "install" / "Ubuntu")]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_migrate_worker_exports_unregisters_and_imports(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """成功路径：导出到目标卷 → 删除旧实例 → 导入新目录；临时包清理并写明新位置。"""
+    window, _first, second, distro_item = _two_root_window(home, monkeypatch, tmp_path)
+    target = second / "install" / "Ubuntu"
+    temp = second / ".Ubuntu-migrate.tar"
+    commands: list[list[str]] = []
+    moved = replace(distro_item, base_path=str(target))
+    try:
+        monkeypatch.setattr(cli, "_require_target", lambda env, name: distro_item)
+        monkeypatch.setattr(cli, "_dir_problem", lambda path: None)
+        monkeypatch.setattr(
+            cli, "_preflight_for", lambda env, root, need, estimated=False: SimpleNamespace(ok=True, detail="")
+        )
+        monkeypatch.setattr(cli, "part_path", lambda path: Path(f"{path}.part"))
+        monkeypatch.setattr(cli, "atomic_replace", lambda part, path: Path(path).write_text("tar", encoding="utf-8"))
+        monkeypatch.setattr(_wslmanw_qt, "distro_export_bytes", lambda *args: (512, False))
+        monkeypatch.setattr(cli, "_try_view", lambda env: _view(moved))
+
+        def run_step(env: Any, args: list[str], **kwargs: Any) -> None:
+            commands.append(list(args))
+            if args[0] == "--export":
+                Path(args[2]).write_text("tar", encoding="utf-8")
+
+        monkeypatch.setattr(cli, "_run_step", run_step)
+        message = window._migrate_worker(distro_item, second, target)
+        assert commands[0][:2] == ["--export", "Ubuntu"]
+        assert commands[1] == ["--unregister", "Ubuntu"]
+        assert commands[2] == ["--import", "Ubuntu", str(target), str(temp), "--version", "2"]
+        assert str(target) in message
+        assert not temp.exists()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_migrate_worker_rolls_back_when_import_fails(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """导入失败时把旧实例导回原位置，不让原实例不可用；临时包保留备查。"""
+    window, first, second, distro_item = _two_root_window(home, monkeypatch, tmp_path)
+    target = second / "install" / "Ubuntu"
+    original = Path(distro_item.base_path or "")
+    temp = second / ".Ubuntu-migrate.tar"
+    commands: list[list[str]] = []
+    try:
+        monkeypatch.setattr(cli, "_require_target", lambda env, name: distro_item)
+        monkeypatch.setattr(cli, "_dir_problem", lambda path: None)
+        monkeypatch.setattr(
+            cli, "_preflight_for", lambda env, root, need, estimated=False: SimpleNamespace(ok=True, detail="")
+        )
+        monkeypatch.setattr(cli, "part_path", lambda path: Path(f"{path}.part"))
+        monkeypatch.setattr(cli, "atomic_replace", lambda part, path: Path(path).write_text("tar", encoding="utf-8"))
+        monkeypatch.setattr(_wslmanw_qt, "distro_export_bytes", lambda *args: (512, False))
+
+        def run_step(env: Any, args: list[str], **kwargs: Any) -> None:
+            commands.append(list(args))
+            if args[0] == "--export":
+                Path(args[2]).write_text("tar", encoding="utf-8")
+            if args[0] == "--import" and args[2] == str(target):
+                raise _wslmanw_qt.runtime_error("导入失败：磁盘已满")
+
+        monkeypatch.setattr(cli, "_run_step", run_step)
+        with pytest.raises(WslmanError) as caught:
+            window._migrate_worker(distro_item, second, target)
+        assert "已回滚到原位置" in str(caught.value)
+        assert ["--import", "Ubuntu", str(original), str(temp), "--version", "2"] in commands
+        assert "已经回滚" in str(caught.value) or "已回滚" in str(caught.value)
+        assert temp.exists()
+        assert first.exists()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_migrate_worker_rejects_insufficient_space(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """目标可用空间不足时明确提示，且不会先导出。"""
+    window, _first, second, distro_item = _two_root_window(home, monkeypatch, tmp_path)
+    commands: list[list[str]] = []
+    try:
+        monkeypatch.setattr(cli, "_require_target", lambda env, name: distro_item)
+        monkeypatch.setattr(cli, "_dir_problem", lambda path: None)
+        monkeypatch.setattr(
+            cli,
+            "_preflight_for",
+            lambda env, root, need, estimated=False: SimpleNamespace(ok=False, detail="需要 8 GiB，可用 1 GiB"),
+        )
+        monkeypatch.setattr(cli, "_run_step", lambda env, args, **kwargs: commands.append(list(args)))
+        monkeypatch.setattr(_wslmanw_qt, "distro_export_bytes", lambda *args: (512, False))
+        with pytest.raises(WslmanError) as caught:
+            window._migrate_worker(distro_item, second, second / "install" / "Ubuntu")
+        assert "可用空间不足" in str(caught.value)
+        assert commands == []
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_settings_page_ignores_legacy_download_dirs(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """旧设置里的下载 / 备份目录按新规则忽略，并在日志里留一句说明。"""
     from fcmd.apps.wslman import wslmanw
 
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     wslmanw.save_settings(
         wslmanw.WslmanwSettings(download_dir=r"E:\WSL", backup_dir=r"E:\Backups", mirror="ustc"),
         _guiconfig.config_path(wslmanw.SETTINGS_NAME),
@@ -1034,10 +1287,10 @@ def test_settings_page_restores_saved_download_dir(home: Path) -> None:
     window = _wslmanw_qt.WslmanQtWindow()
     try:
         _wait_idle(window)
-        assert window.download_dir.value() == r"E:\WSL"
-        assert window.backup_dir.value() == r"E:\Backups"
-        assert window._backup_dir_path() == Path(r"E:\Backups")
+        assert window._local_start_dir() == str(home / "wsl" / "download")
+        assert window._backup_dir_path() == home / "wsl" / "backup"
         assert window.mirror_ids[window.mirror.currentIndex()] == "ustc"
+        assert any("旧设置里的下载 / 备份目录已忽略" in line for line in window._log_lines)
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
@@ -1232,10 +1485,10 @@ def test_status_messages_follow_their_page(home: Path, monkeypatch: pytest.Monke
 
         # 设置页的改动只写设置页
         window.show_page("distros")
-        window._on_download_dir_committed("")
-        assert window.page_status("settings").startswith("下载目录")
+        window._on_mirror_changed(window.mirror.currentIndex())
+        assert window.page_status("settings").startswith("下载源")
         assert window.status_text() == window.page_status("distros")
-        assert not window.status_text().startswith("下载目录")
+        assert not window.status_text().startswith("下载源")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

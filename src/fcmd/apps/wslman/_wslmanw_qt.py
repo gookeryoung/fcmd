@@ -56,13 +56,7 @@ from PySide6.QtWidgets import (
 from fcmd.apps.wslman import _files, _images, _initenv, _mirrors, _open, _sshfiles
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman import wslmanw as w
-from fcmd.apps.wslman._config import (
-    default_backups_dir,
-    default_download_dir,
-    default_install_root,
-    load_config,
-    work_root,
-)
+from fcmd.apps.wslman._config import load_config
 from fcmd.apps.wslman._decode import decode_console
 from fcmd.apps.wslman._disk import distro_disk_bytes, distro_export_bytes, format_bytes
 from fcmd.apps.wslman._distro import Distro, state_label
@@ -74,6 +68,7 @@ from fcmd.gui.geometry import format_geometry
 from fcmd.gui.page import PageBody, PageSpec
 from fcmd.gui.widgets import (
     Card,
+    DiskGrid,
     ElidedLabel,
     FormGrid,
     ItemRow,
@@ -84,6 +79,7 @@ from fcmd.gui.widgets import (
     StatusTag,
     button,
     confirm,
+    default_disk_locations,
     fit_dialog_to_content,
     hint_label,
     icon_button,
@@ -175,12 +171,14 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         distro: Distro,
         size: int | None,
         estimated: bool,
+        work_dir: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(distro.name, "", parent=parent)
         self.distro = distro
         self.size = size
         self.estimated = estimated
+        self.work_dir = work_dir
         self.state_tag = StatusTag("", tone="muted", parent=self.header)
         self.add_tag(self.state_tag)
         self.default_tag = StatusTag("默认", tone="accent", parent=self.header)
@@ -215,15 +213,29 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
 
         self.update_distro(distro, size, estimated)
 
+    def _work_dir_text(self) -> str:
+        """副标题里的工作目录：显示目录名；不属于任何已配置目录时如实说明。"""
+        if self.work_dir is None:
+            return "未在已配置目录"
+        return self.work_dir.name or str(self.work_dir)
+
+    def _row_tooltip(self) -> str:
+        """完整磁盘位置与所属工作目录；副标题空间有限，完整路径放 tooltip。"""
+        place = self.distro.base_path or "未知"
+        if self.work_dir is None:
+            return f"{self.distro.name}\n磁盘位置：{place}\n工作目录：未在已配置目录"
+        return f"{self.distro.name}\n磁盘位置：{place}\n工作目录：{self.work_dir}"
+
     def update_distro(self, distro: Distro, size: int | None, estimated: bool) -> None:
         """就地刷新状态 / 占用 / 默认标记与启停按钮（轮询不重建行）。"""
         self.distro = distro
         self.size = size
         self.estimated = estimated
-        self.setToolTip(f"{distro.name}\n{distro.base_path or '未知'}")
+        self.setToolTip(self._row_tooltip())
         self.set_title(distro.name)
-        # 与 llmw 模型行同构：左侧副标题只放简短口径（版本），右侧数值放磁盘占用。
-        self.set_subtitle(f"v{distro.version or '未知'}")
+        # 与 llmw 模型行同构：左侧副标题只放简短口径（版本 + 所属工作目录）；
+        # 右侧数值放磁盘占用。所属目录按实例实际 BasePath 归属，找不到就如实说明。
+        self.set_subtitle(f"v{distro.version or '未知'} · {self._work_dir_text()}")
         self.set_metrics(format_bytes(size, estimated=estimated))
         self.state_tag.set_status(state_label(distro), _state_tone(distro.state))
         self.default_tag.setVisible(distro.default)
@@ -535,6 +547,9 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._images_cache_fresh = cache is not None and (time.time() - cache.fetched_at <= _images.CACHE_TTL_SECONDS)
         self._schedule_poll()
         self.refresh()
+        note = w.legacy_dir_note(self.settings)
+        if note:
+            self._log(f"[设置] {note}")
 
     def show_log(self) -> None:
         """打开（或聚焦）任务日志窗口；历史来自 ``_log_lines`` 缓冲。"""
@@ -618,7 +633,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 ("启动", self._start_selected, ""),
                 ("停止", self._terminate_selected, ""),
             ),
-            (("导出", self._export_selected, ""),),
+            (("导出", self._export_selected, ""), ("迁移", self._migrate_selected, "")),
             (
                 ("注销", self._unregister, "danger"),
                 ("关闭全部", self._shutdown, "danger"),
@@ -1343,10 +1358,11 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         return page
 
     def _build_settings_page(self) -> QWidget:
-        """设置页：下载目录 / 下载源 / 校验 + 配置文件位置。
+        """设置页：工作目录 + 下载源 / 校验 + 打开方式。
 
-        原来塞在镜像页「高级」折叠区里的配置项全部搬到这里（镜像页只留列表与
-        下载动作），页面用 :class:`PageScroll` 包裹，窗口变矮时滚动而不是压扁控件。
+        工作目录排在最上方（用户最常改的一项）；下载 / 备份 / 安装目录不再单独配置，
+        也不在界面上逐项展示，统一按工作目录推演。页面用 :class:`PageScroll` 包裹，
+        窗口变矮时滚动而不是压扁控件。
         """
         page = PageBody(self, spacing=0)
         outer = page.body
@@ -1354,43 +1370,10 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         outer.addWidget(scroll)
         layout = scroll.body
 
+        layout.addWidget(self._build_work_card())
+
         download = Card("下载")
         form = FormGrid(download)
-        self.download_dir = PathRow(
-            value=self.settings.download_dir,
-            placeholder=f"留空 = {default_download_dir()}",
-            directory=True,
-            show_reset=True,
-            browse_text="更改",
-            parent=download,
-        )
-        self.download_dir.setToolTip(
-            "镜像归档的保存目录；留空时回退到 wslman.json 的 download_dir，再回退到工作目录的 download"
-        )
-        self.download_dir.committed.connect(self._on_download_dir_committed)
-        self.download_dir.reset.clicked.connect(lambda: self.download_dir.set_value(""))
-        # 「恢复默认」只在填了自定义目录时出现，默认状态下按钮不占位。
-        self.download_dir.changed.connect(lambda text: self.download_dir.reset.setVisible(bool(text.strip())))
-        self.download_dir.reset.setVisible(bool(self.settings.download_dir))
-        form.add_row("下载目录", self.download_dir)
-
-        self.backup_dir = PathRow(
-            value=self.settings.backup_dir,
-            placeholder=f"留空 = {default_backups_dir()}",
-            directory=True,
-            show_reset=True,
-            browse_text="更改",
-            parent=download,
-        )
-        self.backup_dir.setToolTip(
-            "导出 / 替换前备份的 .tar 保存目录；留空时回退到 wslman.json 的 backups.dir，再回退到工作目录的 backup"
-        )
-        self.backup_dir.committed.connect(self._on_backup_dir_committed)
-        self.backup_dir.reset.clicked.connect(lambda: self.backup_dir.set_value(""))
-        self.backup_dir.changed.connect(lambda text: self.backup_dir.reset.setVisible(bool(text.strip())))
-        self.backup_dir.reset.setVisible(bool(self.settings.backup_dir))
-        form.add_row("备份目录", self.backup_dir)
-
         self.mirror_ids = _mirrors.identifiers()
         self.mirror = QComboBox(download)
         self.mirror.addItems([_mirrors.label(ident) for ident in self.mirror_ids])
@@ -1406,29 +1389,10 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         form.add_pair("下载源", self.mirror, "校验 sha256", self.expected_sha)
         download.body.addWidget(form)
         download.body.addWidget(
-            hint_label(
-                f"默认工作目录 {work_root()}：下载 / 安装 / 备份各自一个子目录（见下方「工作目录」卡片）；"
-                f"下载 / 备份目录留空时分别回退到 wslman.json 的 download_dir / backups.dir，"
-                f"再回退到 {default_download_dir()} / {default_backups_dir()}。"
-                f"{w._DOWNLOAD_HINT}"
-            )
+            hint_label(f"镜像归档统一存到工作目录的 download 子目录（见上方「工作目录」卡片）。{w._DOWNLOAD_HINT}")
         )
         layout.addWidget(download)
 
-        files = Card("配置文件")
-        files_form = FormGrid(files)
-        self.settings_file_label = ElidedLabel(str(self._settings_path), parent=files)
-        self.settings_file_label.setObjectName("Mono")
-        self.settings_file_label.setToolTip(str(self._settings_path))
-        files_form.add_row("界面设置", self.settings_file_label)
-        config_path = Path(self.config_data.path)
-        self.cli_config_label = ElidedLabel(str(config_path), parent=files)
-        self.cli_config_label.setObjectName("Mono")
-        self.cli_config_label.setToolTip(str(config_path))
-        files_form.add_row("命令行配置", self.cli_config_label)
-        files.body.addWidget(files_form)
-        files.body.addWidget(hint_label("界面设置保存下载目录 / 下载源 / 筛选等；命令行配置与 wslman CLI 共用。"))
-        layout.addWidget(files)
         layout.addWidget(self._build_openers_card())
         layout.addStretch(1)
         return page
@@ -1777,14 +1741,93 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         openers = tuple(item for item in w.openers_for(self.settings, kind) if item.key != current.key)
         self._store_openers(kind, openers, "")
 
-    def _open_work_root(self, root: Path) -> None:
-        """打开默认工作目录（不存在时先创建）。"""
+    def _build_work_card(self) -> QWidget:
+        """工作目录：llmw 同款多磁盘卡，可添加 / 移除多个目录并指定默认。
+
+        默认目录排在第一张卡上：新下载、新安装落到它的 ``download`` / ``install``
+        子目录；备份仍然按默认目录推演。磁盘卡不套设置卡外框，页面直接铺开。
+        """
+        grid = DiskGrid(self, add_text="添加目录", max_columns=2, min_count=1)
+        grid.addRequested.connect(self._add_work_dir)
+        grid.removeRequested.connect(self._remove_work_dir)
+        grid.primaryRequested.connect(self._set_default_work_dir)
+        grid.openRequested.connect(self._open_work_root)
+        self.work_grid = grid
+        self._refresh_work_card()
+        return grid
+
+    def _refresh_work_card(self) -> None:
+        """按当前设置重画磁盘卡：默认目录在第一张，其余按设置顺序排。"""
+        roots = list(w.work_dir_paths(self.settings))
+        self.work_grid.set_locations(default_disk_locations(roots, primary_label="默认工作目录"))
+
+    def _store_work_dirs(self, dirs: Sequence[str | Path], default: str | Path, message: str) -> None:
+        """写回多目录与默认项，立即落盘；实例行上的归属目录同步刷新。"""
+        self.settings = w.with_work_dirs(self.settings, dirs, default)
+        self._refresh_work_card()
+        if hasattr(self, "distro_list"):
+            self._refresh_rows()
         try:
-            root.mkdir(parents=True, exist_ok=True)
+            w.save_settings(self.settings, self._own_settings_path)
         except OSError as exc:
-            QMessageBox.critical(self, "打开失败", f"无法创建目录：{root}\n{exc}")
+            QMessageBox.warning(self, "保存失败", f"工作目录已生效，但写入设置文件失败：\n{exc}")
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(root)))
+        self.set_page_status("settings", message)
+        self._log(f"[设置] {message}")
+
+    def _add_work_dir(self) -> None:
+        """添加一个工作目录（重复目录不重复添加）。"""
+        roots = list(w.work_dir_paths(self.settings))
+        chosen = QFileDialog.getExistingDirectory(self, "添加工作目录", str(roots[0] if roots else Path.home()))
+        if not chosen:
+            return
+        if any(w.same_dir(chosen, item) for item in roots):
+            self.set_page_status("settings", f"目录已在列表中：{chosen}")
+            return
+        self._store_work_dirs([*roots, chosen], roots[0], f"已添加工作目录：{chosen}")
+
+    def _remove_work_dir(self, path: str) -> None:
+        """从列表移除工作目录（至少保留一个，不删磁盘文件）。"""
+        roots = list(w.work_dir_paths(self.settings))
+        if len(roots) <= 1:
+            self.set_page_status("settings", "至少要保留一个工作目录")
+            return
+        target = Path(path)
+        if not confirm(
+            self,
+            "移除工作目录",
+            f"从列表移除以下目录？\n{target}\n\n只从设置里移除，磁盘文件不会被删除。",
+        ):
+            return
+        remaining = [item for item in roots if not w.same_dir(item, target)]
+        if len(remaining) == len(roots):
+            self.set_page_status("settings", f"目录不在列表中：{target}")
+            return
+        self._store_work_dirs(remaining, remaining[0], f"已移除工作目录：{target}")
+
+    def _set_default_work_dir(self, path: str) -> None:
+        """把目录设为默认：新下载 / 新安装落到它的子目录。"""
+        roots = list(w.work_dir_paths(self.settings))
+        target = Path(path)
+        chosen = next((item for item in roots if w.same_dir(item, target)), None)
+        if chosen is None:
+            return
+        rest = [item for item in roots if not w.same_dir(item, chosen)]
+        self._store_work_dirs(
+            [chosen, *rest],
+            chosen,
+            f"默认工作目录已切换为：{chosen}；新下载 / 新安装落到这里",
+        )
+
+    def _open_work_root(self, root: str | None = None) -> None:
+        """打开工作目录（不存在时先创建）。"""
+        target = Path(root) if root else w.work_dir_path(self.settings)
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "打开失败", f"无法创建目录：{target}\n{exc}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     # ------------------------------------------------------------------ #
     # 任务编排
@@ -2044,7 +2087,9 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         for distro in distros:
             size, estimated = self.sizes.get(distro.name, (None, False))
             item = QListWidgetItem(self.distro_list)
-            row = _DistroItemRow(distro, size, estimated, self.distro_list)
+            row = _DistroItemRow(
+                distro, size, estimated, w.work_dir_of(self.settings, distro.base_path), self.distro_list
+            )
             row.toggleRequested.connect(self._on_distro_toggle)
             row.startStopRequested.connect(self._toggle_distro_state)
             row.configRequested.connect(self._configure_distro)
@@ -2367,6 +2412,149 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
 
         self._start("导出", work)
 
+    def _migrate_selected(self) -> None:
+        """把实例整体迁到另一个已配置的工作目录（导出 → 删除 → 导入，失败回滚）。"""
+        distro = self._selected()
+        if distro is None:
+            return
+        if distro.state == "running":
+            QMessageBox.information(
+                self,
+                "请先停止实例",
+                f"{distro.name} 正在运行。迁移会导出并重新导入整个实例，请先点「停止」再迁移。",
+            )
+            return
+        roots = list(w.work_dir_paths(self.settings))
+        current_root = w.work_dir_of(self.settings, distro.base_path)
+        targets = [item for item in roots if current_root is None or not w.same_dir(item, current_root)]
+        if not targets:
+            QMessageBox.information(
+                self,
+                "没有其他工作目录",
+                "先在设置页添加另一个工作目录，再迁移实例。",
+            )
+            return
+        labels = [f"{item.name or item} · {item}" for item in targets]
+        choice, accepted = QInputDialog.getItem(
+            self,
+            f"迁移 {distro.name}",
+            "目标工作目录（会导入到它的 install 子目录）：",
+            labels,
+            0,
+            False,
+        )
+        if not accepted or not choice:
+            return
+        target_root = targets[labels.index(choice)]
+        target = target_root / "install" / distro.name
+        if not confirm(
+            self,
+            "迁移实例",
+            f"将 {distro.name} 整体迁移到：\n{target}\n\n"
+            "迁移会先导出、删除原实例，再导入到新位置；任一步失败会自动回滚到原位置。\n"
+            "实例必须已停止。继续？",
+        ):
+            return
+
+        def work(_cancel: threading.Event) -> str:
+            return self._migrate_worker(distro, target_root, target)
+
+        self._start("迁移", work)
+
+    def _migrate_worker(self, distro: Distro, target_root: Path, target: Path) -> str:
+        """迁移工作线程：导出到目标卷 → 删除旧实例 → 导入；失败尝试导回原位置。"""
+        env = cli._build_environment()
+        current = cli._require_target(env, distro.name)
+        if current.state == "running":
+            raise runtime_error(f"实例 {current.name} 正在运行", hint="先停止实例再迁移")
+        if current.base_path and w.same_dir(Path(current.base_path), target):
+            return f"{current.name} 已经位于 {target}"
+        problem = cli._dir_problem(target)
+        if problem:
+            raise invalid_argument(f"目标目录不可用：{problem}", hint="目标目录必须为空且位于本地磁盘")
+
+        estimate, estimated = distro_disk_bytes(current.base_path, current.version)
+        export_estimate, _ = distro_export_bytes(current.base_path, current.version)
+        need = estimate + (export_estimate or 0)
+        check = cli._preflight_for(env, target_root, need, estimated=estimated)
+        if not check.ok:
+            raise runtime_error(
+                f"目标工作目录可用空间不足：{check.detail}",
+                hint="换一个工作目录，或清理磁盘后重试",
+            )
+
+        original = Path(current.base_path) if current.base_path else None
+        version = str(current.version) if current.version else ""
+        # 临时包放在目标工作目录根下（与最终 vhdx 同一卷）：导入时不用跨盘读大文件，
+        # 又不会把临时文件放进要求为空的 install/<实例> 目录里。
+        temp = target_root / f".{current.name}-migrate.tar"
+        part = cli.part_path(temp)
+        target_root.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(OSError):
+            part.unlink()
+
+        def emit(message: str) -> None:
+            if self._bridge is not None:
+                self._bridge.event.emit(message)
+
+        emit(f"[迁移] 导出 {current.name} → {temp}")
+        try:
+            cli._run_step(
+                env,
+                ["--export", current.name, str(part)],
+                action=f"导出 {current.name}",
+                hint="检查目标工作目录的空间与权限",
+                timeout=3600.0,
+            )
+            cli.atomic_replace(part, temp)
+            emit(f"[迁移] 删除旧实例 {current.name}（数据已导出到临时包）")
+            cli._run_step(env, ["--unregister", current.name], action=f"删除实例 {current.name}")
+            import_args = ["--import", current.name, str(target), str(temp)]
+            if version:
+                import_args.extend(["--version", version])
+            target.mkdir(parents=True, exist_ok=True)
+            emit(f"[迁移] 导入 {current.name} → {target}")
+            cli._run_step(
+                env,
+                import_args,
+                action=f"迁移 {current.name}",
+                hint="导入失败会自动尝试导回原位置",
+                timeout=3600.0,
+            )
+        except BaseException as exc:
+            emit(f"[迁移] 导入失败，正在回滚到原位置 {original or '未知'}")
+            with contextlib.suppress(Exception):
+                cli._run_step(env, ["--unregister", current.name], action=f"清理半成品 {current.name}")
+            rollback_error: str | None = None
+            if original is None or not temp.is_file():
+                rollback_error = f"缺少原位置或临时包（{temp}）"
+            else:
+                try:
+                    original.mkdir(parents=True, exist_ok=True)
+                    args = ["--import", current.name, str(original), str(temp)]
+                    if version:
+                        args.extend(["--version", version])
+                    cli._run_step(env, args, action=f"回滚 {current.name}", timeout=3600.0)
+                except Exception as rollback_exc:  # 回滚失败要让用户知道临时包仍在
+                    rollback_error = w._error_text(rollback_exc)
+            if rollback_error is not None:
+                raise runtime_error(
+                    f"迁移失败且回滚未完成：{rollback_error}",
+                    hint=f'临时包保留在 {temp}；可手动执行 wsl --import {current.name} <原目录> "{temp}"',
+                ) from exc
+            raise runtime_error(
+                f"迁移失败，已回滚到原位置 {original or '未知'}：{w._error_text(exc)}",
+                hint="原实例已恢复；检查目标目录空间与权限后重试",
+            ) from exc
+
+        with contextlib.suppress(OSError):
+            temp.unlink()
+        after = cli._try_view(env)
+        landed = after.find(current.name) if after is not None else None
+        if landed is not None and landed.base_path and not w.same_dir(landed.base_path, target):
+            return f"已迁移 {current.name}，但复核时磁盘位置仍为 {landed.base_path}；请刷新列表确认"
+        return f"已迁移 {current.name} 到 {target}"
+
     def _open_image_manager(self) -> None:
         """「管理镜像」：导出 / 删除本地镜像包，并清理清单缓存与未完成下载。"""
         if self._busy:
@@ -2473,12 +2661,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         return cache.entries if cache is not None else ()
 
     def _local_start_dir(self) -> str:
-        """下载目录：设置页 > wslmanw.json > wslman.json > 工作目录的 download。"""
-        configured = self.download_dir.value() or self.settings.download_dir
-        if configured:
-            return configured
-        fallback = load_config().download_dir.strip()
-        return fallback or str(default_download_dir())
+        """下载目录：工作目录的 download 子目录（不再单独配置）。"""
+        return str(w.derived_dirs(self.settings)["download"])
 
     def _download_entry(self, name: str) -> None:
         """行内「下载 / 安装」按钮：先聚焦该行，再复用同一套下载流程。"""
@@ -2582,14 +2766,13 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         """下载目录（与「安装镜像」扫描目录同一口径）。"""
         return Path(self._local_start_dir())
 
+    def _install_dir_path(self) -> Path:
+        """安装目录：工作目录的 install 子目录。"""
+        return w.derived_dirs(self.settings)["install"]
+
     def _backup_dir_path(self) -> Path:
-        """备份目录：设置页 > wslmanw.json > wslman.json > 工作目录的 backup。"""
-        widget = getattr(self, "backup_dir", None)
-        configured = (widget.value() if widget is not None else "") or self.settings.backup_dir
-        if configured:
-            return Path(configured)
-        fallback = load_config().backups_dir.strip()
-        return Path(fallback) if fallback else default_backups_dir()
+        """备份目录：工作目录的 backup 子目录（不再单独配置）。"""
+        return w.derived_dirs(self.settings)["backup"]
 
     # ------------------------------------------------------------------ #
     # 镜像列表
@@ -2599,16 +2782,6 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         if 0 <= self.mirror.currentIndex() < len(self.mirror_ids):
             self.set_page_status("settings", f"下载源：{_mirrors.label(self.mirror_ids[self.mirror.currentIndex()])}")
             self._persist_image_view()
-
-    def _on_download_dir_committed(self, _text: str) -> None:
-        """下载目录变更（回车 / 选目录）立即落盘，下次启动回填。"""
-        self._persist_image_view()
-        self.set_page_status("settings", "下载目录已保存" if self.download_dir.value() else "下载目录已恢复默认")
-
-    def _on_backup_dir_committed(self, _text: str) -> None:
-        """备份目录变更（回车 / 选目录）立即落盘，下次启动回填。"""
-        self._persist_image_view()
-        self.set_page_status("settings", "备份目录已保存" if self.backup_dir.value() else "备份目录已恢复默认")
 
     def _restore_images_cache(self) -> Any:
         """把上次落盘的镜像清单直接铺到列表上（不等网络），返回命中的缓存。"""
@@ -2853,13 +3026,13 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         w.save_settings(
             w.WslmanwSettings(
                 geometry=geometry,
-                download_dir=self.download_dir.value(),
+                work_dir=self.settings.work_dir,
+                work_dirs=self.settings.work_dirs,
                 mirror=self.mirror_ids[self.mirror.currentIndex()] if self.mirror.currentIndex() >= 0 else "auto",
                 sidebar_collapsed=self.nav.is_collapsed(),
                 image_filter=self._image_filter_key,
                 image_sort=self.image_sort.currentData() or w.DEFAULT_IMAGE_SORT,
                 image_source=self.image_source.currentData() or w.DEFAULT_IMAGE_SOURCE,
-                backup_dir=self.backup_dir.value(),
                 distro_terminal_dirs=self.settings.distro_terminal_dirs,
                 dialog_geometry=self.settings.dialog_geometry,
                 distro_init_tasks=self.settings.distro_init_tasks,
@@ -4447,7 +4620,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
                 on_done=self._info["校验状态"].setText,
             )
         self.name.setText(archive.distro)
-        self.target.setText(str(default_install_root() / archive.distro))
+        self.target.setText(str(self._owner._install_dir_path() / archive.distro))
 
     def _start(self) -> None:
         archive = self._current()

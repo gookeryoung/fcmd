@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import ntpath
+import os
 import platform
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
@@ -19,6 +20,7 @@ from typing import Any
 
 import fcmd
 from fcmd.apps.wslman import _images, _initenv, _mirrors, _open
+from fcmd.apps.wslman._config import work_root
 from fcmd.apps.wslman._disk import format_bytes
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError
@@ -33,6 +35,7 @@ __all__ = [
     "WslmanwSettings",
     "action_states",
     "config_path",
+    "derived_dirs",
     "detail_fields",
     "dialog_geometry",
     "distro_image_text",
@@ -49,11 +52,13 @@ __all__ = [
     "image_source_text",
     "image_status_text",
     "init_task_keys",
+    "legacy_dir_note",
     "load_settings",
     "main",
     "openers_for",
     "pick_download",
     "resolve_geometry",
+    "same_dir",
     "save_settings",
     "selected_opener",
     "settings_from_mapping",
@@ -66,6 +71,11 @@ __all__ = [
     "with_dialog_geometry",
     "with_init_task_keys",
     "with_terminal_cwd",
+    "with_work_dir",
+    "with_work_dirs",
+    "work_dir_of",
+    "work_dir_path",
+    "work_dir_paths",
 ]
 
 SETTINGS_NAME = "wslmanw"
@@ -200,8 +210,21 @@ def action_states(state: str | None) -> tuple[bool, bool]:
 @dataclass(frozen=True, slots=True)
 class WslmanwSettings:
     geometry: str | None = None
+    work_dir: str = ""
+    """工作目录；留空用 ``${FCMD_HOME:-~/.fcmd}/wsl``。
+
+    下载 / 安装 / 备份都按它推演子目录，不再单独配置下载目录与备份目录。
+    """
+    work_dirs: tuple[str, ...] = ()
+    """全部工作目录；首项是默认目录，新下载 / 新安装落在它的子目录。
+
+    留空表示只有 ``work_dir``（或回落的默认目录）这一个；旧版单目录配置读入时
+    会迁移成一条记录并设为默认，不让老用户丢设置。
+    """
     download_dir: str = ""
+    """旧版的下载目录覆盖值：仅用于读入旧设置并给迁移提示，界面不再写入。"""
     backup_dir: str = ""
+    """旧版的备份目录覆盖值：仅用于读入旧设置并给迁移提示，界面不再写入。"""
     mirror: str = "auto"
     sidebar_collapsed: bool = False
     image_filter: str = DEFAULT_IMAGE_FILTER
@@ -226,6 +249,8 @@ class WslmanwSettings:
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
     return {
         "geometry": settings.geometry,
+        "work_dir": settings.work_dir,
+        "work_dirs": list(settings.work_dirs),
         "download_dir": settings.download_dir,
         "backup_dir": settings.backup_dir,
         "mirror": settings.mirror,
@@ -254,8 +279,11 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
     agent_openers = _openers(openers_map.get("agent"), _open.KIND_AGENT)
     selected = openers_map.get("selected")
     selected_map = selected if isinstance(selected, Mapping) else {}
+    work_dir, work_dirs = _work_dirs(_str(raw, "work_dir"), raw.get("work_dirs"))
     return WslmanwSettings(
         geometry=_guiconfig.valid_geometry(_str(raw, "geometry")),
+        work_dir=work_dir,
+        work_dirs=work_dirs,
         download_dir=_str(raw, "download_dir"),
         backup_dir=_str(raw, "backup_dir"),
         mirror=mirror if mirror in _mirrors.identifiers() else "auto",
@@ -355,6 +383,133 @@ def with_terminal_cwd(settings: WslmanwSettings, name: str, cwd: str) -> Wslmanw
     if target != DEFAULT_TERMINAL_CWD:
         dirs[name.strip()] = target
     return replace(settings, distro_terminal_dirs=dirs)
+
+
+def _dir_key(value: str | Path) -> str:
+    """目录比较用的规范化 key：展开 ``~`` 后按平台归一大小写与分隔符。"""
+    return os.path.normcase(str(Path(str(value).strip()).expanduser().resolve()))
+
+
+def same_dir(left: str | Path, right: str | Path) -> bool:
+    """两个目录是否是同一路径（按平台归一大小写与分隔符）。"""
+    return _dir_key(left) == _dir_key(right)
+
+
+def _work_dirs(legacy: str, raw: Any) -> tuple[str, tuple[str, ...]]:
+    """解析工作目录列表与默认项。
+
+    旧版只有 ``work_dir`` 单目录：读入时迁成一条记录并设为默认，老用户不丢设置；
+    显式列表里默认项排在首位，找不到默认项时用第一项。
+    """
+    values: list[str] = []
+    seen: set[str] = set()
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, str) or not item.strip():
+                continue
+            text = item.strip()
+            key = _dir_key(text)
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(text)
+    legacy_text = legacy.strip()
+    if not values:
+        return legacy_text, (legacy_text,) if legacy_text else ()
+    default = legacy_text if legacy_text and _dir_key(legacy_text) in seen else values[0]
+    ordered = [default, *(item for item in values if _dir_key(item) != _dir_key(default))]
+    return ordered[0], tuple(ordered)
+
+
+def work_dir_paths(settings: WslmanwSettings) -> tuple[Path, ...]:
+    """全部工作目录，默认目录在首位且去重；没有配置列表时回落到单个默认路径。"""
+    configured = [Path(item).expanduser() for item in settings.work_dirs if item.strip()]
+    if not configured:
+        return (work_dir_path(settings),)
+    default = work_dir_path(settings)
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for item in configured:
+        key = _dir_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    head = [item for item in unique if _dir_key(item) == _dir_key(default)]
+    rest = [item for item in unique if _dir_key(item) != _dir_key(default)]
+    return (*(head or [default]), *rest)
+
+
+def work_dir_path(settings: WslmanwSettings) -> Path:
+    """默认工作目录：``work_dir`` 优先；多目录未写单字段时取首项，留空回落默认根。"""
+    value = settings.work_dir.strip()
+    if value:
+        return Path(value).expanduser()
+    if settings.work_dirs:
+        return Path(settings.work_dirs[0]).expanduser()
+    return work_root()
+
+
+def derived_dirs(settings: WslmanwSettings) -> dict[str, Path]:
+    """按默认工作目录推演下载 / 安装 / 备份子目录（不再读单独的目录配置）。"""
+    root = work_dir_path(settings)
+    return {"download": root / "download", "install": root / "install", "backup": root / "backup"}
+
+
+def with_work_dirs(
+    settings: WslmanwSettings,
+    dirs: Sequence[str | Path],
+    default: str | Path = "",
+) -> WslmanwSettings:
+    """写回全部工作目录与默认项（默认项排首位），并清掉旧版下载 / 备份覆盖值。"""
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in dirs:
+        text = str(item).strip()
+        if not text:
+            continue
+        key = _dir_key(text)
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(text)
+    chosen = str(default).strip()
+    if values:
+        if not chosen or _dir_key(chosen) not in seen:
+            chosen = values[0]
+        values = [chosen, *(item for item in values if _dir_key(item) != _dir_key(chosen))]
+    else:
+        chosen = ""
+    return replace(settings, work_dir=chosen, work_dirs=tuple(values), download_dir="", backup_dir="")
+
+
+def with_work_dir(settings: WslmanwSettings, value: str | Path) -> WslmanwSettings:
+    """改单个工作目录（兼容旧入口）：等价于只有一条工作目录记录。"""
+    text = str(value).strip()
+    return with_work_dirs(settings, (text,) if text else (), text)
+
+
+def work_dir_of(settings: WslmanwSettings, base_path: str | None) -> Path | None:
+    """实例磁盘位置所属的已配置工作目录；不在任何目录下时返回 ``None``。"""
+    if not base_path:
+        return None
+    child = _dir_key(base_path)
+    for root in work_dir_paths(settings):
+        root_key = _dir_key(root)
+        try:
+            if os.path.commonpath([child, root_key]) == root_key:
+                return root
+        except ValueError:
+            continue
+    return None
+
+
+def legacy_dir_note(settings: WslmanwSettings) -> str:
+    """旧设置里单独配过下载 / 备份目录时给一句迁移说明；没有则返回空串。"""
+    legacy = [item for item in (settings.download_dir.strip(), settings.backup_dir.strip()) if item]
+    if not legacy:
+        return ""
+    return f"旧设置里的下载 / 备份目录已忽略（{'、'.join(legacy)}），改为按工作目录推演"
 
 
 def _dialog_geometries(value: Any) -> dict[str, str]:

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.wslman import wslmanw
+from fcmd.apps.wslman import _open, wslmanw
 from fcmd.apps.wslman._distro import Distro
 from fcmd.apps.wslman._errors import not_found
 from fcmd.core.toolkit import _TOOL_REGISTRY
@@ -102,6 +102,8 @@ def test_settings_mapping_is_json_friendly() -> None:
     settings = wslmanw.WslmanwSettings(geometry="900x600", download_dir=r"D:\WSL")
     assert wslmanw.settings_to_mapping(settings) == {
         "geometry": "900x600",
+        "work_dir": "",
+        "work_dirs": [],
         "download_dir": r"D:\WSL",
         "backup_dir": "",
         "mirror": "auto",
@@ -112,6 +114,11 @@ def test_settings_mapping_is_json_friendly() -> None:
         "distro_terminal_dirs": {},
         "dialog_geometry": {},
         "distro_init_tasks": {},
+        "openers": {
+            "ide": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_IDE)],
+            "agent": [_open.to_mapping(item) for item in _open.default_openers(_open.KIND_AGENT)],
+            "selected": {"ide": "vscode", "agent": "opencode"},
+        },
     }
 
 
@@ -469,6 +476,72 @@ def test_error_text_formats_wslman_errors() -> None:
     assert wslmanw._error_text(not_found("没有", hint="先安装")) == "没有（先安装）"
     assert wslmanw._error_text(not_found("没有")) == "没有"
     assert wslmanw._error_text(RuntimeError("boom")) == "RuntimeError: boom"
+
+
+def test_work_dir_derives_download_install_and_backup(tmp_path: Path) -> None:
+    settings = wslmanw.WslmanwSettings(work_dir=str(tmp_path / "root"))
+    assert wslmanw.work_dir_path(settings) == tmp_path / "root"
+    assert wslmanw.derived_dirs(settings) == {
+        "download": tmp_path / "root" / "download",
+        "install": tmp_path / "root" / "install",
+        "backup": tmp_path / "root" / "backup",
+    }
+
+
+def test_empty_work_dir_falls_back_to_fcmd_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path / "home"))
+    assert wslmanw.work_dir_path(wslmanw.WslmanwSettings()) == tmp_path / "home" / "wsl"
+
+
+def test_with_work_dir_clears_legacy_overrides() -> None:
+    settings = wslmanw.WslmanwSettings(download_dir=r"D:\old", backup_dir=r"D:\bak")
+    updated = wslmanw.with_work_dir(settings, r"E:\new")
+    assert updated.work_dir == r"E:\new"
+    assert updated.download_dir == ""
+    assert updated.backup_dir == ""
+
+
+def test_legacy_dir_note_mentions_old_paths() -> None:
+    assert wslmanw.legacy_dir_note(wslmanw.WslmanwSettings()) == ""
+    note = wslmanw.legacy_dir_note(wslmanw.WslmanwSettings(download_dir=r"D:\dl"))
+    assert r"D:\dl" in note
+    assert "工作目录" in note
+
+
+def test_legacy_single_work_dir_migrates_to_one_default(tmp_path: Path) -> None:
+    """旧版单目录平滑迁成一条记录并设为默认。"""
+    settings = wslmanw.settings_from_mapping({"work_dir": str(tmp_path / "old")})
+    assert settings.work_dir == str(tmp_path / "old")
+    assert settings.work_dirs == (str(tmp_path / "old"),)
+    assert wslmanw.work_dir_paths(settings) == (tmp_path / "old",)
+
+    raw = wslmanw.settings_to_mapping(settings)
+    assert raw["work_dirs"] == [str(tmp_path / "old")]
+
+
+def test_work_dir_paths_keep_default_first_and_dedupe(tmp_path: Path) -> None:
+    first, second = tmp_path / "a", tmp_path / "b"
+    settings = wslmanw.WslmanwSettings(work_dir=str(second), work_dirs=(str(first), str(second), str(first)))
+    assert wslmanw.work_dir_paths(settings) == (second, first)
+    assert wslmanw.work_dir_path(settings) == second
+
+    updated = wslmanw.with_work_dirs(settings, (first, second), second)
+    assert updated.work_dirs == (str(second), str(first))
+    assert updated.work_dir == str(second)
+    # 再切默认：列表顺序跟着变，下载 / 安装 / 备份按新默认推演。
+    switched = wslmanw.with_work_dirs(updated, (updated.work_dirs[1], updated.work_dirs[0]), first)
+    assert switched.work_dirs == (str(first), str(second))
+    assert wslmanw.derived_dirs(switched)["install"] == first / "install"
+
+
+def test_work_dir_of_matches_registry_base_path(tmp_path: Path) -> None:
+    root = tmp_path / "wsl"
+    other = tmp_path / "other"
+    settings = wslmanw.WslmanwSettings(work_dir=str(root), work_dirs=(str(root), str(other)))
+    assert wslmanw.work_dir_of(settings, str(root / "install" / "Ubuntu")) == root
+    assert wslmanw.work_dir_of(settings, str(other / "x")) == other
+    assert wslmanw.work_dir_of(settings, str(tmp_path / "loose" / "Debian")) is None
+    assert wslmanw.work_dir_of(settings, None) is None
 
 
 def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
