@@ -104,7 +104,8 @@ def test_default_source_dir_is_home_dot_ssh() -> None:
 
 def test_classify_by_name_and_content() -> None:
     assert _sshfiles.classify("known_hosts", b"") == "known_hosts"
-    assert _sshfiles.classify("known_hosts.old", b"") == "known_hosts"
+    # 备份文件不按 known_hosts 计有效；默认不勾选、不计完成度。
+    assert _sshfiles.classify("known_hosts.old", b"") == "other"
     assert _sshfiles.classify("config", b"") == "config"
     assert _sshfiles.classify("id_ed25519.pub", b"ssh-ed25519 AAAA") == "public"
     assert _sshfiles.classify("mykey", b"-----BEGIN OPENSSH PRIVATE KEY-----\n") == "private"
@@ -333,6 +334,39 @@ def test_migration_state_derives_from_scanned_files() -> None:
         ),
     )
     assert unverifiable.label == _sshfiles.DONE_LABEL
+
+
+def test_backup_and_temp_files_do_not_count_as_partial_migration() -> None:
+    """有效文件全部迁移后就是完成：.bak / .old / 未知杂项默认跳过，不参与完成度。"""
+    files = (
+        _sshfiles.SshFile("id_ed25519", 10, "private"),
+        _sshfiles.SshFile("config", 5, "config"),
+        _sshfiles.SshFile("id_ed25519.bak", 99, "other", "备份 / 临时文件，默认不迁移"),
+        _sshfiles.SshFile("known_hosts.old", 20, "other", "备份 / 临时文件，默认不迁移"),
+        _sshfiles.SshFile(".DS_Store", 1, "other", "备份 / 临时文件，默认不迁移"),
+    )
+    target = _sshfiles.SshTarget(
+        dir="/home/me/.ssh",
+        files=(_sshfiles.RemoteFile("id_ed25519", "600", 10), _sshfiles.RemoteFile("config", "644", 5)),
+    )
+    state = _sshfiles.migration_state(files, target)
+    assert (state.label, state.tone, state.matched, state.total) == (_sshfiles.DONE_LABEL, "success", 2, 2)
+    assert "已忽略 3 个" in state.detail
+
+    # 只有无效文件时也不能冒充“未迁移 / 部分迁移”。
+    only_skipped = tuple(item for item in files if item.kind == "other")
+    skipped = _sshfiles.migration_state(only_skipped, _sshfiles.SshTarget())
+    assert skipped.label == "无有效文件"
+    assert skipped.total == 0
+
+
+def test_backup_names_are_classified_as_other_and_unchecked() -> None:
+    for name in ("id_rsa.bak", "known_hosts.old", "config.tmp", "id_ed25519~", ".DS_Store"):
+        assert _sshfiles.is_migratable_name(name) is False
+        assert _sshfiles.classify(name, b"PRIVATE KEY") == "other"
+        assert _sshfiles.SshFile(name, 1, "other").checked_by_default is False
+    assert _sshfiles.is_migratable_name("id_ed25519") is True
+    assert _sshfiles.is_migratable_name("known_hosts") is True
 
 
 def test_write_script_refuses_unconfirmed_overwrite_and_quotes_names() -> None:

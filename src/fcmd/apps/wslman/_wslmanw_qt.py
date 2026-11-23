@@ -104,6 +104,20 @@ __all__ = ["WslmanQtWindow", "run_qt"]
 DEFAULT_SIZE = (1160, 760)
 
 _KEEPALIVE_LOOP = "while :; do sleep 3600; done"
+
+
+def _ensure_running(env: Any, name: str) -> None:
+    """用看护进程确保实例处于 Running；供启动按钮 / 配置内探测共用。"""
+    wsl_path = cli._require_wsl(env)
+    spawn_detached([wsl_path, "-d", name, "--exec", "/bin/sh", "-c", _KEEPALIVE_LOOP])
+    current = cli.wait_until_running(env, name)
+    if current.state != "running":
+        raise runtime_error(
+            f"{name} 启动后状态仍为 {state_label(current)}（已等待 {cli.START_TIMEOUT_S:.0f}s）",
+            hint="实例可能仍在启动：稍等后点「刷新」；持续未运行请检查 wsl -l -v 或运行 fcmd wslman doctor",
+        )
+
+
 """启动实例时的看护命令：常驻一个 sleep 循环，让实例在 wslmanw 关闭后仍保持运行。
 
 用 POSIX ``sh`` 循环而不是 ``sleep infinity``：部分镜像的 ``sleep`` 不认 ``infinity``，
@@ -2654,24 +2668,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._log(f"[打开] 已启动 {distro.name}")
 
     def _launch_keepalive(self, env: Any, name: str) -> None:
-        """用看护进程把实例带起来，并等状态真正变成 Running（后台线程调用）。
-
-        一次性命令（如 ``/bin/true``）跑完 WSL 就把实例收回 Stopped，
-        wslmanw 关闭后更会失去唯一的进程；这里让实例里常驻一个 sleep 循环，
-        关掉 wslmanw 也不会结束实例，只有用户点「停止」或 ``wsl --shutdown`` 才会退出。
-        启动是异步的：``wsl -l -v`` 要过几百毫秒才看到 Running（实测约 0.7s），
-        立刻断言会误报「启动失败」，统一在这里等一小段时间。
-        """
-        wsl_path = cli._require_wsl(env)
-        spawn_detached(
-            [wsl_path, "-d", name, "--exec", "/bin/sh", "-c", _KEEPALIVE_LOOP],
-        )
-        current = cli.wait_until_running(env, name)
-        if current.state != "running":
-            raise runtime_error(
-                f"{name} 启动后状态仍为 {state_label(current)}（已等待 {cli.START_TIMEOUT_S:.0f}s）",
-                hint="实例可能仍在启动：稍等后点「刷新」；持续未运行请检查 wsl -l -v 或运行 fcmd wslman doctor",
-            )
+        """用看护进程把实例带起来，并等状态真正变成 Running（后台线程调用）。"""
+        _ensure_running(env, name)
 
     def _start_selected(self) -> None:
         distro = self._selected()
@@ -3602,6 +3600,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self._busy = False
         self._closing = False
         self._refresh_after_run = False
+        self._keepalive = False
         self._log_lines: list[str] = []
         self._bridge = EventBridge(self)
         self._bridge.event.connect(self._append_log)
@@ -3889,13 +3888,15 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         """后台探测实例环境；实例未运行时先确认，因为它会被 WSL 启动。"""
         if self._busy:
             return
-        if self._current_state() != "running" and not confirm(
+        state = self._current_state()
+        if state != "running" and not confirm(
             self,
             "检测环境",
             f"检测 {self._distro.name} 需要在实例内执行命令，WSL 会启动/唤醒该实例。继续？",
         ):
             self.summary.setText("已取消检测（实例未运行）")
             return
+        self._keepalive = state != "running"
         self._set_busy(True)
         self.summary.setText("正在检测环境…")
         submit_daemon(
@@ -3908,6 +3909,9 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
     def _detect(self) -> _initenv.EnvStatus:
         env = cli._build_environment()
         wsl_path = cli._require_wsl(env)
+        if self._keepalive:
+            _ensure_running(env, self._distro.name)
+            self._keepalive = False
         result = env.runner.run(
             [wsl_path, "-d", self._distro.name, "--exec", "bash", "-lc", _initenv.probe_script()],
             timeout=180.0,
@@ -3946,6 +3950,15 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         if not keys:
             QMessageBox.information(self, "未选择项目", "请至少勾选一项初始化内容。")
             return
+        state = self._current_state()
+        if state != "running" and not confirm(
+            self,
+            "开始初始化",
+            f"初始化 {self._distro.name} 需要在实例内执行命令，WSL 会启动/唤醒该实例。继续？",
+        ):
+            self.summary.setText("已取消初始化（实例未运行）")
+            return
+        self._keepalive = state != "running"
         steps = _initenv.steps_for(keys)
         self._set_busy(True)
         self._refresh_after_run = False
@@ -3961,6 +3974,9 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         """按顺序执行步骤；输出通过事件桥增量回到界面，失败即停止。"""
         env = cli._build_environment()
         wsl_path = cli._require_wsl(env)
+        if self._keepalive:
+            _ensure_running(env, self._distro.name)
+            self._keepalive = False
         for step in steps:
             self._bridge.event.emit(f"[{step.label}] 开始…")
             argv = [wsl_path, "-d", self._distro.name]
@@ -4040,6 +4056,8 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         self._files: dict[str, _sshfiles.SshFile] = {}
         self._target: _sshfiles.SshTarget | None = None
         self._source_snapshot: _sshfiles.SshSource | None = None
+        self._keepalive_target = False
+        self._keepalive_source = False
         self._boxes: dict[str, QCheckBox] = {}
         self._log_lines: list[str] = []
         self._refresh_after_run = False
@@ -4273,15 +4291,19 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         """后台扫描来源（Windows 目录或实例 ~/.ssh）并探测当前实例。"""
         if self._busy:
             return
-        may_start = self._current_state() != "running" or self.source_kind.currentData() == _sshfiles.SOURCE_WSL
+        state = self._current_state()
+        wsl_source = self.source_kind.currentData() == _sshfiles.SOURCE_WSL
+        may_start = state != "running" or wsl_source
         if may_start and not confirm(
             self,
             "扫描 SSH",
-            f"扫描需要在 {'来源实例与 ' if self.source_kind.currentData() == _sshfiles.SOURCE_WSL else ''}"
+            f"扫描需要在 {'来源实例与 ' if wsl_source else ''}"
             f"{self._distro.name} 内执行命令，WSL 会启动/唤醒未运行的实例。继续？",
         ):
             self.file_hint.setText("已取消扫描（实例未运行）")
             return
+        self._keepalive_target = state != "running"
+        self._keepalive_source = wsl_source
         self._set_busy(True)
         self.file_hint.setText("正在扫描…")
         submit_daemon(
@@ -4315,9 +4337,15 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         env = cli._build_environment()
         wsl_path = cli._require_wsl(env)
         source = self._source()
+        if self._keepalive_target:
+            _ensure_running(env, self._distro.name)
+            self._keepalive_target = False
         if source.is_wsl:
             if not source.distro:
                 raise invalid_argument("没有可选的 WSL 来源实例", hint="先在实例页创建或导入一个实例")
+            if self._keepalive_source:
+                _ensure_running(env, source.distro)
+                self._keepalive_source = False
             remote = self._probe(
                 env,
                 wsl_path,

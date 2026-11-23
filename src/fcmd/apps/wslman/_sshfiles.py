@@ -43,6 +43,7 @@ __all__ = [
     "classify",
     "conflicts",
     "default_source_dir",
+    "is_migratable_name",
     "kind_label",
     "looks_private",
     "loose_modes",
@@ -93,6 +94,9 @@ _KIND_LABELS = {
 _KIND_MODES = {"private": 0o600}
 _KIND_DEFAULT_MODE = 0o644
 _DRIVE_PATH = re.compile(r"[A-Za-z]:[\\/]")
+_SKIP_SUFFIXES = (".bak", ".old", ".orig", ".tmp", ".temp", ".swp", ".swo", ".save", ".rej", "~")
+_SKIP_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}
+"""备份 / 临时 / 编辑器交换文件：可见但默认不迁移，也不计入迁移完成度。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +231,8 @@ def remote_files(target: SshTarget) -> tuple[SshFile, ...]:
         warning = ""
         if item.name.casefold().endswith(".ppk"):
             warning = "PuTTY 私钥格式，OpenSSH 默认不能直接使用"
+        elif not is_migratable_name(item.name):
+            warning = "备份 / 临时文件，默认不迁移"
         elif kind == "other":
             warning = "未知类型，确认后再迁移"
         files.append(SshFile(item.name, item.size, kind, warning))
@@ -267,8 +273,16 @@ def looks_private(name: str) -> bool:
     return name.startswith("id_") and not name.endswith(".pub")
 
 
-def classify(name: str, content: bytes) -> str:
-    """按文件名与文件头判断类型；识别不了的归入 ``other``。"""
+def is_migratable_name(name: str) -> bool:
+    """是否是默认值得迁移的 SSH 文件：备份 / 临时 / 系统杂项不算。"""
+    key = name.casefold()
+    return key not in _SKIP_NAMES and not key.endswith(_SKIP_SUFFIXES)
+
+
+def classify(name: str, content: bytes) -> str:  # noqa: PLR0911 - 兼容已有分类分支
+    """按文件名与文件头判断类型；备份 / 未知类型归入 ``other``。"""
+    if not is_migratable_name(name):
+        return "other"
     if name.startswith("known_hosts"):
         return "known_hosts"
     if name == "config":
@@ -285,6 +299,8 @@ def classify(name: str, content: bytes) -> str:
 def _warning(name: str, kind: str, head: bytes) -> str:
     if name.casefold().endswith(".ppk"):
         return "PuTTY 私钥格式，OpenSSH 默认不能直接使用"
+    if not is_migratable_name(name):
+        return "备份 / 临时文件，默认不迁移"
     if kind == "private" and not head:
         return "文件为空"
     if kind == "config":
@@ -462,12 +478,20 @@ def migration_state(files: Sequence[SshFile], target: SshTarget) -> MigrationSta
     权限待修正；部分文件缺失或大小不同就是「部分迁移」，一个都没命中是
     「未迁移」。来源目录为空时给「无文件」，不把空来源误判成已完成。
     """
-    total = len(files)
+    valid = [item for item in files if item.checked_by_default]
+    skipped = len(files) - len(valid)
+    total = len(valid)
     if not total:
+        if files:
+            return MigrationState(
+                "无有效文件",
+                "muted",
+                f"来源有 {len(files)} 个文件，但均为备份 / 临时 / 未知类型；默认不迁移，也不参与完成度判断",
+            )
         return MigrationState("无文件", "muted", "来源目录没有可迁移的普通文件")
-    missing = [item for item in files if not _content_matches(item, target)]
+    missing = [item for item in valid if not _content_matches(item, target)]
     if not missing:
-        wrong = [item for item in files if not _mode_matches(item, target)]
+        wrong = [item for item in valid if not _mode_matches(item, target)]
         if wrong:
             names = "、".join(item.name for item in wrong)
             return MigrationState(
@@ -477,7 +501,10 @@ def migration_state(files: Sequence[SshFile], target: SshTarget) -> MigrationSta
                 total,
                 total,
             )
-        return MigrationState(DONE_LABEL, "success", f"{total} 个文件均已存在于实例 ~/.ssh，且权限正确", total, total)
+        detail = f"{total} 个有效文件均已存在于实例 ~/.ssh，且权限正确"
+        if skipped:
+            detail += f"；已忽略 {skipped} 个备份 / 临时 / 未知文件"
+        return MigrationState(DONE_LABEL, "success", detail, total, total)
     if len(missing) == total:
         return MigrationState("未迁移", "muted", "实例内未找到与来源匹配的文件", 0, total)
     matched = total - len(missing)

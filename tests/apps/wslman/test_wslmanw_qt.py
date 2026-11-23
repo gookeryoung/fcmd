@@ -2326,6 +2326,33 @@ def test_ssh_scan_prompts_before_starting_stopped_instance(home: Path, monkeypat
         owner.deleteLater()
 
 
+def test_init_env_detection_keeps_started_instance_alive(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """为检测而启动的实例要用看护进程留在 Running，不能命令结束就自动停。"""
+    kept: list[str] = []
+
+    class _Runner:
+        def run(self, argv: Any, **_kwargs: Any) -> CommandResult:
+            return CommandResult(tuple(argv), 0, b"WSLMAN_USER=me\n", b"", 1)
+
+    class _FakeEnv:
+        runner = _Runner()
+
+    monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+    monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+    monkeypatch.setattr(_wslmanw_qt, "_ensure_running", lambda env, name: kept.append(name))
+    owner = QWidget()
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu", "stopped"))
+    try:
+        section._keepalive = True
+        status = section._detect()
+        assert status.user == "me"
+        assert kept == ["Ubuntu"]
+        assert section._keepalive is False
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
 def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """开始初始化只跑「未就绪且勾选」的项目，已就绪的不重复执行。"""
     owner = QWidget()
