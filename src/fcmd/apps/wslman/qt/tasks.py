@@ -183,14 +183,37 @@ class TasksMixin:
         return _owner.w.download_metrics_text(task.done, task.total, speed)
 
     def _update_download_status(self) -> None:
-        """镜像页状态行：并发数 / 上限 / 排队数；重操作占用状态行时不抢。"""
+        """镜像页状态行与右侧进度条：并发数 / 排队数，以及聚合进度 / 速度。
+
+        单项进度仍写在行内；状态栏按所有运行中的下载求和，参考导出实例的
+        「百分比 · 已下载 / 总量 · 速度 · 剩余」口径。重操作占用状态栏时不抢。
+        """
         if self._busy:
             return
-        running = sum(1 for task in self._downloads.values() if task.state == "running")
+        running_tasks = [task for task in self._downloads.values() if task.state == "running"]
         queued = sum(1 for task in self._downloads.values() if task.state == "queued")
-        text = _owner.w.download_queue_text(running, queued, _owner.w.download_limit(self.settings.max_downloads))
-        if text:
-            self.set_page_status("images", text)
+        limit = _owner.w.download_limit(self.settings.max_downloads)
+        if not running_tasks:
+            text = _owner.w.download_queue_text(0, queued, limit)
+            if text:
+                self.set_page_status("images", text)
+            if not queued:
+                self.show_progress("", 0, None)
+            return
+        done = sum(max(0, task.done) for task in running_tasks)
+        total = sum(task.total or 0 for task in running_tasks) if all(task.total for task in running_tasks) else None
+        speed = sum(
+            meter.speed for name, meter in self._download_meters.items() if self._downloads.get(name) is not None
+        )
+        text = "正在" + _owner.w.download_progress_text(f"{len(running_tasks)} 项", done, total, speed)
+        if queued:
+            text += f" · 排队 {queued} 项"
+        self.set_page_status("images", text)
+        if total:
+            brief = f"下载 {min(100, int(done * 100 / total))}% · {_owner.format_speed(speed)}"
+        else:
+            brief = f"下载 {_owner.format_bytes(done)} · {_owner.format_speed(speed)}"
+        self.show_progress(brief, done, total)
 
     def _image_row(self, name: str) -> _owner._ImageItemRow | None:
         for index in range(self.image_list.count()):

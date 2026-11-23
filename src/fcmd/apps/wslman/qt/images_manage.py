@@ -232,9 +232,36 @@ class ImagesManageMixin:
         mirror_index = self.mirror.currentIndex()
         mirror_policy = self.mirror_ids[mirror_index] if mirror_index >= 0 else "auto"
         directory = self._download_dir_path()
+        wslui_sources = _owner._wslui.match_sources(self._wslui_catalog, entry)
 
         def work(cancel: threading.Event) -> str:
             env = _owner.cli._build_environment()
+            if mirror_policy == _owner._mirrors.AUTO and wslui_sources:
+                ranked = _owner._wslui.rank_sources(wslui_sources)
+                arch = _owner.w.pick_download(entry).arch if entry.downloads else "x86_64"
+                target = directory / _owner._wslui.download_filename(entry, ranked[0], arch)
+                if target.exists():
+                    raise _owner.invalid_argument(f"目标文件已存在：{target}", hint="换一个目录或先删除旧文件")
+                check = _owner.cli._preflight_for(env, target, None, estimated=True)
+                if not check.ok:
+                    raise _owner.runtime_error(f"目标卷空间不足：{check.detail}", hint="换一个目录")
+                from fcmd.apps.wslman import _source
+
+                candidates = tuple(
+                    _owner._mirrors.Candidate(source.mirror, source.label, source.url, False) for source in ranked
+                )
+                result_data = _source.download_mirrored(
+                    target,
+                    candidates=candidates,
+                    expected_sha256=None,
+                    cancelled=cancel.is_set,
+                    progress=lambda done, total: self._progress_bridge.progress.emit((entry.name, done, total)),
+                )
+                used = next((source for source in ranked if source.mirror == result_data.source), ranked[0])
+                return (
+                    f"已下载 {target}（{_owner.format_bytes(result_data.size)}，来源 {used.label}，自动测速择优）；"
+                    "点行内「安装」导入 WSL"
+                )
             if not entry.downloads:
                 # 只有 CLI / Store 来源：没有归档可下载，直接走 wsl --install。
                 _owner.cli._run_step(

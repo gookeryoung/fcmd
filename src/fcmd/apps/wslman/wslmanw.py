@@ -1232,7 +1232,8 @@ def mark_downloaded(entries: Sequence[_images.ImageEntry], directory: Path) -> t
     会让列表里出现「同名镜像一个已下载、一个未下载」的不一致状态。
     """
     found: dict[str, Path] = {}
-    for path in local_archives(directory):
+    archives = local_archives(directory)
+    for path in archives:
         matched_all = _match_archives(path, entries)
         for entry, download in matched_all:
             key = entry.name.casefold()
@@ -1240,6 +1241,15 @@ def mark_downloaded(entries: Sequence[_images.ImageEntry], directory: Path) -> t
             current = found.get(key)
             if current is None or download.arch == preferred:
                 found[key] = path
+    # WSLUI 镜像源下载落盘名是 ``<实例名>-<arch>.<格式>``；官方文件名匹配不到时按前缀识别。
+    for entry in sorted(entries, key=lambda item: len(item.name), reverse=True):
+        key = entry.name.casefold()
+        if key in found:
+            continue
+        prefix = f"{key}-"
+        matched = next((path for path in archives if path.name.casefold().startswith(prefix)), None)
+        if matched is not None:
+            found[key] = matched
     return tuple(
         replace(
             entry,

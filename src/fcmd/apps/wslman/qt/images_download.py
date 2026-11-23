@@ -138,14 +138,16 @@ class ImagesDownloadMixin:
             on_finished=lambda: self._set_images_busy(False),
         )
 
-    def _images_worker(self, force: bool = False) -> tuple[Any, tuple[ImageEntry, ...]]:
+    def _images_worker(self, force: bool = False) -> tuple[Any, tuple[ImageEntry, ...], Any]:
         env = _owner.cli._build_environment()
         catalog = _owner._images.collect_images(
             fetch_cli=lambda: _owner.cli._online_rows(env),
             fetch_manifest=_owner.cli._manifest_images,
             force=force,
         )
-        return catalog, self._mark_local(catalog.entries, env)
+        # WSLUI 镜像源是附加信息：失败不能拖垮官方清单，只记 warning。
+        wslui = _owner._wslui.load_catalog(force=force)
+        return catalog, self._mark_local(catalog.entries, env), wslui
 
     def _mark_local(self, entries: Any, env: Any) -> tuple[ImageEntry, ...]:
         """标注本地状态：已安装 / 已备份（``wsl`` 侧）+ 已下载（下载目录里的归档）。"""
@@ -161,15 +163,33 @@ class ImagesDownloadMixin:
         self.images_status.setText(f"镜像清单获取失败：{message}{kept}")
         self._log(f"[镜像列表] {message}")
 
-    def _apply_images(self, payload: tuple[Any, tuple[ImageEntry, ...]]) -> None:
-        catalog, entries = payload
+    def _apply_images(self, payload: tuple[Any, ...]) -> None:
+        # 兼容测试 / 旧调用只传 (官方清单, 条目)；运行时多带一份 WSLUI 镜像源。
+        if len(payload) >= 3:
+            catalog, entries, wslui = payload[0], payload[1], payload[2]
+        else:
+            catalog, entries = payload[0], payload[1]
+            wslui = None
         self.image_entries = entries
+        self._wslui_catalog = wslui
         self._images_from_cache = catalog.from_cache
         self._images_note = _owner._images_note_text(catalog)
         for warning in catalog.warnings:
             self._log(f"[镜像列表] {warning}")
+        for warning in getattr(wslui, "warnings", ()):
+            self._log(f"[镜像源] {warning}")
         self._render_images()
         self._refresh_distro_images()
+
+    def _mirror_note(self, entry: ImageEntry) -> tuple[str, str]:
+        """镜像行副标题后的「可用镜像源」文本与 tooltip。"""
+        sources = _owner._wslui.match_sources(self._wslui_catalog, entry)
+        if sources:
+            labels = _owner._wslui.mirror_labels(sources)
+            return f"镜像源：{' / '.join(labels)}", _owner._wslui.mirror_tooltip(sources)
+        if entry.downloads:
+            return "镜像源：官方源", "未在 WSLUI 镜像清单中找到该发行版，使用官方下载地址"
+        return "镜像源：wsl --install（无直链）", "该条目只有系统安装来源，没有可直接下载的镜像源"
 
     def _render_images(self) -> None:
         filter_key = self._image_filter_key
@@ -185,7 +205,8 @@ class ImagesDownloadMixin:
         self.image_list.clear()
         for entry in rows:
             item = _owner.QListWidgetItem(self.image_list)
-            row = _owner._ImageItemRow(entry, self.image_list)
+            mirror_text, mirror_tip = self._mirror_note(entry)
+            row = _owner._ImageItemRow(entry, self.image_list, mirror_text=mirror_text, mirror_tip=mirror_tip)
             row.toggleRequested.connect(self._on_image_toggle)
             row.downloadRequested.connect(self._download_entry)
             row.installRequested.connect(self._install_entry)

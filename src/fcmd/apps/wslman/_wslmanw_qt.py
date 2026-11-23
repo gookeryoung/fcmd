@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.wslman import _files, _images, _initenv, _install, _mirrors, _open
+from fcmd.apps.wslman import _files, _images, _initenv, _install, _mirrors, _open, _wslui
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman import wslmanw as w
 from fcmd.apps.wslman._config import load_config
@@ -206,6 +206,7 @@ class WslmanQtWindow(
         self.sizes: dict[str, tuple[int | None, bool]] = {}
         self._rows: list[tuple[str, ...]] = []
         self.image_entries: tuple[ImageEntry, ...] = ()
+        self._wslui_catalog: Any = None
         self._image_filter_key = self.settings.image_filter
         self._images_note = ""
         self._busy = False
@@ -420,6 +421,7 @@ _REEXPORTS = (
     _install,
     _mirrors,
     _open,
+    _wslui,
     build_command,
     button,
     cli,

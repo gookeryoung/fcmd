@@ -7,6 +7,14 @@
 
 ### 变更
 
+- 修复「开发时 WSL 实例经常自己启动」：`llmw` 的 vLLM 平台探测会对每个发行版执行
+  `wsl -d <名称>`（探测等于启动），而运行页构造即调用它——打开 llmw 或跑测试都会把
+  Ubuntu / kali-linux 一个个拉起来。现在默认**只探测运行中的实例**，其余实例名放进
+  `VllmPlatform.stopped` 交给界面提示；只有安装 vLLM（确认对话框）时才带
+  `allow_start=True` 连已停止实例一起探。平台探测拆到 `_llmvllm_platform.py`。
+  测试侧新增全局守卫 `forbid_wsl_distro_start()`：任何测试里出现
+  `-d` / `--exec` / `--terminate` / `--import` 等会启动 / 改动实例的调用直接失败；
+  gui 与 llm 测试默认把平台探测替换成「不支持」，不再碰真实宿主机。
 - 推进 ADR 0046：wslman 六个对话框迁至 `apps/wslman/qt/dialogs.py`，
   `_wslmanw_qt.py` 保留同名 re-export；布局守卫支持 `apps/<app>/qt/` 三层。
 - 推进 ADR 0046 P2/P3：`WslmanQtWindow` 方法拆为 10 个 `qt/*.py` mixin，行卡/详情、
@@ -21,6 +29,9 @@
 - 修改实例的软件包源后，即使 Python / uv 已初始化，点「开始初始化」也会先执行独立的
   pip / uv 配置步骤（只改 `pip config` 与 `uv.toml`，不重装 uv、不碰系统源）；
   环境检测的初始化项目标签同时覆盖两种状态：绿色「已初始化」/ 红色「未初始化」。
+- `wslmanw` 镜像页接入 WSL Dashboard 的公开镜像源清单：每行显示可用源（清华 / 中科大 /
+  阿里 / 北外 / 火山等），`自动` 下载会并发测速择优并依次回退；下载状态栏显示聚合
+  百分比、已下载/总量、速度和剩余时间，行内进度与取消保持原样。
 - `wslmanw` 实例页在「导出」左侧新增「安装」：支持 `.tar` / `.tar.gz` / `.wsl` 直接导入，
   `.vhdx` 复制到实例目录后 `--import-in-place`，以及 zip / 7z / rar / gz / bz2 / xz /
   tar.bz2 / tar.xz 等压缩包；解压后自动找 `ext4.vhdx`、`rootfs.tar` / `install.tar`，

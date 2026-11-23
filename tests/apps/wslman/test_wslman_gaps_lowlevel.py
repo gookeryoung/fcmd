@@ -23,7 +23,7 @@ from fcmd.apps.wslman._registry import WindowsRegistryReader
 
 
 def test_mirror_labels_and_trusted_ids() -> None:
-    assert _mirrors.label(_mirrors.AUTO) == "自动（优先国内镜像）"
+    assert _mirrors.label(_mirrors.AUTO) == "自动（镜像源测速择优）"
     assert _mirrors.label("ustc") == "中科大 USTC"
     assert _mirrors.label("huawei") == "华为云"
     assert _mirrors.label("custom") == "custom"

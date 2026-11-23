@@ -519,6 +519,90 @@ def test_export_progress_lands_in_status_bar(home: Path, monkeypatch: pytest.Mon
         window.deleteLater()
 
 
+def test_image_row_shows_wslui_mirror_sources(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像行副标题后显示 WSLUI 提供的可用镜像源，完整 URL 在 tooltip。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entry = _image_entry("Ubuntu-24.04")
+        catalog = _wslmanw_qt._wslui.WsluiCatalog(
+            (
+                _wslmanw_qt._wslui.WsluiDistro(
+                    "Ubuntu",
+                    "24.04",
+                    (
+                        _wslmanw_qt._wslui.WsluiSource(
+                            "https://mirrors.ustc.edu.cn/ubuntu/rootfs.tar.xz", "ustc", "tar.xz"
+                        ),
+                    ),
+                ),
+            )
+        )
+        window._apply_images((_catalog((entry,)), (entry,), catalog))
+        window._render_images()
+        row = _image_row(window, 0)
+        assert row.mirror_label.isHidden() is False
+        assert "中科大 USTC" in row.mirror_label.fullText()
+        assert "mirrors.ustc.edu.cn" in row.mirror_label.toolTip()
+
+        # 没有匹配项时明确写官方源，而不是留空。
+        other = _image_entry("Custom")
+        window._apply_images((_catalog((other,)), (other,), catalog))
+        window._render_images()
+        assert _image_row(window, 0).mirror_label.fullText() == "镜像源：官方源"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_auto_download_uses_fastest_wslui_source(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """自动策略先对 WSLUI 源测速，按最快顺序交给下载器；落盘名带实例名便于重扫。"""
+    from types import SimpleNamespace
+
+    from fcmd.apps.wslman import _source
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    monkeypatch.setattr(cli, "_preflight_for", lambda *args, **kwargs: SimpleNamespace(ok=True, detail=""))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entry = _image_entry("Ubuntu-24.04")
+        slow = _wslmanw_qt._wslui.WsluiSource("https://slow/rootfs.tar.xz", "slow", "tar.xz")
+        fast = _wslmanw_qt._wslui.WsluiSource("https://fast/rootfs.tar.xz", "fast", "tar.xz")
+        catalog = _wslmanw_qt._wslui.WsluiCatalog((_wslmanw_qt._wslui.WsluiDistro("Ubuntu", "24.04", (slow, fast)),))
+        window._apply_images((_catalog((entry,)), (entry,), catalog))
+        monkeypatch.setattr(_wslmanw_qt._wslui, "rank_sources", lambda sources: (fast, slow))
+        seen: list[tuple[str, ...]] = []
+
+        def fake_download(target: Any, *, candidates: Any, **_kwargs: Any) -> Any:
+            seen.append(tuple(candidate.url for candidate in candidates))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"x")
+            return SimpleNamespace(size=1, source=candidates[0].ident, sha256="x")
+
+        monkeypatch.setattr(_source, "download_mirrored", fake_download)
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_refresh_image_states", lambda self: None)
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_render_images", lambda self: None)
+        monkeypatch.setattr(
+            _wslmanw_qt,
+            "submit",
+            lambda fn, *args, on_done=None, on_error=None, on_finished=None, **kwargs: (
+                on_done(fn(*args)) if on_done else None
+            ),
+        )
+        window._download_payload(entry)
+        assert seen == [("https://fast/rootfs.tar.xz", "https://slow/rootfs.tar.xz")]
+        assert any("来源 fast" in line for line in window._log_lines)
+        assert any("Ubuntu-24.04-x86_64.tar.xz" in line for line in window._log_lines)
+    finally:
+        window._downloads.clear()
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_download_progress_lands_on_its_own_row(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """并发下载的进度按镜像名落到各自行：行内给百分比 / 已下载量，状态行给并发与排队。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
@@ -538,11 +622,15 @@ def test_download_progress_lands_on_its_own_row(home: Path, monkeypatch: pytest.
         assert row.metrics_label is not None
         assert row.metrics_label.text().startswith("下载 50%")
         assert "正在下载 1 项" in window.page_status("images")
+        assert "50%" in window.page_status("images")
+        assert "下载 50%" in window.loading_bar.text_label.text()
+        assert window.loading_bar.bar.value() > 0
         assert "排队" not in window.page_status("images")
 
         # 总量未知（服务器没给长度）时只给已下载量。
         window._on_download_event((entry.name, 2048, None))
         assert row.metrics_label.text().startswith("下载 2.0 KiB")
+        assert window.loading_bar.bar.maximum() == 0  # 总量未知回到忙碌态
     finally:
         window._downloads.clear()
         window._poll.stop()  # type: ignore[union-attr]

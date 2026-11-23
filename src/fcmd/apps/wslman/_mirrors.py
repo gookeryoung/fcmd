@@ -80,7 +80,7 @@ def label(ident: str) -> str:
     if ident == OFFICIAL:
         return "官方源"
     if ident == AUTO:
-        return "自动（优先国内镜像）"
+        return "自动（镜像源测速择优）"
     for mirror in MIRRORS:
         if mirror.ident == ident:
             return mirror.label

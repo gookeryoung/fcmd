@@ -886,6 +886,15 @@ def test_mark_downloaded_matches_archives_in_directory(tmp_path: Path) -> None:
     assert again[0].downloaded is True
 
 
+def test_mark_downloaded_recognizes_wslui_source_filename(tmp_path: Path) -> None:
+    """WSLUI 自动择优下载落盘为 ``<实例>-<arch>.<格式>``，重扫时也要标成已下载。"""
+    ubuntu = _image("Ubuntu-24.04")
+    (tmp_path / "Ubuntu-24.04-x86_64.tar.xz").write_bytes(b"x")
+    marked = wslmanw.mark_downloaded((ubuntu,), tmp_path)
+    assert marked[0].downloaded is True
+    assert marked[0].archive.endswith("Ubuntu-24.04-x86_64.tar.xz")
+
+
 def test_mark_downloaded_marks_all_entries_sharing_an_archive(tmp_path: Path) -> None:
     """同名下载项指向同一个归档时，相关条目的「已下载」状态保持一致。"""
     url = "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-wsl-amd64.wsl"

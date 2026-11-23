@@ -210,7 +210,14 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
     installRequested = _owner.Signal(str)
     cancelRequested = _owner.Signal()
 
-    def __init__(self, entry: ImageEntry, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        entry: ImageEntry,
+        parent: QWidget | None = None,
+        *,
+        mirror_text: str = "",
+        mirror_tip: str = "",
+    ) -> None:
         title, subtitle, metrics = _owner.w.image_item_lines(entry)
         super().__init__(
             title,
@@ -235,6 +242,13 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
             if hint:
                 tag.setToolTip(hint)
             self.add_tag(tag)
+        # 可用镜像源（WSLUI 清单）：副标题后一行，窄窗口右侧省略，完整 URL 走 tooltip。
+        self.mirror_label = _owner.ElidedLabel(mirror_text, mode=_owner.Qt.TextElideMode.ElideRight, parent=self.header)
+        self.mirror_label.setObjectName("Hint")
+        self.mirror_label.setVisible(bool(mirror_text))
+        if mirror_tip:
+            self.mirror_label.setToolTip(mirror_tip)
+        self.add_note_widget(self.mirror_label, stretch=1)
         self.set_metrics(metrics)
 
         # 每行自带动作按钮：未下载 →「下载」；已下载未安装 →「安装」；已安装 → 无按钮。
