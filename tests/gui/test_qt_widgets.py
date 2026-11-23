@@ -59,6 +59,7 @@ from fcmd.gui.widgets import (
     ProgressRow,
     RowDetailMixin,
     RowListWidget,
+    SectionTitle,
     SegmentBar,
     SelectionRow,
     StatusTag,
@@ -939,6 +940,21 @@ def test_button_attaches_shared_icon_automatically() -> None:
     assert forced.icon().isNull() is False
     disabled_icon = button("刷新", icon="")
     assert disabled_icon.icon().isNull() is True
+
+
+def test_section_title_and_header_share_object_name() -> None:
+    """分节标题固定 ``SectionTitle``；section_header 返回同一子类并自带弹性空白。"""
+    title = SectionTitle("小节")
+    header, label = section_header("小节")
+    try:
+        assert title.objectName() == "SectionTitle"
+        assert isinstance(label, SectionTitle)
+        assert label.objectName() == "SectionTitle"
+        assert label.text() == "小节"
+        assert header.count() == 2  # 标题 + stretch
+    finally:
+        title.deleteLater()
+        label.deleteLater()
 
 
 def test_tone_label_mixin_and_factory_subclasses() -> None:

@@ -36,6 +36,7 @@ from fcmd.gui.logdialog import LogChannelMixin
 from fcmd.gui.page import PageSpec
 from fcmd.gui.shell import WindowShellMixin, WindowSpec
 from fcmd.gui.statusbar import DEFAULT_STATUS, WindowStatusBar
+from fcmd.gui.widgets.text import SectionTitle
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -166,8 +167,7 @@ class QtMainWindow(LogChannelMixin, WindowShellMixin, QMainWindow):  # pragma: n
         right_layout.setSpacing(8)
         # 页标题行：左侧可挂页面级动作（如对话页的侧栏收起键），标题紧随其后，
         # 避免页面再单独占一行放动作、浪费正文高度。
-        self.page_title = QLabel("", right)
-        self.page_title.setObjectName("SectionTitle")
+        self.page_title = SectionTitle("", right)
         # 页标题下的描述行不再展示：页面提示保留在 PageSpec / 侧边栏 tooltip，
         # 标题行只保留标题与页面动作，正文更紧凑（与简洁侧边栏风格一致）。
         self.page_hint = QLabel("", right)

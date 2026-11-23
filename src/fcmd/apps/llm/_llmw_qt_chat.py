@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
@@ -71,6 +70,7 @@ from fcmd.gui.widgets import (
     Collapsible,
     ElidedLabel,
     FormGrid,
+    SectionTitle,
     SidebarActionButton,
     SidebarEntry,
     SidebarList,
@@ -212,13 +212,6 @@ def conversation_from_data(raw: Any) -> _Conversation | None:
     return conversation
 
 
-def _dialog_title(text: str, parent: QWidget) -> QLabel:
-    """配置窗口里的小节标题（与页面 SectionTitle 同一套字号 / 颜色）。"""
-    label = QLabel(text, parent)
-    label.setObjectName("SectionTitle")
-    return label
-
-
 def history_payload(
     conversations: list[_Conversation],
     active: int,
@@ -289,7 +282,7 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         owner.connection_box.add_row("API Key", owner.api_key_edit)
         body.addWidget(owner.connection_box)
 
-        body.addWidget(_dialog_title("生成参数", self))
+        body.addWidget(SectionTitle("生成参数", self))
         settings_form = FormGrid(self)
         owner.system_edit = QLineEdit("", self)
         owner.system_edit.setPlaceholderText("系统提示（留空不发送）")

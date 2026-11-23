@@ -13,6 +13,7 @@ __all__ = [
     "ElidedLabel",
     "HintLabel",
     "MonoLabel",
+    "SectionTitle",
     "StatusTag",
     "ToneLabelMixin",
     "ValueLabel",
@@ -143,7 +144,19 @@ class HintLabel(ToneLabelMixin, QLabel):  # pragma: no cover - Qt 控件
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
 
-def section_header(title: str, parent: QWidget | None = None) -> tuple[QHBoxLayout, QLabel]:
+class SectionTitle(QLabel):  # pragma: no cover - Qt 控件
+    """分节标题标签：固定 ``SectionTitle`` objectName，避免各处手写。
+
+    页面标题行、卡片内小节、对话框分组共用同一套字号 / 颜色；需要右侧状态 /
+    动作时用 :func:`section_header` 或直接把它加进自己的 ``QHBoxLayout``。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setObjectName("SectionTitle")
+
+
+def section_header(title: str, parent: QWidget | None = None) -> tuple[QHBoxLayout, SectionTitle]:
     """卡片内的分节标题行：``SectionTitle`` 标签 + 弹性空白。
 
     返回 ``(布局, 标题标签)``，调用方把布局加进 ``Card.body`` 后继续往布局右侧
@@ -153,8 +166,7 @@ def section_header(title: str, parent: QWidget | None = None) -> tuple[QHBoxLayo
     header = QHBoxLayout()
     header.setContentsMargins(0, 0, 0, 0)
     header.setSpacing(8)
-    label = QLabel(title, parent)
-    label.setObjectName("SectionTitle")
+    label = SectionTitle(title, parent)
     header.addWidget(label)
     header.addStretch(1)
     return header, label

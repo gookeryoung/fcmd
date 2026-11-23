@@ -7,6 +7,15 @@
 
 ### 变更
 
+- `filescanw` 改成侧边栏分页（与 `wslmanw` / `llmw` 同构）：扫描 / 结果 / 规则三页
+  由共享 `QtMainWindow` + `SidebarNav` 承载，支持折叠、`Ctrl+Tab` 切页与几何记忆；
+  每页是 `AppPage` 子类，状态栏按页隔离（扫描进度 / 结果筛选 / 规则操作各归各页），
+  扫描完成自动切到结果页。扫描页表单套 `PageScroll`（窗口压矮时滚动而不是裁掉
+  底部动作行），结果页表格吃满页面高度。侧边栏折叠状态随 `filescanw.json` 落盘
+  （新增 `sidebar_collapsed` 字段，旧设置文件不受影响）。
+- 新增 `SectionTitle` 标签子类：页面标题、卡片小节、对话框分组统一用它，不再各自
+  `QLabel` + `setObjectName("SectionTitle")`；`section_header()` 与窗口页标题行改用，
+  llmw 对话配置与概览页的手写标题同步替换。
 - 表单路径输入新增 `PathInputMixin`：`PathRow` / `PathField` 共用 `value` /
   `set_value` 与目录 / 文件选择对话框，各自只保留选中后的落地差异（提交信号 /
   路径提示）。

@@ -47,6 +47,7 @@ from fcmd.gui.widgets import (
     Card,
     ElidedLabel,
     RowListWidget,
+    SectionTitle,
     SegmentBar,
     SelectionRow,
     StatusTag,
@@ -534,8 +535,7 @@ class OverviewPage(AppPage):  # pragma: no cover - Qt 控件
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
-        title = QLabel("运行中的模型", container)
-        title.setObjectName("SectionTitle")
+        title = SectionTitle("运行中的模型", container)
         self._running_badge = StatusTag("未运行", tone="muted", parent=container)
         header.addWidget(title)
         header.addStretch(1)
@@ -592,8 +592,7 @@ class OverviewPage(AppPage):  # pragma: no cover - Qt 控件
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
-        heading = QLabel(title, block)
-        heading.setObjectName("SectionTitle")
+        heading = SectionTitle(title, block)
         hint = ElidedLabel("等待采样…", parent=block)
         hint.setObjectName("Hint")
         percent = QLabel("-", block)
