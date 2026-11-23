@@ -3,8 +3,8 @@
 左侧边栏四页（与 wslmanw / llmw 同一套 ``SidebarNav``，避免表单堆叠）：
 
 - **扫描**：按任务管理的目录列表（参考 wslmanw 实例行）：首项固定是虚线框
-  「添加任务」，任务行可单独开始 / 停止扫描、查看结果、展开详情或移除（不确认）；
-  选项摘要（递归 / 深度 / 并发 / 白名单后缀数 / 缓存开关）用带色标签放在卡片
+  「添加任务」，任务行可单独开始 / 停止扫描、查看结果或展开详情；移除 / 清空在
+  卡片右上角（不确认）；选项摘要（递归 / 深度 / 并发 / 白名单后缀数 / 缓存开关）用带色标签放在卡片
   标题行。扫描进度写在窗口状态栏右侧。
 - **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
   可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出
@@ -16,8 +16,9 @@
   校验）、后缀包含/排除、强制后缀、大小与修改时间上下限、跳过二进制、解析文档、
   单文件上限、并发数；使用缓存与清理缓存、导入 / 导出扫描配置。
 
-窗口设置（目录、选项、规则集、过滤条件、窗口位置）保存在
-``${FCMD_HOME:-~/.fcmd}/ui/filescanw.json``，下次启动自动恢复。
+窗口设置（任务、选项、规则集、过滤条件、窗口位置）保存在
+``${FCMD_HOME:-~/.fcmd}/ui/filescanw.json``，扫描结果（每个任务最近一次）保存在
+``${FCMD_HOME:-~/.fcmd}/ui/filescanw-results.json``，下次启动都会恢复。
 
 扫描在后台线程执行，取消走 :class:`CancelToken`，关窗时置位取消并等待 worker
 退出，不留下悬挂线程。
@@ -53,6 +54,7 @@ from fcmd.apps.filescan._report import (
     no_hit_hint,
     scan_summary,
 )
+from fcmd.apps.filescan._results import results_from_mapping, results_to_mapping
 from fcmd.apps.filescan._rules import (
     RuleSet,
     builtin_ruleset,
@@ -70,14 +72,18 @@ __all__ = [
     "ScanTask",
     "apply_expression",
     "group_whitelist",
+    "load_results",
     "load_settings",
     "new_scan_task",
     "parse_and_validate_ext_line",
     "parse_whitelist_text",
+    "results_path",
     "run_gui",
+    "save_results",
     "save_settings",
     "scan_progress_text",
     "scan_status_text",
+    "scan_task_summary",
     "settings_from_mapping",
     "settings_to_mapping",
     "task_from_mapping",
@@ -86,6 +92,7 @@ __all__ = [
 ]
 
 SETTINGS_NAME = "filescanw"
+RESULTS_NAME = "filescanw-results"
 DEFAULT_GEOMETRY = "1120x760+140+70"
 MIN_WIDTH = 960
 MIN_HEIGHT = 620
@@ -98,7 +105,7 @@ _DESCRIPTION = "目录敏感内容扫描：规则表达式、并行扫描、按�
 # ---------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class ScanTask:
-    """一个扫描任务：固定目录 + 最近一次扫描的摘要（结果对象只留在本次会话）。"""
+    """一个扫描任务：固定目录 + 最近一次扫描的摘要（完整结果按任务 id 落盘）。"""
 
     id: str
     path: str
@@ -117,7 +124,7 @@ class ScanTask:
 
     @property
     def has_history(self) -> bool:
-        """是否已有上一次扫描的摘要（不代表本次会话保留了结果对象）。"""
+        """是否已有上一次扫描的摘要（完整结果是否仍在结果文件里由窗口判断）。"""
         return bool(self.last_status or self.last_summary)
 
 
@@ -404,6 +411,27 @@ def save_settings(settings: FilescanSettings, path: Path | None = None) -> None:
     SettingsStore("filescanw", path).save(settings_to_mapping(settings))
 
 
+# ---------------------------------------------------------------------- #
+# 扫描结果持久化（退出应用后结果页仍能恢复）
+# ---------------------------------------------------------------------- #
+def results_path(path: Path | None = None) -> Path:
+    """结果文件路径：``ui/filescanw-results.json``（与设置文件分开，避免撑大设置）。"""
+    return path or _guiconfig.config_path(RESULTS_NAME)
+
+
+def load_results(path: Path | None = None) -> dict[str, ScanResult]:
+    """读取持久化的任务结果；文件缺失或损坏时返回空表。"""
+    raw = _guiconfig.read_settings(results_path(path))
+    if raw is None:
+        return {}
+    return results_from_mapping(raw)
+
+
+def save_results(results: Mapping[str, ScanResult], path: Path | None = None) -> None:
+    """写入任务结果；父目录自动创建，写入失败时静默忽略（不阻塞关闭 / 扫描）。"""
+    _guiconfig.write_settings(results_to_mapping(results), results_path(path))
+
+
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆位置，越界或非法时回落到默认 geometry。"""
     from fcmd.gui import geometry as _geometry
@@ -541,6 +569,18 @@ def scan_progress_text(done: int, total: int, rate: float = 0.0) -> str:
         if files > scanned:
             parts.append(f"剩余 {format_eta((files - scanned) / rate)}")
     return " · ".join(parts)
+
+
+def scan_task_summary(result: ScanResult) -> str:
+    """任务列表 / 详情用的精简结果摘要，只留命中数与取消前缀。
+
+    完整口径（范围外 / 读取后跳过 / 0 命中诊断）仍走 :func:`scan_status_text`，
+    写在状态栏与结果页；任务行只需要「命中几个文件、共几条」这种一眼可读的数字。
+    """
+    prefix = "已停止 · " if result.stats.cancelled else ""
+    if result.stats.hit_files <= 0 and result.stats.hit_count <= 0:
+        return f"{prefix}无命中"
+    return f"{prefix}命中 {result.stats.hit_files} 文件 / {result.stats.hit_count} 条"
 
 
 def scan_status_text(result: ScanResult) -> str:

@@ -301,6 +301,15 @@ def _status_result(stats: ScanStats) -> ScanResult:
     return ScanResult(roots=(Path("D:/data"),), hits=[], skipped=[], errors=[], stats=stats)
 
 
+def test_scan_task_summary_is_concise() -> None:
+    """任务行摘要只给命中数字；无命中 / 取消各给一句短文案。"""
+    hits = ScanStats(hit_files=2, hit_count=3)
+    assert filescanw.scan_task_summary(_status_result(hits)) == "命中 2 文件 / 3 条"
+    assert filescanw.scan_task_summary(_status_result(ScanStats())) == "无命中"
+    stopped = ScanStats(hit_files=1, hit_count=1, cancelled=True)
+    assert filescanw.scan_task_summary(_status_result(stopped)) == "已停止 · 命中 1 文件 / 1 条"
+
+
 def test_scan_status_text_separates_scope_from_read_skips() -> None:
     """范围外文件不再被 GUI 笼统称作「跳过」，0 命中时给出诊断。"""
     stats = ScanStats(
