@@ -106,16 +106,20 @@ def _b64(text: str) -> str:
 def _wait_idle(window: _wslmanw_qt.WslmanQtWindow, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     app = QApplication.instance()
-    # 先让 ``_task_finished`` 里 singleShot(0) 排队的轻量状态刷新落地，再等它完成；
-    # 只等 ``_busy`` 会在状态刷新线程仍在跑时提前返回，读到旧行卡。
+    # 先让 ``_task_finished`` 里 singleShot(0) 排队的刷新（轻量状态 / 完整重读）落地，
+    # 再等它完成；只等 ``_busy`` 会在状态刷新线程仍在跑时提前返回，读到旧行卡。
+    # 连续两拍空闲才收手：收尾的那一拍可能刚好只把 timer 排进队列，下一拍才真正启动。
+    settled = 0
     while time.monotonic() < deadline:
         if app is not None:
             app.processEvents()
-        if not window._busy and not window._status_busy:
-            break
+        if window._busy or window._status_busy or window._reload_pending:
+            settled = 0
+        else:
+            settled += 1
+            if settled >= 2:
+                break
         time.sleep(0.01)
-    if app is not None:
-        app.processEvents()
     assert not window._busy
 
 
@@ -790,7 +794,9 @@ def test_start_failure_dialog_only_after_waiting_for_running(home: Path, monkeyp
         assert waited  # 先等待，再判定失败
         assert messages and "启动后状态仍为" in messages[0]
         assert "已等待" in messages[0]
+        # 状态行也要能读到原因，不能只有一条「启动失败」。
         assert "启动失败" in window.status_text()
+        assert "启动后状态仍为" in window.status_text()
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
@@ -2696,58 +2702,234 @@ def test_refresh_requested_during_task_runs_after_finish(home: Path, monkeypatch
         window.deleteLater()
 
 
-def test_reload_button_rereads_registry_and_recomputes_work_dir(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """「更新列表」走完整刷新：重读注册信息，并按当前工作目录重算行内归属。"""
-    installed = str(home / "wsl" / "install" / "Ubuntu")
-    monkeypatch.setattr(cli, "_view", lambda env: _view(replace(_distro(), base_path=installed)))
-    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+def test_reload_button_rereads_registry_and_recomputes_work_dir_size(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """「更新列表」重读注册信息：实例搬家后归属目录与占用都按新 BasePath 重算。"""
+    first = home / "wsl" / "install" / "Ubuntu"
+    second = home / "other" / "install" / "Ubuntu"
+    state = {"base": str(first)}
+    sizes = {str(first): (2048, False), str(second): (4096, True)}
+    monkeypatch.setattr(
+        cli,
+        "_view",
+        lambda env: _view(replace(_distro("Ubuntu", "stopped"), base_path=state["base"])),
+    )
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda base, version: sizes.get(str(base), (None, False)))
     window = _wslmanw_qt.WslmanQtWindow()
-    loaded: list[str] = []
-
-    def fake_load(self: _wslmanw_qt.WslmanQtWindow, _cancel: threading.Event) -> str:
-        loaded.append("load")
-        self.view = _view(replace(_distro(), base_path=installed))
-        self.sizes = {"Ubuntu": (2048, False)}
-        return "已加载 1 个实例"
-
-    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load", fake_load)
     try:
         _wait_idle(window)
-        assert _distro_row(window, 0).work_dir == home / "wsl"
-
-        other = home / "other"
         cast(Any, window).settings = wslmanw.with_work_dirs(
-            cast(wslmanw.WslmanwSettings, window.settings), [other, home / "wsl"], other
+            cast(wslmanw.WslmanwSettings, window.settings),
+            [home / "wsl", home / "other"],
+            home / "wsl",
         )
         window._on_reload_distros()
         _wait_idle(window)
+        row = _distro_row(window, 0)
+        assert row.work_dir == home / "wsl"
+        metrics = row.metrics_label
+        assert metrics is not None and metrics.text() == "2.0 KiB"
 
-        assert loaded == ["load"]
-        # 默认目录换了，但实例仍归属于 home/wsl，归属不能被默认目录带偏。
-        assert _distro_row(window, 0).work_dir == home / "wsl"
-        assert "wsl" in _distro_row(window, 0).sub_label.text()
+        state["base"] = str(second)  # 实例被整体移动到第二个工作目录
+        window._on_reload_distros()
+        _wait_idle(window)
+
+        row = _distro_row(window, 0)
+        assert row.distro.base_path == str(second)
+        assert row.work_dir == home / "other"
+        assert "other" in row.sub_label.text()
+        metrics = row.metrics_label
+        assert metrics is not None and metrics.text() == "≈4.0 KiB"
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
 
-def test_reload_button_while_busy_marks_pending(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """重操作进行中点「更新列表」：不另起任务，明确提示待刷新。"""
-    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
-    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+def test_reload_keeps_size_when_instance_is_outside_configured_dirs(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """实例不在任何已配置目录：归属如实标注，占用仍按 BasePath 的 vhdx 解析。"""
+    outside = home / "external" / "Ubuntu"
+    monkeypatch.setattr(cli, "_view", lambda env: _view(replace(_distro("Ubuntu", "stopped"), base_path=str(outside))))
+    monkeypatch.setattr(
+        _wslmanw_qt,
+        "distro_disk_bytes",
+        lambda base, version: (8192, False) if str(base) == str(outside) else (None, False),
+    )
     window = _wslmanw_qt.WslmanQtWindow()
-    loaded: list[str] = []
-    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load", lambda self, cancel: loaded.append("load") or "")
     try:
         _wait_idle(window)
+        window._on_reload_distros()
+        _wait_idle(window)
+
+        row = _distro_row(window, 0)
+        assert row.work_dir is None
+        assert row.sub_label.text().endswith("未在已配置目录")
+        metrics = row.metrics_label
+        assert metrics is not None and metrics.text() == "8.0 KiB"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_reload_button_while_busy_runs_full_reload_after_finish(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """重操作中点的「更新列表」不丢：收尾后完整重读，归属与占用按新位置重算。"""
+    first = home / "wsl" / "install" / "Ubuntu"
+    second = home / "other" / "install" / "Ubuntu"
+    state = {"base": str(first)}
+    sizes = {str(first): (2048, False), str(second): (8192, False)}
+    monkeypatch.setattr(
+        cli,
+        "_view",
+        lambda env: _view(replace(_distro("Ubuntu", "stopped"), base_path=state["base"])),
+    )
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda base, version: sizes.get(str(base), (None, False)))
+    window = _wslmanw_qt.WslmanQtWindow()
+    loads: list[str] = []
+    real_load = _wslmanw_qt.WslmanQtWindow._load
+
+    def counting_load(self: Any, cancel: threading.Event) -> str:
+        loads.append("load")
+        return real_load(self, cancel)
+
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load", counting_load)
+    try:
+        _wait_idle(window)
+        cast(Any, window).settings = wslmanw.with_work_dirs(
+            cast(wslmanw.WslmanwSettings, window.settings),
+            [home / "wsl", home / "other"],
+            home / "wsl",
+        )
+        state["base"] = str(second)
+        loads.clear()
         window._busy = True
         window._button_by_text["更新列表"].click()
 
-        assert loaded == []
-        assert window._refresh_pending is True
-        assert "已有任务在执行" in window.page_status("distros")
+        assert loads == []
+        assert window._reload_pending is True
+        assert "结束后自动" in window.page_status("distros")
+
+        window._busy = False
+        window._task_finished()
+        QApplication.processEvents()
+        _wait_idle(window)
+
+        assert loads == ["load"]
+        row = _distro_row(window, 0)
+        assert row.work_dir == home / "other"
+        metrics = row.metrics_label
+        assert metrics is not None and metrics.text() == "8.0 KiB"
     finally:
         window._busy = False
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_move_task_finishes_with_full_reload(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """迁移收尾的轻量刷新发现 BasePath 变了：静默完整重读，归属与占用立刻更新。"""
+    outside = home / "external" / "Ubuntu"
+    second = home / "other" / "install" / "Ubuntu"
+    state = {"base": str(outside)}
+    sizes = {str(outside): (2048, False), str(second): (8192, False)}
+    monkeypatch.setattr(
+        cli,
+        "_view",
+        lambda env: _view(replace(_distro("Ubuntu", "stopped"), base_path=state["base"])),
+    )
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda base, version: sizes.get(str(base), (None, False)))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        cast(Any, window).settings = wslmanw.with_work_dirs(
+            cast(wslmanw.WslmanwSettings, window.settings),
+            [home / "wsl", home / "other"],
+            home / "wsl",
+        )
+        assert _distro_row(window, 0).work_dir is None
+
+        state["base"] = str(second)
+        window._busy = True
+        window._task_done("迁移", ("ok", "已迁移到 other"))
+        window._task_finished()
+        QApplication.processEvents()
+        _wait_idle(window)
+
+        row = _distro_row(window, 0)
+        assert row.work_dir == home / "other"
+        metrics = row.metrics_label
+        assert metrics is not None and metrics.text() == "8.0 KiB"
+        # 自动重读是静默的：任务结果不被泛化的「刷新完成」覆盖。
+        assert window.page_status("distros") == "迁移完成"
+    finally:
+        window._busy = False
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_status_poll_reloads_rows_when_base_path_changes(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """轮询发现 BasePath 变了：完整重读，归属与占用跟着换，不用等手动点「更新列表」。"""
+    first = home / "wsl" / "install" / "Ubuntu"
+    second = home / "other" / "install" / "Ubuntu"
+    sizes = {str(first): (2048, False), str(second): (8192, False)}
+    current = {"view": _view(replace(_distro("Ubuntu", "stopped"), base_path=str(first)))}
+    monkeypatch.setattr(cli, "_view", lambda env: current["view"])
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda base, version: sizes.get(str(base), (None, False)))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        cast(Any, window).settings = wslmanw.with_work_dirs(
+            cast(wslmanw.WslmanwSettings, window.settings),
+            [home / "wsl", home / "other"],
+            home / "wsl",
+        )
+        window._on_reload_distros()
+        _wait_idle(window)
+        assert _distro_row(window, 0).work_dir == home / "wsl"
+
+        current["view"] = _view(replace(_distro("Ubuntu", "stopped"), base_path=str(second)))
+        window._on_status(current["view"])
+        QApplication.processEvents()
+        _wait_idle(window)
+
+        row = _distro_row(window, 0)
+        assert row.work_dir == home / "other"
+        metrics = row.metrics_label
+        assert metrics is not None and metrics.text() == "8.0 KiB"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_start_selected_reprobes_state_instead_of_trusting_stale_row(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """行卡停在过期的「运行中」时点启动：按新环境重新探测并真正拉起。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro("Ubuntu", "running")))
+    monkeypatch.setattr(cli, "_build_environment", lambda: SimpleNamespace(config=WslmanConfig(path=default_path())))
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        cli,
+        "_require_target",
+        lambda env, name: calls.append(("probe", name)) or _distro("Ubuntu", "stopped"),
+    )
+    monkeypatch.setattr(
+        _wslmanw_qt.WslmanQtWindow,
+        "_launch_keepalive",
+        lambda self, env, name: calls.append(("launch", name)),
+    )
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.distro_list.setCurrentRow(0)
+        window._start_selected()
+        _wait_idle(window)
+
+        assert calls == [("probe", "Ubuntu"), ("launch", "Ubuntu")]
+        assert window.page_status("distros") == "启动完成"
+    finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 

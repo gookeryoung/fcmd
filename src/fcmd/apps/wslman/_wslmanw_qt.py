@@ -515,6 +515,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._images_note = ""
         self._busy = False
         self._refresh_pending = False
+        self._reload_pending = False
+        self._reload_quiet = False
         self._list_pending = False
         self._opener_detections: dict[str, tuple[dict[str, _open.Detection], dict[str, _open.Detection]]] = {}
         self._detecting = False
@@ -1905,7 +1907,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
     # ------------------------------------------------------------------ #
     # 任务编排
     # ------------------------------------------------------------------ #
-    def _start(self, label: str, work: Any) -> None:
+    def _start(self, label: str, work: Any, *, quiet: bool = False) -> None:
         if self._busy:
             QMessageBox.information(self, "请稍候", "已有任务在执行")
             return
@@ -1917,11 +1919,13 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._cancel = threading.Event()
         self._bridge = EventBridge(self)
         self._bridge.event.connect(self._on_log_event)
-        self._set_task_status(f"{label}…")
+        if not quiet:
+            self._set_task_status(f"{label}…")
         self._set_buttons(False)
         # 任务进行中在状态栏右侧显示加载条；可预估总量的导出会切成确定进度。
         self._export_meter.reset()
-        self.show_loading(f"{label}…")
+        if not quiet:
+            self.show_loading(f"{label}…")
 
         def runner(cancel: threading.Event) -> tuple[str, str]:
             try:
@@ -1935,25 +1939,31 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         submit(
             runner,
             self._cancel,
-            on_done=lambda payload: self._task_done(label, payload),
-            on_error=lambda message: self._task_error(label, message),
+            on_done=lambda payload: self._task_done(label, payload, quiet=quiet),
+            on_error=(lambda message: self._quiet_error(label, message))
+            if quiet
+            else (lambda message: self._task_error(label, message)),
             on_finished=self._task_finished,
         )
 
-    def _task_done(self, label: str, payload: tuple[str, str]) -> None:
+    def _task_done(self, label: str, payload: tuple[str, str], *, quiet: bool = False) -> None:
         status, message = payload
         if status == "cancelled":
             self._log(f"[{label}] {message}")
-            self._set_task_status(f"{label}已取消")
+            if not quiet:
+                self._set_task_status(f"{label}已取消")
             self._refresh_image_states()
             return
         if status != "ok":
             self._log(f"[{label}] {message}")
-            self._set_task_status(f"{label}失败")
-            QMessageBox.critical(self, label, message)
+            if not quiet:
+                # 状态行要能读到失败原因：错误框可能被切走 / 忽略，日志也不是唯一入口。
+                self._set_task_status(f"{label}失败：{message}")
+                QMessageBox.critical(self, label, message)
             return
         self._log(f"[{label}] {message}")
-        self._set_task_status(f"{label}完成")
+        if not quiet:
+            self._set_task_status(f"{label}完成")
         if label == "刷新":
             self._refresh_rows()
         else:
@@ -1964,8 +1974,12 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
 
     def _task_error(self, label: str, message: str) -> None:
         self._log(f"[{label}] 失败：{message}")
-        self._set_task_status(f"{label}失败")
+        self._set_task_status(f"{label}失败：{message}")
         QMessageBox.critical(self, label, message)
+
+    def _quiet_error(self, label: str, message: str) -> None:
+        """静默刷新失败：只记日志，不覆盖用户刚看到的任务结果。"""
+        self._log(f"[{label}] 失败：{message}")
 
     def _task_finished(self) -> None:
         self._busy = False
@@ -1977,6 +1991,14 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         if self._closing:
             return
         self._update_action_states()
+        if self._reload_pending:
+            # 「更新列表」或注册信息变化等到了空闲点：重读注册信息，按当前位置重算
+            # 归属目录与占用（不能降级成轻量状态轮询，它只重读 ``wsl -l -v``）。
+            quiet = self._reload_quiet
+            self._reload_pending = False
+            self._reload_quiet = False
+            self._list_pending = False
+            QTimer.singleShot(0, lambda: self.refresh(quiet=quiet))
         if self._list_pending:
             # 工作目录在任务进行中改过：当时没重建列表，收尾后按新配置重算归属。
             self._list_pending = False
@@ -2151,6 +2173,9 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         names = [distro.name for distro in view.distros]
         if previous is None or names != [distro.name for distro in previous.distros]:
             self._refresh_rows()
+            if previous is not None and any(distro.name not in self.sizes for distro in view.distros):
+                # 外部新增实例：新行还没有占用数据，完整重读一次补上。
+                self._schedule_reload()
             return
         for index in range(self.distro_list.count()):
             row = self.distro_list.itemWidget(self.distro_list.item(index))
@@ -2166,23 +2191,52 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 self.distro_detail_view.render(distro, size, estimated)
         self._update_action_states()
         self._show_details()
+        if self._base_paths_changed(previous, view):
+            # BasePath 变了（实例被移动 / 迁移）：归属目录与 vhdx 占用都要按新位置重算，
+            # 就地更新补不上，安排一次完整重读。
+            self._schedule_reload()
+
+    @staticmethod
+    def _base_paths_changed(previous: Any, current: Any) -> bool:
+        """注册表里的 ``BasePath`` 是否变了（按实例名比对）。"""
+        before = {distro.name: distro.base_path for distro in previous.distros}
+        return any(before.get(distro.name) != distro.base_path for distro in current.distros)
+
+    def _schedule_reload(self) -> None:
+        """安排一次完整的静默重读：忙时并入任务收尾，空闲时下一拍执行。"""
+        if self._busy:
+            self._reload_pending = True
+            self._reload_quiet = True
+            return
+        QTimer.singleShot(0, lambda: self.refresh(quiet=True))
 
     # ------------------------------------------------------------------ #
     # 列表与详情
     # ------------------------------------------------------------------ #
-    def refresh(self) -> None:
-        """重新读取实例注册信息，并按当前工作目录配置重算每个实例的归属目录。"""
+    def refresh(self, *, quiet: bool = False) -> None:
+        """重新读取实例注册信息，并按当前工作目录配置重算每个实例的归属目录。
+
+        ``quiet`` 用于注册信息变化后的自动重读：不写状态行 / 加载条，避免把用户刚
+        看到的「安装完成 / 迁移完成」等任务结果覆盖成一句泛化的「刷新完成」。
+        """
         if self._busy:
             self._refresh_pending = True
             return
         self._list_pending = False
-        self._start("刷新", self._load)
+        self._reload_pending = False
+        self._reload_quiet = False
+        self._start("刷新", self._load, quiet=quiet)
 
     def _on_reload_distros(self) -> None:
-        """「更新列表」：手动重读注册信息；重操作进行中只提示待刷新。"""
+        """「更新列表」：完整重读注册信息（BasePath → 归属目录与占用）。
+
+        忙时不丢弃这次点击：标记完整刷新，任务收尾后自动执行。轻量状态轮询只重读
+        ``wsl -l -v``，不会重算归属目录与 vhdx 占用，不能代替本动作。
+        """
         if self._busy:
-            self._refresh_pending = True
-            self.set_page_status("distros", "已有任务在执行；结束后自动刷新，也可稍后点「更新列表」")
+            self._reload_pending = True
+            self._reload_quiet = False
+            self.set_page_status("distros", "已有任务在执行；结束后自动重读列表，也可稍后点「更新列表」")
             return
         self.refresh()
 
@@ -2454,11 +2508,10 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
     def _start_selected(self) -> None:
         distro = self._selected()
         if distro is None:
+            self.set_page_status("distros", "未选中实例；先选中一行再启动")
             return
-        if distro.state == "running":
-            self.set_page_status("distros", f"{distro.name} 已在运行")
-            self._update_action_states()
-            return
+        # 不用行卡里缓存的 state 提前返回：列表可能是过期的（注册信息变了、实例刚被
+        # 移动 / 迁移），真正的状态由后台新环境重新探测；确实在运行时 worker 会如实返回。
 
         def work(_cancel: threading.Event) -> str:
             env = cli._build_environment()
