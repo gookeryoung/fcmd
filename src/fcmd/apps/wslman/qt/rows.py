@@ -148,16 +148,16 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
             can_start = can_stop = False
         enabled = (can_start or can_stop) and not self._busy
         if can_stop:
-            _owner.set_button_kind(self.start_stop_button, "danger")
+            self.start_stop_button.set_kind("danger")
             tone = "danger" if enabled else "muted"
             text = "停止"
             icon = "stop"
         else:
-            _owner.set_button_kind(self.start_stop_button, "primary")
+            self.start_stop_button.set_kind("primary")
             tone = "on_accent" if enabled else "muted"
             text = "启动"
             icon = "run"
-        _owner.set_button_icon(self.start_stop_button, icon, tone=tone)
+        self.start_stop_button.set_icon_name(icon, tone=tone)
         self.start_stop_button.setEnabled(enabled)
         tip = "需先修复注册" if self.distro.needs_repair else f"{text} {self.distro.name}"
         self.start_stop_button.setToolTip(tip)

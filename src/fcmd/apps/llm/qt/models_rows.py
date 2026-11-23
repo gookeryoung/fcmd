@@ -179,7 +179,7 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
             text = "排队中…"
         else:
             text = "继续下载" if self._incomplete else "下载"
-        _owner.set_button_text(self.download_button, text)
+        self.download_button.set_text(text)
 
     def set_convert_state(self, *, busy: bool, active: bool) -> None:
         """转换中禁用按钮；已转换行保持不可点击的「已转换」。"""
@@ -187,14 +187,14 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
             return
         if self._converted:
             self.convert_button.setEnabled(False)
-            _owner.set_button_text(self.convert_button, "已转换", tone="success")
+            self.convert_button.set_text("已转换", tone="success")
             return
         if self._convert_blocked:
             self.convert_button.setEnabled(False)
-            _owner.set_button_text(self.convert_button, "不可转换")
+            self.convert_button.set_text("不可转换")
             return
         self.convert_button.setEnabled(not busy)
-        _owner.set_button_text(self.convert_button, "转换中…" if active else "转换")
+        self.convert_button.set_text("转换中…" if active else "转换")
 
     def set_quant_state(self, *, busy: bool, active: bool) -> None:
         """量化中禁用按钮；无候选时保持不可量化的禁用态。"""
@@ -202,10 +202,10 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
             return
         if self._quant_blocked:
             self.quant_button.setEnabled(False)
-            _owner.set_button_text(self.quant_button, "不可量化")
+            self.quant_button.set_text("不可量化")
             return
         self.quant_button.setEnabled(not busy)
-        _owner.set_button_text(self.quant_button, "量化中…" if active else "量化")
+        self.quant_button.set_text("量化中…" if active else "量化")
 
     def set_serve_state(self, *, busy: bool, running: bool) -> None:
         """快捷启动按钮：任务进行中禁用，已运行时显示「已启动」。
@@ -217,8 +217,7 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
             return
         enabled = not busy and not running
         self.start_button.setEnabled(enabled)
-        _owner.set_button_text(
-            self.start_button,
+        self.start_button.set_text(
             "已启动" if running else "启动服务",
             tone="on_accent" if enabled else "muted",
         )

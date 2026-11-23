@@ -20,7 +20,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.gui.widgets.buttons import ButtonStateMixin
 from fcmd.gui.widgets.log import LogView
+from fcmd.gui.widgets.text import ToneLabelMixin
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -147,14 +149,14 @@ def fit_dialog_to_content(dialog: QDialog, *, min_width: int | None = None) -> N
     dialog.adjustSize()
 
 
-class ChoiceCard(QPushButton):  # pragma: no cover - Qt 控件
+class ChoiceCard(ButtonStateMixin, ToneLabelMixin, QPushButton):  # pragma: no cover - Qt 控件
     """可选项方块：标题 + 下方说明，整块可点击。"""
 
     def __init__(self, title: str, description: str, *, tone: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ChoiceCard")
         if tone:
-            self.setProperty("tone", tone)
+            self.set_tone(tone)
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)

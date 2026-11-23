@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMessageBox,
-    QProgressBar,
     QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
@@ -74,6 +73,7 @@ from fcmd.gui.toolwindow import QtToolWindow
 from fcmd.gui.widgets import (
     Card,
     PageScroll,
+    ProgressBar,
     button,
     confirm,
     hint_label,
@@ -468,8 +468,7 @@ class FilescanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._cancel_button.setEnabled(False)
         self._cancel_button.clicked.connect(self._cancel_scan)
         actions.addWidget(self._cancel_button)
-        self._progress = QProgressBar(self)
-        self._progress.setRange(0, 100)
+        self._progress = ProgressBar(parent=self)
         actions.addWidget(self._progress, 1)
         for text, handler in (
             ("导入配置…", self._import_config),

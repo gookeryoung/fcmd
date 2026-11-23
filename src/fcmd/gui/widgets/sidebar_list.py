@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui import style as _qt_theme
+from fcmd.gui.widgets.buttons import ButtonStateMixin
 
 __all__ = ["SidebarActionButton", "SidebarEntry", "SidebarList"]
 
@@ -176,7 +177,7 @@ def _theme() -> Any:
         return next(iter(THEMES.values()))
 
 
-class SidebarActionButton(QPushButton):  # pragma: no cover - Qt 控件
+class SidebarActionButton(ButtonStateMixin, QPushButton):  # pragma: no cover - Qt 控件
     """侧边栏顶部的主操作按钮：与 SidebarList 条目同宽、圆角与内边距同源。
 
     比普通按钮更「实体」：半透明强调底 + 更深边框，和列表条目区分；高度与

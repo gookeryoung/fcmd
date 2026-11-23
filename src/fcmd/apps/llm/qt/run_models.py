@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import fcmd.apps.llm._llmw_qt_run as _owner
+from fcmd.gui.widgets import HintLabel
 
 from .run_compat import (
     Path,
-    QLabel,
     ServeState,
     _llmw_compat,
 )
@@ -45,14 +45,11 @@ class RunModelsMixin:
         selected = self._selected_service_state()
         running = selected is not None and _owner.llmserve.process_alive(selected.pid, selected.create_time)
         has_model = self.state.selected_model is not None or bool(self._usage_models())
-        _owner.set_button_text(
-            self.model_action_button,
+        self.model_action_button.set_text(
             "停止服务" if running else "启动服务",
             tone="danger" if running else "on_accent",
         )
-        self.model_action_button.setObjectName("RunDanger" if running else "RunPrimary")
-        self.model_action_button.style().unpolish(self.model_action_button)
-        self.model_action_button.style().polish(self.model_action_button)
+        self.model_action_button.set_style_name("RunDanger" if running else "RunPrimary")
         self.model_action_button.setEnabled(not busy and has_model)
         # 重启只在服务已运行时可用；任务进行中禁用，避免停止 / 启动竞争。
         self.restart_button.setEnabled(not busy and running)
@@ -95,9 +92,7 @@ class RunModelsMixin:
                 hint.setText("vLLM · 未找到 HF safetensors 模型目录")
             else:
                 hint.setText(f"vLLM · {path.name} · {self._vllm_platform.reason}")
-            hint.setProperty("tone", "accent" if path is not None else "muted")
-            hint.style().unpolish(hint)
-            hint.style().polish(hint)
+            hint.set_tone("accent" if path is not None else "muted")
             return
         if path is None:
             hint.setText("")
@@ -132,11 +127,9 @@ class RunModelsMixin:
         self._set_compat_hint(hint, compat)
 
     @staticmethod
-    def _set_compat_hint(label: QLabel, compat: _llmw_compat.Compat) -> None:
+    def _set_compat_hint(label: HintLabel, compat: _llmw_compat.Compat) -> None:
         label.setText(f"模型适配 · {compat.hint}")
-        label.setProperty("tone", compat.tone)
-        label.style().unpolish(label)
-        label.style().polish(label)
+        label.set_tone(compat.tone)
 
     def _service_status_text(self, path: Path) -> str:
         """只有正在运行的服务才返回状态；未运行不占用下拉项文本。"""

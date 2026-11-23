@@ -33,19 +33,27 @@ from PySide6.QtWidgets import (
 from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.widgets import (
+    Button,
+    ButtonStateMixin,
     Card,
     ChoiceGroup,
     Collapsible,
     DiskGrid,
     DiskLocation,
     DiskTile,
+    ElidedLabel,
     FlowLayout,
+    HintLabel,
+    IconButton,
     ItemRow,
+    LinkButton,
     LoadingBar,
     LogView,
     MetricGrid,
+    MonoLabel,
     PathRow,
     PillTabBar,
+    ProgressBar,
     ProgressRow,
     RowDetailMixin,
     RowListWidget,
@@ -53,15 +61,22 @@ from fcmd.gui.widgets import (
     SelectionRow,
     StatusTag,
     ToggleChip,
+    ToneLabelMixin,
+    ValueLabel,
     button,
+    hint_label,
     icon_button,
+    link_button,
+    mono_label,
     pill_tabs,
     section_header,
     segment_band,
     segment_fill,
     set_button_kind,
+    set_button_style_name,
     set_button_text,
     tab_widget,
+    value_label,
 )
 
 _BUTTON_KINDS = ("", "primary", "danger", "ghost")
@@ -530,6 +545,41 @@ def test_choice_group_selects_and_emits() -> None:
         group.deleteLater()
 
 
+def test_progress_bar_scales_and_toggles_busy() -> None:
+    """统一进度条：忙碌态 / 比例写入 / 百分比写入都按当前 maximum 折算且不溢出。"""
+    bar = ProgressBar(maximum=1000)
+    try:
+        assert bar.isTextVisible() is False
+        assert bar.maximum() == 1000
+        bar.set_progress(1, 4)
+        assert bar.value() == 250
+        bar.set_progress(5, 4)
+        assert bar.value() == 1000
+        # 总量未知回到忙碌态；下次有总量时恢复原刻度。
+        bar.set_progress(0, 0)
+        assert bar.maximum() == 0
+        bar.set_progress(1, 2)
+        assert bar.maximum() == 1000
+        assert bar.value() == 500
+        bar.set_percent(None)
+        assert bar.maximum() == 0
+        bar.set_percent(42)
+        assert bar.maximum() == 100
+        assert bar.value() == 42
+        bar.set_percent(150)
+        assert bar.value() == 100
+    finally:
+        bar.deleteLater()
+
+    thin = ProgressBar(height=6)
+    try:
+        assert thin.height() == 6
+        assert thin.maximum() == 100
+        assert thin.value() == 0
+    finally:
+        thin.deleteLater()
+
+
 def test_progress_row_keeps_actions_and_optional_bar() -> None:
     """进度行可挂动作按钮；纯状态场景可隐藏进度条。"""
     row = ProgressRow("就绪")
@@ -860,6 +910,84 @@ def test_button_attaches_shared_icon_automatically() -> None:
     assert forced.icon().isNull() is False
     disabled_icon = button("刷新", icon="")
     assert disabled_icon.icon().isNull() is True
+
+
+def test_tone_label_mixin_and_factory_subclasses() -> None:
+    """语义色标签共用 mixin；hint / value / mono 工厂返回对应子类。"""
+    hint = hint_label("说明")
+    value = value_label("42")
+    mono = mono_label("ls -la")
+    elided = ElidedLabel("很长的路径")
+    tag = StatusTag("运行中", tone="success")
+    try:
+        for widget in (hint, value, mono, elided, tag):
+            assert isinstance(widget, ToneLabelMixin)
+        assert isinstance(hint, HintLabel)
+        assert isinstance(value, ValueLabel)
+        assert isinstance(mono, MonoLabel)
+        assert hint.wordWrap() is True
+        assert hint_label("单行", wrap=False).wordWrap() is False
+        assert tag.tone() == "success"
+        hint.set_tone("danger")
+        assert hint.tone() == "danger"
+        # 未知识别回落到 muted，且重复设置不重抛光。
+        hint.set_tone("bogus")
+        assert hint.tone() == "muted"
+        hint.set_tone("muted")
+        assert hint.tone() == "muted"
+        tag.set_status("失败", "danger")
+        assert tag.text() == "失败"
+        assert tag.tone() == "danger"
+        tag.set_status("失败", "danger")
+    finally:
+        for widget in (hint, value, mono, elided, tag):
+            widget.deleteLater()
+
+
+def test_button_factory_returns_stateful_subclasses() -> None:
+    """工厂返回带状态方法的子类；其它按钮控件也复用同一套状态 mixin。"""
+    from fcmd.gui.widgets import ChoiceCard, DiskAddTile, SidebarActionButton
+
+    primary = button("运行", kind="primary")
+    icon = icon_button("+", tooltip="添加")
+    link = link_button("重新检测")
+    try:
+        assert isinstance(primary, Button)
+        assert isinstance(icon, IconButton)
+        assert isinstance(link, LinkButton)
+        for widget in (primary, icon, link):
+            assert isinstance(widget, ButtonStateMixin)
+        assert issubclass(ChoiceCard, ButtonStateMixin)
+        assert issubclass(DiskAddTile, ButtonStateMixin)
+        assert issubclass(SidebarActionButton, ButtonStateMixin)
+    finally:
+        primary.deleteLater()
+        icon.deleteLater()
+        link.deleteLater()
+
+
+def test_button_state_mixin_methods_delegate() -> None:
+    """混入方法等价于模块级函数，并支持自定义 objectName 重抛光。"""
+    widget = button("启动服务", kind="primary")
+    try:
+        widget.set_kind("danger")
+        assert widget.objectName() == "Danger"
+        widget.set_text("停止服务", tone="danger")
+        assert widget.text() == "停止服务"
+        assert widget.property("fcmdIconName") == "stop"
+        assert widget.property("fcmdIconTone") == "danger"
+        widget.set_icon_name("run", tone="muted")
+        assert widget.property("fcmdIconName") == "run"
+        assert widget.property("fcmdIconTone") == "muted"
+        widget.set_style_name("RunPrimary")
+        assert widget.objectName() == "RunPrimary"
+        # 同名重复设置不再重抛光。
+        widget.set_style_name("RunPrimary")
+        assert widget.objectName() == "RunPrimary"
+        set_button_style_name(widget, "")
+        assert widget.objectName() == ""
+    finally:
+        widget.deleteLater()
 
 
 def test_set_button_kind_switches_variant() -> None:

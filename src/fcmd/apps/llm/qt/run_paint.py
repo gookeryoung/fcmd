@@ -148,14 +148,11 @@ class RunPaintMixin:
         reachable = bool(probe.reachable) if probe is not None else False
         running = alive or reachable
         busy = self.state.busy or self._paint_busy
-        _owner.set_button_text(
-            self.paint_action_button,
+        self.paint_action_button.set_text(
             "停止服务" if running else "启动服务",
             tone="danger" if running else "on_accent",
         )
-        self.paint_action_button.setObjectName("RunDanger" if running else "RunPrimary")
-        self.paint_action_button.style().unpolish(self.paint_action_button)
-        self.paint_action_button.style().polish(self.paint_action_button)
+        self.paint_action_button.set_style_name("RunDanger" if running else "RunPrimary")
         self.paint_action_button.setEnabled(not busy)
         self.paint_restart_button.setEnabled(not busy and alive)
         section = getattr(self, "paint_engine_section", None)

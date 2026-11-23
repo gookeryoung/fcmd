@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QProgressBar,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -29,8 +28,9 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui import icons as _icons
-from fcmd.gui.widgets.buttons import button, confirm
+from fcmd.gui.widgets.buttons import ButtonStateMixin, button, confirm
 from fcmd.gui.widgets.cards import Card
+from fcmd.gui.widgets.metrics import ProgressBar
 from fcmd.gui.widgets.text import ElidedLabel, StatusTag, hint_label
 from fcmd.shared.formatting import format_bytes
 
@@ -142,11 +142,8 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(3)
-        bar = QProgressBar(box)
+        bar = ProgressBar(height=6, parent=box)
         bar.setObjectName("DiskBar")
-        bar.setTextVisible(False)
-        bar.setFixedHeight(6)
-        bar.setRange(0, 100)
         bar.setValue(location.percent if location.total else 0)
         layout.addWidget(bar)
         usage = QLabel(self._usage_text(location), self)
@@ -189,7 +186,7 @@ class DiskTile(QFrame):  # pragma: no cover - Qt 控件
         return row
 
 
-class DiskAddTile(QPushButton):  # pragma: no cover - Qt 控件
+class DiskAddTile(ButtonStateMixin, QPushButton):  # pragma: no cover - Qt 控件
     """虚线「添加目录」卡片：与磁盘卡片同高并排。"""
 
     def __init__(self, text: str = "添加目录", parent: QWidget | None = None) -> None:

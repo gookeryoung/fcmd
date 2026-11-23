@@ -27,6 +27,7 @@ __all__ = [
     "KeyValueGrid",
     "LoadingBar",
     "MetricGrid",
+    "ProgressBar",
     "ProgressRow",
     "SegmentBar",
     "segment_band",
@@ -193,6 +194,57 @@ _PROGRESS_STEPS = 1000
 """确定进度条的内部刻度：与字节数解耦，避免几十 GB 的商品文件撑爆 QProgressBar 的 int 范围。"""
 
 
+class ProgressBar(QProgressBar):  # pragma: no cover - Qt 控件
+    """统一进度条：隐藏百分比、可切忙碌态、按比例写入且不溢出。
+
+    ``QProgressBar`` 的取值是 32 位 ``int``，几十 GB 的字节数会溢出；需要按字节
+    上报的调用方用 :meth:`set_progress`（按当前 ``maximum`` 折算），或直接使用
+    :data:`_PROGRESS_STEPS` 刻度。默认 ``0..100`` 与多数窗口的百分比口径一致。
+    """
+
+    def __init__(
+        self,
+        *,
+        maximum: int = 100,
+        height: int | None = None,
+        busy: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._maximum = max(int(maximum), 1)
+        self.setTextVisible(False)
+        if height is not None:
+            self.setFixedHeight(height)
+        if busy:
+            self.set_busy()
+        else:
+            self.setRange(0, self._maximum)
+            self.setValue(0)
+
+    def set_busy(self) -> None:
+        """切到忙碌动画（总量未知）；不显示百分比。"""
+        self.setRange(0, 0)
+
+    def set_progress(self, done: float, total: float | None) -> None:
+        """按 ``done / total`` 写入比例；``total`` 未知或非正数时回到忙碌态。"""
+        if not total or total <= 0:
+            self.set_busy()
+            return
+        ratio = max(0.0, min(1.0, float(done) / float(total)))
+        if self.maximum() != self._maximum:
+            self.setRange(0, self._maximum)
+        self.setValue(int(ratio * self._maximum))
+
+    def set_percent(self, percent: float | None) -> None:
+        """写入 0–100 百分比；``None`` 切忙碌态。"""
+        if percent is None:
+            self.set_busy()
+            return
+        self.setRange(0, 100)
+        clamped = max(0.0, min(100.0, float(percent)))
+        self.setValue(round(clamped))
+
+
 class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
     """不定进度加载条：说明文字 + 忙碌动画 + 已用时（秒）。
 
@@ -218,12 +270,8 @@ class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
         self.elapsed_label = QLabel("0.0s", self)
         self.elapsed_label.setObjectName("Hint")
         self.elapsed_label.setToolTip("本次加载已用时")
-        self.bar = QProgressBar(self)
-        self.bar.setRange(0, 0)  # 0/0 = 忙碌态，不显示百分比
-        self.bar.setTextVisible(False)
+        self.bar = ProgressBar(maximum=_PROGRESS_STEPS, height=6 if compact else None, busy=True, parent=self)
         self.bar.setMinimumWidth(120 if compact else 160)
-        if compact:
-            self.bar.setFixedHeight(6)
         row.addWidget(self.text_label, 0)
         row.addWidget(self.bar, 1)
         row.addWidget(self.elapsed_label, 0)
@@ -252,17 +300,12 @@ class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
         ``QProgressBar`` 的取值是 32 位 ``int``，几十 GB 的镜像字节数会溢出，所以
         内部统一折算成 ``0.._PROGRESS_STEPS`` 的刻度，只用于画填充比例。
         """
-        if not total or total <= 0:
-            self.bar.setRange(0, 0)
-            return
-        ratio = max(0.0, min(1.0, done / total))
-        self.bar.setRange(0, _PROGRESS_STEPS)
-        self.bar.setValue(int(ratio * _PROGRESS_STEPS))
+        self.bar.set_progress(done, total)
 
     def stop(self) -> None:
         """停止计时并收起加载条（进度条回到忙碌态，下次复用时不会残留百分比）。"""
         self._timer.stop()
-        self.bar.setRange(0, 0)
+        self.bar.set_busy()
         self.setVisible(False)
 
     def is_running(self) -> bool:
@@ -299,10 +342,7 @@ class ProgressRow(QWidget):  # pragma: no cover - Qt 控件
         row.setSpacing(8)
         self.label = hint_label(text, wrap=False)
         self.label.setVisible(bool(text))
-        self.bar = QProgressBar(self)
-        self.bar.setTextVisible(False)
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
+        self.bar = ProgressBar(parent=self)
         self.bar.setMinimumWidth(120)
         self.bar.setVisible(show_bar)
         self._actions = QHBoxLayout()

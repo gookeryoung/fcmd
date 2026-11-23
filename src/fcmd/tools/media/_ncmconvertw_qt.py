@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QProgressBar,
     QWidget,
 )
 
@@ -33,7 +32,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, PathField, button, confirm
+from fcmd.gui.widgets import Card, PathField, ProgressBar, button, confirm
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.media.ncmconvertw import (
     MIN_HEIGHT,
@@ -194,10 +193,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         layout.setSpacing(12)
         self._convert_button = button("开始转换", kind="primary")
         self._convert_button.clicked.connect(self._start_conversion)
-        self._progress = QProgressBar(row)
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
-        self._progress.setTextVisible(False)
+        self._progress = ProgressBar(maximum=1, parent=row)
         layout.addWidget(self._convert_button)
         layout.addWidget(self._progress, 1)
         return row

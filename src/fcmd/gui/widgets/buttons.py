@@ -1,10 +1,18 @@
-"""按钮类控件：主 / 危险 / 次要按钮、图标按钮、胶囊开关与确认框。"""
+"""按钮类控件：主 / 危险 / 次要按钮、图标按钮、胶囊开关与确认框。
+
+按钮变体共用 :class:`ButtonStateMixin`：文案（:meth:`~ButtonStateMixin.set_text`）、
+图标（``set_icon_name``）、QSS 变体（``set_kind`` / ``set_style_name``）都走幂等更新，
+业务代码不必再手写 ``setText`` + ``setObjectName`` + unpolish / polish。
+:func:`button` / :func:`link_button` / :func:`icon_button` 返回对应子类，模块级函数保留
+为兼容入口；新代码优先用方法。
+"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QColor, QEnterEvent, QIcon, QPaintEvent
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -18,6 +26,10 @@ from PySide6.QtWidgets import (
 from fcmd.gui import style as _qt_theme
 
 __all__ = [
+    "Button",
+    "ButtonStateMixin",
+    "IconButton",
+    "LinkButton",
     "ToggleChip",
     "button",
     "confirm",
@@ -29,14 +41,12 @@ __all__ = [
 ]
 
 
-def set_button_text(widget: QPushButton, text: str, *, tone: str | None = None) -> None:
+def set_button_text(widget: QAbstractButton, text: str, *, tone: str | None = None) -> None:
     """改写按钮文字并按新文案更新图标（保留原色调，未命中时清空图标）。
 
     动态文案（启动 / 停止服务、下载中…、转换中等）不能只 ``setText``：
     否则图标还停在创建时那个动作上，看起来与文字不匹配。
     """
-    from PySide6.QtGui import QIcon
-
     from fcmd.gui.icons import ICON_NAME_PROPERTY, ICON_TONE_PROPERTY, icon_for_text, set_icon
 
     name = icon_for_text(text)
@@ -57,7 +67,7 @@ def set_button_text(widget: QPushButton, text: str, *, tone: str | None = None) 
     widget.setProperty(ICON_NAME_PROPERTY, None)
 
 
-def set_button_icon(widget: QPushButton, name: str, *, tone: str = "text") -> None:
+def set_button_icon(widget: QAbstractButton, name: str, *, tone: str = "text") -> None:
     """只换按钮图标、不改文字；图标名 / 色调未变时直接返回。
 
     纯图标按钮（实例行内的启动 / 停止）不能再走 :func:`set_button_text`：
@@ -71,19 +81,113 @@ def set_button_icon(widget: QPushButton, name: str, *, tone: str = "text") -> No
     set_icon(widget, name, tone=mapped)
 
 
-def set_button_kind(widget: QPushButton, kind: str) -> None:
+def set_button_style_name(widget: QAbstractButton, name: str) -> None:
+    """切换 ``objectName`` 并立即重抛光；同名时直接返回。
+
+    标准变体走 :func:`set_button_kind`；``RunPrimary`` / ``RunDanger`` 这类应用自定义
+    objectName 直接传这里，避免每处手写 ``setObjectName`` + unpolish / polish。
+    """
+    if widget.objectName() == name:
+        return
+    widget.setObjectName(name)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
+def set_button_kind(widget: QAbstractButton, kind: str) -> None:
     """运行时切换按钮变体（``primary`` / ``danger`` / ``ghost`` / 空）。
 
     动态动作按钮（启动 ↔ 停止）不能只改文案：配色 / 边框由 ``#Primary`` /
     ``#Danger`` 的 QSS 决定，必须同时换 objectName 并重抛光；动作状态未变化时
     直接返回，避免轮询里反复重解析样式。图标色调由 :func:`set_button_text` 负责。
     """
-    name = kind.capitalize() if kind else ""
-    if widget.objectName() == name:
-        return
-    widget.setObjectName(name)
-    widget.style().unpolish(widget)
-    widget.style().polish(widget)
+    set_button_style_name(widget, kind.capitalize() if kind else "")
+
+
+class ButtonStateMixin:
+    """按钮状态复用：文案 / 图标 / QSS 变体统一走幂等更新。
+
+    与 ``QPushButton`` / ``QToolButton`` 组合使用（``class MyButton(ButtonStateMixin,
+    QPushButton)``）。各方法只是模块级函数的薄封装，保留既有函数式调用作为兼容入口；
+    新代码优先用方法，避免在业务里反复写 ``setObjectName`` + unpolish / polish。
+    """
+
+    def set_text(self: QAbstractButton, text: str, *, tone: str | None = None) -> None:
+        """改写文案并按新文案更新图标（``tone`` 省略时保留原色调）。"""
+        set_button_text(self, text, tone=tone)
+
+    def set_icon_name(self: QAbstractButton, name: str, *, tone: str = "text") -> None:
+        """只换图标、不改文案；名称 / 色调未变时直接返回。"""
+        set_button_icon(self, name, tone=tone)
+
+    def set_kind(self: QAbstractButton, kind: str) -> None:
+        """切换标准变体（``primary`` / ``danger`` / ``ghost`` / 空）。"""
+        set_button_kind(self, kind)
+
+    def set_style_name(self: QAbstractButton, name: str) -> None:
+        """切换自定义 objectName 并重抛光（如 ``RunPrimary`` / ``RunDanger``）。"""
+        set_button_style_name(self, name)
+
+
+class Button(ButtonStateMixin, QPushButton):  # pragma: no cover - Qt 控件
+    """带状态方法的标准按钮；:func:`button` 返回本类。
+
+    ``icon`` 省略时按文案自动推断，传空串可显式禁用；图标配色跟随 ``kind``。
+    """
+
+    def __init__(
+        self,
+        text: str,
+        *,
+        kind: str = "",
+        tooltip: str = "",
+        icon: str | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(text, parent)
+        from fcmd.gui.icons import icon_for_text, set_icon
+
+        name = icon_for_text(text) if icon is None else icon
+        if name:
+            # 图标配色跟随按钮变体：主按钮用 on_accent、危险按钮用 danger、
+            # 次要按钮用 muted，避免图标与文字一深一浅。
+            tone = {"primary": "on_accent", "danger": "danger", "ghost": "muted"}.get(kind, "text")
+            set_icon(self, name, tone=tone)
+        if kind:
+            self.setObjectName(kind.capitalize())
+        if tooltip:
+            self.setToolTip(tooltip)
+
+
+class LinkButton(ButtonStateMixin, QPushButton):  # pragma: no cover - Qt 控件
+    """文字链接按钮：透明背景、强调色、无边框，用于「修改 / 重新检测」等轻量动作。"""
+
+    def __init__(self, text: str, *, tooltip: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setObjectName("Link")
+        self.setFlat(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if tooltip:
+            self.setToolTip(tooltip)
+
+
+class IconButton(ButtonStateMixin, QToolButton):  # pragma: no cover - Qt 控件
+    """方形图标按钮：用一个字形作图标，必配 tooltip；``checkable`` 用于展开 / 收起开关。"""
+
+    def __init__(
+        self,
+        text: str,
+        *,
+        tooltip: str = "",
+        checkable: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("IconButton")
+        self.setText(text)
+        self.setCheckable(checkable)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(tooltip)
 
 
 def button(
@@ -92,48 +196,23 @@ def button(
     kind: str = "",
     tooltip: str = "",
     icon: str | None = None,
-) -> QPushButton:  # pragma: no cover - Qt 控件
-    """创建按钮；``kind`` 取 ``primary`` / ``danger`` / ``ghost`` 时套用主题变体。
+) -> Button:  # pragma: no cover - Qt 控件
+    """创建 :class:`Button`；``kind`` 取 ``primary`` / ``danger`` / ``ghost`` 时套用主题变体。
 
     ``icon`` 为图标名（见 :mod:`fcmd.gui.icons`）；省略时按按钮文案自动推断，
     传空串可显式禁用图标。图标不改变按钮文字，便于保留既有文案与测试口径。
     """
-    from fcmd.gui.icons import icon_for_text, set_icon
-
-    widget = QPushButton(text)
-    name = icon_for_text(text) if icon is None else icon
-    if name:
-        # 图标配色跟随按钮变体：主按钮用 on_accent、危险按钮用 danger、
-        # 次要按钮用 muted，避免图标与文字一深一浅。
-        tone = {"primary": "on_accent", "danger": "danger", "ghost": "muted"}.get(kind, "text")
-        set_icon(widget, name, tone=tone)
-    if kind:
-        widget.setObjectName(kind.capitalize())
-    if tooltip:
-        widget.setToolTip(tooltip)
-    return widget
+    return Button(text, kind=kind, tooltip=tooltip, icon=icon)
 
 
-def link_button(text: str, *, tooltip: str = "") -> QPushButton:  # pragma: no cover - Qt 控件
-    """文字链接按钮：透明背景、强调色、无边框，用于「修改 / 重新检测」等轻量动作。"""
-    widget = QPushButton(text)
-    widget.setObjectName("Link")
-    widget.setFlat(True)
-    widget.setCursor(Qt.CursorShape.PointingHandCursor)
-    if tooltip:
-        widget.setToolTip(tooltip)
-    return widget
+def link_button(text: str, *, tooltip: str = "") -> LinkButton:  # pragma: no cover - Qt 控件
+    """创建 :class:`LinkButton`。"""
+    return LinkButton(text, tooltip=tooltip)
 
 
-def icon_button(text: str, *, tooltip: str = "", checkable: bool = False) -> QToolButton:  # pragma: no cover
-    """方形图标按钮：用一个字形作图标，必配 tooltip；``checkable`` 用于展开 / 收起开关。"""
-    widget = QToolButton()
-    widget.setObjectName("IconButton")
-    widget.setText(text)
-    widget.setCheckable(checkable)
-    widget.setCursor(Qt.CursorShape.PointingHandCursor)
-    widget.setToolTip(tooltip)
-    return widget
+def icon_button(text: str, *, tooltip: str = "", checkable: bool = False) -> IconButton:  # pragma: no cover
+    """创建 :class:`IconButton`。"""
+    return IconButton(text, tooltip=tooltip, checkable=checkable)
 
 
 class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件

@@ -38,7 +38,6 @@ from PySide6.QtWidgets import (  # noqa: F401
     QListWidgetItem,
     QMenu,
     QMessageBox,
-    QProgressBar,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -87,6 +86,7 @@ from fcmd.apps.llm.llmdown import (  # noqa: F401
 )
 from fcmd.gui.page import AppPage
 from fcmd.gui.widgets import (  # noqa: F401
+    ProgressBar,
     RowDetailMixin,
     RowListWidget,
     StatusTag,
@@ -357,8 +357,7 @@ class _BrowsePanel(
         status_row.addStretch(1)
         self.download_text = hint_label("", wrap=False)
         status_row.addWidget(self.download_text)
-        self.download_bar = QProgressBar(self.download_status)
-        self.download_bar.setRange(0, 100)
+        self.download_bar = ProgressBar(parent=self.download_status)
         self.download_bar.setFixedWidth(220)
         status_row.addWidget(self.download_bar)
         self.stop_download_button = link_button("停止", tooltip="停止当前下载")

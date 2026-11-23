@@ -7,7 +7,8 @@
 
 - :mod:`fcmd.gui.widgets.text`：说明 / 数值 / 状态标签、等宽字体、分节标题与省略标签；
 - :mod:`fcmd.gui.widgets.tables`：只读表格与只读单元格；
-- :mod:`fcmd.gui.widgets.buttons`：按钮、图标按钮、胶囊开关与确认框；
+- :mod:`fcmd.gui.widgets.buttons`：按钮、图标按钮、胶囊开关与确认框；按钮共用
+  ``ButtonStateMixin``（``set_text`` / ``set_icon_name`` / ``set_kind`` / ``set_style_name``）；
 - :mod:`fcmd.gui.widgets.tabs`：药丸页签与数量徽标；
 - :mod:`fcmd.gui.widgets.rows`：可展开行卡、行列表与展开态 mixin；
 - :mod:`fcmd.gui.widgets.cards`：卡片、滚动页、折叠区、互斥选项卡片；
@@ -31,6 +32,10 @@
 from __future__ import annotations
 
 from fcmd.gui.widgets.buttons import (
+    Button,
+    ButtonStateMixin,
+    IconButton,
+    LinkButton,
     ToggleChip,
     button,
     confirm,
@@ -38,6 +43,7 @@ from fcmd.gui.widgets.buttons import (
     link_button,
     set_button_icon,
     set_button_kind,
+    set_button_style_name,
     set_button_text,
 )
 from fcmd.gui.widgets.cards import (
@@ -55,6 +61,7 @@ from fcmd.gui.widgets.metrics import (
     KeyValueGrid,
     LoadingBar,
     MetricGrid,
+    ProgressBar,
     ProgressRow,
     SegmentBar,
     segment_band,
@@ -77,7 +84,10 @@ from fcmd.gui.widgets.tabs import PillTabBar, badge_text, pill_tabs, tab_widget
 from fcmd.gui.widgets.text import (
     ElidedLabel,
     HintLabel,
+    MonoLabel,
     StatusTag,
+    ToneLabelMixin,
+    ValueLabel,
     hint_label,
     mono_font,
     mono_label,
@@ -86,6 +96,8 @@ from fcmd.gui.widgets.text import (
 )
 
 __all__ = [
+    "Button",
+    "ButtonStateMixin",
     "Card",
     "ChoiceCard",
     "ChoiceGroup",
@@ -98,15 +110,19 @@ __all__ = [
     "FlowLayout",
     "FormGrid",
     "HintLabel",
+    "IconButton",
     "ItemRow",
     "KeyValueGrid",
+    "LinkButton",
     "LoadingBar",
     "LogView",
     "MetricGrid",
+    "MonoLabel",
     "PageScroll",
     "PathField",
     "PathRow",
     "PillTabBar",
+    "ProgressBar",
     "ProgressRow",
     "RowDetailMixin",
     "RowListWidget",
@@ -119,6 +135,8 @@ __all__ = [
     "StorageCard",
     "StorageRoots",
     "ToggleChip",
+    "ToneLabelMixin",
+    "ValueLabel",
     "apply_splitter_sizes",
     "badge_text",
     "button",
@@ -139,6 +157,7 @@ __all__ = [
     "segment_fill",
     "set_button_icon",
     "set_button_kind",
+    "set_button_style_name",
     "set_button_text",
     "splitter_sizes",
     "tab_widget",

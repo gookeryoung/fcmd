@@ -269,7 +269,7 @@ class SettingsMixin:
         self._detect_token += 1
         token = self._detect_token
         self.opener_detect_button.setEnabled(False)
-        _owner.set_button_text(self.opener_detect_button, "检测中…")
+        self.opener_detect_button.set_text("检测中…")
         suffix = "" if include_wsl else "（实例未运行，复用上次结果）"
         self.opener_detect_hint.setText(f"正在检查宿主机与 {name or '当前环境'}{suffix}…")
         for kind in _owner._open.KINDS:
@@ -366,7 +366,7 @@ class SettingsMixin:
         self._detecting = False
         if not hasattr(self, "opener_detect_button"):
             return
-        _owner.set_button_text(self.opener_detect_button, "智能检测")
+        self.opener_detect_button.set_text("智能检测")
         self.opener_detect_button.setEnabled(True)
         for kind in _owner._open.KINDS:
             self._reload_opener_combo(kind)

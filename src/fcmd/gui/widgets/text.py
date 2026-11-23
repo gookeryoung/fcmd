@@ -12,7 +12,10 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QWidget
 __all__ = [
     "ElidedLabel",
     "HintLabel",
+    "MonoLabel",
     "StatusTag",
+    "ToneLabelMixin",
+    "ValueLabel",
     "hint_label",
     "mono_font",
     "mono_label",
@@ -21,27 +24,43 @@ __all__ = [
 ]
 
 
-def hint_label(text: str = "", *, wrap: bool = True) -> QLabel:  # pragma: no cover - Qt 控件
+_TONES = frozenset({"muted", "success", "warning", "danger", "accent"})
+"""标签可用的语义色；与主题 QSS 的 ``[tone="..."]`` 选择器一一对应。"""
+
+
+class ToneLabelMixin:
+    """语义色标签复用：``tone`` 动态属性 + 幂等重抛光。
+
+    与 ``QLabel`` 及子类组合使用。QSS 按 ``[tone="..."]`` 上色，切换语义色必须同时
+    重抛光；这里统一处理，业务侧不必再写 ``setProperty("tone", ...)`` + unpolish /
+    polish。未知 tone 回落到 ``muted``，与 :class:`StatusTag` 的历史口径一致。
+    """
+
+    def tone(self: QLabel) -> str:
+        """当前语义色：``muted`` / ``success`` / ``warning`` / ``danger`` / ``accent``。"""
+        return str(self.property("tone") or "muted")
+
+    def set_tone(self: QLabel, tone: str) -> None:
+        """切换语义色；未知值回落到 ``muted``，同名时直接返回。"""
+        normalized = tone if tone in _TONES else "muted"
+        if self.property("tone") == normalized:
+            return
+        self.setProperty("tone", normalized)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
+def hint_label(text: str = "", *, wrap: bool = True) -> HintLabel:  # pragma: no cover - Qt 控件
     """次要说明文字（灰色小字），默认自动换行。"""
-    label = QLabel(text)
-    label.setObjectName("Hint")
-    label.setWordWrap(wrap)
-    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    return label
+    return HintLabel(text, wrap=wrap)
 
 
-def value_label(text: str = "") -> QLabel:  # pragma: no cover - Qt 控件
+def value_label(text: str = "") -> ValueLabel:  # pragma: no cover - Qt 控件
     """强调数值文字（用于指标网格）。"""
-    label = QLabel(text)
-    label.setObjectName("Value")
-    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    return label
+    return ValueLabel(text)
 
 
-_STATUS_TONES = frozenset({"muted", "success", "warning", "danger", "accent"})
-
-
-class StatusTag(QLabel):  # pragma: no cover - Qt 控件
+class StatusTag(ToneLabelMixin, QLabel):  # pragma: no cover - Qt 控件
     """状态标签（胶囊）：短状态文本 + 语义色背景，用于「运行中 / 监控中 / 成功」等。
 
     与 ``Hint`` 的区别是自带底色与边框，能在卡片标题行、工具行里作为独立状态块；
@@ -56,22 +75,9 @@ class StatusTag(QLabel):  # pragma: no cover - Qt 控件
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.set_tone(tone)
 
-    def tone(self) -> str:
-        """当前语义色：``muted`` / ``success`` / ``warning`` / ``danger`` / ``accent``。"""
-        return str(self.property("tone") or "muted")
-
-    def set_tone(self, tone: str) -> None:
-        """切换语义色；未知值回落到 ``muted``。"""
-        normalized = tone if tone in _STATUS_TONES else "muted"
-        if self.property("tone") == normalized:
-            return
-        self.setProperty("tone", normalized)
-        self.style().unpolish(self)
-        self.style().polish(self)
-
     def set_status(self, text: str, tone: str | None = None) -> None:
         """一次写入文案与可选语义色（状态刷新最常用）；完全没变时不重绘。"""
-        normalized = None if tone is None else (tone if tone in _STATUS_TONES else "muted")
+        normalized = None if tone is None else (tone if tone in _TONES else "muted")
         if self.text() == text and (normalized is None or self.tone() == normalized):
             return
         self.setText(text)
@@ -98,21 +104,42 @@ def mono_font(point_size: int = 9) -> QFont:  # pragma: no cover - Qt 控件
     return font
 
 
-def mono_label(text: str = "") -> QLabel:  # pragma: no cover - Qt 控件
+class MonoLabel(ToneLabelMixin, QLabel):  # pragma: no cover - Qt 控件
     """等宽小字（命令、路径、CSV 片段）。"""
-    label = QLabel(text)
-    label.setObjectName("Mono")
-    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    return label
-
-
-class HintLabel(QLabel):  # pragma: no cover - Qt 控件
-    """次要说明文字，``text`` 可随时替换（替代旧版的可变提示行）。"""
 
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
         super().__init__(text, parent)
+        self.setObjectName("Mono")
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+
+def mono_label(text: str = "") -> MonoLabel:  # pragma: no cover - Qt 控件
+    """等宽小字（命令、路径、CSV 片段）。"""
+    return MonoLabel(text)
+
+
+class ValueLabel(ToneLabelMixin, QLabel):  # pragma: no cover - Qt 控件
+    """强调数值文字（用于指标网格）。"""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setObjectName("Value")
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+
+class HintLabel(ToneLabelMixin, QLabel):  # pragma: no cover - Qt 控件
+    """次要说明文字，``text`` 可随时替换（替代旧版的可变提示行）。"""
+
+    def __init__(
+        self,
+        text: str = "",
+        *,
+        wrap: bool = True,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(text, parent)
         self.setObjectName("Hint")
-        self.setWordWrap(True)
+        self.setWordWrap(wrap)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
 
@@ -133,7 +160,7 @@ def section_header(title: str, parent: QWidget | None = None) -> tuple[QHBoxLayo
     return header, label
 
 
-class ElidedLabel(QLabel):  # pragma: no cover - Qt 控件
+class ElidedLabel(ToneLabelMixin, QLabel):  # pragma: no cover - Qt 控件
     """长文本标签：按可用宽度中间省略，完整内容放进 tooltip。
 
     用于长路径、长 URL、长命令。水平尺寸策略为 ``Ignored``，避免超长文本

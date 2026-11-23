@@ -976,17 +976,15 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
     def _sync_send_button(self) -> None:
         """把发送 / 停止状态同步到同一个图标按钮。"""
         if self._running:
-            self.send_button.setObjectName("ChatStop")
-            _set_icon(self.send_button, "stop", tone="danger")
+            self.send_button.set_style_name("ChatStop")
+            self.send_button.set_icon_name("stop", tone="danger")
             self.send_button.setToolTip("停止生成")
             self.send_button.setAccessibleName("停止生成")
         else:
-            self.send_button.setObjectName("ChatSend")
-            _set_icon(self.send_button, "send", tone="accent")
+            self.send_button.set_style_name("ChatSend")
+            self.send_button.set_icon_name("send", tone="accent")
             self.send_button.setToolTip("发送（Ctrl+Enter）")
             self.send_button.setAccessibleName("发送")
-        self.send_button.style().unpolish(self.send_button)
-        self.send_button.style().polish(self.send_button)
 
     def stop(self) -> None:
         """停止当前流式生成。"""

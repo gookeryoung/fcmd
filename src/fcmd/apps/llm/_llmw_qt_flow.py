@@ -79,8 +79,6 @@ from fcmd.gui.widgets import (
     hint_label,
     icon_button,
     make_splitter,
-    set_button_kind,
-    set_button_text,
     value_label,
 )
 from fcmd.gui.workers import submit, submit_daemon
@@ -648,8 +646,8 @@ class WorkflowPage(AppPage):  # pragma: no cover - Qt 控件
         running = self._cancel is not None
         has_cards = bool(self._cards)
         self._run_button.setEnabled(has_cards)
-        set_button_kind(self._run_button, "danger" if running else "primary")
-        set_button_text(self._run_button, "停止" if running else "运行")
+        self._run_button.set_kind("danger" if running else "primary")
+        self._run_button.set_text("停止" if running else "运行")
         self._run_button.setToolTip("取消当前工作流" if running else "按节点顺序执行工作流")
         self._save_button.setEnabled(has_cards and not running)
         self._add_button.setEnabled(self._current is not None and not running)

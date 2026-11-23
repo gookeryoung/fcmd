@@ -7,6 +7,19 @@
 
 ### 变更
 
+- 新增通用 `ProgressBar`：统一隐藏百分比、忙碌态切换与按比例 / 百分比写入
+  （内部按 `maximum` 折算，避免大字节数溢出）；`LoadingBar`、`ProgressRow`、
+  `DiskTile` 以及 filescan / ncmconvertw / llmw 模型下载改用，不再各自
+  `QProgressBar` + `setTextVisible` + 手写刻度。
+- 文本控件新增 `ToneLabelMixin`（`tone` 属性 + 幂等重抛光）：`StatusTag`、`HintLabel`、
+  `ElidedLabel`、`MonoLabel`、`ValueLabel` 与选项卡 `ChoiceCard` 复用；`hint_label()` /
+  `value_label()` / `mono_label()` 工厂改为返回对应子类，业务侧用 `set_tone()` 替代手写
+  `setProperty("tone", ...)` + unpolish / polish。
+- 重构 `fcmd.gui.widgets` 按钮：新增 `ButtonStateMixin` 与 `Button` / `LinkButton` /
+  `IconButton` 子类，`button()` 等工厂返回子类；文案、图标、变体切换统一走
+  `set_text` / `set_icon_name` / `set_kind` / `set_style_name`，业务侧不再手写
+  `setObjectName` + unpolish / polish。`ChoiceCard`、`DiskAddTile`、
+  `SidebarActionButton` 同样复用该 mixin；模块级函数保留为兼容入口。
 - `wslmanw` 镜像页首屏提速：WSLUI 镜像源不再与官方清单同链等待，改由
   `_load_wslui_catalog` 后台单独加载、到货后补一次重绘；超时收紧为
   `wsl --list --online` 12 秒、官方清单 10 秒（WSLUI 侧 5 / 4 / 8 秒），
