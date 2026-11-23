@@ -202,6 +202,9 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.work_dir = work_dir
         self.state_tag = StatusTag("", tone="muted", parent=self.header)
         self.add_tag(self.state_tag)
+        self.repair_tag = StatusTag("需修复", tone="warning", parent=self.header)
+        self.repair_tag.setToolTip("注册表 BasePath 下找不到磁盘文件；先点「修复注册」再启动")
+        self.add_tag(self.repair_tag)
         self.default_tag = StatusTag("默认", tone="accent", parent=self.header)
         self.add_tag(self.default_tag)
         # 发行版图标：按实例名挑对应发行版，识别不出回落通用图标（不留空、不显示问号）。
@@ -243,9 +246,16 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
     def _row_tooltip(self) -> str:
         """完整磁盘位置与所属工作目录；副标题空间有限，完整路径放 tooltip。"""
         place = self.distro.base_path or "未知"
+        lines = [self.distro.name, f"注册表磁盘位置：{place}"]
+        if self.distro.needs_repair:
+            lines.append("状态：需修复注册（当前 BasePath 下找不到磁盘文件，实例无法启动）")
+            if self.distro.repair_vhd:
+                lines.append(f"可用磁盘：{self.distro.repair_vhd}")
         if self.work_dir is None:
-            return f"{self.distro.name}\n磁盘位置：{place}\n工作目录：未在已配置目录"
-        return f"{self.distro.name}\n磁盘位置：{place}\n工作目录：{self.work_dir}"
+            lines.append("工作目录：未在已配置目录")
+        else:
+            lines.append(f"工作目录：{self.work_dir}")
+        return "\n".join(lines)
 
     def update_distro(self, distro: Distro, size: int | None, estimated: bool) -> None:
         """就地刷新状态 / 占用 / 默认标记与启停按钮（轮询不重建行）。"""
@@ -259,6 +269,7 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.set_subtitle(f"v{distro.version or '未知'} · {self._work_dir_text()}")
         self.set_metrics(format_bytes(size, estimated=estimated))
         self.state_tag.set_status(state_label(distro), _state_tone(distro.state))
+        self.repair_tag.setVisible(distro.needs_repair)
         self.default_tag.setVisible(distro.default)
         self._apply_action_state()
 
@@ -282,6 +293,8 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         会看不清。
         """
         can_start, can_stop = w.action_states(self.distro.state)
+        if self.distro.needs_repair:
+            can_start = can_stop = False
         enabled = (can_start or can_stop) and not self._busy
         if can_stop:
             set_button_kind(self.start_stop_button, "danger")
@@ -293,7 +306,8 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
             text = "启动"
         set_button_text(self.start_stop_button, text, tone=tone)
         self.start_stop_button.setEnabled(enabled)
-        self.start_stop_button.setToolTip(f"{text} {self.distro.name}")
+        tip = "需先修复注册" if self.distro.needs_repair else f"{text} {self.distro.name}"
+        self.start_stop_button.setToolTip(tip)
         self.config_button.setEnabled(not self._busy)
 
     def set_busy(self, busy: bool) -> None:
@@ -681,6 +695,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 ("重启", self._restart_selected, ""),
                 ("停止", self._terminate_selected, ""),
                 ("刷新", self._refresh_distros, "ghost"),
+                ("修复注册", self._repair_registrations, "ghost"),
             ),
             (("导出", self._export_selected, ""), ("迁移", self._migrate_selected, "")),
             (
@@ -703,6 +718,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self.start_button = self._button_by_text["启动"]
         self.restart_button = self._button_by_text["重启"]
         self.stop_button = self._button_by_text["停止"]
+        self.repair_button = self._button_by_text["修复注册"]
+        self.repair_button.setToolTip("用工作目录里扫描到的 ext4.vhdx 重新注册失效实例")
         return toolbar
 
     def _build_files_page(self) -> QWidget:
@@ -1963,8 +1980,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             return
         self._log(f"[{label}] {message}")
         if not quiet:
-            # 刷新结果可能包含重定位 / 剔除实例的说明，直接回显比一句「刷新完成」有用。
-            self._set_task_status(message if label == "刷新" and message else f"{label}完成")
+            # 刷新 / 修复结果可能包含具体处理说明，直接回显比一句泛化「完成」有用。
+            self._set_task_status(message if label in {"刷新", "修复注册"} and message else f"{label}完成")
         if label == "刷新":
             self._refresh_rows()
         else:
@@ -2150,8 +2167,8 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         )
 
     def _status_worker(self) -> Any:
-        """轮询只读视图，但仍剔除注册表 BasePath 下磁盘文件已不存在的实例。"""
-        view, _removed, _orphans = w.reconcile_distros(cli._view(cli._build_environment()))
+        """轮询只读视图，但标记注册表 BasePath 下磁盘文件已不存在的实例。"""
+        view, _needs_repair, _orphans = w.reconcile_distros(cli._view(cli._build_environment()), self.settings)
         return view
 
     def _on_status(self, view: Any) -> None:
@@ -2248,19 +2265,95 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             return
         self.refresh()
 
+    def _repair_registrations(self) -> None:
+        """「修复注册」：用扫描到的 ext4.vhdx 重新注册失效实例。
+
+        只处理 ``needs_repair`` 且找到同名 ``ext4.vhdx`` 的条目：先 ``wsl --unregister``
+        清掉旧登记，再 ``wsl --import-in-place`` 现有磁盘。旧 BasePath 仍存在（可能还有
+        其他文件）时拒绝自动删除，避免误删用户数据。
+        """
+        if self._busy or self.view is None:
+            return
+        targets = [distro for distro in self.view.distros if distro.needs_repair and distro.repair_vhd]
+        if not targets:
+            self.set_page_status("distros", "没有可自动修复的实例：未找到同名 ext4.vhdx")
+            return
+        lines = "\n".join(f"  {distro.name}  ←  {distro.repair_vhd}" for distro in targets)
+        text = (
+            f"将重新注册 {len(targets)} 个实例：\n\n{lines}\n\n"
+            "流程：wsl --unregister（清掉失效登记）→ wsl --import-in-place（挂回现有磁盘）。\n"
+            "旧 BasePath 目录若仍存在且非空，会跳过该实例，避免误删文件。继续？"
+        )
+        if not confirm(self, "修复注册", text):
+            return
+        snapshot = tuple(targets)
+        default = self.view.default
+
+        def work(cancel: threading.Event) -> str:  # noqa: PLR0912 - 逐项校验并汇总失败原因
+            env = cli._build_environment()
+            repaired: list[str] = []
+            failed: list[str] = []
+            for distro in snapshot:
+                if cancel.is_set():
+                    raise KeyboardInterrupt
+                vhd = Path(distro.repair_vhd or "")
+                if not vhd.is_file():
+                    failed.append(f"{distro.name}: 磁盘不存在 {vhd}")
+                    continue
+                fresh = cli._view(env).find(distro.name)
+                if fresh is not None and w.has_distro_files(fresh.base_path):
+                    repaired.append(distro.name)
+                    continue
+                if fresh is not None and fresh.base_path and Path(fresh.base_path).exists():
+                    base = Path(fresh.base_path)
+                    try:
+                        leftovers = any(base.iterdir())
+                    except OSError:
+                        leftovers = True
+                    if leftovers:
+                        failed.append(f"{distro.name}: 旧 BasePath 仍有文件，拒绝自动删除：{base}")
+                        continue
+                try:
+                    if fresh is not None:
+                        cli._run_step(env, ["--unregister", fresh.name], action=f"移除失效登记 {fresh.name}")
+                    cli._run_step(
+                        env,
+                        ["--import-in-place", distro.name, str(vhd)],
+                        action=f"重新注册 {distro.name}",
+                        hint="确认 WSL 版本支持 --import-in-place，且磁盘是 ext4.vhdx",
+                    )
+                except WslmanError as exc:
+                    failed.append(f"{distro.name}: {exc}")
+                    continue
+                repaired.append(distro.name)
+            if default and default in repaired:
+                try:
+                    cli._run_step(env, ["--set-default", default], action=f"恢复默认实例 {default}")
+                except WslmanError as exc:
+                    failed.append(f"恢复默认实例 {default}: {exc}")
+            message = f"修复完成：成功 {len(repaired)} 个"
+            if repaired:
+                message += f"（{'、'.join(repaired)}）"
+            if failed:
+                message += f"；失败 {len(failed)} 个：{'；'.join(failed)}"
+            return message
+
+        self._start("修复注册", work)
+
     def _load(self, _cancel: threading.Event) -> str:
         env = cli._build_environment()
-        view, removed, orphans = w.reconcile_distros(cli._view(env), self.settings)
+        view, needs_repair, orphans = w.reconcile_distros(cli._view(env), self.settings)
         sizes: dict[str, tuple[int | None, bool]] = {}
         for distro in view.distros:
-            sizes[distro.name] = distro_disk_bytes(distro.base_path, distro.version)
+            base = str(Path(distro.repair_vhd).parent) if distro.repair_vhd else distro.base_path
+            sizes[distro.name] = distro_disk_bytes(base, distro.version)
         self.view = view
         self.sizes = sizes
         message = f"已加载 {len(view.distros)} 个实例"
-        if removed:
-            message += f"；{len(removed)} 个实例磁盘文件已不存在，已移出列表"
+        if needs_repair:
+            message += f"；{len(needs_repair)} 个实例需修复注册"
         if orphans:
-            message += f"；{len(orphans)} 个同名残余磁盘未注册，启动前需重新导入"
+            message += f"（{len(orphans)} 个已找到残余磁盘，可点「修复注册」）"
         return message
 
     def _selected(self) -> Distro | None:
@@ -2283,10 +2376,9 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         distros = tuple(view.distros) if view is not None else ()
         for distro in distros:
             size, estimated = self.sizes.get(distro.name, (None, False))
+            base = str(Path(distro.repair_vhd).parent) if distro.repair_vhd else distro.base_path
             item = QListWidgetItem(self.distro_list)
-            row = _DistroItemRow(
-                distro, size, estimated, w.work_dir_of(self.settings, distro.base_path), self.distro_list
-            )
+            row = _DistroItemRow(distro, size, estimated, w.work_dir_of(self.settings, base), self.distro_list)
             row.toggleRequested.connect(self._on_distro_toggle)
             row.startStopRequested.connect(self._toggle_distro_state)
             row.configRequested.connect(self._configure_distro)
@@ -2365,14 +2457,24 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
         self._update_action_states()
 
     def _update_action_states(self) -> None:
+        if hasattr(self, "repair_button"):
+            self.repair_button.setEnabled(self._repairable_count() > 0 and not self._busy)
         if self._busy:
             return
         distro = self._selected()
         can_start, can_stop = w.action_states(distro.state if distro is not None else None)
+        if distro is not None and distro.needs_repair:
+            can_start = can_stop = False
         self.start_button.setEnabled(can_start)
         # 重启只对运行中的实例有意义：停止 / 启动已能覆盖其余状态。
         self.restart_button.setEnabled(can_stop)
         self.stop_button.setEnabled(can_stop)
+
+    def _repairable_count(self) -> int:
+        view = self.view
+        if view is None:
+            return 0
+        return sum(1 for distro in view.distros if distro.needs_repair and distro.repair_vhd)
 
     def _toggle_distro_state(self, name: str) -> None:
         """行内「启动 / 停止」：聚焦该行后复用工具栏动作（口径完全一致）。"""

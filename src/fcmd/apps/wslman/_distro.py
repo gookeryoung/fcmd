@@ -55,6 +55,10 @@ class Distro:
     disk_estimated: bool = False
     listed: bool = True
     registered: bool = True
+    needs_repair: bool = False
+    """注册表 ``BasePath`` 下已找不到磁盘文件：实例无法启动，需要重新注册。"""
+    repair_vhd: str | None = None
+    """工作目录扫描到的同名 ``ext4.vhdx``；有值才可自动修复注册。"""
 
 
 @dataclass(frozen=True, slots=True)

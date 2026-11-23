@@ -219,6 +219,7 @@ BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("更新列表", "refresh"),
     ("关闭全部", "stop"),
     ("刷新", "refresh"),
+    ("修复", "reset"),
     ("更新", "refresh"),
     ("保存", "save"),
     ("删除", "trash"),

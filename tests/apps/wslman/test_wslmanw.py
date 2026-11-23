@@ -606,8 +606,8 @@ def test_scan_install_dirs_finds_moved_instances(tmp_path: Path) -> None:
     assert wslmanw.has_distro_files(None) is False
 
 
-def test_reconcile_distros_removes_stale_entries_and_reports_orphans(tmp_path: Path) -> None:
-    """刷新对比：BasePath 失效的实例一律移出；同名残余磁盘只提示、不当成已注册实例。"""
+def test_reconcile_distros_marks_stale_entries_for_repair(tmp_path: Path) -> None:
+    """刷新对比：BasePath 失效的实例仍列出，但标「需修复」；同名磁盘填进修复路径。"""
     root = tmp_path / "wsl"
     moved = root / "install" / "Ubuntu"
     moved.mkdir(parents=True)
@@ -624,12 +624,14 @@ def test_reconcile_distros_removes_stale_entries_and_reports_orphans(tmp_path: P
     missing = Distro("Debian", "stopped", "Stopped", 2, False, base_path=str(root / "old" / "Debian"))
     view = DistroView((stale_ubuntu, missing), "Ubuntu", (), snapshot)
 
-    reconciled, removed, orphans = wslmanw.reconcile_distros(view, settings)
-    assert removed == ("Ubuntu", "Debian")
+    reconciled, needs_repair, orphans = wslmanw.reconcile_distros(view, settings)
+    assert needs_repair == ("Ubuntu", "Debian")
     assert orphans == {"Ubuntu": moved}
-    assert reconciled.distros == ()
-    assert reconciled.default is None
-    assert any("已从实例列表移除" in warning for warning in reconciled.warnings)
+    assert [item.name for item in reconciled.distros] == ["Ubuntu", "Debian"]
+    assert all(item.needs_repair for item in reconciled.distros)
+    assert reconciled.distros[0].repair_vhd == str(moved / "ext4.vhdx")
+    assert reconciled.distros[1].repair_vhd is None
+    assert any("需修复注册" in warning for warning in reconciled.warnings)
     assert any("同名残余磁盘" in warning and str(moved) in warning for warning in reconciled.warnings)
 
 
@@ -644,9 +646,9 @@ def test_reconcile_distros_keeps_unknown_base_path(tmp_path: Path) -> None:
     )
     distro = Distro("Ubuntu", "running", "Running", 2, True, base_path=None)
     view = DistroView((distro,), "Ubuntu", (), snapshot)
-    reconciled, removed, orphans = wslmanw.reconcile_distros(view, wslmanw.WslmanwSettings())
+    reconciled, needs_repair, orphans = wslmanw.reconcile_distros(view, wslmanw.WslmanwSettings())
     assert reconciled is view
-    assert removed == ()
+    assert needs_repair == ()
     assert orphans == {}
 
 

@@ -2857,10 +2857,8 @@ def test_reload_button_while_busy_runs_full_reload_after_finish(home: Path, monk
         window.deleteLater()
 
 
-def test_refresh_removes_stale_instance_even_if_disk_exists_elsewhere(
-    home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """注册表 BasePath 失效时，扫描到的同名磁盘不能直接当已注册实例展示。"""
+def test_refresh_keeps_stale_instance_with_repair_tag(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """注册表 BasePath 失效时仍列出实例，但标「需修复」、禁用启动并启用修复按钮。"""
     monkeypatch.setattr(wslmanw, "has_distro_files", _REAL_HAS_DISTRO_FILES)
     stale = home / "wsl" / "install" / "Ubuntu"
     moved = home / "other" / "install" / "Ubuntu"
@@ -2878,18 +2876,76 @@ def test_refresh_removes_stale_instance_even_if_disk_exists_elsewhere(
         window._button_by_text["刷新"].click()
         _wait_idle(window)
 
-        # WSL 启动仍走注册表旧路径；扫描位置只能提示为残余磁盘，不能变成可用行。
-        assert window.distro_list.count() == 0
-        status = window.page_status("distros")
-        assert "已移出列表" in status
-        assert "同名残余磁盘" in status
+        assert window.distro_list.count() == 1
+        row = _distro_row(window, 0)
+        assert row.distro.needs_repair is True
+        assert row.distro.repair_vhd == str(moved / "ext4.vhdx")
+        assert row.repair_tag.isHidden() is False
+        assert row.start_stop_button.isEnabled() is False
+        assert "需先修复注册" in row.start_stop_button.toolTip()
+        assert window.repair_button.isEnabled() is True
+        assert "需修复注册" in window.page_status("distros")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
 
-def test_refresh_removes_instance_when_disk_files_are_gone(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """工作目录被移除 / 磁盘文件被删后，刷新不能继续保留无法启动的实例。"""
+def test_repair_registrations_unregisters_and_imports_in_place(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """「修复注册」先 unregister 失效登记，再 import-in-place 扫描到的 ext4.vhdx。"""
+    monkeypatch.setattr(wslmanw, "has_distro_files", _REAL_HAS_DISTRO_FILES)
+    stale = home / "wsl" / "install" / "Ubuntu"
+    moved = home / "other" / "install" / "Ubuntu"
+    moved.mkdir(parents=True)
+    vhd = moved / "ext4.vhdx"
+    vhd.write_bytes(b"x" * 16)
+    state = {"view": _view(replace(_distro("Ubuntu", "stopped"), base_path=str(stale)))}
+    monkeypatch.setattr(cli, "_view", lambda env: state["view"])
+    calls: list[tuple[str, ...]] = []
+
+    class _Runner:
+        def run(self, argv: Any, **_kwargs: Any) -> CommandResult:
+            calls.append(tuple(str(part) for part in argv))
+            if "--import-in-place" in argv:
+                state["view"] = _view(replace(_distro("Ubuntu", "stopped"), base_path=str(moved)))
+            return CommandResult(argv=tuple(argv), returncode=0, stdout=b"", stderr=b"", duration_ms=1)
+
+    config = WslmanConfig(path=default_path(), terminal_program="conhost")
+    monkeypatch.setattr(
+        cli,
+        "_build_environment",
+        lambda *args, **kwargs: SimpleNamespace(runner=_Runner(), config=config),
+    )
+    monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+    monkeypatch.setattr(_wslmanw_qt, "confirm", lambda *args, **kwargs: True)
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        cast(Any, window).settings = wslmanw.with_work_dirs(
+            cast(wslmanw.WslmanwSettings, window.settings),
+            [home / "wsl", home / "other"],
+            home / "wsl",
+        )
+        window._button_by_text["刷新"].click()
+        _wait_idle(window)
+        assert _distro_row(window, 0).distro.needs_repair is True
+
+        started: dict[str, Any] = {}
+        monkeypatch.setattr(window, "_start", lambda label, work: started.update(label=label, work=work))
+        window.repair_button.click()
+        assert started["label"] == "修复注册"
+        message = started["work"](threading.Event())
+        assert "成功 1 个" in message
+        rendered = [" ".join(argv) for argv in calls]
+        assert any("--unregister Ubuntu" in item for item in rendered)
+        assert any(f"--import-in-place Ubuntu {vhd}" in item for item in rendered)
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_refresh_marks_instance_when_disk_files_are_gone(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """磁盘文件被删后，刷新保留实例但标「需修复」，并提示没有可自动导入的磁盘。"""
     monkeypatch.setattr(wslmanw, "has_distro_files", _REAL_HAS_DISTRO_FILES)
     current = home / "wsl" / "install" / "Ubuntu"
     current.mkdir(parents=True)
@@ -2907,8 +2963,13 @@ def test_refresh_removes_instance_when_disk_files_are_gone(home: Path, monkeypat
         window._button_by_text["刷新"].click()
         _wait_idle(window)
 
-        assert window.distro_list.count() == 0
-        assert "已移出列表" in window.page_status("distros")
+        assert window.distro_list.count() == 1
+        row = _distro_row(window, 0)
+        assert row.distro.needs_repair is True
+        assert row.distro.repair_vhd is None
+        assert row.repair_tag.isHidden() is False
+        assert window.repair_button.isEnabled() is False
+        assert "需修复注册" in window.page_status("distros")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

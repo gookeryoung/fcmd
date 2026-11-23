@@ -568,39 +568,41 @@ def reconcile_distros(
     view: DistroView,
     settings: WslmanwSettings | None = None,
 ) -> tuple[DistroView, tuple[str, ...], dict[str, Path]]:
-    """剔除注册表 BasePath 下已经没有磁盘文件的实例。
+    """标记注册表 BasePath 下已经没有磁盘文件的实例为「需修复」。
 
-    返回 ``(新视图, 移除的实例名, 同名残余磁盘)``：
+    返回 ``(新视图, 需修复的实例名, 同名残余磁盘)``：
 
-    - ``BasePath`` 下已经没有 ``ext4.vhdx`` / ``rootfs`` 时，该实例实际无法启动，
-      直接从列表移除（注册表 / ``wsl`` 里的残留登记不会因此被改写）。
-    - 提供 ``settings`` 时顺带扫描已配置工作目录，把同名 ``install/<实例>`` 作为
-      “残余磁盘”返回，供界面提示用户用 ``wsl --import-in-place`` 重新注册；
-      **不能**把扫描位置直接当成已注册实例展示——WSL 启动仍使用注册表旧路径。
-    - ``BasePath`` 为空（注册表不可读）时保持原样，避免误删仍可启动的实例。
+    - ``BasePath`` 下没有 ``ext4.vhdx`` / ``rootfs`` 时实例无法启动，但**仍保留在
+      列表里**，``needs_repair=True``；界面据此禁用启动并显示「需修复」标签。
+    - 提供 ``settings`` 时扫描已配置工作目录，把同名 ``install/<实例>`` 填进
+      ``repair_vhd``，供「修复注册」用 ``wsl --import-in-place`` 重新注册。
+    - ``BasePath`` 为空（注册表不可读）时保持原样，避免误标仍可启动的实例。
     """
     stale = [distro for distro in view.distros if distro.base_path and not has_distro_files(distro.base_path)]
     if not stale:
         return view, (), {}
 
     found = scan_install_dirs(settings) if settings is not None else {}
-    removed = tuple(distro.name for distro in stale)
-    orphans = {name: found[name.casefold()] for name in removed if name.casefold() in found}
-    removed_set = {name.casefold() for name in removed}
-    distros = tuple(distro for distro in view.distros if distro.name.casefold() not in removed_set)
-
+    orphans = {distro.name: found[distro.name.casefold()] for distro in stale if distro.name.casefold() in found}
+    stale_names = {distro.name.casefold() for distro in stale}
+    distros: list[Distro] = []
+    for distro in view.distros:
+        if distro.name.casefold() not in stale_names:
+            distros.append(distro)
+            continue
+        orphan = orphans.get(distro.name)
+        vhd = orphan / "ext4.vhdx" if orphan is not None else None
+        distros.append(
+            replace(distro, needs_repair=True, repair_vhd=str(vhd) if vhd is not None and vhd.is_file() else None)
+        )
     warnings = list(view.warnings)
-    for name in removed:
-        warning = f"{name} 的磁盘文件已不存在，已从实例列表移除（注册表 / wsl 中的残留登记需另行清理）"
-        orphan = orphans.get(name)
+    for distro in stale:
+        warning = f"{distro.name} 的磁盘文件已不存在（注册表 BasePath：{distro.base_path}），需修复注册"
+        orphan = orphans.get(distro.name)
         if orphan is not None:
-            warning += f"；在 {orphan} 发现同名残余磁盘，可用 wsl --import-in-place 重新注册"
+            warning += f"；发现同名残余磁盘 {orphan / 'ext4.vhdx'}，可用「修复注册」重新导入"
         warnings.append(warning)
-
-    default = view.default
-    if default and not any(item.name == default for item in distros):
-        default = distros[0].name if distros else None
-    return replace(view, distros=distros, default=default, warnings=tuple(warnings)), removed, orphans
+    return replace(view, distros=tuple(distros), warnings=tuple(warnings)), tuple(d.name for d in stale), orphans
 
 
 def legacy_dir_note(settings: WslmanwSettings) -> str:
