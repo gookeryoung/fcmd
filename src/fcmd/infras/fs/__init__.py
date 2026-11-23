@@ -8,6 +8,7 @@ from .path import *  # noqa: F403
 from .rename import *  # noqa: F403
 from .rename_plan import *  # noqa: F403
 from .search import *  # noqa: F403
+from .timestamps import *  # noqa: F403
 
 __all__ = [  # noqa: F405
     "CASE_MODES",
@@ -15,6 +16,7 @@ __all__ = [  # noqa: F405
     "DEFAULT_BRACKETS",
     "DEFAULT_LEVELS",
     "FileLevelConfig",
+    "TimestampError",
     "add_date_prefixes",
     "apply_case",
     "clear_date_prefixes",
@@ -22,10 +24,13 @@ __all__ = [  # noqa: F405
     "config_path",
     "config_to_mapping",
     "default_config",
+    "file_stamps",
     "file_timestamp",
+    "format_epoch",
     "iter_files",
     "load_filelevel_config",
     "normalize_path",
+    "parse_timestamp",
     "path_diff",
     "path_parts",
     "relative_to",

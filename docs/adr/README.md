@@ -51,3 +51,4 @@
 | [0044](0044-llmw-workflow.md) | llmw 工作流：类型化节点 + DAG 执行 + 模板化工作流页（C1 / C2 落地，C3 画布 / C4 ComfyUI 导入待办） | C1 / C2 已落地 |
 | [0045](0045-fx-tool-execution-primitives.md) | `fx.tool` 执行原语：前置断言 `preconditions`、有序步骤 `steps`、显式聚合 `aggregate`；`gittool` 的 `a` / `i` 改为步骤声明，内部开关不再泄漏到 CLI | 已落地 |
 | [0046](0046-large-qt-app-split.md) | 大型 Qt 应用拆分：wslman / llmw 页面化与窗口瘦身；`apps/<app>/qt/` 布局例外、状态归属、P0–P5 分期与行数守卫 | 已落地（wslman + llmw 模型/运行页拆分；chat/paint 按触达再迁） |
+| [0047](0047-confirm-gate-and-filetime.md) | 破坏性写操作的确认闸门（`requires_confirmation` + `--confirm`）与 `filetime` 工具（mtime/atime 读/写）；schema 增加 `json` / `requires_confirmation` 标记 | 已落地 |

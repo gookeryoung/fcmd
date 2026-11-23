@@ -182,6 +182,7 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 |------|------|------|
 | `writefile` | - | 写入文本内容到文件 |
 | `filedate` | - | 文件日期前缀处理（添加/清除） |
+| `filetime` | - | 读取/设置文件时间戳（mtime/atime/ctime；`set` 支持 ISO 8601 或 `@Unix` 秒，需 `--confirm`） |
 | `filelevel` | - | 文件等级标记重命名（PUB/NOR/INT/CON/CLA）；等级 / 括号映射直接读 `~/.fcmd/filelevel.json`（不存在时按默认值自动生成），手工编辑后立即生效 |
 | `filerename` | - | 文件批量重命名（replace/insert/case） |
 | `filesearch` | - | 文件名/内容搜索（支持正则与通配符） |

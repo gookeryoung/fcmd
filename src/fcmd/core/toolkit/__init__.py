@@ -128,6 +128,7 @@ def tool(  # noqa: PLR0913
     timeout: float | None = None,
     param_help: Mapping[str, str] | None = None,
     examples: Sequence[str] | None = None,
+    requires_confirmation: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：将函数注册为 ``@fx.tool`` 工具。
 
@@ -169,6 +170,9 @@ def tool(  # noqa: PLR0913
     examples:
         示例调用列表（完整 ``fcmd ...`` 命令）；同时进入 ``--help`` 末尾与
         ``fcmd info --json`` 的 schema，供人照抄、供模型减少参数猜测
+    requires_confirmation:
+        该子命令是否必须显式确认才能执行；``True`` 时 CLI 暴露 ``--confirm``，
+        未确认且非 ``--dry-run`` 时按 ``CONFIRM_REQUIRED``（退出 2）拒绝
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -197,6 +201,7 @@ def tool(  # noqa: PLR0913
             timeout=timeout,
             param_help=dict(param_help) if param_help else None,
             examples=tuple(examples) if examples else (),
+            requires_confirmation=requires_confirmation,
         )
         _register_tool(spec)
         return func

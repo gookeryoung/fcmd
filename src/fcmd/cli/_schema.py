@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -72,6 +73,8 @@ def subcommand_schema(spec: ToolSpec) -> dict[str, Any]:
         "help": spec.help,
         "kind": spec_kind(spec),
         "hidden": spec.hidden,
+        "json": "json_output" in inspect.signature(spec.func).parameters,
+        "requires_confirmation": spec.requires_confirmation,
         "needs": list(spec.needs),
         "strategy": spec.strategy,
         "params": param_schema(spec),

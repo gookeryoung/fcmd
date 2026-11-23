@@ -109,6 +109,9 @@ class ToolSpec:
     examples:
         示例调用列表（完整 ``fcmd ...`` 命令）；同时进入 ``--help`` 末尾与
         ``fcmd info --json`` 的 schema，供人直接照抄、供模型减少参数猜测
+    requires_confirmation:
+        子命令是否必须显式确认（``--confirm``）才能执行；``True`` 时 parser
+        才暴露 ``--confirm``，``--dry-run`` 视为仅预览、不要求确认
     """
 
     name: str
@@ -131,6 +134,7 @@ class ToolSpec:
     timeout: float | None = None
     param_help: Mapping[str, str] | None = None
     examples: tuple[str, ...] = ()
+    requires_confirmation: bool = False
 
     def __post_init__(self) -> None:
         if self.steps and self.cmd is not None:

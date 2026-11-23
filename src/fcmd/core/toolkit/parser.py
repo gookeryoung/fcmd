@@ -209,14 +209,22 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
                 aliases=_PARAM_CLI_ALIASES.get(pname, ()),
             )
     # 工具自己声明 dry_run 时由工具生成结构化计划，不再添加框架级 --dry-run
-    _add_global_options(parser, include_dry_run="dry_run" not in sig.parameters)
+    _add_global_options(
+        parser,
+        include_dry_run="dry_run" not in sig.parameters,
+        include_confirm=spec.requires_confirmation and "confirm" not in sig.parameters,
+    )
     return parser
 
 
-def _add_global_options(parser: argparse.ArgumentParser, *, include_dry_run: bool = True) -> None:
-    """为 parser 添加全局选项（--dry-run / --quiet / --strategy）。"""
+def _add_global_options(
+    parser: argparse.ArgumentParser, *, include_dry_run: bool = True, include_confirm: bool = False
+) -> None:
+    """为 parser 添加全局选项（``--dry-run`` / ``-q`` / ``--strategy``，按需 ``--confirm``）。"""
     if include_dry_run:
         parser.add_argument("--dry-run", action="store_true", default=False, help="仅打印执行计划，不执行")
+    if include_confirm:
+        parser.add_argument("--confirm", action="store_true", default=False, help="确认执行会修改文件/系统状态的操作")
     parser.add_argument("-q", "--quiet", action="store_true", default=False, help="减少输出")
     parser.add_argument(
         "--strategy",

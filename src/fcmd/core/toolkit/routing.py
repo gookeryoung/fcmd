@@ -146,7 +146,7 @@ def _parse_tool_args(
     # 复用完整 parser，参数经共享 variables 流入子任务插值
     if _is_aggregate(target_spec) and not inspect.signature(target_spec.func).parameters:
         parser = argparse.ArgumentParser(prog=f"{name} {target}", description=target_spec.help)
-        _add_global_options(parser)
+        _add_global_options(parser, include_confirm=target_spec.requires_confirmation)
     else:
         parser = _build_parser_for_tool(target_spec)
 
@@ -154,4 +154,14 @@ def _parse_tool_args(
     variables = _parse_arguments(parser, name, target, argv_rest, usage)
     if isinstance(variables, int):
         return variables
+    if target_spec.requires_confirmation and not variables.get("confirm") and not variables.get("dry_run"):
+        message = f"工具 {name!r} 的子命令 {target!r} 会修改文件/系统状态，需要显式确认"
+        hint = f"先加 --dry-run 预览，或加 --confirm 执行；运行 {usage} 查看用法"
+        if json_output:
+            emit_error(name, target, code="CONFIRM_REQUIRED", message=message, hint=hint)
+        else:
+            from fcmd.console import print_error
+
+            print_error(message, code="CONFIRM_REQUIRED", hint=hint)
+        return int(ExitCode.USAGE)
     return variables, target_spec

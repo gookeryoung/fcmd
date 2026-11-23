@@ -63,6 +63,7 @@ TOOLS: dict[str, ToolEntry] = {
     "filesearch": ToolEntry("filesearch", "python", "fcmd.tools.system.filesearch"),
     "filesync": ToolEntry("filesync", "python", "fcmd.apps.filesync.filesync"),
     "filesyncw": ToolEntry("filesyncw", "python", "fcmd.apps.filesync.filesyncw"),
+    "filetime": ToolEntry("filetime", "python", "fcmd.tools.system.filetime"),
     "folderback": ToolEntry("folderback", "python", "fcmd.tools.system.folderback"),
     "folderzip": ToolEntry("folderzip", "python", "fcmd.tools.archive.folderzip"),
     "fonttool": ToolEntry("fonttool", "python", "fcmd.tools.system.fonttool"),
@@ -193,6 +194,7 @@ DESCRIPTIONS: dict[str, str] = {
     "filesearch": "按文件名 glob 搜索",
     "filesync": "文件夹比较与同步（参考 FreeFileSync）：compare 按时间/大小/内容比较两侧，sync 支持双向/镜像/更新三种模式，可用 --preview 预览，冲突项自动跳过",
     "filesyncw": "文件夹比较与同步窗口版（Qt）：左右目录对比（时间/大小/内容），结果表列出差异与计划动作，支持双向/镜像/更新同步与试运行，冲突项自动跳过；设置持久化到 ~/.fcmd/ui/filesyncw.json",
+    "filetime": "读取文件 mtime/atime/ctime",
     "folderback": "备份文件夹",
     "folderzip": "压缩当前目录下所有子文件夹为 zip",
     "fonttool": "列出可安装字体",
@@ -312,6 +314,7 @@ HELP: dict[str, str] = {
     "filesearch": "filesearch 子命令\n+------------------------------+\n| 子命令  | 说明               |\n|---------+--------------------|\n| content | 按内容正则搜索     |\n| name    | 按文件名 glob 搜索 |\n+------------------------------+\n",
     "filesync": "filesync 子命令\n+------------------------------------+\n| 子命令  | 说明                     |\n|---------+--------------------------|\n| compare | 比较两个文件夹并列出差异 |\n| sync    | 按同步模式执行文件夹同步 |\n+------------------------------------+\n",
     "filesyncw": "usage: filesyncw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开文件夹比较与同步窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
+    "filetime": "filetime 子命令\n+-------------------------------------------------+\n| 子命令 | 说明                                   |\n|--------+----------------------------------------|\n| get    | 读取文件 mtime/atime/ctime             |\n| set    | 设置文件 mtime/atime（需要 --confirm） |\n+-------------------------------------------------+\n",
     "folderback": "usage: folderback [-h] [--src SRC] [--dst DST] [--max-zip MAX_ZIP] [--dry-run]\n                  [-q] [--strategy STRATEGY]\n\n备份文件夹\n\noptions:\n  -h, --help           show this help message and exit\n  --src SRC            源文件夹路径（默认: 当前目录）\n  --dst DST            目标文件夹路径（默认: ./backup）\n  --max-zip MAX_ZIP    最大备份数量（默认: 5，超出时删除最旧的）\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "folderzip": "usage: folderzip [-h] [--directory DIRECTORY] [--dry-run] [-q]\n                 [--strategy STRATEGY]\n\n压缩当前目录下所有子文件夹为 zip\n\noptions:\n  -h, --help            show this help message and exit\n  --directory DIRECTORY\n                        目标目录（默认当前目录）\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
     "fonttool": "fonttool 子命令\n+----------------------------+\n| 子命令  | 说明             |\n|---------+------------------|\n| install | 下载并安装字体   |\n| list    | 列出可安装字体   |\n| remove  | 移除已安装字体   |\n| status  | 查看字体安装状态 |\n+----------------------------+\n",
@@ -508,6 +511,7 @@ LAYOUT: tuple[str, ...] = (
     "tools/system/filelevel.py",
     "tools/system/filerename.py",
     "tools/system/filesearch.py",
+    "tools/system/filetime.py",
     "tools/system/folderback.py",
     "tools/system/fonttool.py",
     "tools/system/pathtool.py",
@@ -530,11 +534,11 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "e9943da2995894e8c03cf7aa06824b4e"
+DIGEST = "ae3731298001988061df0b3b3a8d2f55"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
-TOOL_COUNT = 115
-SUBCOMMAND_TOTAL = 398
+TOOL_COUNT = 116
+SUBCOMMAND_TOTAL = 400
 
 
 if __name__ == "__main__":  # pragma: no cover
