@@ -14,20 +14,30 @@ from __future__ import annotations
 
 import base64
 import binascii
+import posixpath
 import re
 import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fcmd.apps.wslman._errors import not_found, runtime_error
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 __all__ = [
     "BACKUP_PREFIX",
+    "SOURCE_LABELS",
+    "SOURCE_WINDOWS",
+    "SOURCE_WSL",
     "SSH_DIR",
     "WRITE_PREFIX",
+    "MigrationState",
     "RemoteFile",
     "SshFile",
+    "SshSource",
     "SshTarget",
     "backup_name",
     "classify",
@@ -36,17 +46,31 @@ __all__ = [
     "kind_label",
     "looks_private",
     "loose_modes",
+    "migration_state",
     "parse_probe",
     "parse_write_result",
     "probe_script",
     "read_source",
+    "remote_files",
+    "remote_path",
+    "remote_read_argv",
     "scan_source",
+    "source_file_path",
+    "source_label",
     "target_summary",
     "write_script",
 ]
 
 SSH_DIR = "~/.ssh"
 """实例内的目标目录（展示用；脚本里用 ``$HOME/.ssh``）。"""
+
+SOURCE_WINDOWS = "windows"
+"""来源类型：Windows 宿主的 ``%USERPROFILE%\\.ssh``。"""
+
+SOURCE_WSL = "wsl"
+"""来源类型：另一个 WSL 实例的 ``~/.ssh``（经 ``wsl.exe`` 文件流读取）。"""
+
+SOURCE_LABELS = {SOURCE_WINDOWS: "Windows 宿主", SOURCE_WSL: "WSL 实例"}
 
 BACKUP_PREFIX = "fcmd-ssh-backup-"
 """覆盖前备份目录名前缀。"""
@@ -135,6 +159,98 @@ class SshTarget:
 
     def find(self, name: str) -> RemoteFile | None:
         return next((item for item in self.files if item.name == name), None)
+
+
+@dataclass(frozen=True, slots=True)
+class SshSource:
+    """一次迁移的来源：Windows 宿主目录或某个 WSL 实例的 ``~/.ssh``。"""
+
+    kind: str = SOURCE_WINDOWS
+    distro: str = ""
+    directory: str = ""
+
+    @property
+    def is_wsl(self) -> bool:
+        return self.kind == SOURCE_WSL
+
+    @property
+    def label(self) -> str:
+        return source_label(self.kind, self.distro)
+
+    def display_path(self, remote_dir: str = "") -> str:
+        """实际读取的位置：Windows 侧是本地目录，WSL 侧是 ``<实例>:<目录>``。"""
+        if self.is_wsl:
+            return f"{self.distro}:{remote_dir or self.directory or SSH_DIR}"
+        return self.directory or str(default_source_dir())
+
+
+def source_label(kind: str, distro: str = "") -> str:
+    """来源展示名：WSL 来源带上实例名，避免两个实例同名目录混淆。"""
+    label = SOURCE_LABELS.get(kind, kind)
+    return f"{label} · {distro}" if kind == SOURCE_WSL and distro else label
+
+
+def remote_path(target: SshTarget, name: str) -> str:
+    """源实例内一个文件的绝对路径；探测未给出 ``dir`` 时回落到 ``$HOME/.ssh``。"""
+    directory = target.dir or posixpath.join(target.home or "/root", ".ssh")
+    return posixpath.join(directory, name)
+
+
+def source_file_path(source: SshSource, name: str) -> str:
+    """扫描时已解析出来源实例的 ``~/.ssh``，按它拼出要读取的文件路径。"""
+    if not source.directory:
+        raise runtime_error(
+            f"实例 {source.distro} 没有 ~/.ssh 目录",
+            hint="在来源实例里先执行一次 ssh 连接，或手动创建 ~/.ssh 后重新扫描",
+        )
+    return posixpath.join(source.directory, name)
+
+
+def remote_read_argv(path: str) -> tuple[str, str, str]:
+    """读取源实例文件的 argv：``cat`` 直接输出文件流，不依赖实例里有 rsync。
+
+    返回值追加在 ``wsl.exe -d <实例> --exec`` 之后；内容只走 stdout，
+    私钥不会出现在命令行 / 进程列表里。
+    """
+    return ("cat", "--", path)
+
+
+def remote_files(target: SshTarget) -> tuple[SshFile, ...]:
+    """把源实例 ``~/.ssh`` 的文件清单转成可勾选条目。
+
+    只按文件名分类（不读内容），所以非标准命名的私钥会被归到「其它」，
+    与 Windows 侧「未知类型默认不勾选」的口径一致。
+    """
+    files: list[SshFile] = []
+    for item in target.files:
+        kind = classify(item.name, b"")
+        warning = ""
+        if item.name.casefold().endswith(".ppk"):
+            warning = "PuTTY 私钥格式，OpenSSH 默认不能直接使用"
+        elif kind == "other":
+            warning = "未知类型，确认后再迁移"
+        files.append(SshFile(item.name, item.size, kind, warning))
+    files.sort(key=lambda item: (_KIND_ORDER.get(item.kind, len(_KIND_ORDER)), item.name.casefold()))
+    return tuple(files)
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationState:
+    """由一次扫描结果推导的迁移进度（标签文案 / 色调 / 说明）。"""
+
+    label: str
+    tone: str
+    detail: str
+    matched: int = 0
+    total: int = 0
+
+    @property
+    def done(self) -> bool:
+        return self.label == DONE_LABEL
+
+
+DONE_LABEL = "已完成迁移"
+"""全部来源文件都已存在且权限正确时的标签文案。"""
 
 
 def default_source_dir() -> Path:
@@ -322,6 +438,56 @@ def target_summary(target: SshTarget) -> str:
 def backup_name(stamp: float) -> str:
     """备份目录名：``fcmd-ssh-backup-YYYYmmdd-HHMMSS``。"""
     return BACKUP_PREFIX + time.strftime("%Y%m%d-%H%M%S", time.localtime(stamp))
+
+
+def _content_matches(item: SshFile, target: SshTarget) -> bool:
+    remote = target.find(item.name)
+    return remote is not None and remote.size == item.size
+
+
+def _mode_matches(item: SshFile, target: SshTarget) -> bool:
+    remote = target.find(item.name)
+    if remote is None or not remote.mode:
+        return True
+    try:
+        return int(remote.mode, 8) == item.mode
+    except ValueError:
+        return True
+
+
+def migration_state(files: Sequence[SshFile], target: SshTarget) -> MigrationState:
+    """按扫描结果判断迁移完成度，供卡片标签直接展示。
+
+    只看实际文件：同名且大小一致算「已到实例」，再按权限口径细分为已完成 /
+    权限待修正；部分文件缺失或大小不同就是「部分迁移」，一个都没命中是
+    「未迁移」。来源目录为空时给「无文件」，不把空来源误判成已完成。
+    """
+    total = len(files)
+    if not total:
+        return MigrationState("无文件", "muted", "来源目录没有可迁移的普通文件")
+    missing = [item for item in files if not _content_matches(item, target)]
+    if not missing:
+        wrong = [item for item in files if not _mode_matches(item, target)]
+        if wrong:
+            names = "、".join(item.name for item in wrong)
+            return MigrationState(
+                "权限待修正",
+                "warning",
+                f"文件已全部存在，但 {names} 的权限与口径不一致；迁移同名文件会改为私钥 600、其余 644",
+                total,
+                total,
+            )
+        return MigrationState(DONE_LABEL, "success", f"{total} 个文件均已存在于实例 ~/.ssh，且权限正确", total, total)
+    if len(missing) == total:
+        return MigrationState("未迁移", "muted", "实例内未找到与来源匹配的文件", 0, total)
+    matched = total - len(missing)
+    return MigrationState(
+        "部分迁移",
+        "warning",
+        f"已匹配 {matched}/{total} 个文件；其余文件缺失或大小与来源不一致",
+        matched,
+        total,
+    )
 
 
 def write_script(name: str, mode: int, *, overwrite: bool, backup: str) -> str:

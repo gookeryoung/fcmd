@@ -48,6 +48,56 @@ def test_remote_target_helpers() -> None:
     assert target.find("missing") is None
 
 
+def test_remote_source_helpers_describe_windows_and_wsl() -> None:
+    """来源抽象：Windows 用本地目录，WSL 带实例名与实际读取路径。"""
+    windows = _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", r"C:\Users\me\.ssh")
+    assert windows.is_wsl is False
+    assert windows.label == "Windows 宿主"
+    assert windows.display_path() == r"C:\Users\me\.ssh"
+    assert _sshfiles.source_label(_sshfiles.SOURCE_WSL, "Debian") == "WSL 实例 · Debian"
+    assert _sshfiles.source_label(_sshfiles.SOURCE_WSL) == "WSL 实例"
+
+    remote = _sshfiles.SshSource(_sshfiles.SOURCE_WSL, "Debian", "/home/me/.ssh")
+    assert remote.is_wsl is True
+    assert remote.label == "WSL 实例 · Debian"
+    assert remote.display_path() == "Debian:/home/me/.ssh"
+    assert _sshfiles.source_file_path(remote, "id_ed25519") == "/home/me/.ssh/id_ed25519"
+    with pytest.raises(WslmanError) as missing:
+        _sshfiles.source_file_path(_sshfiles.SshSource(_sshfiles.SOURCE_WSL, "Debian"), "id_ed25519")
+    assert "没有 ~/.ssh" in missing.value.message
+
+
+def test_remote_read_argv_uses_cat_stream_and_keeps_path_argument() -> None:
+    """跨实例读取走 ``cat`` 文件流，私钥内容只出现在 stdout。"""
+    assert _sshfiles.remote_read_argv("/home/me/.ssh/id_ed25519") == (
+        "cat",
+        "--",
+        "/home/me/.ssh/id_ed25519",
+    )
+
+
+def test_remote_files_classifies_names_and_warns_without_content() -> None:
+    target = _sshfiles.SshTarget(
+        user="me",
+        home="/home/me",
+        dir="/home/me/.ssh",
+        files=(
+            _sshfiles.RemoteFile("known_hosts", "644", 40),
+            _sshfiles.RemoteFile("id_ed25519.pub", "644", 80),
+            _sshfiles.RemoteFile("id_rsa", "600", 1200),
+            _sshfiles.RemoteFile("weird.ppk", "600", 900),
+            _sshfiles.RemoteFile("notes.txt", "644", 1),
+        ),
+    )
+    files = _sshfiles.remote_files(target)
+    assert [item.name for item in files] == ["id_rsa", "id_ed25519.pub", "known_hosts", "notes.txt", "weird.ppk"]
+    assert [item.kind for item in files] == ["private", "public", "known_hosts", "other", "other"]
+    assert files[0].size_text == "1.2 KB"
+    assert "未知类型" in files[3].warning
+    assert "PuTTY" in files[4].warning
+    assert files[3].checked_by_default is False
+
+
 def test_default_source_dir_is_home_dot_ssh() -> None:
     assert _sshfiles.default_source_dir() == Path.home() / ".ssh"
 
@@ -215,6 +265,74 @@ def test_backup_name_uses_timestamp() -> None:
     name = _sshfiles.backup_name(0)
     assert name.startswith(_sshfiles.BACKUP_PREFIX)
     assert re.fullmatch(r"fcmd-ssh-backup-\d{8}-\d{6}", name)
+
+
+def test_migration_state_derives_from_scanned_files() -> None:
+    files = (
+        _sshfiles.SshFile("id_ed25519", 10, "private"),
+        _sshfiles.SshFile("config", 5, "config"),
+    )
+    empty = _sshfiles.migration_state((), _sshfiles.SshTarget())
+    assert (empty.label, empty.tone, empty.total) == ("无文件", "muted", 0)
+    assert empty.done is False
+
+    none = _sshfiles.migration_state(files, _sshfiles.SshTarget())
+    assert (none.label, none.tone, none.matched, none.total) == ("未迁移", "muted", 0, 2)
+
+    partial_target = _sshfiles.SshTarget(
+        dir="/home/me/.ssh",
+        files=(_sshfiles.RemoteFile("id_ed25519", "600", 10),),
+    )
+    partial = _sshfiles.migration_state(files, partial_target)
+    assert (partial.label, partial.tone, partial.matched, partial.total) == ("部分迁移", "warning", 1, 2)
+    assert "1/2" in partial.detail
+
+    # 同名但大小不同，视为未到实例。
+    wrong_size = _sshfiles.SshTarget(
+        dir="/home/me/.ssh",
+        files=(_sshfiles.RemoteFile("id_ed25519", "600", 11), _sshfiles.RemoteFile("config", "644", 5)),
+    )
+    assert _sshfiles.migration_state(files, wrong_size).label == "部分迁移"
+    assert (
+        _sshfiles.migration_state(
+            files,
+            _sshfiles.SshTarget(
+                dir="/home/me/.ssh",
+                files=(_sshfiles.RemoteFile("id_ed25519", "600", 11), _sshfiles.RemoteFile("config", "644", 6)),
+            ),
+        ).label
+        == "未迁移"
+    )
+
+    done = _sshfiles.migration_state(
+        files,
+        _sshfiles.SshTarget(
+            dir="/home/me/.ssh",
+            files=(_sshfiles.RemoteFile("id_ed25519", "600", 10), _sshfiles.RemoteFile("config", "644", 5)),
+        ),
+    )
+    assert (done.label, done.tone, done.matched, done.total) == (_sshfiles.DONE_LABEL, "success", 2, 2)
+    assert done.done is True
+
+    wrong_mode = _sshfiles.migration_state(
+        files,
+        _sshfiles.SshTarget(
+            dir="/home/me/.ssh",
+            files=(_sshfiles.RemoteFile("id_ed25519", "644", 10), _sshfiles.RemoteFile("config", "644", 5)),
+        ),
+    )
+    assert (wrong_mode.label, wrong_mode.tone) == ("权限待修正", "warning")
+    assert "id_ed25519" in wrong_mode.detail
+
+    # 权限读不到（空串 / 非八进制）时不臆断权限错误，仍算已完成。
+    unverifiable = _sshfiles.migration_state(
+        files,
+        _sshfiles.SshTarget(
+            dir="/home/me/.ssh",
+            files=(_sshfiles.RemoteFile("id_ed25519", "", 10), _sshfiles.RemoteFile("config", "bad", 5)),
+        ),
+    )
+    assert unverifiable.label == _sshfiles.DONE_LABEL
 
 
 def test_write_script_refuses_unconfirmed_overwrite_and_quotes_names() -> None:

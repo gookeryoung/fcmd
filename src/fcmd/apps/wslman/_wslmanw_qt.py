@@ -1683,6 +1683,16 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
                 return row
         return None
 
+    def _other_instance_names(self, name: str) -> tuple[str, ...]:
+        """除当前实例外的已列出实例：作为 SSH 迁移的候选来源。"""
+        key = name.casefold()
+        names: list[str] = []
+        for index in range(self.distro_list.count()):
+            row = self.distro_list.itemWidget(self.distro_list.item(index))
+            if isinstance(row, _DistroItemRow) and row.distro.name.casefold() != key:
+                names.append(row.distro.name)
+        return tuple(names)
+
     def _configure_distro(self, name: str) -> None:
         """行内「配置」：保存终端默认目录，按需把实例设为默认发行版。"""
         row = self._row_for_distro(name)
@@ -1694,6 +1704,7 @@ class WslmanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要
             row.distro,
             w.terminal_cwd(self.settings, row.distro.name),
             selected=w.init_task_keys(self.settings, row.distro.name),
+            instances=self._other_instance_names(row.distro.name),
         )
         self._restore_dialog_geometry("distro_config", dialog)
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -2808,9 +2819,10 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
 
 
 _SSH_HINT = (
-    "从 Windows 的 ~/.ssh 读取私钥、公钥、known_hosts 与 config，写入实例的 ~/.ssh；"
-    "目录权限 700、私钥 600。实例内已有同名文件时不会静默覆盖：先确认，再备份到 "
-    "~/.ssh/fcmd-ssh-backup-<时间>/ 后写入。"
+    "从 Windows 的 ~/.ssh 或其它 WSL 实例的 ~/.ssh 读取私钥、公钥、known_hosts 与 config，"
+    "写入当前实例的 ~/.ssh；目录权限 700、私钥 600。实例内已有同名文件时不会静默覆盖：先确认，"
+    "再备份到 ~/.ssh/fcmd-ssh-backup-<时间>/ 后写入。要把当前实例的 SSH 推到别的实例，"
+    "打开目标实例的配置，把来源选成当前实例即可。"
 )
 """迁移 SSH 卡片说明：收进 tooltip 与确认框，不占版面高度。"""
 
@@ -2819,20 +2831,24 @@ _SSH_LOG_LINES_MAX = 200
 
 
 class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
-    """迁移 SSH 文件卡片：扫描 Windows 侧目录、预览冲突、备份后写入实例。
+    """迁移 SSH 文件卡片：从 Windows 宿主或另一个实例读取，备份后写入当前实例。
 
     与「初始化环境」并列放在实例配置对话框里：初始化负责在实例内生成密钥，
-    本卡片负责把 Windows 上已经在用的密钥、known_hosts、config 带进去，两者
-    互不替代。文件内容通过 stdin 送进实例，命令行与日志里只有文件名和权限。
+    本卡片负责把已经在用的密钥、known_hosts、config 带进来，两者互不替代。
+    跨实例来源通过 ``wsl.exe`` 的 ``cat`` 文件流读取，不依赖实例内是否装了 rsync；
+    目标侧始终是当前实例，反向迁移用目标实例的配置卡片完成。文件内容通过 stdin
+    送进目标实例，命令行与日志里只有文件名和权限。
     """
 
-    def __init__(self, parent: QWidget, distro: Distro) -> None:
+    def __init__(self, parent: QWidget, distro: Distro, *, instances: Sequence[str] = ()) -> None:
         super().__init__("迁移 SSH 文件", parent)
         self._distro = distro
+        self._instances = tuple(instances)
         self._busy = False
         self._closing = False
         self._files: dict[str, _sshfiles.SshFile] = {}
         self._target: _sshfiles.SshTarget | None = None
+        self._source_snapshot: _sshfiles.SshSource | None = None
         self._boxes: dict[str, QCheckBox] = {}
         self._log_lines: list[str] = []
         self._refresh_after_run = False
@@ -2845,8 +2861,12 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(6)
-        self.collapsed_hint = hint_label("尚未扫描 Windows 侧的 ~/.ssh。", wrap=False)
+        self.collapsed_hint = hint_label("尚未扫描来源目录。", wrap=False)
         header.addWidget(self.collapsed_hint)
+        # 迁移完成度：每次扫描按实际文件推导，不依赖「点过迁移按钮」。
+        self.state_tag = StatusTag("", tone="muted", parent=self)
+        self.state_tag.setVisible(False)
+        header.addWidget(self.state_tag)
         self.summary = ElidedLabel("", parent=self)
         self.summary.setObjectName("Hint")
         self.summary.setToolTip(_SSH_HINT)
@@ -2865,18 +2885,45 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         details.setContentsMargins(0, 0, 0, 0)
         details.setSpacing(4)
 
+        # 来源类型：Windows 宿主，或另一个已安装的 WSL 实例（当前实例不作为来源）。
         source_row = QHBoxLayout()
         source_row.setContentsMargins(0, 0, 0, 0)
         source_row.setSpacing(6)
-        source_row.addWidget(hint_label("Windows 侧目录", wrap=False))
+        source_row.addWidget(hint_label("来源", wrap=False))
+        self.source_kind = QComboBox(self)
+        self.source_kind.addItem(_sshfiles.SOURCE_LABELS[_sshfiles.SOURCE_WINDOWS], _sshfiles.SOURCE_WINDOWS)
+        if self._instances:
+            self.source_kind.addItem(_sshfiles.SOURCE_LABELS[_sshfiles.SOURCE_WSL], _sshfiles.SOURCE_WSL)
+        self.source_kind.setToolTip("Windows 宿主的 %USERPROFILE%\\.ssh，或另一个 WSL 实例的 ~/.ssh")
+        self.source_kind.currentIndexChanged.connect(self._on_source_changed)
+        source_row.addWidget(self.source_kind)
+        self.source_instance = QComboBox(self)
+        for name in self._instances:
+            self.source_instance.addItem(name, name)
+        self.source_instance.setToolTip("从这里读取 SSH 文件；实例未运行时会由 wsl.exe 启动后再读")
+        self.source_instance.setVisible(False)
+        self.source_instance.currentIndexChanged.connect(self._on_source_changed)
+        source_row.addWidget(self.source_instance, 1)
+        source_row.addStretch(1)
+        details.addLayout(source_row)
+
+        path_row = QHBoxLayout()
+        path_row.setContentsMargins(0, 0, 0, 0)
+        path_row.setSpacing(6)
+        self.source_label = hint_label("Windows 侧目录", wrap=False)
+        path_row.addWidget(self.source_label)
         self.source = PathRow(
             value=str(_sshfiles.default_source_dir()),
             placeholder=r"%USERPROFILE%\.ssh",
             directory=True,
             parent=self,
         )
-        source_row.addWidget(self.source, 1)
-        details.addLayout(source_row)
+        path_row.addWidget(self.source, 1)
+        self.source_remote = ElidedLabel("", parent=self)
+        self.source_remote.setObjectName("Hint")
+        self.source_remote.setVisible(False)
+        path_row.addWidget(self.source_remote, 1)
+        details.addLayout(path_row)
 
         self.file_hint = ElidedLabel("点「扫描」读取来源目录并检测实例。", parent=self)
         self.file_hint.setObjectName("Hint")
@@ -2923,6 +2970,7 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         self.body.addLayout(actions)
 
         self._sync_collapsed_view()
+        self._sync_source_controls()
 
     @property
     def collapsed(self) -> bool:
@@ -2970,8 +3018,54 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
         text = self.source.value()
         return Path(text) if text else _sshfiles.default_source_dir()
 
+    def _source(self) -> _sshfiles.SshSource:
+        """当前选择的来源；WSL 来源的目录要等扫描探测后再补齐。"""
+        if self.source_kind.currentData() == _sshfiles.SOURCE_WSL:
+            return _sshfiles.SshSource(_sshfiles.SOURCE_WSL, str(self.source_instance.currentData() or ""))
+        return _sshfiles.SshSource(_sshfiles.SOURCE_WINDOWS, "", str(self._source_dir()))
+
+    def _on_source_changed(self, _index: int = 0) -> None:
+        """切换来源类型 / 实例：清掉旧结果，展开态下立即重新扫描。"""
+        self._reset_results()
+        self._sync_source_controls()
+        if not self._collapsed and not self._busy:
+            self.refresh()
+
+    def _sync_source_controls(self) -> None:
+        """按来源类型切换「本地目录」与「实例 + 实际读取路径」两组控件。"""
+        wsl_source = self.source_kind.currentData() == _sshfiles.SOURCE_WSL
+        self.source_instance.setVisible(wsl_source)
+        self.source.setVisible(not wsl_source)
+        self.source_remote.setVisible(wsl_source)
+        self.source_label.setText("来源实例目录" if wsl_source else "Windows 侧目录")
+        if wsl_source:
+            self.source_remote.setText(self._remote_path_text())
+            self.source_remote.setToolTip(self.source_remote.text())
+
+    def _remote_path_text(self) -> str:
+        """WSL 来源实际读取的位置；扫描前给出预期位置，扫描后换成探测到的目录。"""
+        distro = str(self.source_instance.currentData() or "")
+        snapshot = self._source_snapshot
+        if snapshot is not None and snapshot.is_wsl and snapshot.distro == distro:
+            return snapshot.display_path()
+        return f"{distro or '（未选择实例）'}:{_sshfiles.SSH_DIR}（扫描后显示实际路径）"
+
+    def _reset_results(self) -> None:
+        """来源变化或扫描失败后，旧的判定与勾选都不再成立。"""
+        self._files = {}
+        self._target = None
+        self._source_snapshot = None
+        self._rebuild_files()
+        self.state_tag.setVisible(False)
+        self.state_tag.setToolTip("")
+        self.summary.setText("")
+        self.file_hint.setText("点「扫描」读取来源目录并检测实例。")
+        self.target_hint.setText("尚未检测实例的 ~/.ssh。")
+        self.collapsed_hint.setText("尚未扫描来源目录。")
+        self._sync_actions()
+
     def refresh(self) -> None:
-        """后台扫描 Windows 侧目录并探测实例 ~/.ssh；失败只写日志与提示。"""
+        """后台扫描来源（Windows 目录或实例 ~/.ssh）并探测当前实例。"""
         if self._busy:
             return
         self._set_busy(True)
@@ -2983,46 +3077,96 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
             on_finished=self._scan_finished,
         )
 
-    def _scan(self) -> tuple[tuple[_sshfiles.SshFile, ...], _sshfiles.SshTarget]:
-        files = _sshfiles.scan_source(self._source_dir())
-        env = cli._build_environment()
-        wsl_path = cli._require_wsl(env)
+    def _probe(self, env: Any, wsl_path: str, distro: str, action: str, hint: str) -> _sshfiles.SshTarget:
+        """在实例内跑只读探测脚本，解析 ``~/.ssh`` 快照。"""
         result = env.runner.run(
-            [wsl_path, "-d", self._distro.name, "--exec", "bash", "-lc", _sshfiles.probe_script()],
+            [wsl_path, "-d", distro, "--exec", "bash", "-lc", _sshfiles.probe_script()],
             timeout=180.0,
         )
         text = decode_console(result.stdout + result.stderr)
         target = _sshfiles.parse_probe(text)
         if result.returncode != 0 and not target.user:
+            tail = _initenv.tail_lines(text, 3)
+            # 保留可操作提示，把 wsl.exe 的原始错误附在后面便于排查。
+            detail = tail[-1] if tail else ""
             raise runtime_error(
-                f"检测 {self._distro.name} 的 ~/.ssh 失败（退出码 {result.returncode}）",
-                hint=_initenv.tail_lines(text, 3)[-1] if text.strip() else "确认实例可启动，或运行 fcmd wslman doctor",
+                f"{action} 失败（退出码 {result.returncode}）",
+                hint=f"{hint}（wsl.exe：{detail}）" if detail else hint,
             )
-        return files, target
+        return target
 
-    def _scan_done(self, result: tuple[tuple[_sshfiles.SshFile, ...], _sshfiles.SshTarget]) -> None:
+    def _scan(
+        self,
+    ) -> tuple[tuple[_sshfiles.SshFile, ...], _sshfiles.SshTarget, _sshfiles.SshSource]:
+        env = cli._build_environment()
+        wsl_path = cli._require_wsl(env)
+        source = self._source()
+        if source.is_wsl:
+            if not source.distro:
+                raise invalid_argument("没有可选的 WSL 来源实例", hint="先在实例页创建或导入一个实例")
+            remote = self._probe(
+                env,
+                wsl_path,
+                source.distro,
+                f"读取实例 {source.distro} 的 ~/.ssh",
+                f"确认实例已安装；若未运行，先在实例页启动 {source.distro} 后重试"
+                "（wsl.exe 通常也会自动拉起已停止的实例）。",
+            )
+            files = _sshfiles.remote_files(remote) if remote.dir else ()
+            source = _sshfiles.SshSource(_sshfiles.SOURCE_WSL, source.distro, remote.dir)
+        else:
+            files = _sshfiles.scan_source(Path(source.directory))
+        target = self._probe(
+            env,
+            wsl_path,
+            self._distro.name,
+            f"检测 {self._distro.name} 的 ~/.ssh",
+            "确认实例可启动，或运行 fcmd wslman doctor",
+        )
+        return files, target, source
+
+    def _scan_done(
+        self,
+        result: tuple[tuple[_sshfiles.SshFile, ...], _sshfiles.SshTarget, _sshfiles.SshSource],
+    ) -> None:
         if self._closing:
             return
-        files, target = result
+        files, target, source = result
+        self._source_snapshot = source
         self._files = {item.name: item for item in files}
         self._target = target
         self._rebuild_files()
         names = "、".join(item.name for item in files)
-        self.file_hint.setText(f"找到 {len(files)} 个文件：{names}" if files else "来源目录没有可迁移的普通文件")
+        self.file_hint.setText(f"找到 {len(files)} 个文件：{names}" if files else "来源没有可迁移的普通文件")
         self.target_hint.setText(_sshfiles.target_summary(target))
-        self.summary.setText(f"Windows 侧 {len(files)} 个文件 · 实例内 {len(target.files)} 个文件")
-        self._append_log(f"扫描完成：来源 {self._source_dir()}（{len(files)} 个文件）")
+        self.summary.setText(f"{source.label} {len(files)} 个文件 · 实例内 {len(target.files)} 个文件")
+        state = _sshfiles.migration_state(files, target)
+        self.state_tag.set_status(state.label, state.tone)
+        self.state_tag.setToolTip(state.detail)
+        self.state_tag.setVisible(True)
+        self.collapsed_hint.setText(f"{source.label} {len(files)} 个文件")
+        self._append_log(f"扫描完成：来源 {source.display_path()}（{len(files)} 个文件）")
         self._append_log(_sshfiles.target_summary(target))
+        self._sync_source_controls()
         self._sync_actions()
         self._sync_collapsed_view()
 
     def _scan_error(self, message: str) -> None:
         if self._closing:
             return
-        self.file_hint.setText("扫描失败，检查目录后重试")
+        self._files = {}
+        self._target = None
+        self._source_snapshot = None
+        self._rebuild_files()
+        self.file_hint.setText("扫描失败，检查来源后重试")
         self.summary.setText("扫描失败")
         self.collapsed_hint.setText("扫描失败，展开后可重试。")
         self.target_hint.setText("")
+        # 扫描失败时旧结果已经不成立，隐藏标签而不是继续展示过期状态。
+        self.state_tag.setVisible(False)
+        self.state_tag.setToolTip("")
+        self._sync_source_controls()
+        self._sync_actions()
         self._append_log(f"扫描失败：{message}")
 
     def _scan_finished(self) -> None:
@@ -3060,6 +3204,10 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self.scan_button.setEnabled(not busy)
+        # 扫描 / 迁移期间锁住来源选择，避免结果回来时来源已经换了。
+        self.source_kind.setEnabled(not busy)
+        self.source_instance.setEnabled(not busy)
+        self.source.setEnabled(not busy)
         for box in self._boxes.values():
             box.setEnabled(not busy)
         self._sync_actions()
@@ -3115,17 +3263,49 @@ class _SshMigrateSection(Card):  # pragma: no cover - Qt 控件
             on_finished=self._migrate_finished,
         )
 
+    def _read_remote(
+        self,
+        env: Any,
+        wsl_path: str,
+        source: _sshfiles.SshSource,
+        name: str,
+        entry: _sshfiles.SshFile,
+    ) -> bytes:
+        """经 ``wsl.exe --exec cat`` 读来源实例文件：内容只走 stdout，不进命令行。"""
+        path = _sshfiles.source_file_path(source, name)
+        self._bridge.event.emit(f"[{name}] 从实例 {source.distro} 读取…")
+        result = env.runner.run(
+            [wsl_path, "-d", source.distro, "--exec", *_sshfiles.remote_read_argv(path)],
+            timeout=120.0,
+        )
+        if result.returncode != 0:
+            tail = _initenv.tail_lines(decode_console(result.stderr).strip(), 3)
+            raise runtime_error(
+                f"从实例 {source.distro} 读取 {name} 失败（退出码 {result.returncode}）",
+                hint=tail[-1] if tail else f"确认 {source.distro} 可启动，并重新扫描后再试",
+            )
+        data = result.stdout
+        if len(data) != entry.size:
+            raise runtime_error(
+                f"{name} 自扫描后大小已变化（{len(data)} ≠ {entry.size} 字节）",
+                hint="重新扫描后再迁移",
+            )
+        return data
+
     def _migrate(self, names: Sequence[str], overwrite: set[str]) -> str:
         """逐个文件写入：内容走 stdin，命令行只带文件名、权限与备份目录。"""
         env = cli._build_environment()
         wsl_path = cli._require_wsl(env)
-        source = self._source_dir()
+        source = self._source_snapshot or self._source()
         backup = _sshfiles.backup_name(time.time())
         for name in names:
             entry = self._files.get(name)
             if entry is None:
                 raise runtime_error(f"来源文件已变化：{name}", hint="重新扫描后再迁移")
-            data = _sshfiles.read_source(source / name)
+            if source.is_wsl:
+                data = self._read_remote(env, wsl_path, source, name, entry)
+            else:
+                data = _sshfiles.read_source(Path(source.directory) / name)
             script = _sshfiles.write_script(name, entry.mode, overwrite=name in overwrite, backup=backup)
             self._bridge.event.emit(f"[{name}] 写入 ~/.ssh（权限 {entry.mode_text}）…")
             result = env.runner.run(
@@ -3180,6 +3360,7 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         cwd: str,
         *,
         selected: Sequence[str] | None = None,
+        instances: Sequence[str] = (),
     ) -> None:
         super().__init__(owner)
         self.setWindowTitle(f"配置 {distro.name}")
@@ -3219,7 +3400,7 @@ class _DistroConfigDialog(QDialog):  # pragma: no cover - 模态对话框
         outer.addWidget(self.init_env)
 
         # SSH 迁移单独一张卡：要选来源目录、看冲突，比塞进「初始化环境」的勾选项更清楚。
-        self.ssh_migrate = _SshMigrateSection(self, distro)
+        self.ssh_migrate = _SshMigrateSection(self, distro, instances=instances)
         outer.addWidget(self.ssh_migrate)
 
         actions = QHBoxLayout()
