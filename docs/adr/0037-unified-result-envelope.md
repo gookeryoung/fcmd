@@ -55,6 +55,15 @@ filescan scan（`--json` 与 `--format` 关系）、llmserve / llmbench / llmdoc
 dynacalc(report/compare/gates)、paramcad(digest/inspect)、paramesh(check/report)、lscalc status、
 csvtool 非 JSON 子命令；`folderzip` 属写操作，单独评估。
 
+### P2 落地进度
+
+已接入（2026-11-24）：`which`、`pathtool`（show/rel/norm/diff）、`tomltool`
+（get/keys/format/validate）、`inifile`（get/list/keys）；MCP 白名单
+`_JSON_READY` 同步补齐这四个工具的条目。
+
+待办：`filecheck`、`archivex list`、`csvtool select/merge`、`urlcheck`、
+`portcheck`、`iptool`、`filescan scan`、LLM 与领域应用工具。
+
 ### P3 收口（待办）
 
 README 与 ADR 状态回填、写操作工具接入评估、错误码补表审查。

@@ -20,6 +20,7 @@ __all__ = [
     "fcmd_home",
     "format_bytes",
     "kill_processes",
+    "locate_commands",
     "persist_env",
     "set_environment_variable",
     "shell_profile_path",
@@ -67,17 +68,21 @@ def kill_processes(names: list[str]) -> list[str]:
     return messages
 
 
-def which_commands(commands: list[str]) -> list[str]:
-    """逐条查找可执行命令路径（跨平台 shutil.which），返回回显消息。"""
+def locate_commands(commands: list[str]) -> list[tuple[str, str | None]]:
+    """逐条查找可执行命令路径（跨平台 ``shutil.which``）。
+
+    返回 ``(命令名, 路径或 None)`` 列表，供人类可读回显与机读信封共用同一份结果。
+    """
     import shutil  # 延迟导入：shutil 仅命令查找场景需要（冷启动导入税）
 
+    return [(command, shutil.which(command)) for command in commands]
+
+
+def which_commands(commands: list[str]) -> list[str]:
+    """逐条查找可执行命令路径（跨平台 shutil.which），返回回显消息。"""
     messages: list[str] = []
-    for command in commands:
-        path = shutil.which(command)
-        if path is None:
-            messages.append(f"{command} -> 未找到")
-        else:
-            messages.append(f"{command} -> {path}")
+    for command, path in locate_commands(commands):
+        messages.append(f"{command} -> {path}" if path else f"{command} -> 未找到")
     return messages
 
 

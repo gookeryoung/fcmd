@@ -169,10 +169,10 @@ def test_cli_get_nested(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> 
 
 
 def test_cli_get_key_not_found(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI get 键不存在时打印错误。"""
+    """CLI get 键不存在时按 NOT_FOUND 退出（4）。"""
     code = run_tool("tomltool", ["get", str(toml_file), "project.nope"])
     captured = capsys.readouterr()
-    assert code == 0
+    assert code == 4
     assert "不存在" in captured.out
 
 
@@ -206,16 +206,16 @@ def test_cli_validate(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> No
 
 
 def test_cli_validate_invalid(invalid_toml_file: Path) -> None:
-    """CLI validate 语法错误时打印错误。"""
+    """CLI validate 语法错误时按 INVALID_ARGUMENT 退出（3）。"""
     code = run_tool("tomltool", ["validate", str(invalid_toml_file)])
-    assert code == 0
+    assert code == 3
 
 
 def test_cli_file_not_found(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI 文件不存在时打印错误。"""
+    """CLI 文件不存在时按 FILE_NOT_FOUND 退出（4）。"""
     code = run_tool("tomltool", ["get", str(tmp_path / "nope.toml"), "key"])
     captured = capsys.readouterr()
-    assert code == 0
+    assert code == 4
     assert "文件不存在" in captured.out
 
 

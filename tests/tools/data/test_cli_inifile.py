@@ -166,10 +166,10 @@ def test_cli_get(ini_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_cli_get_section_not_found(ini_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI get section 不存在时打印错误（现有工具模式：捕获异常后 return，退出码 0）。"""
+    """CLI get section 不存在时按 NOT_FOUND 退出（4）。"""
     code = run_tool("inifile", ["get", str(ini_file), "nope", "key"])
     captured = capsys.readouterr()
-    assert code == 0  # 现有工具模式：捕获异常后 return，framework 返回 0
+    assert code == 4
     assert "不存在" in captured.out
 
 
@@ -216,7 +216,7 @@ def test_cli_keys_section_not_found(ini_file: Path, capsys: pytest.CaptureFixtur
     """CLI keys section 不存在时打印错误。"""
     code = run_tool("inifile", ["keys", str(ini_file), "nope"])
     captured = capsys.readouterr()
-    assert code == 0
+    assert code == 4
     assert "不存在" in captured.out
 
 
@@ -224,5 +224,5 @@ def test_cli_file_not_found(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     """CLI 文件不存在时打印错误。"""
     code = run_tool("inifile", ["get", str(tmp_path / "nope.ini"), "db", "host"])
     captured = capsys.readouterr()
-    assert code == 0
+    assert code == 4
     assert "文件不存在" in captured.out

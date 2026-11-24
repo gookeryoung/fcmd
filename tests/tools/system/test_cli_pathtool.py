@@ -239,7 +239,7 @@ class TestCLISubcommands:
         base.mkdir()
         target.parent.mkdir()
         target.touch()
-        assert run_tool("pathtool", ["rel", str(target), str(base)]) == 0
+        assert run_tool("pathtool", ["rel", str(target), str(base)]) == 3
         assert "无法计算相对路径" in capsys.readouterr().out
 
     def test_norm(self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:

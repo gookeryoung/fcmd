@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fcmd as fx
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras.fs import join_path, normalize_path, path_diff, path_parts, relative_to
 
 __all__ = ["diff", "join", "kind", "norm", "rel", "show"]
@@ -16,9 +17,12 @@ __all__ = ["diff", "join", "kind", "norm", "rel", "show"]
     help="显示路径各部分信息",
     param_help={"path": "待解析的路径"},
 )
-def show(path: Path) -> None:
+def show(path: Path, json_output: bool = False) -> None:
     """显示路径各部分信息（anchor/parent/name/stem/suffix 等）。"""
     info = path_parts(path)
+    if json_output:
+        emit_result("pathtool", "show", info)
+        return
     print(f"输入路径:   {info['input']}")
     print(f"绝对路径:   {info['absolute']}")
     print(f"卷标/root: {info['anchor'] or '(无)'}")
@@ -40,12 +44,23 @@ def show(path: Path) -> None:
         "base": "基准路径",
     },
 )
-def rel(path: Path, base: Path) -> None:
+def rel(path: Path, base: Path, json_output: bool = False) -> None:
     """计算 ``path`` 相对 ``base`` 的相对路径。"""
     try:
         result = relative_to(path, base)
     except ValueError as exc:
-        print(f"错误: 无法计算相对路径: {exc}")
+        report_error(
+            "pathtool",
+            "rel",
+            code="INVALID_ARGUMENT",
+            message=f"无法计算相对路径: {exc}",
+            field="path",
+            expected="与 base 处于同一盘符 / 根下的路径",
+            json_output=json_output,
+        )
+        return
+    if json_output:
+        emit_result("pathtool", "rel", {"result": str(result)})
         return
     print(str(result))
 
@@ -78,9 +93,13 @@ def kind(path: Path) -> None:
     help="规范化路径",
     param_help={"path": "待规范化的路径"},
 )
-def norm(path: Path) -> None:
+def norm(path: Path, json_output: bool = False) -> None:
     """规范化路径（展开 ~、绝对化、消除 ``..``/``.``）。"""
-    print(str(normalize_path(path)))
+    result = str(normalize_path(path))
+    if json_output:
+        emit_result("pathtool", "norm", {"result": result})
+        return
+    print(result)
 
 
 @fx.tool(
@@ -92,9 +111,22 @@ def norm(path: Path) -> None:
         "p2": "待比较的路径 2",
     },
 )
-def diff(p1: Path, p2: Path) -> None:
+def diff(p1: Path, p2: Path, json_output: bool = False) -> None:
     """比较两路径组件差异，输出公共前缀与各自独有部分。"""
     common, only1, only2 = path_diff(p1, p2)
+    if json_output:
+        emit_result(
+            "pathtool",
+            "diff",
+            {
+                "p1": str(normalize_path(p1)),
+                "p2": str(normalize_path(p2)),
+                "common": common,
+                "only1": only1,
+                "only2": only2,
+            },
+        )
+        return
     print(f"路径 1: {normalize_path(p1)}")
     print(f"路径 2: {normalize_path(p2)}")
     if common:

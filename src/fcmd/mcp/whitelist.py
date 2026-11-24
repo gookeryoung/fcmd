@@ -38,6 +38,20 @@ _JSON_READY: frozenset[tuple[str, str | None]] = frozenset(
         ("filesync", "compare"),
         ("renamer", "preview"),
         ("csvtool", "show"),
+        # 路径与命令
+        ("which", None),
+        ("pathtool", "show"),
+        ("pathtool", "rel"),
+        ("pathtool", "norm"),
+        ("pathtool", "diff"),
+        # 结构化配置（get/keys/format/validate）
+        ("tomltool", "get"),
+        ("tomltool", "keys"),
+        ("tomltool", "format"),
+        ("tomltool", "validate"),
+        ("inifile", "get"),
+        ("inifile", "list"),
+        ("inifile", "keys"),
         # PE 只读中已接入 --json 的部分
         ("peview", "info"),
         ("peview", "sections"),
@@ -88,6 +102,7 @@ _JSON_READY: frozenset[tuple[str, str | None]] = frozenset(
         ("stattool", "stddev"),
         ("stattool", "variance"),
         ("stattool", "summarize"),
+        ("stattool", "percentile"),
         ("timetool", "now"),
         ("timetool", "parse"),
         ("timetool", "unix"),

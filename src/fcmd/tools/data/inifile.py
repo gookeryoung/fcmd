@@ -14,7 +14,41 @@ import configparser
 from pathlib import Path
 
 import fcmd as fx
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import data
+
+
+def _report_ini_error(subcommand: str, exc: Exception, json_output: bool) -> None:
+    """按异常类型呈现 INI 读写错误（文件缺失 4 / 解析或键缺失 3）。"""
+    if isinstance(exc, FileNotFoundError):
+        report_error(
+            "inifile",
+            subcommand,
+            code="FILE_NOT_FOUND",
+            message=str(exc),
+            field="file",
+            expected="存在的 INI 文件",
+            json_output=json_output,
+        )
+        return
+    if isinstance(exc, (KeyError, configparser.NoSectionError, configparser.NoOptionError)):
+        report_error(
+            "inifile",
+            subcommand,
+            code="NOT_FOUND",
+            message=f"未找到: {exc.args[0] if exc.args else exc}",
+            json_output=json_output,
+        )
+        return
+    report_error(
+        "inifile",
+        subcommand,
+        code="INVALID_ARGUMENT",
+        message=f"INI 解析失败: {exc}",
+        field="file",
+        expected="语法正确的 INI 文件",
+        json_output=json_output,
+    )
 
 
 @fx.tool(
@@ -27,12 +61,17 @@ from fcmd.infras import data
         "key": "key 名",
     },
 )
-def get(file: Path, section: str, key: str) -> None:
+def get(file: Path, section: str, key: str, json_output: bool = False) -> None:
     """获取指定 section.key 的值。"""
     try:
-        print(data.get_ini_value(file, section, key))
+        value = data.get_ini_value(file, section, key)
     except (FileNotFoundError, KeyError, configparser.Error) as exc:
-        print(f"错误: {exc}")
+        _report_ini_error("get", exc, json_output)
+        return
+    if json_output:
+        emit_result("inifile", "get", {"section": section, "key": key, "value": value})
+        return
+    print(value)
 
 
 @fx.tool(
@@ -46,12 +85,15 @@ def get(file: Path, section: str, key: str) -> None:
         "value": "要设置的值",
     },
 )
-def set(file: Path, section: str, key: str, value: str) -> None:
+def set(file: Path, section: str, key: str, value: str, json_output: bool = False) -> None:
     """设置 section.key 的值并写回文件。"""
     try:
         data.set_ini_value(file, section, key, value)
     except (FileNotFoundError, configparser.Error) as exc:
-        print(f"错误: {exc}")
+        _report_ini_error("set", exc, json_output)
+        return
+    if json_output:
+        emit_result("inifile", "set", {"section": section, "key": key, "value": value, "file": str(file)})
         return
     print(f"已设置 [{section}] {key} = {value}")
 
@@ -62,12 +104,15 @@ def set(file: Path, section: str, key: str, value: str) -> None:
     help="列出所有 section",
     param_help={"file": "INI 文件路径"},
 )
-def list_sections(file: Path) -> None:
+def list_sections(file: Path, json_output: bool = False) -> None:
     """列出所有 section。"""
     try:
         sections = data.list_ini_sections(file)
     except (FileNotFoundError, configparser.Error) as exc:
-        print(f"错误: {exc}")
+        _report_ini_error("list", exc, json_output)
+        return
+    if json_output:
+        emit_result("inifile", "list", {"sections": sections})
         return
     if not sections:
         print("无 section")
@@ -85,12 +130,15 @@ def list_sections(file: Path) -> None:
         "section": "section 名",
     },
 )
-def keys(file: Path, section: str) -> None:
+def keys(file: Path, section: str, json_output: bool = False) -> None:
     """列出 section 的所有 key。"""
     try:
         key_list = data.list_ini_keys(file, section)
     except (FileNotFoundError, KeyError, configparser.Error) as exc:
-        print(f"错误: {exc}")
+        _report_ini_error("keys", exc, json_output)
+        return
+    if json_output:
+        emit_result("inifile", "keys", {"section": section, "keys": key_list})
         return
     if not key_list:
         print(f"section {section!r} 无 key")
