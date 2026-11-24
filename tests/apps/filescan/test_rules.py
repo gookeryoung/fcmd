@@ -302,8 +302,13 @@ def test_builtin_rules_carry_severity() -> None:
     levels = {rule.id: rule.severity for rule in ruleset.rules}
     assert levels["aws_key"] == SEVERITY_CRITICAL
     assert levels["private_key"] == SEVERITY_CRITICAL
+    assert levels["github_token"] == SEVERITY_CRITICAL
+    assert levels["aliyun_ak"] == SEVERITY_CRITICAL
     assert levels["cn_id"] == SEVERITY_HIGH
+    assert levels["db_conn"] == SEVERITY_HIGH
+    assert levels["credit_code"] == DEFAULT_SEVERITY
     assert levels["email"] == SEVERITY_LOW
+    assert levels["wechat_id"] == SEVERITY_LOW
     assert all(level in SEVERITY_LEVELS for level in levels.values())
 
 
@@ -357,7 +362,24 @@ def test_load_ruleset_reports_file_errors(tmp_path: Path) -> None:
 def test_builtin_ruleset_is_valid_and_compiles() -> None:
     ruleset = builtin_ruleset()
     ids = set(ruleset.rule_ids())
-    assert {"cn_id", "cn_phone", "email", "bank_card", "api_key", "aws_key", "private_key"} <= ids
+    assert {
+        "cn_id",
+        "cn_phone",
+        "email",
+        "bank_card",
+        "api_key",
+        "aws_key",
+        "private_key",
+        "db_conn",
+        "password_assign",
+        "jwt_token",
+        "password_hash",
+        "github_token",
+        "slack_token",
+        "aliyun_ak",
+        "credit_code",
+        "wechat_id",
+    } <= ids
     for rule in ruleset.rules:
         rule.validate()
         assert isinstance(compile_matcher(rule.matcher), re.Pattern)
@@ -373,6 +395,15 @@ def test_builtin_ruleset_is_valid_and_compiles() -> None:
         ("api_key", 'api_key = "abcdefghijklmnop"'),
         ("aws_key", "AKIAIOSFODNN7EXAMPLE"),
         ("private_key", "-----BEGIN RSA PRIVATE KEY-----"),
+        ("db_conn", "postgres://user:pass@db.example.com:5432/app"),
+        ("password_assign", 'password = "hunter2pass"'),
+        ("jwt_token", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop"),
+        ("password_hash", "$2b$12$" + "a" * 53),
+        ("github_token", "ghp_" + "A1b2C3d4E5f6G7h8I9j0" + "K1l2M3n4O5p6Q7r8"),
+        ("slack_token", "xoxb-123456789012-abcdefghij"),
+        ("aliyun_ak", "LTAI5tAbCdEfGhIjKlMn"),
+        ("credit_code", "91350100M000100Y43"),
+        ("wechat_id", "微信号：abc_12345"),
     ],
 )
 def test_builtin_rules_match_samples(rule_id: str, sample: str) -> None:

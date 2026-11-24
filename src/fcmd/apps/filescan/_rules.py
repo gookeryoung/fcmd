@@ -696,6 +696,91 @@ def _builtin_rules() -> tuple[Rule, ...]:
                 case_sensitive=False,
             ),
         ),
+        Rule(
+            id="db_conn",
+            name="数据库连接串",
+            group="凭证",
+            severity=SEVERITY_HIGH,
+            matcher=Matcher(
+                kind=MATCH_REGEX,
+                pattern=r"\b(?:mysql|mariadb|postgres(?:ql)?|mongodb(?:\+srv)?|redis|rediss|mssql|oracle|amqp|clickhouse)://[^\s\"'<>]+",
+                case_sensitive=False,
+            ),
+        ),
+        Rule(
+            id="password_assign",
+            name="密码赋值",
+            group="凭证",
+            severity=SEVERITY_MEDIUM,
+            matcher=Matcher(
+                kind=MATCH_REGEX,
+                pattern=r"\b(?:password|passwd|pwd)\b\s*[:=]\s*[\"']?[^\s\"',;]{6,}",
+                case_sensitive=False,
+            ),
+        ),
+        Rule(
+            id="jwt_token",
+            name="JWT 令牌",
+            group="凭证",
+            severity=SEVERITY_HIGH,
+            matcher=Matcher(
+                kind=MATCH_REGEX, pattern=r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+            ),
+        ),
+        Rule(
+            id="password_hash",
+            name="密码哈希（bcrypt / argon2）",
+            group="凭证",
+            severity=SEVERITY_MEDIUM,
+            matcher=Matcher(
+                kind=MATCH_REGEX,
+                pattern=r"(?:\$2[abxy]\$\d{2}\$[./A-Za-z0-9]{40,}|\$argon2(?:id|i|d)\$v=\d+\$[^\s\"']{20,})",
+            ),
+        ),
+        Rule(
+            id="github_token",
+            name="GitHub 访问令牌",
+            group="凭证",
+            severity=SEVERITY_CRITICAL,
+            matcher=Matcher(
+                kind=MATCH_REGEX, pattern=r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})\b"
+            ),
+        ),
+        Rule(
+            id="slack_token",
+            name="Slack 访问令牌",
+            group="凭证",
+            severity=SEVERITY_HIGH,
+            matcher=Matcher(kind=MATCH_REGEX, pattern=r"\bxox[abposr]-[A-Za-z0-9-]{10,}\b"),
+        ),
+        Rule(
+            id="aliyun_ak",
+            name="阿里云 AccessKey ID",
+            group="凭证",
+            severity=SEVERITY_CRITICAL,
+            matcher=Matcher(kind=MATCH_REGEX, pattern=r"\bLTAI[A-Za-z0-9]{12,20}\b"),
+        ),
+        Rule(
+            id="credit_code",
+            name="统一社会信用代码",
+            group="企业信息",
+            severity=SEVERITY_MEDIUM,
+            matcher=Matcher(
+                kind=MATCH_REGEX,
+                pattern=r"(?<![0-9A-Za-z])[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}(?![0-9A-Za-z])",
+            ),
+        ),
+        Rule(
+            id="wechat_id",
+            name="微信号",
+            group="社交账号",
+            severity=SEVERITY_LOW,
+            matcher=Matcher(
+                kind=MATCH_REGEX,
+                pattern=r"(?:微信号|wxid|wechat(?:\s*id)?)\s*[:：]\s*[A-Za-z][-_A-Za-z0-9]{5,19}",
+                case_sensitive=False,
+            ),
+        ),
     )
 
 

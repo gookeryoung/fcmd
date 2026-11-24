@@ -7,6 +7,10 @@
 
 ### 变更
 
+- `filescan` 内置规则扩充到 16 条，新增数据库连接串、密码赋值、JWT 令牌、
+  密码哈希（bcrypt / argon2）、GitHub / Slack 令牌、阿里云 AccessKey ID、
+  统一社会信用代码与微信号，按「个人信息 / 联系方式 / 财务信息 / 凭证 /
+  企业信息 / 社交账号」分组并各自带严重级；所有规则文案与正则为本项目原创。
 - `filescan` 规则新增严重级 `severity`（`info` / `low` / `medium` / `high` / `critical`，
   默认 `medium`，旧规则集自动补齐）：文本报告以「【高】」标注、CSV 增加「严重级」
   列（中文标签）、JSON 输出英文枚举；GUI 结果树新增严重级列并按主题色着色
