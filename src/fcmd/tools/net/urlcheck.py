@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import fcmd as fx
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import net as netinfra
 
 __all__ = ["urlcheck_r", "urlcheck_u"]
@@ -23,9 +24,12 @@ __all__ = ["urlcheck_r", "urlcheck_u"]
         "timeout": "超时秒数（默认 5）",
     },
 )
-def urlcheck_u(url: str, timeout: float = 5.0) -> None:
+def urlcheck_u(url: str, timeout: float = 5.0, json_output: bool = False) -> None:
     """检测单个 URL 的可访问性并打印延迟。"""
     ok, latency = netinfra.urlcheck_single(url, timeout)
+    if json_output:
+        emit_result("urlcheck", "u", {"url": url, "ok": ok, "latency_ms": round(latency, 1) if ok else None})
+        return
     if ok:
         print(f"{url} -> 可访问 (延迟 {latency:.0f} ms)")
     else:
@@ -41,12 +45,34 @@ def urlcheck_u(url: str, timeout: float = 5.0) -> None:
         "timeout": "单个 URL 的超时秒数（默认 5）",
     },
 )
-def urlcheck_r(urls: list[str], timeout: float = 5.0) -> None:
+def urlcheck_r(urls: list[str], timeout: float = 5.0, json_output: bool = False) -> None:
     """并发探测多个 URL，按访问速度排序打印。"""
     if not urls:
-        print("请提供至少一个 URL")
+        report_error(
+            "urlcheck",
+            "r",
+            code="INVALID_ARGUMENT",
+            message="请提供至少一个 URL",
+            field="urls",
+            expected="非空的 URL 列表",
+            json_output=json_output,
+        )
         return
     results = netinfra.urlcheck_many(urls, timeout)
+    if json_output:
+        emit_result(
+            "urlcheck",
+            "r",
+            {
+                "count": len(results),
+                "reachable": sum(1 for _, ok, _ in results if ok),
+                "results": [
+                    {"url": url, "ok": ok, "latency_ms": round(latency, 1) if ok else None}
+                    for url, ok, latency in results
+                ],
+            },
+        )
+        return
     print(f"URL 探测结果（共 {len(results)} 个，按访问速度排序）:")
     for index, (url, ok, latency) in enumerate(results, start=1):
         speed = f"{latency:.0f} ms" if ok else "-"

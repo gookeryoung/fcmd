@@ -57,6 +57,14 @@ _JSON_READY: frozenset[tuple[str, str | None]] = frozenset(
         ("archivex", "list"),
         ("csvtool", "select"),
         ("csvtool", "merge"),
+        # 网络探测
+        ("urlcheck", "u"),
+        ("urlcheck", "r"),
+        ("portcheck", "c"),
+        ("portcheck", "s"),
+        ("iptool", "parse"),
+        ("iptool", "subnet"),
+        ("iptool", "validate"),
         # PE 只读中已接入 --json 的部分
         ("peview", "info"),
         ("peview", "sections"),

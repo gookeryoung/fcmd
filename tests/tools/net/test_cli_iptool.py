@@ -217,9 +217,9 @@ class TestIptoolCLI:
         assert "is_loopback: True" in out
 
     def test_parse_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """parse 无效 IP 提示。"""
+        """parse 无效 IP 按 INVALID_ARGUMENT 退出（3）。"""
         code = run_tool("iptool", ["parse", "999.999.999.999"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "无效的 IP 地址" in out
 
@@ -234,9 +234,9 @@ class TestIptoolCLI:
         assert "num_addresses: 256" in out
 
     def test_subnet_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """subnet 无效输入提示。"""
+        """subnet 无效输入按 INVALID_ARGUMENT 退出（3）。"""
         code = run_tool("iptool", ["subnet", "192.168.1.0", "33"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "无效的子网" in out
 

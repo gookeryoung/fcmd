@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 import fcmd
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras.net import is_port_in_use as _is_port_in_use
 
 __all__ = [
@@ -171,7 +172,7 @@ def scan_ports(start: int, end: int, host: str = "127.0.0.1") -> None:
 
 
 @fcmd.tool("portcheck", subcommand="c", help="检查端口占用")
-def check_port_cmd(port: int, host: str = "127.0.0.1") -> None:
+def check_port_cmd(port: int, host: str = "127.0.0.1", json_output: bool = False) -> None:
     """检查单个端口是否被占用。
 
     Parameters
@@ -181,11 +182,35 @@ def check_port_cmd(port: int, host: str = "127.0.0.1") -> None:
     host:
         目标主机（默认 ``127.0.0.1``）
     """
+    if json_output:
+        if not 1 <= port <= 65535:
+            report_error(
+                "portcheck",
+                "c",
+                code="INVALID_ARGUMENT",
+                message=f"端口号无效: {port} (应在 1-65535 范围内)",
+                field="port",
+                expected="1-65535 之间的整数",
+                json_output=True,
+            )
+            return
+        in_use = is_port_in_use(port, host)
+        emit_result(
+            "portcheck",
+            "c",
+            {
+                "host": host,
+                "port": port,
+                "in_use": in_use,
+                "occupants": get_port_occupant(port) if in_use else [],
+            },
+        )
+        return
     check_port(port, host)
 
 
 @fcmd.tool("portcheck", subcommand="s", help="扫描端口范围")
-def scan_ports_cmd(start: int, end: int, host: str = "127.0.0.1") -> None:
+def scan_ports_cmd(start: int, end: int, host: str = "127.0.0.1", json_output: bool = False) -> None:
     """扫描端口范围，列出被占用的端口。
 
     Parameters
@@ -197,6 +222,25 @@ def scan_ports_cmd(start: int, end: int, host: str = "127.0.0.1") -> None:
     host:
         目标主机（默认 ``127.0.0.1``）
     """
+    if json_output:
+        if start < 1 or end > 65535 or start > end:
+            report_error(
+                "portcheck",
+                "s",
+                code="INVALID_ARGUMENT",
+                message=f"端口范围无效: {start}-{end} (应在 1-65535 范围内且 start <= end)",
+                field="start",
+                expected="1 <= start <= end <= 65535",
+                json_output=True,
+            )
+            return
+        occupied = [port for port in range(start, end + 1) if is_port_in_use(port, host)]
+        emit_result(
+            "portcheck",
+            "s",
+            {"host": host, "start": start, "end": end, "count": len(occupied), "occupied": occupied},
+        )
+        return
     scan_ports(start, end, host)
 
 

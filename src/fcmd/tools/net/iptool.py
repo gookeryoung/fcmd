@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import fcmd as fx
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import net as netinfra
 
 __all__ = ["iptool_parse", "iptool_subnet", "iptool_validate"]
@@ -21,12 +22,23 @@ __all__ = ["iptool_parse", "iptool_subnet", "iptool_validate"]
     help="解析 IP 地址",
     param_help={"ip": "IP 地址字符串（IPv4 或 IPv6）"},
 )
-def iptool_parse(ip: str) -> None:
+def iptool_parse(ip: str, json_output: bool = False) -> None:
     """解析 IP 地址并逐行打印属性。"""
     try:
         info = netinfra.parse_ip(ip)
     except ValueError as exc:
-        print(f"错误: {exc}")
+        report_error(
+            "iptool",
+            "parse",
+            code="INVALID_ARGUMENT",
+            message=str(exc),
+            field="ip",
+            expected="合法的 IPv4 / IPv6 地址字符串",
+            json_output=json_output,
+        )
+        return
+    if json_output:
+        emit_result("iptool", "parse", {"ip": ip, **info})
         return
     for key, value in info.items():
         print(f"{key}: {value}")
@@ -41,12 +53,23 @@ def iptool_parse(ip: str) -> None:
         "prefix": "前缀长度",
     },
 )
-def iptool_subnet(ip: str, prefix: int) -> None:
+def iptool_subnet(ip: str, prefix: int, json_output: bool = False) -> None:
     """计算子网信息并逐行打印。"""
     try:
         info = netinfra.subnet_info(ip, prefix)
     except ValueError as exc:
-        print(f"错误: {exc}")
+        report_error(
+            "iptool",
+            "subnet",
+            code="INVALID_ARGUMENT",
+            message=str(exc),
+            field="ip",
+            expected="合法的网络地址与前缀长度（如 192.168.1.0 / 24）",
+            json_output=json_output,
+        )
+        return
+    if json_output:
+        emit_result("iptool", "subnet", {"ip": ip, "prefix": prefix, **info})
         return
     for key, value in info.items():
         print(f"{key}: {value}")
@@ -58,9 +81,13 @@ def iptool_subnet(ip: str, prefix: int) -> None:
     help="校验 IP 地址格式",
     param_help={"ip": "待校验的 IP 地址字符串"},
 )
-def iptool_validate(ip: str) -> None:
+def iptool_validate(ip: str, json_output: bool = False) -> None:
     """校验 IP 地址格式是否有效。"""
-    if netinfra.validate_ip(ip):
+    valid = netinfra.validate_ip(ip)
+    if json_output:
+        emit_result("iptool", "validate", {"ip": ip, "valid": valid})
+        return
+    if valid:
         print(f"有效: {ip}")
     else:
         print(f"无效: {ip}")
