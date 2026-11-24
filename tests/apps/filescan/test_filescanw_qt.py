@@ -838,6 +838,9 @@ def test_task_row_has_incremental_and_full_rescan_actions(
         assert index(row.scan_button) < index(row.scan_mode_button) < index(row.result_button)
         assert row.scan_button.text() == "扫描"
         assert row.scan_mode_button.property("fcmdIconName") == "chevron-down"
+        # 更多扫描方式与「查看结果」同为 Ghost 图标按钮，外观尺寸一致。
+        assert row.scan_mode_button.objectName() == row.result_button.objectName() == "Ghost"
+        assert row.scan_mode_button.property("rowMenuButton") == "true"
         assert [action.text() for action in row.scan_mode_button.menu().actions()] == ["增量扫描", "全量重扫"]
         assert row.scan_mode_button.isEnabled() is True
 

@@ -73,7 +73,6 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
-    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -177,7 +176,6 @@ from fcmd.gui.widgets import (
     button,
     confirm,
     hint_label,
-    icon_button,
     make_table,
     make_table_item,
 )
@@ -289,9 +287,12 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
         self.scan_button.clicked.connect(self._on_scan_clicked)
         self.add_action(self.scan_button)
         # 增量 / 全量收进扫描按钮旁的菜单，避免一行摆三个文字按钮把动作区撑宽。
-        self.scan_mode_button = icon_button("", tooltip="更多扫描方式：增量扫描 / 全量重扫")
-        self.scan_mode_button.set_icon_name("chevron-down", tone="muted")
-        self.scan_mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.scan_mode_button = button(
+            "",
+            kind="ghost",
+            icon="chevron-down",
+            tooltip="更多扫描方式：增量扫描 / 全量重扫",
+        )
         scan_menu = QMenu(self.scan_mode_button)
         scan_menu.setObjectName("RowActionMenu")
         muted = _qt_theme.active_theme().palette.muted
@@ -301,6 +302,8 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
         full = scan_menu.addAction(icon("rotate-ccw", size=16, color=muted), "全量重扫")
         full.setToolTip("忽略缓存重新读取所有文件（目录 / 文件大改后校正结果）")
         full.triggered.connect(lambda: self.fullRequested.emit(self.task.id))
+        # 菜单按钮与「查看结果」同款 Ghost 外观；隐藏 Qt 自带的菜单小三角。
+        self.scan_mode_button.setProperty("rowMenuButton", "true")
         self.scan_mode_button.setMenu(scan_menu)
         self.add_action(self.scan_mode_button)
         self.result_button = button("", kind="ghost", icon="search")

@@ -33,6 +33,11 @@ QMenu#RowActionMenu::item {
 QMenu#RowActionMenu::item:selected { background: $surface_hover; color: $text; }
 QMenu#RowActionMenu::item:disabled { color: $disabled_fg; }
 QMenu#RowActionMenu::icon { padding-left: 4px; }
+/* 行内菜单按钮沿用 Ghost 外形：去掉 Qt 默认菜单小三角，图标已经表达「更多」。 */
+QPushButton[rowMenuButton="true"]::menu-indicator {
+    image: none;
+    width: 0;
+}
 QStatusBar { background: $surface; color: $muted; border-top: 1px solid $border; }
 QStatusBar QLabel { color: $muted; }
 
