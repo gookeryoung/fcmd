@@ -775,33 +775,29 @@ def test_task_row_has_incremental_and_full_rescan_actions(
         row = window._task_row(task.id)
         assert row is not None
         index = row.header_row.indexOf
-        assert (
-            index(row.scan_button) < index(row.incremental_button) < index(row.full_button) < index(row.result_button)
-        )
+        assert index(row.scan_button) < index(row.scan_mode_button) < index(row.result_button)
         assert row.scan_button.text() == "扫描"
-        assert row.incremental_button.text() == "增量扫描"
-        assert row.full_button.text() == "全量重扫"
-        assert row.incremental_button.property("fcmdIconName") == "refresh"
-        assert row.full_button.property("fcmdIconName") == "rotate-ccw"
-        assert row.incremental_button.isEnabled() is True
-        assert row.full_button.isEnabled() is True
+        assert row.scan_mode_button.property("fcmdIconName") == "chevron-down"
+        assert [action.text() for action in row.scan_mode_button.menu().actions()] == ["增量扫描", "全量重扫"]
+        assert row.scan_mode_button.isEnabled() is True
 
         calls: list[dict[str, object]] = []
         monkeypatch.setattr(qt_module, "submit", lambda *args, **kwargs: calls.append(kwargs))
-        row.incremental_button.click()
+        menu_actions = {action.text(): action for action in row.scan_mode_button.menu().actions()}
+        menu_actions["增量扫描"].trigger()
         assert calls[-1]["use_cache"] is True
         assert calls[-1]["refresh"] is False
         assert "增量扫描" in window.page_status("scan")
         row = window._task_row(task.id)
         assert row is not None
-        assert row.incremental_button.isEnabled() is False
-        assert row.full_button.isEnabled() is False
+        assert row.scan_mode_button.isEnabled() is False
         window._scan_finished()
         row = window._task_row(task.id)
         assert row is not None
-        assert row.incremental_button.isEnabled() is True
+        assert row.scan_mode_button.isEnabled() is True
 
-        row.full_button.click()
+        menu_actions = {action.text(): action for action in row.scan_mode_button.menu().actions()}
+        menu_actions["全量重扫"].trigger()
         assert calls[-1]["refresh"] is True
         assert "全量重扫" in window.page_status("scan")
     finally:
@@ -850,6 +846,7 @@ def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> No
         window._max_size.setValue(2048)
         window._workers.setValue(3)
         window._context_chars.setValue(12)
+        window._max_file_bytes.setValue(16)
         window._include_ext.setText(".txt")
         window._skip_dirs.setPlainText(".git\nnode_modules")
         window._use_cache.setChecked(False)
@@ -863,6 +860,12 @@ def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> No
         assert options.context_chars == 12
         assert options.include_exts == (".txt",)
         assert options.skip_dirs == (".git", "node_modules")
+        # 单文件上限在界面上用 MB，存储与扫描仍是字节。
+        assert window._max_file_bytes.suffix() == " MB"
+        assert options.max_file_bytes == 16 * 1024 * 1024
+        # 空列表字段给出占位提示，避免用户不知道可以不填。
+        for editor in (window._include_ext, window._exclude_ext, window._force_ext, window._skip_dirs):
+            assert editor.placeholderText()
         assert window._use_cache.isChecked() is False
         assert window._current_settings().use_cache is False
     finally:
@@ -896,26 +899,28 @@ def test_result_context_is_fully_shown_and_match_is_highlighted(home: Path) -> N
     )
     window = _window()
     try:
+        # 本用例验证「完整换行」口径，先关闭默认的紧凑模式。
+        window._compact_mode.setChecked(False)
         window._render_result(result)
         child = window._tree.topLevelItem(0).child(0)
-        assert child.text(5) == render_context(match, False)
+        assert child.text(3) == render_context(match, False)
         masked = "13" + "*" * 7 + "00"
-        assert child.text(5) == long_context.replace("13800138000", masked)
-        assert child.data(5, _CONTEXT_ROLE) == ("客户联系电话 ", masked, " 请勿外传，仅限内部核对使用")
+        assert child.text(3) == long_context.replace("13800138000", masked)
+        assert child.data(3, _CONTEXT_ROLE) == ("客户联系电话 ", masked, " 请勿外传，仅限内部核对使用")
 
         option = QStyleOptionViewItem()
         option.widget = window._tree
         option.font = window._tree.font()
-        index = window._tree.indexFromItem(child, 5)
-        window._tree.setColumnWidth(5, 120)
+        index = window._tree.indexFromItem(child, 3)
+        window._tree.setColumnWidth(3, 120)
         narrow = window._context_delegate.sizeHint(option, index)
-        window._tree.setColumnWidth(5, 900)
+        window._tree.setColumnWidth(3, 900)
         wide = window._context_delegate.sizeHint(option, index)
         # 换行后行高随内容增长，不再按固定单行截断。
         assert narrow.height() > wide.height()
         assert wide.height() > window._tree.fontMetrics().height()
 
-        window._tree.setColumnWidth(5, 300)
+        window._tree.setColumnWidth(3, 300)
         document = window._context_delegate._document(index, 292, selected=False, font=window._tree.font())
         assert document is not None
         cursor = QTextCursor(document)
@@ -956,8 +961,78 @@ def _hit_result(
     )
 
 
+def test_compact_mode_controls_rows_context_and_tables(home: Path, sample: Path) -> None:
+    """紧凑模式默认开启：任务行 dense、表格行高 24、结果上下文单行；关闭后恢复换行。"""
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanResult, ScanStats
+
+    context = "客户联系电话 13800138000 请勿外传，仅限内部核对使用，这是一段很长的上下文用来触发换行"
+    start = context.index("13800138000")
+    match = RuleMatch(
+        rule_id="cn_phone",
+        rule_name="手机号",
+        line_no=1,
+        start=start,
+        end=start + 11,
+        excerpt="13800138000",
+        context=context,
+        context_start=start,
+    )
+    result = ScanResult(
+        roots=(sample,),
+        stats=ScanStats(hit_files=1, hit_count=1),
+        hits=[
+            FileHit(
+                path=sample / "notes.txt",
+                size=120,
+                encoding="utf-8",
+                matches=[match],
+                engine="thread",
+                elapsed=0.012,
+            )
+        ],
+    )
+    window = _window()
+    try:
+        task = filescanw.new_scan_task(str(sample))
+        window._tasks = [task]
+        window._refresh_task_rows()
+        assert window._compact_mode.isChecked() is True
+        assert window._current_settings().compact_mode is True
+        row = window._task_row(task.id)
+        assert row is not None and row.property("dense") == "true"
+        assert window._whitelist_table.verticalHeader().defaultSectionSize() == 24
+
+        window._render_result(result)
+        parent = window._tree.topLevelItem(0)
+        child = parent.child(0)
+        # 引擎 / 耗时并入文件行摘要，不再单占两列。
+        assert "线程" in parent.text(3)
+        assert "12.0 ms" in parent.text(3)
+        option = QStyleOptionViewItem()
+        option.widget = window._tree
+        option.font = window._tree.font()
+        index = window._tree.indexFromItem(child, 3)
+        window._tree.setColumnWidth(3, 120)
+        compact_hint = window._context_delegate.sizeHint(option, index)
+        assert window._context_delegate._compact is True
+
+        window._compact_mode.setChecked(False)
+        assert window._context_delegate._compact is False
+        assert window._current_settings().compact_mode is False
+        row = window._task_row(task.id)
+        assert row is not None and row.property("dense") == "false"
+        assert window._whitelist_table.verticalHeader().defaultSectionSize() == 30
+        expanded_hint = window._context_delegate.sizeHint(option, index)
+        assert expanded_hint.height() > compact_hint.height()
+    finally:
+        window.deleteLater()
+
+
 def test_result_rows_bind_file_and_match_without_duplicate_rule_column(home: Path, tmp_path: Path) -> None:
     """第二列改为命中片段（不再重复规则名），行绑定路径与命中对象供定位 / 复制使用。"""
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
 
     from fcmd.apps.filescan._filescanw_qt import _MATCH_ROLE, _PATH_ROLE
@@ -971,11 +1046,15 @@ def test_result_rows_bind_file_and_match_without_duplicate_rule_column(home: Pat
         window._render_result(result)
         parent = window._tree.topLevelItem(0)
         child = parent.child(0)
-        # 命中内容已在上下文列（带底色）展示，不再单占一列：规则 / 严重级 / 行号 / 引擎 / 耗时 / 上下文 六列。
-        assert window._tree.columnCount() == 6
+        # 命中内容已在上下文列（带底色）展示，不再单占一列：规则 / 严重级 / 行号 / 上下文 四列。
+        assert window._tree.columnCount() == 4
         assert window._tree.headerItem().text(1) == "严重级"
-        assert window._tree.headerItem().text(3) == "引擎"
-        assert window._tree.headerItem().text(4) == "耗时"
+        assert window._tree.headerItem().text(2) == "行号"
+        assert window._tree.headerItem().text(3) == "上下文（打码）"
+        # 固定列宽只留给路径与两列短指标，剩余空间留给上下文。
+        assert window._tree.columnWidth(0) == 300
+        assert sum(window._tree.columnWidth(index) for index in range(3)) <= 420
+        assert window._tree.textElideMode() == Qt.TextElideMode.ElideMiddle
         assert child.text(0) == "手机号"
         assert child.text(1) == "中"
         assert child.text(2) == "3"

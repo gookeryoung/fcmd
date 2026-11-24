@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
@@ -72,6 +73,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -173,6 +175,7 @@ from fcmd.gui.widgets import (
     button,
     confirm,
     hint_label,
+    icon_button,
     make_table,
     make_table_item,
 )
@@ -239,9 +242,9 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
     """扫描任务行卡：与 wslmanw 实例行同一套 ItemRow 骨架。
 
     标题是任务名，副标题是目录；目录旁用标签显示扫描时间与命中情况，行尾是最近一次
-    扫描状态。行内动作依次是「扫描（加宽主按钮）→ 增量扫描 → 全量重扫 → 查看结果」；
-    移除统一走卡片右上角，避免在行内误点。展开箭头就地显示完整目录、状态、时间与
-    精简结果摘要。
+    扫描状态。行内动作依次是「扫描（加宽主按钮）→ 更多扫描方式（增量扫描 / 全量重扫）
+    → 查看结果」；移除统一走卡片右上角，避免在行内误点。展开箭头就地显示完整目录、
+    状态、时间与精简结果摘要。
     """
 
     scanRequested = Signal(str)
@@ -258,12 +261,14 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
         busy: bool,
         active: bool,
         stopping: bool,
+        dense: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(
             task.display_name,
             task.path or "未指定目录",
             elide=Qt.TextElideMode.ElideMiddle,
+            dense=dense,
             parent=parent,
         )
         self.task = task
@@ -281,23 +286,19 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
         self.scan_button.setMinimumWidth(88)
         self.scan_button.clicked.connect(self._on_scan_clicked)
         self.add_action(self.scan_button)
-        # 扫描按钮右侧：增量扫描（只重扫变动的文件）与全量重扫（忽略缓存重读）。
-        self.incremental_button = button(
-            "增量扫描",
-            kind="ghost",
-            icon="refresh",
-            tooltip="只重扫新增或改动过的文件，其余复用缓存（目录变动不大时用）",
-        )
-        self.incremental_button.clicked.connect(lambda: self.incrementalRequested.emit(self.task.id))
-        self.add_action(self.incremental_button)
-        self.full_button = button(
-            "全量重扫",
-            kind="ghost",
-            icon="rotate-ccw",
-            tooltip="忽略缓存重新读取所有文件（目录 / 文件大改后校正结果）",
-        )
-        self.full_button.clicked.connect(lambda: self.fullRequested.emit(self.task.id))
-        self.add_action(self.full_button)
+        # 增量 / 全量收进扫描按钮旁的菜单，避免一行摆三个文字按钮把动作区撑宽。
+        self.scan_mode_button = icon_button("", tooltip="更多扫描方式：增量扫描 / 全量重扫")
+        self.scan_mode_button.set_icon_name("chevron-down", tone="muted")
+        self.scan_mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        scan_menu = QMenu(self.scan_mode_button)
+        incremental = scan_menu.addAction("增量扫描")
+        incremental.setToolTip("只重扫新增或改动过的文件，其余复用缓存")
+        incremental.triggered.connect(lambda: self.incrementalRequested.emit(self.task.id))
+        full = scan_menu.addAction("全量重扫")
+        full.setToolTip("忽略缓存重新读取所有文件（目录 / 文件大改后校正结果）")
+        full.triggered.connect(lambda: self.fullRequested.emit(self.task.id))
+        self.scan_mode_button.setMenu(scan_menu)
+        self.add_action(self.scan_mode_button)
         self.result_button = button("", kind="ghost", icon="search")
         self.result_button.clicked.connect(lambda: self.resultRequested.emit(self.task.id))
         self.add_action(self.result_button)
@@ -344,11 +345,8 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
 
         self.result_button.setEnabled(has_result and not busy)
         self.result_button.setToolTip("查看该任务的扫描结果" if has_result else "还没有该任务的扫描结果，先扫描一次")
-        incremental_tip = "增量扫描：只重扫新增或改动过的文件，其余复用缓存"
-        full_tip = "全量重扫：忽略缓存重新读取所有文件"
-        for extra, tip in ((self.incremental_button, incremental_tip), (self.full_button, full_tip)):
-            extra.setEnabled(not busy)
-            extra.setToolTip("已有扫描在进行" if busy else tip)
+        self.scan_mode_button.setEnabled(not busy)
+        self.scan_mode_button.setToolTip("已有扫描在进行" if busy else "更多扫描方式：增量扫描 / 全量重扫")
         if active:
             self.scan_button.set_text("停止中" if stopping else "停止")
             self.scan_button.set_kind("danger")
@@ -1064,11 +1062,14 @@ def _highest_severity(matches: Sequence[RuleMatch]) -> str:
 
 
 def _hit_summary(hit: FileHit) -> str:
-    """文件行的摘要：命中条数 · 编码（文件名命中可能没有编码）· 大小。"""
+    """文件行摘要：命中条数 · 编码 · 大小 · 引擎 · 耗时（列收起后的合并口径）。"""
     parts = [f"{len(hit.matches)} 条"]
     if hit.encoding:
         parts.append(hit.encoding)
     parts.append(format_size(hit.size))
+    if hit.engine:
+        parts.append(engine_label(hit.engine))
+    parts.append(f"{hit.elapsed * 1000:.1f} ms")
     return " · ".join(parts)
 
 
@@ -1081,10 +1082,18 @@ class _ContextDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
     影响这一列，其它列仍是单行。
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, compact: bool = False) -> None:
         super().__init__(parent)
         self._documents: dict[tuple[int, int, bool, str], QTextDocument] = {}
         self._width = 0
+        self._compact = compact
+
+    def set_compact(self, compact: bool) -> None:
+        """紧凑模式：上下文不再换行，单行省略，行高保持一致。"""
+        if self._compact == compact:
+            return
+        self._compact = compact
+        self.reset()
 
     def reset(self) -> None:
         """结果树重建时清掉排版缓存，避免旧命中的文档对象继续驻留。"""
@@ -1111,14 +1120,16 @@ class _ContextDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
         if parts is None:
             return None
         theme = _qt_theme.active_theme()
-        key = (id(parts), width, selected, theme.name)
+        # 紧凑模式用不限宽（-1）排版，文本保持单行，超出部分由单元格裁剪。
+        wrap_width = -1 if self._compact else width
+        key = (id(parts), wrap_width, selected, theme.name)
         cached = self._documents.get(key)
         if cached is not None:
             return cached
-        if width != self._width:
+        if wrap_width != self._width:
             # 窗口 / 列宽变化后旧排版的换行位置全部失效，直接丢弃重排。
             self._documents.clear()
-            self._width = width
+            self._width = wrap_width
         before, matched, after = parts
         document = QTextDocument()
         document.setDocumentMargin(0)
@@ -1136,7 +1147,7 @@ class _ContextDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
         cursor.setPosition(start)
         cursor.setPosition(start + _utf16_units(matched), QTextCursor.MoveMode.KeepAnchor)
         cursor.mergeCharFormat(highlight)
-        document.setTextWidth(width)
+        document.setTextWidth(wrap_width)
         self._documents[key] = document
         return document
 
@@ -1169,7 +1180,7 @@ class _ContextDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
         base = super().sizeHint(option, index)
-        if _context_parts(index) is None:
+        if _context_parts(index) is None or self._compact:
             return base
         width = self._column_width(option, index)
         document = self._document(index, width, selected=False, font=option.font)
@@ -1337,6 +1348,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._scan_page = self._build_scan_page()
         self._result_page = self._build_result_page()
         self._rules_page = self._build_rules_page()
+        self._apply_compact_mode(self.settings.compact_mode, rebuild_rows=False)
         self.add_pages(
             PAGES,
             {
@@ -1412,6 +1424,18 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         widget.setMaximumWidth(160)
         return widget
 
+    @staticmethod
+    def _mb_spin(parent: QWidget, value: int) -> QDoubleSpinBox:
+        """单文件读取上限：界面上用 MB（0.1 步长），存储与扫描仍是字节。"""
+        widget = QDoubleSpinBox(parent)
+        widget.setDecimals(1)
+        widget.setRange(0.1, 1024.0)
+        widget.setSingleStep(1.0)
+        widget.setSuffix(" MB")
+        widget.setValue(max(0.1, min(1024.0, value / (1024 * 1024))))
+        widget.setMaximumWidth(160)
+        return widget
+
     def _build_settings_page(self) -> _FilescanPage:
         """设置页：扫描范围 / 后缀白名单 / 缓存与配置，三张卡片纵向排布。"""
         page = _FilescanPage(self, "settings", scroll=True, margins=(0, 0, 4, 8))
@@ -1453,12 +1477,15 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._max_depth = self._spin(form, 0, 64, self.settings.max_depth)
         self._min_size = self._spin(form, 0, 2_000_000_000, self.settings.min_size)
         self._max_size = self._spin(form, 0, 2_000_000_000, self.settings.max_size)
-        self._max_file_bytes = self._spin(form, 1, 1_073_741_824, self.settings.max_file_bytes)
+        self._max_file_bytes = self._mb_spin(form, self.settings.max_file_bytes)
         self._workers = self._spin(form, 1, 64, self.settings.workers)
         self._context_chars = self._spin(form, 0, 400, self.settings.context_chars)
         self._include_ext = QLineEdit(self.settings.include_ext, options)
         self._exclude_ext = QLineEdit(self.settings.exclude_ext, options)
         self._force_ext = QLineEdit(self.settings.force_ext, options)
+        self._include_ext.setPlaceholderText("留空表示不限制；如 .txt;.md")
+        self._exclude_ext.setPlaceholderText("留空表示不排除；如 .log;.tmp")
+        self._force_ext.setPlaceholderText("留空表示不强制；如 .pdf")
         self._modified_after = QLineEdit(self.settings.modified_after, options)
         self._modified_before = QLineEdit(self.settings.modified_before, options)
         self._skip_dirs = _multiline_editor(
@@ -1574,17 +1601,18 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._copy_note_button.setToolTip("按「【规则：…，匹配项：…】」逐条生成扫描说明并复制")
         self._copy_note_button.clicked.connect(self._copy_selected_notes)
         action_bar.addWidget(self._copy_note_button)
-        action_bar.addWidget(hint_label("双击行定位文件，右键行可打开 / 复制更多", wrap=False), 1)
+        action_bar.addStretch(1)
         card.body.addLayout(action_bar)
 
         self._tree = QTreeWidget(card)
-        self._tree.setHeaderLabels(["文件 / 规则", "严重级", "行号", "引擎", "耗时", "上下文（打码）"])
+        self._tree.setHeaderLabels(["文件 / 规则", "严重级", "行号", "上下文（打码）"])
         self._tree.setAlternatingRowColors(True)
-        self._tree.setColumnWidth(0, 400)
-        self._tree.setColumnWidth(1, 64)
-        self._tree.setColumnWidth(2, 64)
-        self._tree.setColumnWidth(3, 56)
-        self._tree.setColumnWidth(4, 72)
+        # 引擎 / 耗时并进文件行摘要，固定列宽只留给路径与两列短指标。
+        self._tree.setColumnWidth(0, 300)
+        self._tree.setColumnWidth(1, 56)
+        self._tree.setColumnWidth(2, 48)
+        self._tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self._tree.setToolTip("双击行定位文件，右键行可打开 / 复制更多")
         self._tree.header().setStretchLastSection(True)
         self._tree.setMinimumHeight(240)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1592,8 +1620,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._tree.itemDoubleClicked.connect(self._result_item_double_clicked)
         self._tree.itemSelectionChanged.connect(self._update_result_actions)
         # 上下文列换行完整显示 + 命中底色；其余列继续用默认 delegate 单行绘制。
-        self._context_delegate = _ContextDelegate(self._tree)
-        self._tree.setItemDelegateForColumn(5, self._context_delegate)
+        self._context_delegate = _ContextDelegate(self._tree, compact=self.settings.compact_mode)
+        self._tree.setItemDelegateForColumn(3, self._context_delegate)
         # 列宽变化后旧排版的换行位置失效：清缓存并重算行高，避免行高停在首帧宽度上。
         self._tree.header().sectionResized.connect(self._context_layout_changed)
         card.body.addWidget(self._tree, 1)
@@ -1622,13 +1650,26 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         reset = button("重置")
         reset.clicked.connect(self._reset_filter)
         filter_bar.addWidget(reset)
+        layout.addLayout(filter_bar)
+
+        # 导出 / 原文开关独占一行：与筛选控件挤在同一行会把结果页最小宽度撑到窗口
+        # 无法缩小，也让路径筛选框没有伸展空间。
+        export_bar = QHBoxLayout()
+        export_bar.setContentsMargins(0, 0, 0, 0)
+        export_bar.setSpacing(6)
+        export_bar.addWidget(hint_label("双击行定位文件，右键行可打开 / 复制更多", wrap=False), 1)
+        self._compact_mode = QCheckBox("紧凑模式", self)
+        self._compact_mode.setToolTip("任务行、结果行与规则表使用更紧凑的高度；结果上下文只显示单行，悬停看全文")
+        self._compact_mode.setChecked(self.settings.compact_mode)
+        self._compact_mode.toggled.connect(self._set_compact_mode)
+        export_bar.addWidget(self._compact_mode)
         self._export_raw = QCheckBox("导出 / 复制原文", self)
         self._export_raw.setToolTip("勾选后导出报告与复制命中内容使用原文；默认打码")
-        filter_bar.addWidget(self._export_raw)
+        export_bar.addWidget(self._export_raw)
         export = button("导出报告…", kind="primary")
         export.clicked.connect(self._export_report)
-        filter_bar.addWidget(export)
-        layout.addLayout(filter_bar)
+        export_bar.addWidget(export)
+        layout.addLayout(export_bar)
         return page
 
     def _build_rules_page(self) -> _FilescanPage:
@@ -1746,7 +1787,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
     def _summary_text(self) -> str:
         return (
             f"规则 {len(self.ruleset.rules)} 条（启用 {self.ruleset.enabled_count()}）；"
-            f"扫描任务 {len(self._tasks)} 个；单文件上限 {format_size(self._max_file_bytes.value())}"
+            f"扫描任务 {len(self._tasks)} 个；单文件上限 {format_size(self._max_file_bytes_value())}"
         )
 
     # ------------------------------------------------------------------ #
@@ -1789,6 +1830,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                 busy=self._worker_running,
                 active=self._worker_running and task.id == self._scanning_task_id,
                 stopping=task.id == self._stopping_task_id,
+                dense=self.settings.compact_mode,
                 parent=self._task_list,
             )
             row.toggleRequested.connect(lambda row: self.toggle_row("tasks", row))
@@ -2244,6 +2286,10 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
     # ------------------------------------------------------------------ #
     # 扫描
     # ------------------------------------------------------------------ #
+    def _max_file_bytes_value(self) -> int:
+        """界面上的 MB → 引擎使用的字节数（至少 1 字节）。"""
+        return max(1, round(self._max_file_bytes.value() * 1024 * 1024))
+
     def _scan_options(self) -> ScanOptions:
         after = _parse_optional_timestamp(self._modified_after.text())
         before = _parse_optional_timestamp(self._modified_before.text())
@@ -2267,7 +2313,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             skip_binary=self._skip_binary.isChecked(),
             scan_documents=self._scan_documents.isChecked(),
             normalize_text=self._normalize_text.isChecked(),
-            max_file_bytes=max(1, self._max_file_bytes.value()),
+            max_file_bytes=self._max_file_bytes_value(),
             workers=max(1, self._workers.value()),
             context_chars=max(0, self._context_chars.value()),
         )
@@ -2472,14 +2518,13 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                     str(hit.path),
                     severity_label(highest) if highest else "",
                     "",
-                    engine_label(hit.engine),
-                    f"{hit.elapsed * 1000:.1f} ms",
                     _hit_summary(hit),
                 ]
             )
             parent.setToolTip(0, str(hit.path))
-            parent.setToolTip(3, f"调度引擎：{engine_label(hit.engine)}")
-            parent.setToolTip(4, f"该文件扫描耗时：{hit.elapsed * 1000:.2f} ms")
+            parent.setToolTip(
+                3, f"命中 {len(hit.matches)} 条 · 引擎 {engine_label(hit.engine)} · 耗时 {hit.elapsed * 1000:.2f} ms"
+            )
             if highest:
                 parent.setToolTip(1, f"该文件最高严重级：{severity_label(highest)}")
             parent.setData(0, _PATH_ROLE, str(hit.path))
@@ -2492,8 +2537,6 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                         match.rule_name,
                         severity_label(match.severity) if match.severity else "",
                         str(match.location or match.line_no),
-                        "",
-                        "",
                         rendered,
                     ]
                 )
@@ -2501,11 +2544,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                 child.setData(0, _MATCH_ROLE, match)
                 # 单元格文本仍是完整打码上下文（复制 / 悬停 / 测试可读）；
                 # 富文本绘制由 delegate 按三段重新排版，命中段另外上底色。
-                child.setData(5, _CONTEXT_ROLE, context_segments(match, False))
+                child.setData(3, _CONTEXT_ROLE, context_segments(match, False))
                 child.setToolTip(0, str(hit.path))
                 if match.severity:
                     child.setToolTip(1, f"严重级：{severity_label(match.severity)}")
-                child.setToolTip(5, rendered)
+                child.setToolTip(3, rendered)
                 color = _severity_color(match.severity)
                 if color is not None:
                     brush = QBrush(color)
@@ -2516,12 +2559,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             if index >= 5000:  # 极端结果集下不再逐项展开，避免长时间占用 GUI 线程
                 break
         for item in result.skipped:
-            entry = QTreeWidgetItem([str(item.path), "", "", "", "", f"跳过：{item.reason}"])
+            entry = QTreeWidgetItem([str(item.path), "", "", f"跳过：{item.reason}"])
             entry.setToolTip(0, str(item.path))
             entry.setData(0, _PATH_ROLE, str(item.path))
             self._tree.addTopLevelItem(entry)
         for item in result.errors:
-            entry = QTreeWidgetItem([str(item.path), "", "", "", "", f"错误：{item.message}"])
+            entry = QTreeWidgetItem([str(item.path), "", "", f"错误：{item.message}"])
             entry.setToolTip(0, str(item.path))
             entry.setData(0, _PATH_ROLE, str(item.path))
             self._tree.addTopLevelItem(entry)
@@ -2865,7 +2908,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._max_depth.setValue(options.max_depth)
         self._min_size.setValue(options.min_size)
         self._max_size.setValue(options.max_size or 0)
-        self._max_file_bytes.setValue(options.max_file_bytes)
+        self._max_file_bytes.setValue(options.max_file_bytes / (1024 * 1024))
         self._workers.setValue(options.workers)
         self._context_chars.setValue(options.context_chars)
         self._include_ext.setText(";".join(options.include_exts))
@@ -2917,6 +2960,40 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
     # ------------------------------------------------------------------ #
     # 生命周期
     # ------------------------------------------------------------------ #
+    def _set_compact_mode(self, compact: bool) -> None:
+        """结果页「紧凑模式」开关：同步全部列表并落盘。"""
+        self._apply_compact_mode(compact)
+        self._persist_settings(self.geometry_text())
+
+    def _apply_compact_mode(
+        self,
+        compact: bool,
+        *,
+        rebuild_rows: bool = True,
+    ) -> None:
+        """把紧凑密度应用到任务行、结果树与三张表；默认只改展示，不影响扫描口径。"""
+        self.settings = replace(self.settings, compact_mode=compact)
+        checkbox = getattr(self, "_compact_mode", None)
+        if checkbox is not None and checkbox.isChecked() != compact:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(compact)
+            checkbox.blockSignals(False)
+        delegate = getattr(self, "_context_delegate", None)
+        if delegate is not None:
+            delegate.set_compact(compact)
+        for name in ("_whitelist_table", "_rules_table", "_expression_table"):
+            table = getattr(self, name, None)
+            if table is not None:
+                table.verticalHeader().setDefaultSectionSize(24 if compact else 30)
+        task_list = getattr(self, "_task_list", None)
+        if task_list is not None:
+            task_list.setSpacing(2 if compact else 4)
+            if rebuild_rows:
+                self._refresh_task_rows(update_status=False)
+        tree = getattr(self, "_tree", None)
+        if tree is not None:
+            tree.scheduleDelayedItemsLayout()
+
     def _current_settings(self) -> fw.FilescanSettings:
         return replace(
             self.settings,
@@ -2939,13 +3016,14 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             skip_binary=self._skip_binary.isChecked(),
             scan_documents=self._scan_documents.isChecked(),
             normalize_text=self._normalize_text.isChecked(),
-            max_file_bytes=max(1, self._max_file_bytes.value()),
+            max_file_bytes=self._max_file_bytes_value(),
             workers=max(1, self._workers.value()),
             context_chars=max(0, self._context_chars.value()),
             use_cache=self._use_cache.isChecked(),
             ruleset=self.ruleset,
             filter_rule="" if self._filter_rule.currentText() == "全部" else self._filter_rule.currentText(),
             filter_path=self._filter_path.text(),
+            compact_mode=self.settings.compact_mode,
         )
 
     def _persist_settings(self, geometry: str) -> None:

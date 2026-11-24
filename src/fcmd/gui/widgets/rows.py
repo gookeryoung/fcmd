@@ -164,6 +164,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         collapse_hint: str = "收起详情",
         metrics_samples: Sequence[str] | None = None,
         copy_text: str = "",
+        dense: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -184,6 +185,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         # 共享行卡外观的选择器：所有应用的可展开行卡共用这一条契约。
         self.setProperty("itemRow", "true")
         self.setProperty("selected", "false")
+        self.setProperty("dense", "true" if dense else "false")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -193,12 +195,16 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.header_row = QHBoxLayout(self.header)
         # 行卡内边距略放宽，标题 / 副标题与右侧动作之间留呼吸；动作按钮彼此靠近，
         # 与文字区用一条细分隔线隔开（见 add_action）。
-        self.header_row.setContentsMargins(14, 9, 12, 9)
-        self.header_row.setSpacing(8)
+        # 紧凑行（``dense``）缩内边距与间距，给列表腾出更多横向空间。
+        if dense:
+            self.header_row.setContentsMargins(10, 6, 10, 6)
+        else:
+            self.header_row.setContentsMargins(14, 9, 12, 9)
+        self.header_row.setSpacing(6 if dense else 8)
 
         self.left = QVBoxLayout()
         self.left.setContentsMargins(0, 0, 0, 0)
-        self.left.setSpacing(4)
+        self.left.setSpacing(3 if dense else 4)
         self.title_row = QHBoxLayout()
         self.title_row.setContentsMargins(0, 0, 0, 0)
         self.title_row.setSpacing(8)

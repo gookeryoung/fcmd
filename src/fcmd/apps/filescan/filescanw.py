@@ -241,6 +241,7 @@ class FilescanSettings:
     ruleset: RuleSet = field(default_factory=builtin_ruleset)
     filter_rule: str = ""
     filter_path: str = ""
+    compact_mode: bool = True
     report_format: str = "text"
     sidebar_collapsed: bool = False
     geometry: str | None = None
@@ -287,6 +288,7 @@ def settings_to_mapping(settings: FilescanSettings) -> dict[str, Any]:
         "ruleset": ruleset_to_mapping(settings.ruleset),
         "filter_rule": settings.filter_rule,
         "filter_path": settings.filter_path,
+        "compact_mode": settings.compact_mode,
         "report_format": settings.report_format,
         "sidebar_collapsed": settings.sidebar_collapsed,
         "geometry": settings.geometry,
@@ -396,6 +398,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
         ruleset=ruleset,
         filter_rule=_str_value(raw, "filter_rule"),
         filter_path=_str_value(raw, "filter_path"),
+        compact_mode=_bool_value(raw, "compact_mode", True),
         report_format=_format_value(raw),
         sidebar_collapsed=_bool_value(raw, "sidebar_collapsed", False),
         geometry=_guiconfig.valid_geometry(_str_value(raw, "geometry") or None),

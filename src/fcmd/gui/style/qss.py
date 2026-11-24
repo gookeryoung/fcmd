@@ -51,6 +51,20 @@ QFrame#LoadBlock {
     border: 1px solid $border;
     border-radius: 6px;
 }
+/* 紧凑行：行内按钮 / 图标按钮降一档高度，配合 ItemRow(dense=True) 的内边距，
+   让同屏能多看几行且不挤压文字列。 */
+QFrame[itemRow="true"][dense="true"] QPushButton#Primary,
+QFrame[itemRow="true"][dense="true"] QPushButton#Ghost,
+QFrame[itemRow="true"][dense="true"] QPushButton#Danger {
+    min-height: 26px;
+    max-height: 26px;
+}
+QFrame[itemRow="true"][dense="true"] QToolButton#IconButton {
+    min-width: 26px;
+    max-width: 26px;
+    min-height: 26px;
+    max-height: 26px;
+}
 /* 行卡胶囊：共享高度 / 圆角 / 内边距 / 字号（见 gui/widgets/rows.py 的 rowChip 属性），
    对象名只负责颜色语义；边框用同色系浅描边，避免一排彩色粗框抢走标题的注意力。 */
 QFrame[itemRow="true"] QLabel[rowChip="true"] {
