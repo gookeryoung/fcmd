@@ -39,6 +39,7 @@ from typing import Any
 
 import fcmd
 from fcmd.core.result import emit_result, report_error
+from fcmd.tools.media._filecheck_json import json_payload
 
 __all__ = [
     "Issue",
@@ -732,41 +733,6 @@ def run_filecheck(
     print(f"报告已输出：{report_path}")
 
 
-def _json_payload(result: ScanResult) -> dict[str, Any]:
-    """把扫描结果转为机读字典（不写入报告文件）。"""
-    errors = [item for item in result.issues if item.level == "错误"]
-    warns = [item for item in result.issues if item.level == "警告"]
-    notes = [item for item in result.issues if item.level == "提示"]
-    return {
-        "root": str(result.root),
-        "all_files": result.all_files,
-        "chunk_kb": result.chunk_kb,
-        "stats": result.stats,
-        "summary": {
-            "checked": int(result.stats.get("checked", 0)),
-            "errors": len(errors),
-            "warnings": len(warns),
-            "notes": len(notes),
-            "dir_errors": len(result.dir_errors),
-            "missing_groups": len(result.missing),
-        },
-        "issues": [{"level": item.level, "path": item.path, "message": item.message} for item in result.issues],
-        "missing": [
-            {
-                "dirpath": group.dirpath,
-                "prefix": group.prefix,
-                "season": group.season,
-                "found": group.found,
-                "lo": group.lo,
-                "hi": group.hi,
-                "missing": list(group.missing),
-            }
-            for group in result.missing
-        ],
-        "dir_errors": result.dir_errors,
-    }
-
-
 @fcmd.tool("filecheck", help="文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数")
 def filecheck_cmd(
     path: Path | None = None,
@@ -810,7 +776,7 @@ def filecheck_cmd(
         )
         return
     result = scan_directory(root, max(1, workers), max(4, chunk_kb) * 1024, all_files)
-    emit_result("filecheck", None, _json_payload(result))
+    emit_result("filecheck", None, json_payload(result))
 
 
 @fcmd.main("filecheck")

@@ -30,6 +30,7 @@ from fcmd.apps.llm.llmbase import (
     run_command,
 )
 from fcmd.console import Table, get_console
+from fcmd.core.result import emit_result, record_error
 
 __all__ = ["doctor"]
 
@@ -194,11 +195,25 @@ def doctor(
 _STATUS_TEXT = {"ok": "[green]ok[/green]", "warn": "[yellow]warn[/yellow]", "fail": "[red]fail[/red]"}
 
 
+def doctor_result(checks: list[Check]) -> dict[str, Any]:
+    """把检查项汇总为机读结果（与体检表格同源）。"""
+    failed = sum(1 for check in checks if check.status == "fail")
+    total = len(checks)
+    return {
+        "ok": failed == 0,
+        "passed": total - failed,
+        "failed": failed,
+        "total": total,
+        "checks": [{"name": check.name, "status": check.status, "detail": check.detail} for check in checks],
+    }
+
+
 @fcmd.tool("llmdoctor", help="运行环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++）")
 def doctor_cmd(
     port: int = DEFAULT_PORT,
     engine_tag: str | None = None,
     models_root: Path | None = None,
+    json_output: bool = False,
 ) -> None:
     """运行环境体检并打印检查表。
 
@@ -212,6 +227,12 @@ def doctor_cmd(
         只体检该目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     """
     checks = doctor(port=port, engine_tag=engine_tag, models_root=models_root)
+    result = doctor_result(checks)
+    if json_output:
+        if not result["ok"]:
+            record_error("CHECK_FAILED", kind="check")
+        emit_result("llmdoctor", None, result, ok=result["ok"])
+        return
     table = Table(title="llmdoctor 体检", box="ascii")
     table.add_column("检查项", style="cyan", no_wrap=True)
     table.add_column("状态", justify="center", no_wrap=True)
@@ -222,7 +243,9 @@ def doctor_cmd(
 
     failures = [check for check in checks if check.status == "fail"]
     if failures:
-        raise ServeError(f"{len(failures)} 项检查失败：" + "；".join(f"{c.name}: {c.detail}" for c in failures))
+        detail = "；".join(f"{check.name}: {check.detail}" for check in failures)
+        get_console().print(f"\n[red]检查未通过：{len(failures)} 项失败[/red]（{detail}）")
+        record_error("CHECK_FAILED", kind="check")
 
 
 @fcmd.main("llmdoctor")

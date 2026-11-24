@@ -65,6 +65,15 @@ _JSON_READY: frozenset[tuple[str, str | None]] = frozenset(
         ("iptool", "parse"),
         ("iptool", "subnet"),
         ("iptool", "validate"),
+        # 本地大模型工具（只读）
+        ("llmenv", "show"),
+        ("llmenv", "list"),
+        ("llmmodel", "list"),
+        ("llmmodel", "find"),
+        ("llmmodel", "vram"),
+        ("llmserve", "status"),
+        ("llmbench", None),
+        ("llmdoctor", None),
         # PE 只读中已接入 --json 的部分
         ("peview", "info"),
         ("peview", "sections"),

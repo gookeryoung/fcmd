@@ -17,6 +17,7 @@ from typing import Any
 import fcmd
 from fcmd.apps.llm.llmbase import DEFAULT_ALIAS, DEFAULT_API_KEY, Endpoint, Opener, ServeError
 from fcmd.console import Table, get_console
+from fcmd.core.result import emit_result, report_error
 
 __all__ = ["BenchResult", "bench", "make_bench_prompt"]
 
@@ -126,7 +127,8 @@ def bench_cmd(  # noqa: PLR0913, PLR0917
     prompt_tokens: int | None = None,
     max_tokens: int = 128,
     timeout: float = 180.0,
-) -> None:
+    json_output: bool = False,
+) -> int | None:
     """发一次补全请求，输出延迟与吞吐。
 
     Parameters
@@ -148,8 +150,36 @@ def bench_cmd(  # noqa: PLR0913, PLR0917
     timeout:
         请求超时秒数（默认 180）。
     """
-    endpoint = _resolve_endpoint(name, base_url, api_key, model)
+    try:
+        endpoint = _resolve_endpoint(name, base_url, api_key, model)
+    except ServeError as exc:
+        ambiguous = "多个服务" in str(exc)
+        return report_error(
+            "llmbench",
+            None,
+            code="INVALID_ARGUMENT" if ambiguous else "NOT_FOUND",
+            message=str(exc),
+            field="name",
+            expected="--name 指定服务，或用 --base-url 指定地址",
+            hint="fcmd llmserve status 查看已登记服务",
+            json_output=json_output,
+        )
     result = bench(endpoint, prompt=prompt, prompt_tokens=prompt_tokens, max_tokens=max_tokens, timeout=timeout)
+    if json_output:
+        data: dict[str, Any] = {
+            "base_url": endpoint.base_url,
+            "model": endpoint.model,
+            "latency_s": round(result.latency_s, 3),
+            "prompt_tokens": result.prompt_tokens,
+            "completion_tokens": result.completion_tokens,
+            "tokens_per_s": round(result.tokens_per_s, 2),
+        }
+        if result.prompt_tokens < 1000:
+            data["hint"] = (
+                f"输入仅 {result.prompt_tokens} tokens，短上下文吞吐偏乐观；加 --prompt-tokens 30000 可模拟真实长会话"
+            )
+        emit_result("llmbench", None, data)
+        return
     table = Table(title="实测", box="ascii")
     table.add_column("指标", style="cyan", no_wrap=True)
     table.add_column("值", justify="right", no_wrap=True)

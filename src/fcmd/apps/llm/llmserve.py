@@ -45,6 +45,7 @@ from fcmd.apps.llm.llmbase import (
     validate_name,
 )
 from fcmd.console import Table, get_console
+from fcmd.core.result import emit_result, report_error
 
 __all__ = [
     "ServeMetrics",
@@ -816,8 +817,25 @@ def stop_cmd(name: str = DEFAULT_NAME) -> None:
         get_console().print(f"服务 {name} 未在运行，已清理残留状态")
 
 
+def _state_payload(state: ServeState) -> dict[str, Any]:
+    """服务状态的机读形态（与 :func:`_print_state` 同源）。"""
+    return {
+        "name": state.name,
+        "running": process_alive(state.pid, state.create_time),
+        "base_url": state.base_url,
+        "model": state.model,
+        "profile": state.profile,
+        "context": state.context,
+        "vision": state.vision,
+        "mmproj": state.mmproj,
+        "pid": state.pid,
+        "started_at": state.started_at,
+        "log": state.log,
+    }
+
+
 @fcmd.tool("llmserve", subcommand="status", help="查看服务状态（不指定 name 时列出全部）")
-def status_cmd(name: str | None = None) -> None:
+def status_cmd(name: str | None = None, json_output: bool = False) -> int | None:
     """查看服务进程与健康状态。
 
     Parameters
@@ -826,10 +844,33 @@ def status_cmd(name: str | None = None) -> None:
         服务名；省略时列出全部已登记服务。
     """
     if name:
-        _print_state(llmenv.require_state(name))
+        try:
+            state = llmenv.require_state(name)
+        except ServeError as exc:
+            return report_error(
+                "llmserve",
+                "status",
+                code="NOT_FOUND",
+                message=str(exc),
+                field="name",
+                expected="已登记的服务名",
+                hint="不带 name 运行 fcmd llmserve status 可列出全部服务",
+                json_output=json_output,
+            )
+        if json_output:
+            emit_result("llmserve", "status", _state_payload(state))
+            return
+        _print_state(state)
         return
 
     states = llmenv.list_states()
+    if json_output:
+        emit_result(
+            "llmserve",
+            "status",
+            {"count": len(states), "services": [_state_payload(state) for state in states]},
+        )
+        return
     if not states:
         get_console().print("没有已登记的服务：fcmd llmserve start")
         return

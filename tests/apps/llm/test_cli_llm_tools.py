@@ -239,14 +239,12 @@ def test_env_cmd_shells(
 # ---------------------------------------------------------------------- #
 def test_model_list_without_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(llmenv, "models_dir", lambda *args, **kwargs: tmp_path / "missing")
-    with pytest.raises(ServeError, match="模型目录不存在"):
-        llmmodel.list_cmd()
+    assert llmmodel.list_cmd() == 4
 
 
 def test_model_list_empty_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(llmenv, "models_dir", lambda *args, **kwargs: tmp_path)
-    with pytest.raises(ServeError, match=r"没有 \.gguf"):
-        llmmodel.list_cmd()
+    assert llmmodel.list_cmd() == 4
 
 
 def test_model_list_entries(
@@ -359,13 +357,11 @@ def test_model_find(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixtu
 
 
 def test_model_vram_invalid_kv(tmp_path: Path) -> None:
-    with pytest.raises(ServeError, match="不支持的 KV"):
-        llmmodel.vram_cmd(tmp_path / "m.gguf", kv="nope")
+    assert llmmodel.vram_cmd(tmp_path / "m.gguf", kv="nope") == 3
 
 
 def test_model_vram_missing_file(tmp_path: Path) -> None:
-    with pytest.raises(ServeError, match="读取模型失败"):
-        llmmodel.vram_cmd(tmp_path / "m.gguf")
+    assert llmmodel.vram_cmd(tmp_path / "m.gguf") == 4
 
 
 def test_model_vram_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -885,10 +881,14 @@ def test_doctor_cmd_ok(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFi
     assert "RTX" in capsys.readouterr().out
 
 
-def test_doctor_cmd_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_doctor_cmd_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from fcmd.core.result import reset_error_state, take_pending_exit_code
+
+    reset_error_state()
     monkeypatch.setattr(llmdoctor, "doctor", lambda **kwargs: [Check("引擎", "fail", "未安装")])
-    with pytest.raises(ServeError, match="1 项检查失败"):
-        llmdoctor.doctor_cmd()
+    llmdoctor.doctor_cmd()
+    assert "检查未通过" in capsys.readouterr().out
+    assert take_pending_exit_code() == 5
 
 
 def test_msvc_runtime_engine_local_new(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -26,6 +26,7 @@ from fcmd.apps.llm.llmbase import (
     human_size,
 )
 from fcmd.console import Table, get_console
+from fcmd.core.result import emit_result, report_error
 
 __all__ = [
     "GENERAL_TAG",
@@ -461,7 +462,7 @@ def plan_vram(plan: LaunchPlan) -> int:
 
 
 @fcmd.tool("llmmodel", subcommand="list", help="列出模型目录中的 GGUF 文件")
-def list_cmd(models_root: Path | None = None) -> None:
+def list_cmd(models_root: Path | None = None, json_output: bool = False) -> int | None:
     """扫描模型目录并列出 GGUF 文件。
 
     Parameters
@@ -471,10 +472,56 @@ def list_cmd(models_root: Path | None = None) -> None:
     """
     directory = llmenv.models_dir(models_root)
     if not directory.is_dir():
-        raise ServeError(f"模型目录不存在: {directory}；先用 fcmd llmdown download 下载")
+        return report_error(
+            "llmmodel",
+            "list",
+            code="DIR_NOT_FOUND",
+            message=f"模型目录不存在: {directory}；先用 fcmd llmdown download 下载",
+            field="models_root",
+            expected="已存在的模型目录",
+            hint="用 --models-root 指定已有目录，或先下载模型",
+            json_output=json_output,
+        )
     entries = scan_models(directory)
     if not entries:
-        raise ServeError(f"{directory} 下没有 .gguf 文件；先用 fcmd llmdown download 下载")
+        return report_error(
+            "llmmodel",
+            "list",
+            code="NOT_FOUND",
+            message=f"{directory} 下没有 .gguf 文件；先用 fcmd llmdown download 下载",
+            field="models_root",
+            expected="包含 .gguf 文件的目录",
+            hint="用 fcmd llmdown download 下载模型后重试",
+            json_output=json_output,
+        )
+
+    selection: dict[str, dict[str, str | None]] = {}
+    for name, profile in PROFILES.items():
+        matched = [entry for entry in entries if matches_profile(entry.path, profile.quant)]
+        chosen = max(matched, key=lambda entry: entry.size).path if matched else None
+        selection[name] = {"quant": profile.quant, "path": str(chosen) if chosen is not None else None}
+    if json_output:
+        emit_result(
+            "llmmodel",
+            "list",
+            {
+                "root": str(directory),
+                "count": len(entries),
+                "models": [
+                    {
+                        "path": str(entry.path),
+                        "relative": entry.relative,
+                        "size": entry.size,
+                        "size_human": human_size(entry.size),
+                        "profiles": list(entry.profiles),
+                        "tags": list(entry.tags),
+                    }
+                    for entry in entries
+                ],
+                "selection": selection,
+            },
+        )
+        return
 
     table = Table(title=f"本地模型（{len(entries)} 个）", box="ascii")
     table.add_column("文件", style="cyan", no_wrap=True)
@@ -489,17 +536,21 @@ def list_cmd(models_root: Path | None = None) -> None:
 
     get_console().print("各档位将选用的模型:")
     for name, profile in PROFILES.items():
-        matched = [entry for entry in entries if matches_profile(entry.path, profile.quant)]
+        chosen = selection[name]["path"]
         quant = f"{profile.quant:<7}"
-        if matched:
-            chosen = max(matched, key=lambda entry: entry.size)
-            get_console().print(f"  {name:<12} {quant} {chosen.path}")
+        if chosen is not None:
+            get_console().print(f"  {name:<12} {quant} {chosen}")
         else:
             get_console().print(f"  {name:<12} {quant} [yellow]缺失[/yellow]")
 
 
 @fcmd.tool("llmmodel", subcommand="find", help="按量化类型定位 GGUF 文件")
-def find_cmd(quant: str, models_root: Path | None = None, model: Path | None = None) -> None:
+def find_cmd(
+    quant: str,
+    models_root: Path | None = None,
+    model: Path | None = None,
+    json_output: bool = False,
+) -> int | None:
     """输出匹配量化类型的 GGUF 路径（同名取最大）。
 
     Parameters
@@ -511,11 +562,44 @@ def find_cmd(quant: str, models_root: Path | None = None, model: Path | None = N
     model:
         指定 GGUF 文件或包含 GGUF 的目录，覆盖模型目录配置。
     """
-    get_console().print(str(find_model(quant, models_root, model)), markup=False)
+    target = model.expanduser() if model is not None else None
+    if target is not None and target.is_file() and target.suffix.lower() != ".gguf":
+        return report_error(
+            "llmmodel",
+            "find",
+            code="INVALID_ARGUMENT",
+            message=f"模型文件不是 .gguf: {target}",
+            field="model",
+            expected=".gguf 文件或包含 GGUF 的目录",
+            hint="换成 .gguf 文件路径，或省略 --model 走模型目录配置",
+            json_output=json_output,
+        )
+    try:
+        path = find_model(quant, models_root, model)
+    except ServeError as exc:
+        return report_error(
+            "llmmodel",
+            "find",
+            code="NOT_FOUND",
+            message=str(exc),
+            field="quant",
+            expected=f"文件名含 {quant} 的 GGUF 文件",
+            hint="用 fcmd llmmodel list 查看已发现的模型",
+            json_output=json_output,
+        )
+    if json_output:
+        emit_result("llmmodel", "find", {"quant": quant, "path": str(path)})
+        return
+    get_console().print(str(path), markup=False)
 
 
 @fcmd.tool("llmmodel", subcommand="vram", help="估算指定 GGUF 的显存占用")
-def vram_cmd(model: Path, ctx: int = PROFILES[DEFAULT_PROFILE].context, kv: str = "q8_0") -> None:
+def vram_cmd(
+    model: Path,
+    ctx: int = PROFILES[DEFAULT_PROFILE].context,
+    kv: str = "q8_0",
+    json_output: bool = False,
+) -> int | None:
     """估算模型权重 + KV 缓存 + 固定开销的显存占用。
 
     Parameters
@@ -528,14 +612,57 @@ def vram_cmd(model: Path, ctx: int = PROFILES[DEFAULT_PROFILE].context, kv: str 
         KV 缓存类型（``f16`` / ``q8_0`` / ``q4_0``，默认 ``q8_0``）。
     """
     if kv not in KV_SCALE:
-        raise ServeError(f"不支持的 KV 类型 {kv!r}，可选: {', '.join(KV_SCALE)}")
+        return report_error(
+            "llmmodel",
+            "vram",
+            code="INVALID_ARGUMENT",
+            message=f"不支持的 KV 类型 {kv!r}，可选: {', '.join(KV_SCALE)}",
+            field="kv",
+            expected=" / ".join(KV_SCALE),
+            hint="改用 --kv f16 / q8_0 / q4_0 之一",
+            json_output=json_output,
+        )
     target = model.expanduser()
     try:
         size = target.stat().st_size
+    except FileNotFoundError as exc:
+        return report_error(
+            "llmmodel",
+            "vram",
+            code="FILE_NOT_FOUND",
+            message=f"读取模型失败: {target}（{exc}）",
+            field="model",
+            expected="存在的 GGUF 文件",
+            hint="确认文件路径存在且是 .gguf",
+            json_output=json_output,
+        )
     except OSError as exc:
-        raise ServeError(f"读取模型失败: {target}（{exc}）") from exc
+        return report_error(
+            "llmmodel",
+            "vram",
+            code="RUNTIME_ERROR",
+            message=f"读取模型失败: {target}（{exc}）",
+            field="model",
+            hint="检查文件权限后重试",
+            json_output=json_output,
+        )
 
     estimate = estimate_vram(size, ctx, kv)
+    if json_output:
+        emit_result(
+            "llmmodel",
+            "vram",
+            {
+                "model": str(target),
+                "size": size,
+                "size_human": human_size(size),
+                "context": ctx,
+                "kv": kv,
+                "estimate": estimate,
+                "estimate_human": human_size(estimate),
+            },
+        )
+        return
     table = Table(title="显存估算", box="ascii")
     table.add_column("项目", style="cyan", no_wrap=True)
     table.add_column("值", justify="right", no_wrap=True)

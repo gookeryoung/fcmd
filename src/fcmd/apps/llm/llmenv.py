@@ -49,6 +49,7 @@ from fcmd.apps.llm._llmconfig import (
 )
 from fcmd.apps.llm.llmbase import DEFAULT_NAME, ServeError, ServeState, validate_name
 from fcmd.console import Table, get_console
+from fcmd.core.result import emit_result
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
@@ -179,8 +180,27 @@ _ENV_SHELL = Literal["plain", "powershell", "bash"]
 
 
 @fcmd.tool("llmenv", subcommand="show", help="显示目录布局与当前生效的模型目录")
-def show_cmd() -> None:
+def show_cmd(json_output: bool = False) -> None:
     """打印 ``FCMD_HOME`` 目录布局、模型目录与已登记服务数量。"""
+    if json_output:
+        extras = models_dir_extra()
+        ignored = ignored_work_dir()
+        emit_result(
+            "llmenv",
+            "show",
+            {
+                "fcmd_home": str(fcmd_home()),
+                "serve_dir": str(serve_dir()),
+                "config_path": str(config_path()),
+                "engines_root": str(engines_root()),
+                "models_dirs": [str(directory) for directory in models_dirs()],
+                "products_dir": str(products_dir()),
+                "extra_models_dirs": extras,
+                "ignored_work_dir": ignored,
+                "registered_services": len(list_states()),
+            },
+        )
+        return
     table = Table(title="llmenv 目录布局", box="ascii")
     table.add_column("项目", style="cyan", no_wrap=True)
     table.add_column("路径")
@@ -249,9 +269,29 @@ def reset_cmd() -> None:
 
 
 @fcmd.tool("llmenv", subcommand="list", help="列出已登记的服务状态")
-def list_cmd() -> None:
+def list_cmd(json_output: bool = False) -> None:
     """列出全部可解析的服务状态文件。"""
     states = list_states()
+    if json_output:
+        emit_result(
+            "llmenv",
+            "list",
+            {
+                "count": len(states),
+                "services": [
+                    {
+                        "name": state.name,
+                        "base_url": state.base_url,
+                        "profile": state.profile,
+                        "context": state.context,
+                        "pid": state.pid,
+                        "started_at": state.started_at,
+                    }
+                    for state in states
+                ],
+            },
+        )
+        return
     if not states:
         get_console().print("没有已登记的服务：fcmd llmserve start")
         return
