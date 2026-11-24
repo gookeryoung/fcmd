@@ -1,0 +1,62 @@
+{
+  "version": 6,
+  "name": "场景：知识产权",
+  "rules": [
+    {
+      "id": "kw-project-code",
+      "name": "项目代号",
+      "group": "知识产权",
+      "severity": "medium",
+      "matcher": {
+        "type": "dictionary",
+        "value": "项目代号\n内部代号"
+      }
+    },
+    {
+      "id": "kw-contract",
+      "name": "合同编号",
+      "group": "知识产权",
+      "severity": "info",
+      "matcher": {
+        "type": "dictionary",
+        "value": "合同编号\n项目编号"
+      }
+    },
+    {
+      "id": "re-tracking-code",
+      "name": "追踪编码",
+      "group": "知识产权",
+      "severity": "info",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\bTRK-\\d{4}\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-copyright",
+      "name": "版权声明",
+      "group": "知识产权",
+      "severity": "info",
+      "matcher": {
+        "type": "regex",
+        "pattern": "copyright\\s+\\d{4}",
+        "case_sensitive": false
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "combo-contract-tracking",
+      "name": "编号与追踪码组合",
+      "expression": "kw-contract near[1] re-tracking-code",
+      "enabled": true
+    },
+    {
+      "id": "expr-ip-combo",
+      "name": "项目代号与编号组合",
+      "expression": "kw-project-code and kw-contract near[1] re-tracking-code",
+      "enabled": true
+    }
+  ]
+}

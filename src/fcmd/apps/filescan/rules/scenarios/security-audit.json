@@ -1,0 +1,62 @@
+{
+  "version": 6,
+  "name": "场景：安全审计",
+  "rules": [
+    {
+      "id": "re-session-fingerprint",
+      "name": "会话指纹（32 位十六进制）",
+      "group": "安全审计",
+      "severity": "medium",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b[A-Fa-f0-9]{32}\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-jwt",
+      "name": "JWT 令牌结构",
+      "group": "安全审计",
+      "severity": "high",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{5,}\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "kw-account-mark",
+      "name": "账号标记",
+      "group": "安全审计",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "username=\nuid=\naccount="
+      }
+    },
+    {
+      "id": "kw-login-abnormal",
+      "name": "登录异常标记",
+      "group": "安全审计",
+      "severity": "medium",
+      "matcher": {
+        "type": "dictionary",
+        "value": "login failed\naccount locked"
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "combo-account-abnormal",
+      "name": "账号与登录异常组合",
+      "expression": "kw-account-mark near[2] kw-login-abnormal",
+      "enabled": true
+    },
+    {
+      "id": "expr-fingerprint-with-account",
+      "name": "会话指纹与账号标记同现",
+      "expression": "re-session-fingerprint and kw-account-mark",
+      "enabled": true
+    }
+  ]
+}

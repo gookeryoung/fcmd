@@ -1,0 +1,51 @@
+{
+  "version": 6,
+  "name": "场景：IaC 配置",
+  "rules": [
+    {
+      "id": "kw-cloud-resource",
+      "name": "云资源标识",
+      "group": "IaC 配置",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "bucket\nsubnet\nsecurity_group"
+      }
+    },
+    {
+      "id": "kw-public-attr",
+      "name": "公网访问属性",
+      "group": "IaC 配置",
+      "severity": "medium",
+      "matcher": {
+        "type": "dictionary",
+        "value": "public\npublicly_accessible"
+      }
+    },
+    {
+      "id": "re-open-cidr",
+      "name": "全网段放行",
+      "group": "IaC 配置",
+      "severity": "high",
+      "matcher": {
+        "type": "regex",
+        "pattern": "0\\.0\\.0\\.0/0",
+        "case_sensitive": false
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "combo-public-resource",
+      "name": "云资源公网属性组合",
+      "expression": "kw-cloud-resource near[2] kw-public-attr",
+      "enabled": true
+    },
+    {
+      "id": "expr-open-ingress",
+      "name": "开放网段或公网属性",
+      "expression": "re-open-cidr or kw-public-attr",
+      "enabled": true
+    }
+  ]
+}

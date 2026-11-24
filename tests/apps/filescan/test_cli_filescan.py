@@ -259,6 +259,23 @@ def test_rules_list_shows_builtin_rules(capsys: pytest.CaptureFixture[str]) -> N
     assert "表达式：" in out
 
 
+def test_rules_list_scenarios(capsys: pytest.CaptureFixture[str]) -> None:
+    rules_command(action="scenarios")
+    out = capsys.readouterr().out
+    assert "code-security" in out
+    assert "场景：隐私联系" in out
+    assert len(out.strip().splitlines()) == 12
+
+
+def test_scan_with_scenario_template(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "config.txt"
+    target.write_text("execute(request.getParameter)\n", encoding="utf-8")
+    scan_command(paths=[tmp_path], scenario="code-security", format="json", cache=False)
+    payload = json.loads(capsys.readouterr().out)
+    rules = {match["rule"] for hit in payload["hits"] for match in hit["matches"]}
+    assert "SQL 执行调用" in rules
+
+
 def test_rules_export_and_validate(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = tmp_path / "exported.json"
     rules_command(action="export", output=target)

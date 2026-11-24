@@ -1,0 +1,50 @@
+{
+  "version": 6,
+  "name": "场景：合规审计",
+  "rules": [
+    {
+      "id": "kw-depart",
+      "name": "部门标识",
+      "group": "合规审计",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "人力资源部\n财务部\n法务部"
+      }
+    },
+    {
+      "id": "kw-project",
+      "name": "项目标识",
+      "group": "合规审计",
+      "severity": "medium",
+      "matcher": {
+        "type": "dictionary",
+        "value": "项目代号\n项目编号"
+      }
+    },
+    {
+      "id": "kw-budget",
+      "name": "预算标识",
+      "group": "合规审计",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "预算\n经费"
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "combo-budget-depart",
+      "name": "预算与部门组合",
+      "expression": "kw-budget near[2] kw-depart",
+      "enabled": true
+    },
+    {
+      "id": "expr-project-depart",
+      "name": "项目与部门同现",
+      "expression": "kw-project and kw-depart",
+      "enabled": true
+    }
+  ]
+}

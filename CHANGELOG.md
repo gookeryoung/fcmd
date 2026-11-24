@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `filescan` 收录 12 组场景规则模板（改写自 uniscan `examples/rules`，MIT 署名见
+  `rules/scenarios/NOTICE`）：CLI 用 `--scenario <slug>` 或
+  `rules --action scenarios`，GUI 规则页新增「载入场景」。
 - `filescan` 结果可解释性：文本报告给出「扫描完成 / 部分成功（有错误）/ 已取消」状态与
   `通过 N` 计数，命中行和结果树新增「引擎」「耗时」（线程 / 进程 / 缓存），JSON 统计
   同步补 `files_passed` / `status` 与命中的 `engine` / `elapsed`。

@@ -59,6 +59,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidgetItem,
@@ -156,6 +157,7 @@ from fcmd.apps.filescan._rules import (
     validate_expression,
     validate_ruleset,
 )
+from fcmd.apps.filescan._scenarios import load_scenario, scenario_templates
 from fcmd.gui import style as _qt_theme
 from fcmd.gui.page import AppPage, PageSpec
 from fcmd.gui.widgets import (
@@ -1604,6 +1606,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             ("启用", lambda: self._set_rules_enabled(True)),
             ("禁用", lambda: self._set_rules_enabled(False)),
             ("载入内置", self._load_builtin),
+            ("载入场景", self._load_scenario),
             ("清空", self._clear_rules),
             ("导入…", self._import_rules),
             ("导出…", self._export_rules),
@@ -2060,6 +2063,27 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         if self.ruleset.rules and not confirm(self, "载入内置规则", "当前规则将被内置规则覆盖，继续？"):
             return
         self._sync_ruleset(builtin_ruleset(), message="已载入内置敏感规则")
+
+    def _load_scenario(self) -> None:
+        """列出随包发布的场景模板，选中后整体替换当前规则集。"""
+        try:
+            templates = scenario_templates()
+        except ValueError as exc:
+            QMessageBox.critical(self, "场景模板不可用", str(exc))
+            return
+        labels = [f"{item.name}（{item.slug}，{item.rule_count} 条）" for item in templates]
+        chosen, ok = QInputDialog.getItem(self, "载入场景规则", "选择场景模板：", labels, 0, False)
+        if not ok or not chosen:
+            return
+        template = templates[labels.index(chosen)]
+        if self.ruleset.rules and not confirm(self, "载入场景规则", f"当前规则将被「{template.name}」覆盖，继续？"):
+            return
+        try:
+            loaded = load_scenario(template.slug)
+        except ValueError as exc:
+            QMessageBox.critical(self, "载入失败", str(exc))
+            return
+        self._sync_ruleset(loaded, message=f"已载入场景：{template.name}")
 
     def _clear_rules(self) -> None:
         if not confirm(self, "清空规则", "确定清空全部规则与组合式？"):

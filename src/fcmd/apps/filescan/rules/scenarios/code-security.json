@@ -1,0 +1,71 @@
+{
+  "version": 6,
+  "name": "场景：代码安全",
+  "rules": [
+    {
+      "id": "re-ipv4-internal",
+      "name": "内网 IPv4 地址",
+      "group": "代码安全",
+      "severity": "medium",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b(?:10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "kw-credential-mark",
+      "name": "凭据标记",
+      "group": "代码安全",
+      "severity": "high",
+      "matcher": {
+        "type": "dictionary",
+        "value": "password=\npasswd=\npwd="
+      }
+    },
+    {
+      "id": "kw-debug-bind",
+      "name": "调试绑定标记",
+      "group": "代码安全",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "debug\n0.0.0.0"
+      }
+    },
+    {
+      "id": "kw-sql-exec",
+      "name": "SQL 执行调用",
+      "group": "代码安全",
+      "severity": "medium",
+      "matcher": {
+        "type": "dictionary",
+        "value": "execute(\nexecuteQuery("
+      }
+    },
+    {
+      "id": "kw-user-input",
+      "name": "用户输入入口",
+      "group": "代码安全",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "request.getParameter\ninput("
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "expr-debug-exposed",
+      "name": "调试配置暴露内网地址",
+      "expression": "kw-debug-bind and re-ipv4-internal",
+      "enabled": true
+    },
+    {
+      "id": "combo-sql-input",
+      "name": "SQL 执行拼接用户输入",
+      "expression": "kw-sql-exec near[3] kw-user-input",
+      "enabled": true
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "version": 6,
+  "name": "场景：开发禁忌",
+  "rules": [
+    {
+      "id": "kw-todo-mark",
+      "name": "待办标记残留",
+      "group": "开发禁忌",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "TODO\nFIXME\nXXX"
+      }
+    },
+    {
+      "id": "kw-debug-print",
+      "name": "调试输出残留",
+      "group": "开发禁忌",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "print(\nconsole.log("
+      }
+    },
+    {
+      "id": "kw-hardcode-host",
+      "name": "硬编码主机地址",
+      "group": "开发禁忌",
+      "severity": "medium",
+      "matcher": {
+        "type": "dictionary",
+        "value": "localhost\n127.0.0.1"
+      }
+    },
+    {
+      "id": "re-temp-token",
+      "name": "临时令牌样式",
+      "group": "开发禁忌",
+      "severity": "high",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b(?:sk|pk)-[A-Za-z0-9]{16,}\\b",
+        "case_sensitive": false
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "expr-debug-with-host",
+      "name": "调试输出携带主机地址",
+      "expression": "kw-debug-print and kw-hardcode-host",
+      "enabled": true
+    },
+    {
+      "id": "expr-todo-with-token",
+      "name": "待办标记旁出现令牌样式",
+      "expression": "kw-todo-mark and re-temp-token",
+      "enabled": true
+    }
+  ]
+}

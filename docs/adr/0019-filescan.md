@@ -745,6 +745,23 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 - 规则集 `version` 升到 6；GUI 类型下拉新增中文名称：文档元数据 / 自定义词典 /
   文件哈希 / 高熵串。
 
+### D20 场景规则模板（2026-11-24）
+
+- **来源**：改写自 uniscan `examples/rules/*.yaml`（MIT，署名与许可证原文见
+  `src/fcmd/apps/filescan/rules/scenarios/NOTICE`），共 12 组场景：代码安全、
+  合规审计、数据分级、依赖审计、开发禁忌、DevOps 流水线、财务预算、IaC 配置、
+  知识产权、日志分析、隐私联系、安全审计。
+- **格式**：统一为 fcmd JSON 规则集（`version: 6`），模块
+  `_scenarios.py` 提供 `scenario_templates()` / `load_scenario(slug)`；模板目录
+  随包发布（`filescan/rules/scenarios/*.json`）。
+- **映射口径**：`literal → dictionary`（多词任一命中、忽略大小写）、`regex → regex`、
+  `filename-* → target=filename`、`composite(all_of + within 字符) → near[k]`
+  并按每行约 80 字符折算行窗口（近似）、`expr → 同名表达式`（运算符小写）；
+  `severity: none` 的隐藏叶子降级为 `info`，组合式命中级别由参与规则决定。
+- **入口**：CLI `filescan scan --scenario code-security` 与
+  `filescan rules --action scenarios`（列出）；GUI 规则页「载入场景」；与
+  `--rules` 互斥，避免两份规则集混用。
+
 ### D15 邻近表达式 near[k]（2026-11-24）
 
 表达式新增二元（可链式）邻近算子：``a near[k] b`` / ``a within[k] b``，表示

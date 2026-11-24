@@ -1,0 +1,51 @@
+{
+  "version": 6,
+  "name": "场景：DevOps 流水线",
+  "rules": [
+    {
+      "id": "kw-env-prod",
+      "name": "生产环境标识",
+      "group": "DevOps 流水线",
+      "severity": "high",
+      "matcher": {
+        "type": "dictionary",
+        "value": "prod\nproduction"
+      }
+    },
+    {
+      "id": "kw-deploy-verb",
+      "name": "部署动作标识",
+      "group": "DevOps 流水线",
+      "severity": "medium",
+      "matcher": {
+        "type": "dictionary",
+        "value": "deploy\nrollback\ndestroy"
+      }
+    },
+    {
+      "id": "re-server-ipv4",
+      "name": "服务器 IPv4 地址",
+      "group": "DevOps 流水线",
+      "severity": "medium",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b",
+        "case_sensitive": false
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "combo-prod-deploy",
+      "name": "生产环境部署组合",
+      "expression": "kw-env-prod near[1] kw-deploy-verb",
+      "enabled": true
+    },
+    {
+      "id": "expr-prod-host",
+      "name": "生产标识与服务器地址同现",
+      "expression": "kw-env-prod and re-server-ipv4",
+      "enabled": true
+    }
+  ]
+}

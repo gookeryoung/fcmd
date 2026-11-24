@@ -1,0 +1,52 @@
+{
+  "version": 6,
+  "name": "场景：财务预算",
+  "rules": [
+    {
+      "id": "re-bank-account",
+      "name": "银行账号样式",
+      "group": "财务预算",
+      "severity": "high",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b\\d{16,19}\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-amount",
+      "name": "金额样式",
+      "group": "财务预算",
+      "severity": "medium",
+      "matcher": {
+        "type": "regex",
+        "pattern": "[¥￥]\\s?\\d[\\d,]{3,}",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "kw-budget",
+      "name": "预算标识",
+      "group": "财务预算",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "预算\n经费\n报销"
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "combo-bank-amount",
+      "name": "银行账号与金额组合",
+      "expression": "re-bank-account near[2] re-amount",
+      "enabled": true
+    },
+    {
+      "id": "expr-budget-amount",
+      "name": "预算标识与金额同现",
+      "expression": "kw-budget and re-amount",
+      "enabled": true
+    }
+  ]
+}

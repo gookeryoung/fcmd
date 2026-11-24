@@ -1,0 +1,65 @@
+{
+  "version": 6,
+  "name": "场景：数据分级",
+  "rules": [
+    {
+      "id": "kw-level-public",
+      "name": "公开级标记",
+      "group": "数据分级",
+      "severity": "info",
+      "matcher": {
+        "type": "dictionary",
+        "value": "公开"
+      }
+    },
+    {
+      "id": "kw-level-internal",
+      "name": "内部级标记",
+      "group": "数据分级",
+      "severity": "medium",
+      "matcher": {
+        "type": "dictionary",
+        "value": "内部资料\n内部使用"
+      }
+    },
+    {
+      "id": "kw-level-restricted",
+      "name": "限阅级标记",
+      "group": "数据分级",
+      "severity": "high",
+      "matcher": {
+        "type": "dictionary",
+        "value": "限阅\n仅限授权人员"
+      }
+    },
+    {
+      "id": "kw-depart",
+      "name": "部门标识",
+      "group": "数据分级",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "人力资源部\n财务部"
+      }
+    },
+    {
+      "id": "re-doc-mark",
+      "name": "文档分级标注",
+      "group": "数据分级",
+      "severity": "medium",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\[(?:内部|限阅)\\]",
+        "case_sensitive": false
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "combo-restricted-depart",
+      "name": "限阅标记与部门组合",
+      "expression": "kw-level-restricted near[2] kw-depart",
+      "enabled": true
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "version": 6,
+  "name": "场景：隐私联系",
+  "rules": [
+    {
+      "id": "re-id-card",
+      "name": "身份证号",
+      "group": "隐私联系",
+      "severity": "critical",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b\\d{17}[\\dXx]\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-phone",
+      "name": "手机号",
+      "group": "隐私联系",
+      "severity": "high",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b1[3-9]\\d{9}\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-email",
+      "name": "电子邮箱",
+      "group": "隐私联系",
+      "severity": "low",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "kw-depart",
+      "name": "部门标识",
+      "group": "隐私联系",
+      "severity": "low",
+      "matcher": {
+        "type": "dictionary",
+        "value": "人力资源部\n财务部"
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "expr-person-credential",
+      "name": "部门旁出现证件信息",
+      "expression": "kw-depart and (re-id-card or re-phone)",
+      "enabled": true
+    },
+    {
+      "id": "expr-person-no-email",
+      "name": "部门旁证件信息但无邮箱",
+      "expression": "kw-depart and (re-id-card or re-phone) and not re-email",
+      "enabled": true
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "version": 6,
+  "name": "场景：依赖审计",
+  "rules": [
+    {
+      "id": "fname-lock",
+      "name": "依赖锁定文件",
+      "group": "依赖审计",
+      "severity": "low",
+      "matcher": {
+        "type": "regex",
+        "target": "filename",
+        "pattern": ".*(requirements\\.txt|package-lock\\.json|poetry\\.lock)$",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "fname-compose",
+      "name": "编排配置文件",
+      "group": "依赖审计",
+      "severity": "low",
+      "matcher": {
+        "type": "regex",
+        "target": "filename",
+        "pattern": ".*docker-compose.*\\.ya?ml$",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-snapshot-version",
+      "name": "SNAPSHOT 依赖版本",
+      "group": "依赖审计",
+      "severity": "medium",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b\\d+\\.\\d+\\.\\d+-SNAPSHOT\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-latest-tag",
+      "name": "latest 版本标签",
+      "group": "依赖审计",
+      "severity": "medium",
+      "matcher": {
+        "type": "regex",
+        "pattern": ":\\s*latest\\b",
+        "case_sensitive": false
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "expr-lock-latest",
+      "name": "锁定文件中出现 latest 标签",
+      "expression": "fname-lock and re-latest-tag",
+      "enabled": true
+    },
+    {
+      "id": "expr-compose-latest",
+      "name": "编排配置使用 latest 镜像",
+      "expression": "fname-compose and re-latest-tag",
+      "enabled": true
+    }
+  ]
+}

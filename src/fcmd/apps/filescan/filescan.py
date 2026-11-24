@@ -68,6 +68,7 @@ from fcmd.apps.filescan._rules import (
     resolve_expression,
     save_ruleset,
 )
+from fcmd.apps.filescan._scenarios import load_scenario, scenario_templates
 from fcmd.console import print_error
 
 __all__ = ["rules_command", "run_command", "scan_command"]
@@ -115,8 +116,15 @@ def _close_cache(store: ScanCache | None) -> None:
     store.close()
 
 
-def _load_ruleset(path: Path | None) -> RuleSet:
-    """加载规则集：未指定时使用内置规则，加载失败给出中文错误。"""
+def _load_ruleset(path: Path | None, scenario: str = "") -> RuleSet:
+    """加载规则集：``--scenario`` 与 ``--rules`` 互斥，均未指定时用内置规则。"""
+    if scenario:
+        if path is not None:
+            _fail("--scenario 与 --rules 只能二选一")
+        try:
+            return load_scenario(scenario)
+        except ValueError as exc:
+            _fail(str(exc))
     if path is None:
         return builtin_ruleset()
     try:
@@ -187,6 +195,7 @@ def _build_options(  # noqa: PLR0913, PLR0917 - 直接映射 CLI 选项，保持
 def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保持扁平签名
     paths: list[Path],
     rules: Path | None = None,
+    scenario: str = "",
     expr: str = "",
     recursive: bool = True,
     max_depth: int = 0,
@@ -223,6 +232,9 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         一个或多个待扫描目录
     rules:
         规则集 JSON 文件，留空使用内置敏感规则
+    scenario:
+        场景模板名（如 ``code-security``），与 ``rules`` 互斥；模板随包发布，
+        可用 ``filescan rules --action list`` 式场景列表见文档
     expr:
         组合表达式（本次扫描唯一默认生效，替换 / 新增为 ``cli_expr``），如 ``cn_id and not allow_list``
     recursive:
@@ -283,7 +295,7 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     """
     if not paths:
         _fail("请至少指定一个待扫描目录")
-    ruleset = _load_ruleset(rules)
+    ruleset = _load_ruleset(rules, scenario)
     if expr.strip():
         # 命令行表达式是本次唯一默认生效的组合式：其余组合式保留为构件（禁用）。
         others = tuple(replace(item, enabled=False) for item in ruleset.expressions)
@@ -443,8 +455,9 @@ def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成
 
 @fcmd.tool("filescan", subcommand="rules", help="查看、校验或导出规则集", description=_DESCRIPTION)
 def rules_command(
-    action: Literal["list", "export", "validate"] = "list",
+    action: Literal["list", "export", "validate", "scenarios"] = "list",
     rules: Path | None = None,
+    scenario: str = "",
     output: Path | None = None,
 ) -> None:
     """管理规则集。
@@ -452,13 +465,20 @@ def rules_command(
     Parameters
     ----------
     action:
-        list=列出规则（默认）、export=导出规则集、validate=校验规则集
+        list=列出规则（默认）、export=导出规则集、validate=校验规则集、
+        scenarios=列出随包发布的场景模板
     rules:
         规则集 JSON 文件，留空使用内置敏感规则
+    scenario:
+        场景模板名（与 ``rules`` 互斥），用于列出 / 校验 / 导出该场景规则
     output:
         export 的输出文件，默认为当前目录 ``filescan-rules.json``
     """
-    ruleset = _load_ruleset(rules)
+    if action == "scenarios":
+        for item in scenario_templates():
+            print(f"{item.slug}\t{item.name}（{item.rule_count} 条）")
+        return
+    ruleset = _load_ruleset(rules, scenario)
     if action == "validate":
         try:
             resolve_expression(ruleset)

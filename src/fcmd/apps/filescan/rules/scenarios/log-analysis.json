@@ -1,0 +1,71 @@
+{
+  "version": 6,
+  "name": "场景：日志分析",
+  "rules": [
+    {
+      "id": "re-log-error",
+      "name": "错误级别标记",
+      "group": "日志分析",
+      "severity": "low",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b(?:ERROR|FATAL)\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-request-id",
+      "name": "请求标识",
+      "group": "日志分析",
+      "severity": "info",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\breq-[0-9a-f]{8}\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "re-slow-query",
+      "name": "慢查询标记",
+      "group": "日志分析",
+      "severity": "medium",
+      "matcher": {
+        "type": "regex",
+        "pattern": "\\b(?:slow query|timeout)\\b",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "fname-log",
+      "name": "日志文件名",
+      "group": "日志分析",
+      "severity": "info",
+      "matcher": {
+        "type": "regex",
+        "target": "filename",
+        "pattern": ".*\\.(log|out)$",
+        "case_sensitive": false
+      }
+    },
+    {
+      "id": "fname-access-log",
+      "name": "访问与错误日志名",
+      "group": "日志分析",
+      "severity": "info",
+      "matcher": {
+        "type": "regex",
+        "target": "filename",
+        "pattern": "access|error",
+        "case_sensitive": false
+      }
+    }
+  ],
+  "expressions": [
+    {
+      "id": "combo-error-reqid",
+      "name": "错误与请求标识组合",
+      "expression": "re-log-error near[2] re-request-id",
+      "enabled": true
+    }
+  ]
+}
