@@ -8,6 +8,7 @@
       "rules": {"version": 1, "name": "…", "rules": [...], "expression": "…"},
       "options": {
         "recursive": true, "max_depth": 0, "follow_symlinks": false,
+        "skip_dirs": [".git", "node_modules"], "skip_hidden": false,
         "ext_whitelist": [".txt", ".log"], "include_exts": [], "force_exts": [],
         "exclude_exts": [], "min_size": 0, "max_size": null,
         "modified_after": "2026-01-01T00:00:00", "modified_before": null,
@@ -47,8 +48,10 @@ from fcmd.apps.filescan._engine import (
     DEFAULT_ENCODINGS,
     DEFAULT_MAX_FILE_BYTES,
     DEFAULT_SCAN_EXTENSIONS,
+    DEFAULT_SKIP_DIRS,
     ScanOptions,
     normalize_exts,
+    normalize_skip_dirs,
     parse_ext_text,
 )
 from fcmd.apps.filescan._rules import (
@@ -160,6 +163,8 @@ def config_to_mapping(config: ScanConfig) -> dict[str, Any]:
             "recursive": options.recursive,
             "max_depth": options.max_depth,
             "follow_symlinks": options.follow_symlinks,
+            "skip_dirs": list(options.skip_dirs),
+            "skip_hidden": options.skip_hidden,
             "ext_whitelist": list(options.ext_whitelist),
             "include_exts": list(options.include_exts),
             "force_exts": list(options.force_exts),
@@ -384,6 +389,27 @@ def _ext_field(  # noqa: PLR0913 - 字段读取器，参数与校验口径一一
     return normalized
 
 
+def _skip_dirs_value(raw: Mapping[str, Any], prefix: str, warnings: list[str]) -> tuple[str, ...]:
+    """读取跳过目录列表；缺失时用内置列表，空列表合法（表示不跳过目录）。
+
+    也接受分号 / 逗号 / 换行分隔的字符串（便于手写），空格保留在目录名内。
+    """
+    key = "skip_dirs"
+    if key not in raw:
+        return DEFAULT_SKIP_DIRS
+    value = raw[key]
+    if isinstance(value, str):
+        return normalize_skip_dirs(value.replace(",", ";").replace("\n", ";").split(";"))
+    if not isinstance(value, list):
+        _warn(warnings, f"{prefix}{key}", f"应为目录名数组，实际为 {_show(value)}，已使用内置跳过目录")
+        return DEFAULT_SKIP_DIRS
+    items = [item for item in value if isinstance(item, str) and item.strip()]
+    invalid = len(value) - len(items)
+    if invalid:
+        _warn(warnings, f"{prefix}{key}", f"有 {invalid} 项不是非空字符串，已忽略")
+    return normalize_skip_dirs(items)
+
+
 def _encodings_value(raw: Mapping[str, Any], key: str, prefix: str, warnings: list[str]) -> tuple[str, ...]:
     """读取编码候选；未知编码逐项丢弃，全部无效时回落默认候选。"""
     if key not in raw:
@@ -440,6 +466,8 @@ def _options_value(raw: Any, warnings: list[str]) -> ScanOptions:
         recursive=_bool_field(raw, "recursive", defaults.recursive, prefix, warnings),
         max_depth=_int_field(raw, "max_depth", defaults.max_depth, prefix, warnings) or 0,
         follow_symlinks=_bool_field(raw, "follow_symlinks", defaults.follow_symlinks, prefix, warnings),
+        skip_dirs=_skip_dirs_value(raw, prefix, warnings),
+        skip_hidden=_bool_field(raw, "skip_hidden", defaults.skip_hidden, prefix, warnings),
         ext_whitelist=_ext_field(
             raw,
             "ext_whitelist",

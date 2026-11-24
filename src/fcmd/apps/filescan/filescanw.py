@@ -46,6 +46,7 @@ from fcmd.apps.filescan._engine import (
     DEFAULT_ENCODINGS,
     DEFAULT_MAX_FILE_BYTES,
     DEFAULT_SCAN_EXTENSIONS,
+    DEFAULT_SKIP_DIRS,
     ScanResult,
     normalize_exts,
 )
@@ -217,6 +218,8 @@ class FilescanSettings:
     recursive: bool = True
     max_depth: int = 0
     follow_symlinks: bool = False
+    skip_dirs: str = field(default_factory=lambda: ";".join(DEFAULT_SKIP_DIRS))
+    skip_hidden: bool = False
     ext_whitelist: str = field(default_factory=lambda: ";".join(DEFAULT_SCAN_EXTENSIONS))
     whitelist_groups: tuple[tuple[str, tuple[str, ...]], ...] = ()
     include_ext: str = ""
@@ -260,6 +263,8 @@ def settings_to_mapping(settings: FilescanSettings) -> dict[str, Any]:
         "recursive": settings.recursive,
         "max_depth": settings.max_depth,
         "follow_symlinks": settings.follow_symlinks,
+        "skip_dirs": settings.skip_dirs,
+        "skip_hidden": settings.skip_hidden,
         "ext_whitelist": settings.ext_whitelist,
         "whitelist_groups": [[label, list(exts)] for label, exts in settings.whitelist_groups],
         "include_ext": settings.include_ext,
@@ -366,6 +371,8 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
         recursive=_bool_value(raw, "recursive", True),
         max_depth=_int_value(raw, "max_depth", 0),
         follow_symlinks=_bool_value(raw, "follow_symlinks", False),
+        skip_dirs=_str_value(raw, "skip_dirs", ";".join(DEFAULT_SKIP_DIRS)),
+        skip_hidden=_bool_value(raw, "skip_hidden", False),
         ext_whitelist=_str_value(raw, "ext_whitelist", ";".join(DEFAULT_SCAN_EXTENSIONS)),
         whitelist_groups=_groups_value(raw),
         include_ext=_str_value(raw, "include_ext"),

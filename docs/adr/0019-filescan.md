@@ -90,6 +90,12 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
 
 - `recursive`（默认真）、`max_depth`（0 表示不限）、`follow_symlinks`（默认假；
   为真时用 `resolve()` 去重防止目录环）；
+- `skip_dirs`（默认 `DEFAULT_SKIP_DIRS`：`.git` / `.svn` / `.hg` / `node_modules` /
+  `__pycache__` / `.venv` / `dist` / `build` / `.cargo/registry` 等版本控制、依赖、
+  构建产物与系统目录；按任意层级匹配目录名，含斜杠的条目匹配相对根目录的路径
+  后缀；自定义列表整体替换默认值，空列表表示不跳过任何目录）；
+- `skip_hidden`（默认假；为真时跳过名称以 `.` 开头的文件与目录，Windows 另含
+  隐藏属性。默认关闭以免漏扫 `.env` 这类常见敏感配置）；
 - `ext_whitelist`（后缀白名单，默认 `DEFAULT_TEXT_EXTENSIONS` 共 102 项常见
   文本后缀：txt/md/log/csv/json/yaml/yml/ini/toml/cfg/conf/env/py/js/ts/java/c/go/rs/sql/sh/html/css/xml 等；
   按「文件名结尾」匹配，`.env` 同时命中 `.env` 与 `prod.env`；`*` 表示全部后缀）；
@@ -110,7 +116,9 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
 
 遍历用 `os.scandir` 迭代实现，不跟随符号链接（除非显式开启），权限错误、
 读取失败记入 `errors` 并继续。二进制、超限、大小过滤、符号链接记入 `skipped`
-（带原因），不当作错误。读取按行流式进行，单行超长（> 1 MiB）截断后再匹配并标注。
+（带原因），不当作错误；`skip_dirs` / 隐藏目录在目录层剪枝，同样记入 `skipped`
+（原因「跳过目录」/「隐藏目录」）并累加 `dirs_skipped`，被剪掉的目录不下探、
+其中文件也不进入 `files_seen`。读取按行流式进行，单行超长（> 1 MiB）截断后再匹配并标注。
 
 调度分两级（结果与排序完全一致，只是并行单元不同）：
 
@@ -126,8 +134,9 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
 
 统计 `ScanStats`：文件总数、已扫描、跳过、错误、读取字节数、命中文件数、
 命中条数、耗时，用于吞吐口径（`字节 / 秒`、`文件 / 秒`）。跳过原因按
-`files_skipped_extension`（后缀未命中）/ `files_skipped_binary`（二进制）/
-`files_skipped_other`（符号链接、大小与修改时间过滤、超限等其他原因）分别计数。
+`files_skipped_extension`（后缀未命中）/ `files_skipped_hidden`（隐藏文件）/
+`files_skipped_binary`（二进制）/ `files_skipped_other`（符号链接、大小与修改时间
+过滤、超限等其他原因）分别计数，另有 `dirs_skipped` 记录目录剪枝数（不计入文件数）。
 
 ### D4 结果、打码与报告
 
@@ -152,7 +161,8 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
 ### D5 CLI
 
 - `filescan scan PATHS...`：`--rules FILE`（默认内置）、`--expr TEXT`、
-  `--no-recursive`、`--max-depth`、`--follow-symlinks`、`--ext-whitelist TEXT`
+  `--no-recursive`、`--max-depth`、`--follow-symlinks`、`--skip-dir NAME`（可重复，
+  指定后替换内置跳过列表）、`--skip-hidden`、`--ext-whitelist TEXT`
   （留空用内置，`*` 为全部后缀）、`--include-ext`（白名单内收窄）、
   `--force-ext`（强制扫描名单外后缀）、`--exclude-ext`、`--min-size` / `--max-size`、
   `--modified-after` / `--modified-before`（ISO-8601 或 epoch 秒）、
@@ -203,9 +213,9 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
    新增/编辑/删除、启用/禁用、载入内置、清空、导入/导出/保存规则集、
    表达式输入框与校验。
 4. **设置**：三张卡片纵向排布（`PageScroll`）——
-   - **扫描范围**：递归 / 跟随符号链接 / 跳过二进制 / 解析文档四个开关 +
+   - **扫描范围**：递归 / 跟随符号链接 / 跳过二进制 / 解析文档 / 跳过隐藏文件五个开关 +
      `FormGrid` 两列表单（深度、最小 / 最大字节、单文件上限、并发数、上下文长度、
-     后缀包含 / 排除 / 强制、修改时间上下界）；
+     后缀包含 / 排除 / 强制、修改时间上下界、跳过目录）；
    - **后缀白名单**：表格「类型 / 后缀」两列，每行一个类型，后缀用英文逗号 `,`
      分隔；行可新增、编辑、删除，支持 Ctrl / Shift 多选后批量删除，编辑时对类型
      重名与后缀逐项校验，非法条目拒绝并提示，删除需二次确认；分组随设置持久化，
@@ -387,6 +397,7 @@ CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个�
 | | `report.mask` | 真=报告打码，假=输出原文（CLI `--raw` / GUI「导出 / 复制原文」的反面） |
 | | `report.format` | `text` / `json` / `csv` |
 | `options` | `recursive` / `max_depth` / `follow_symlinks` | 遍历范围 |
+| | `skip_dirs` / `skip_hidden` | 跳过目录名列表（空数组表示不跳过，缺失用内置）/ 是否跳过隐藏文件与目录 |
 | | `ext_whitelist` / `include_exts` / `force_exts` / `exclude_exts` | 后缀白名单与收窄 / 强制 / 排除（接受数组，也接受分号串） |
 | | `min_size` / `max_size` | 大小过滤；`max_size` 为 `null` 或 `0` 表示不限 |
 | | `modified_after` / `modified_before` | 修改时间过滤，ISO-8601 文本或 epoch 秒，边界含端点 |
@@ -556,16 +567,18 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 **修复：**
 
 - `ScanStats` 增加 `files_skipped_size_time`，并由派生属性拆分：
-  `files_out_of_scope = 后缀白名单外 + 大小/时间过滤`（从未读取），
+  `files_out_of_scope = 后缀白名单外 + 大小/时间过滤 + 隐藏文件`（从未读取），
   `files_skipped_after_read = files_skipped - files_out_of_scope`
   （二进制 / 文档四类 / 其他）；
 - 新增 `_report.scan_summary(stats, compact=...)` 与 `no_hit_hint(stats)`，
   CLI 文本 / JSON 与 GUI 状态栏**共用**同一实现：
-  `范围外 N（后缀白名单 X / 大小或时间 Y）；读取后跳过 M（二进制 … / 其他 … / 无文本 …）`；
+  `范围外 N（后缀白名单 X / 大小或时间 Y[ / 隐藏 Z]）；读取后跳过 M（二进制 … / 其他 … / 无文本 …）[；跳过目录 D 个]`
+  （隐藏文件与目录剪枝只在非零时出现，默认概要不被拉长）；
 - 0 命中且未取消时追加可操作提示：已检查文件数、范围外数量、读取后跳过与无文本层
   数量，并提示检查后缀白名单与规则启用状态；
-- JSON `stats` 增加 `files_skipped_size_time`、`files_out_of_scope`、
-  `files_skipped_after_read`，既有字段语义保持不变（`files_skipped` 仍为总数）。
+- JSON `stats` 增加 `files_skipped_size_time`、`files_skipped_hidden`、`dirs_skipped`、
+  `files_out_of_scope`、`files_skipped_after_read`，既有字段语义保持不变
+  （`files_skipped` 仍为文件总数，不含目录剪枝）。
 
 **口径约定：** 大小 / 修改时间过滤属于「范围外」（从未读取），不再计入「其他」；
 `files_skipped_other` 只统计读盘（或解析）之后才发生的其它跳过。
@@ -576,8 +589,9 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   上下文正确，默认打码；
 - `(a or b) and not c` 等嵌套表达式按文件级语义判定，非法表达式给出中文错误；
 - 递归深度、后缀白名单/收窄/强制/排除、大小上下限、修改时间上下界、跳过二进制、
-  单文件上限均生效；统计区分「范围外（后缀白名单 / 大小或时间）」与「读取后跳过
-  （二进制 / 文档无文本层等）」，0 命中时给出可操作诊断（见 D12）；
+  跳过目录（内置列表按名匹配，含斜杠条目按相对路径后缀）、跳过隐藏文件（默认关闭）、
+  单文件上限均生效；统计区分「范围外（后缀白名单 / 大小或时间 / 隐藏）」与「读取后跳过
+  （二进制 / 文档无文本层等）」，并单列目录剪枝数，0 命中时给出可操作诊断（见 D12）；
 - 取消后返回已完成部分且不写任何文件；
 - CSV / JSON / 文本三种报告可导出，`--raw` 才含原文；
 - GUI 可添加多目录、编辑白名单、载入内置规则、编辑/启停规则、查看聚合结果、筛选与

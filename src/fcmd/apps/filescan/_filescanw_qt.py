@@ -93,6 +93,7 @@ from fcmd.apps.filescan._engine import (
     format_size,
     normalize_exts,
     parse_ext_text,
+    parse_skip_dirs_text,
     scan_paths,
 )
 from fcmd.apps.filescan._report import (
@@ -863,7 +864,10 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._skip_binary.setChecked(self.settings.skip_binary)
         self._scan_documents = QCheckBox("解析文档", options)
         self._scan_documents.setChecked(self.settings.scan_documents)
-        for widget in (self._recursive, self._follow, self._skip_binary, self._scan_documents):
+        self._skip_hidden = QCheckBox("跳过隐藏文件/目录", options)
+        self._skip_hidden.setChecked(self.settings.skip_hidden)
+        self._skip_hidden.setToolTip("默认不跳过，避免漏扫 .env 等隐藏配置；勾选后按名称前缀 . 与 Windows 隐藏属性过滤")
+        for widget in (self._recursive, self._follow, self._skip_binary, self._scan_documents, self._skip_hidden):
             checks.addWidget(widget)
         checks.addStretch(1)
         options.body.addLayout(checks)
@@ -880,6 +884,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._force_ext = QLineEdit(self.settings.force_ext, options)
         self._modified_after = QLineEdit(self.settings.modified_after, options)
         self._modified_before = QLineEdit(self.settings.modified_before, options)
+        self._skip_dirs = QLineEdit(self.settings.skip_dirs, options)
+        self._skip_dirs.setPlaceholderText("分号分隔，如 .git;node_modules；留空表示不跳过目录")
+        self._skip_dirs.setToolTip("跳过目录名，按任意层级匹配；含斜杠的条目匹配相对根目录的路径后缀")
         self._modified_after.setPlaceholderText("YYYY-MM-DD HH:MM:SS，可空")
         self._modified_before.setPlaceholderText("YYYY-MM-DD HH:MM:SS，可空")
         form.add_pair("深度(0=不限)", self._max_depth, "后缀包含", self._include_ext)
@@ -888,6 +895,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         form.add_pair("单文件上限", self._max_file_bytes, "并发数", self._workers)
         form.add_pair("上下文长度", self._context_chars, "修改时间≥", self._modified_after)
         form.add_pair("修改时间≤", self._modified_before)
+        form.add_pair("跳过目录", self._skip_dirs)
         options.body.addWidget(form)
         options.body.addWidget(hint_label("白名单外强制扫描（如 .pdf）；大小 / 时间过滤属「范围外」，从不读取"))
         body.addWidget(options)
@@ -1546,6 +1554,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             recursive=self._recursive.isChecked(),
             max_depth=max(0, self._max_depth.value()),
             follow_symlinks=self._follow.isChecked(),
+            skip_dirs=parse_skip_dirs_text(self._skip_dirs.text()),
+            skip_hidden=self._skip_hidden.isChecked(),
             ext_whitelist=self._whitelist_exts() or DEFAULT_SCAN_EXTENSIONS,
             include_exts=parse_ext_text(self._include_ext.text()),
             force_exts=parse_ext_text(self._force_ext.text()),
@@ -2154,6 +2164,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             recursive=self._recursive.isChecked(),
             max_depth=max(0, self._max_depth.value()),
             follow_symlinks=self._follow.isChecked(),
+            skip_dirs=self._skip_dirs.text().strip(),
+            skip_hidden=self._skip_hidden.isChecked(),
             ext_whitelist=";".join(self._whitelist_exts()),
             whitelist_groups=tuple(self._whitelist_rows()),
             include_ext=self._include_ext.text(),

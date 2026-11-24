@@ -102,6 +102,8 @@ def result_to_mapping(result: ScanResult, include_raw: bool = False) -> dict[str
             "files_skipped": stats.files_skipped,
             "files_skipped_extension": stats.files_skipped_extension,
             "files_skipped_size_time": stats.files_skipped_size_time,
+            "files_skipped_hidden": stats.files_skipped_hidden,
+            "dirs_skipped": stats.dirs_skipped,
             "files_out_of_scope": stats.files_out_of_scope,
             "files_skipped_after_read": stats.files_skipped_after_read,
             "files_skipped_binary": stats.files_skipped_binary,
@@ -179,6 +181,16 @@ def _document_parts(stats: ScanStats) -> str:
     )
 
 
+def _hidden_part(stats: ScanStats) -> str:
+    """隐藏文件只在非零时追加到「范围外」括号里，保持默认概要不被拉长。"""
+    return f" / 隐藏 {stats.files_skipped_hidden}" if stats.files_skipped_hidden else ""
+
+
+def _dirs_part(stats: ScanStats) -> str:
+    """目录剪枝计数只在非零时追加，且与文件数分开表述。"""
+    return f"；跳过目录 {stats.dirs_skipped} 个" if stats.dirs_skipped else ""
+
+
 def scan_summary(stats: ScanStats, *, compact: bool = False) -> str:
     """扫描概要：区分「范围外（从未读取）」与「读取后跳过」。
 
@@ -194,9 +206,11 @@ def scan_summary(stats: ScanStats, *, compact: bool = False) -> str:
     )
     scope = (
         f"范围外 {stats.files_out_of_scope}"
-        f"（后缀白名单 {stats.files_skipped_extension} / 大小或时间 {stats.files_skipped_size_time}）；"
+        f"（后缀白名单 {stats.files_skipped_extension} / 大小或时间 {stats.files_skipped_size_time}"
+        f"{_hidden_part(stats)}）；"
         f"读取后跳过 {stats.files_skipped_after_read}"
         f"（二进制 {stats.files_skipped_binary} / 其他 {stats.files_skipped_other}{_document_parts(stats)}）"
+        f"{_dirs_part(stats)}"
     )
     tail = (
         f"错误 {stats.files_failed}；读取 {format_size(stats.bytes_read)}，"
@@ -218,10 +232,12 @@ def no_hit_hint(stats: ScanStats) -> str | None:
     checked = stats.files_scanned + stats.files_reused
     parts = [f"已检查 {checked} 个文件（实扫 {stats.files_scanned} / 缓存复用 {stats.files_reused}）"]
     if stats.files_out_of_scope:
-        parts.append(
-            f"{stats.files_out_of_scope} 个文件不在扫描范围"
-            f"（后缀白名单 {stats.files_skipped_extension} / 大小或时间 {stats.files_skipped_size_time}）"
-        )
+        reasons = [f"后缀白名单 {stats.files_skipped_extension}", f"大小或时间 {stats.files_skipped_size_time}"]
+        if stats.files_skipped_hidden:
+            reasons.append(f"隐藏 {stats.files_skipped_hidden}")
+        parts.append(f"{stats.files_out_of_scope} 个文件不在扫描范围（{' / '.join(reasons)}）")
+    if stats.dirs_skipped:
+        parts.append(f"{stats.dirs_skipped} 个目录按跳过规则剪枝")
     read_skipped = stats.files_skipped_after_read
     if read_skipped:
         detail = f"，其中文档无文本层 {stats.files_skipped_no_text} 个" if stats.files_skipped_no_text else ""

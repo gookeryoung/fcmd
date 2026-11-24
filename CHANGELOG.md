@@ -7,6 +7,12 @@
 
 ### 变更
 
+- `filescan` 新增扫描范围剪枝：内置跳过目录列表（`.git` / `node_modules` /
+  `__pycache__` / `.venv` / `dist` / `build` 等，含斜杠条目按相对根目录路径后缀
+  匹配），默认生效、可在设置页 / 配置 / CLI（`--skip-dir`）整体替换，空列表表示
+  不跳过；新增「跳过隐藏文件/目录」开关（`skip_hidden`，默认关闭，避免漏扫
+  `.env`）。统计新增 `files_skipped_hidden` 与 `dirs_skipped`，扫描概要与 0 命中
+  诊断分别在非零时展示。
 - `filescanw` 结果页支持定位文件与复制命中：选中行后可「定位文件」（Windows
   explorer `/select`、macOS Finder `-R`、Linux xdg-open 打开父目录），双击行同样
   定位；「复制命中内容」「复制上下文」「复制扫描说明」（按「【规则：…，匹配项：…】」

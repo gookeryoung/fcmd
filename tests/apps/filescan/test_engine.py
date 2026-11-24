@@ -14,11 +14,14 @@ import pytest
 from fcmd.apps.filescan import _engine
 from fcmd.apps.filescan._engine import (
     DEFAULT_MAX_FILE_BYTES,
+    DEFAULT_SKIP_DIRS,
     REASON_BINARY,
     REASON_DOC_CORRUPT,
     REASON_DOC_ENCRYPTED,
     REASON_DOC_NO_TEXT,
     REASON_DOC_UNSUPPORTED,
+    REASON_HIDDEN_DIR,
+    REASON_SKIP_DIR,
     REASON_SYMLINK,
     REASON_TOO_LARGE,
     CancelToken,
@@ -28,7 +31,9 @@ from fcmd.apps.filescan._engine import (
     decode_text,
     format_size,
     normalize_exts,
+    normalize_skip_dirs,
     parse_ext_text,
+    parse_skip_dirs_text,
     scan_file,
     scan_paths,
     walk_files,
@@ -246,6 +251,86 @@ def test_walk_reports_bad_roots(tmp_path: Path) -> None:
     file_root = _write(tmp_path, "file.txt", "x")
     result = walk_files([tmp_path / "missing", file_root])
     assert [error.message for error in result.errors] == ["目录不存在", "不是目录"]
+
+
+def test_walk_skips_builtin_dirs_by_name(tmp_path: Path) -> None:
+    _write(tmp_path, "keep.txt", "a")
+    _write(tmp_path, "node_modules/pkg/a.txt", "a")
+    _write(tmp_path, "src/.git/index.txt", "a")
+    result = walk_files([tmp_path])
+    assert [path.name for path in result.files] == ["keep.txt"]
+    assert result.skipped_dirs == 2
+    assert {item.reason for item in result.skipped} == {REASON_SKIP_DIR}
+    assert {item.path.name for item in result.skipped} == {".git", "node_modules"}
+
+
+def test_walk_custom_skip_dirs_replaces_defaults(tmp_path: Path) -> None:
+    _write(tmp_path, "node_modules/a.txt", "a")
+    _write(tmp_path, "logs/a.txt", "a")
+    result = walk_files([tmp_path], ScanOptions(skip_dirs=("logs",)))
+    # 自定义列表整体替换默认列表：node_modules 恢复扫描，logs 被剪枝
+    assert {path.relative_to(tmp_path).as_posix() for path in result.files} == {"node_modules/a.txt"}
+    assert result.skipped_dirs == 1
+
+
+def test_walk_skip_dirs_with_slash_matches_relative_suffix(tmp_path: Path) -> None:
+    _write(tmp_path, "keep.txt", "a")
+    _write(tmp_path, "cache/.cargo/registry/a.txt", "a")
+    _write(tmp_path, "other/registry/a.txt", "a")
+    result = walk_files([tmp_path], ScanOptions(skip_dirs=(".cargo/registry",)))
+    assert {path.relative_to(tmp_path).as_posix() for path in result.files} == {
+        "keep.txt",
+        "other/registry/a.txt",
+    }
+    assert [item.path.name for item in result.skipped] == ["registry"]
+
+
+def test_walk_empty_skip_dirs_disables_pruning(tmp_path: Path) -> None:
+    _write(tmp_path, "node_modules/a.txt", "a")
+    result = walk_files([tmp_path], ScanOptions(skip_dirs=()))
+    assert result.skipped_dirs == 0
+    assert [path.name for path in result.files] == ["a.txt"]
+
+
+def test_walk_hidden_off_by_default(tmp_path: Path) -> None:
+    _write(tmp_path, ".env", "TOKEN=1")
+    result = walk_files([tmp_path], ScanOptions(skip_dirs=()))
+    assert [path.name for path in result.files] == [".env"]
+    assert result.skipped_hidden == 0
+
+
+def test_walk_skip_hidden_filters_files_and_dirs(tmp_path: Path) -> None:
+    _write(tmp_path, ".env", "TOKEN=1")
+    _write(tmp_path, ".cache/a.txt", "a")
+    _write(tmp_path, "visible.txt", "a")
+    result = walk_files([tmp_path], ScanOptions(skip_dirs=(), skip_hidden=True))
+    assert [path.name for path in result.files] == ["visible.txt"]
+    assert result.skipped_hidden == 1
+    assert result.skipped_dirs == 1
+    assert any(item.reason == REASON_HIDDEN_DIR and item.path.name == ".cache" for item in result.skipped)
+
+
+def test_normalize_skip_dirs_and_parse_text() -> None:
+    assert normalize_skip_dirs([" .Git ", "A\\B/", "", ".git", "Program Files"]) == (
+        ".git",
+        "a/b",
+        "program files",
+    )
+    assert parse_skip_dirs_text(".git; .cargo/registry") == (".git", ".cargo/registry")
+    assert "--" not in DEFAULT_SKIP_DIRS  # 默认列表保持小写、无占位条目
+    assert all(item == item.lower() for item in DEFAULT_SKIP_DIRS)
+
+
+def test_scan_paths_reports_hidden_and_dir_skip_stats(tmp_path: Path) -> None:
+    _write(tmp_path, "hit.txt", "alpha")
+    _write(tmp_path, "node_modules/hit.txt", "alpha")
+    _write(tmp_path, ".env", "alpha")
+    result = scan_paths([tmp_path], _ruleset(("alpha", "alpha")), ScanOptions(skip_hidden=True))
+    assert [hit.path.name for hit in result.hits] == ["hit.txt"]
+    assert result.stats.dirs_skipped == 1
+    assert result.stats.files_skipped_hidden == 1
+    assert result.stats.files_skipped == 1
+    assert result.stats.files_out_of_scope == 1
 
 
 def test_walk_skips_symlinks_by_default(tmp_path: Path) -> None:

@@ -50,6 +50,8 @@ _STAT_CASTS: tuple[tuple[str, type], ...] = (
     ("files_skipped", int),
     ("files_skipped_extension", int),
     ("files_skipped_size_time", int),
+    ("files_skipped_hidden", int),
+    ("dirs_skipped", int),
     ("files_skipped_binary", int),
     ("files_skipped_other", int),
     ("files_skipped_encrypted", int),

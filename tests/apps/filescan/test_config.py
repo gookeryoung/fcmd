@@ -26,6 +26,7 @@ from fcmd.apps.filescan._engine import (
     DEFAULT_ENCODINGS,
     DEFAULT_MAX_FILE_BYTES,
     DEFAULT_SCAN_EXTENSIONS,
+    DEFAULT_SKIP_DIRS,
     ScanOptions,
 )
 from fcmd.apps.filescan._rules import builtin_ruleset, ruleset_to_mapping, save_ruleset
@@ -58,6 +59,8 @@ def _config_payload(*, version: int = CONFIG_VERSION) -> dict[str, Any]:
             "recursive": True,
             "max_depth": 2,
             "follow_symlinks": True,
+            "skip_dirs": [".git", "node_modules"],
+            "skip_hidden": True,
             "ext_whitelist": [".txt", ".log", ".md"],
             "include_exts": [".txt"],
             "force_exts": [],
@@ -92,6 +95,8 @@ def test_dump_config_has_version_and_core_sections(tmp_path: Path) -> None:
         "recursive",
         "max_depth",
         "follow_symlinks",
+        "skip_dirs",
+        "skip_hidden",
         "ext_whitelist",
         "include_exts",
         "force_exts",
@@ -139,6 +144,8 @@ def test_old_config_missing_fields_falls_back_to_defaults() -> None:
     assert parsed.options.recursive is False
     assert parsed.options.max_depth == 0
     assert parsed.options.follow_symlinks is False
+    assert parsed.options.skip_dirs == DEFAULT_SKIP_DIRS
+    assert parsed.options.skip_hidden is False
     assert parsed.options.ext_whitelist == DEFAULT_SCAN_EXTENSIONS
     assert parsed.options.max_file_bytes == DEFAULT_MAX_FILE_BYTES
     assert parsed.options.workers == 4
@@ -161,6 +168,23 @@ def test_older_version_loaded_without_error() -> None:
 # ---------------------------------------------------------------------- #
 # 容错：非法值逐字段回落 + 明确提示
 # ---------------------------------------------------------------------- #
+def test_skip_dirs_accepts_list_and_text() -> None:
+    parsed = config_from_mapping({"version": 1, "roots": [], "options": {"skip_dirs": " .git ; node_modules, logs "}})
+    assert parsed.options.skip_dirs == (".git", "node_modules", "logs")
+    assert parsed.warnings == ()
+    parsed = config_from_mapping({"version": 1, "roots": [], "options": {"skip_dirs": ";"}})
+    assert parsed.options.skip_dirs == ()
+
+
+def test_invalid_skip_dirs_tolerated_with_warning() -> None:
+    parsed = config_from_mapping({"version": 1, "roots": [], "options": {"skip_dirs": 3}})
+    assert parsed.options.skip_dirs == DEFAULT_SKIP_DIRS
+    assert any("skip_dirs" in item for item in parsed.warnings)
+    parsed = config_from_mapping({"version": 1, "roots": [], "options": {"skip_dirs": [".git", 1, "  "]}})
+    assert parsed.options.skip_dirs == (".git",)
+    assert any("不是非空字符串" in item for item in parsed.warnings)
+
+
 def test_invalid_values_tolerated_field_by_field() -> None:
     payload = _config_payload()
     payload["options"]["max_depth"] = "abc"
@@ -361,6 +385,24 @@ def test_cli_time_filter_excludes_new_files(tmp_path: Path) -> None:
     assert target.exists()  # 只读，未改动
 
 
+def test_cli_skip_dirs_and_hidden_written_to_config(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _write_file(data, "hit.txt", "手机 13812345678\n")
+    _write_file(data, "node_modules/hit.txt", "手机 13812345678\n")
+    _write_file(data, ".env", "手机 13812345678\n")
+    cfg = tmp_path / "cfg.json"
+    scan_command(paths=[data], save_config=cfg, skip_dir=["node_modules"], skip_hidden=True)
+    saved = load_config(cfg)
+    assert saved.options.skip_dirs == ("node_modules",)
+    assert saved.options.skip_hidden is True
+    out = tmp_path / "out.json"
+    run_command(config=cfg, format="json", output=out)
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert [Path(hit["path"]).name for hit in report["hits"]] == ["hit.txt"]
+    assert report["stats"]["files_skipped_hidden"] == 1
+    assert report["stats"]["dirs_skipped"] >= 1
+
+
 def test_cli_rejects_reversed_time_range(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         scan_command(paths=[tmp_path], modified_after="2026-12-31", modified_before="2026-01-01")
@@ -370,14 +412,20 @@ def test_cli_rejects_reversed_time_range(tmp_path: Path) -> None:
 # GUI 设置 ↔ 配置
 # ---------------------------------------------------------------------- #
 def test_gui_settings_include_scan_documents_and_config_fields() -> None:
-    settings = FilescanSettings(scan_documents=False, modified_after="2026-01-01")
+    settings = FilescanSettings(
+        scan_documents=False, modified_after="2026-01-01", skip_dirs=".git;build", skip_hidden=True
+    )
     payload = settings_to_mapping(settings)
     assert payload["scan_documents"] is False
+    assert payload["skip_hidden"] is True
+    assert payload["skip_dirs"] == ".git;build"
     assert payload["modified_after"] == "2026-01-01"
     assert payload["use_processes"] is True
     assert payload["encodings"]
     restored = settings_from_mapping(payload)
     assert restored.scan_documents is False
+    assert restored.skip_dirs == ".git;build"
+    assert restored.skip_hidden is True
     assert restored.modified_after == "2026-01-01"
     assert restored.use_processes is True
 

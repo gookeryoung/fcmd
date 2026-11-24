@@ -42,9 +42,11 @@ from fcmd.apps.filescan._config import (
 from fcmd.apps.filescan._engine import (
     DEFAULT_MAX_FILE_BYTES,
     DEFAULT_SCAN_EXTENSIONS,
+    DEFAULT_SKIP_DIRS,
     CancelToken,
     ScanOptions,
     ScanResult,
+    normalize_skip_dirs,
     parse_ext_text,
     scan_paths,
 )
@@ -137,6 +139,8 @@ def _build_options(  # noqa: PLR0913, PLR0917 - 直接映射 CLI 选项，保持
     recursive: bool,
     max_depth: int,
     follow_symlinks: bool,
+    skip_dir: list[str] | None,
+    skip_hidden: bool,
     min_size: int,
     max_size: int,
     modified_after: str,
@@ -158,6 +162,8 @@ def _build_options(  # noqa: PLR0913, PLR0917 - 直接映射 CLI 选项，保持
         recursive=recursive,
         max_depth=max(0, max_depth),
         follow_symlinks=follow_symlinks,
+        skip_dirs=normalize_skip_dirs(skip_dir) if skip_dir else DEFAULT_SKIP_DIRS,
+        skip_hidden=skip_hidden,
         ext_whitelist=_parse_whitelist(ext_whitelist),
         include_exts=parse_ext_text(include_ext),
         force_exts=parse_ext_text(force_ext),
@@ -181,6 +187,8 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     recursive: bool = True,
     max_depth: int = 0,
     follow_symlinks: bool = False,
+    skip_dir: list[str] | None = None,
+    skip_hidden: bool = False,
     ext_whitelist: str = "",
     include_ext: str = "",
     force_ext: str = "",
@@ -218,6 +226,11 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         最大目录深度，0 表示不限，1 表示只下探一层子目录
     follow_symlinks:
         跟随符号链接（默认不跟随，避免扫描越出指定目录）
+    skip_dir:
+        跳过目录名，可重复；留空使用内置列表（.git / node_modules / __pycache__ 等），
+        含斜杠的条目按相对根目录的路径后缀匹配（如 .cargo/registry）
+    skip_hidden:
+        跳过隐藏文件与隐藏目录（名称以 . 开头，Windows 另含隐藏属性），默认不跳过
     ext_whitelist:
         后缀白名单，分号或逗号分隔；留空使用内置白名单（文本 + docx/xlsx/pptx/odt/ods/pdf），
         ``*`` 表示全部后缀
@@ -277,6 +290,8 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         recursive,
         max_depth,
         follow_symlinks,
+        skip_dir,
+        skip_hidden,
         min_size,
         max_size,
         modified_after,

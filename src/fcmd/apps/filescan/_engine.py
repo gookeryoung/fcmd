@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import stat
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -56,6 +57,7 @@ __all__ = [
     "DEFAULT_ENCODINGS",
     "DEFAULT_MAX_FILE_BYTES",
     "DEFAULT_SCAN_EXTENSIONS",
+    "DEFAULT_SKIP_DIRS",
     "DEFAULT_TEXT_EXTENSIONS",
     "CancelToken",
     "FileHit",
@@ -69,7 +71,9 @@ __all__ = [
     "decode_text",
     "format_size",
     "normalize_exts",
+    "normalize_skip_dirs",
     "parse_ext_text",
+    "parse_skip_dirs_text",
     "scan_file",
     "scan_paths",
     "walk_files",
@@ -94,6 +98,8 @@ DEFAULT_ENCODINGS: tuple[str, ...] = ("utf-8", "gb18030", "latin-1")
 """编码候选：BOM 优先，其余按顺序尝试，最后以 latin-1 兜底。"""
 
 REASON_SYMLINK = "符号链接（未跟随）"
+REASON_SKIP_DIR = "跳过目录（内置 / 自定义规则）"
+REASON_HIDDEN_DIR = "隐藏目录"
 REASON_BINARY = "二进制文件"
 REASON_TOO_LARGE = "超出单文件读取上限"
 REASON_DOC_ENCRYPTED = "文档已加密"
@@ -215,6 +221,49 @@ DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
 DEFAULT_SCAN_EXTENSIONS: tuple[str, ...] = DEFAULT_TEXT_EXTENSIONS + DOCUMENT_EXTENSIONS
 """默认白名单：文本后缀 + 文档后缀（docx/xlsx/pptx/odt/ods 走文档抽取）。"""
 
+DEFAULT_SKIP_DIRS: tuple[str, ...] = (
+    # 版本控制 / IDE / 依赖 / 构建产物
+    ".git",
+    ".svn",
+    ".hg",
+    ".idea",
+    ".vscode",
+    ".vs",
+    "node_modules",
+    "bower_components",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "out",
+    "target",
+    "vendor",
+    ".gradle",
+    ".next",
+    ".nuxt",
+    # 包管理器 / 工具链缓存（通常是海量二进制依赖）
+    ".m2",
+    ".npm",
+    ".nuget",
+    ".cargo/registry",
+    ".cache",
+    # 系统目录：盘符级扫描时剪枝，避免回收站 / 系统文件拖慢扫描
+    "$recycle.bin",
+    "system volume information",
+    ".trash",
+)
+"""默认跳过的目录名（小写，按任意层级匹配）。
+
+不含斜杠的条目匹配目录名；含斜杠的条目（如 ``.cargo/registry``）匹配相对根
+目录的路径后缀。用户可在设置页 / 配置文件里整体替换这份列表（空列表表示不跳过）。
+"""
+
 
 # ---------------------------------------------------------------------- #
 # 取消与选项
@@ -253,11 +302,18 @@ class ScanOptions:
 
     ``modified_after`` / ``modified_before`` 按文件 mtime 过滤（epoch 秒，边界
     含端点），``None`` 表示不限；与大小过滤同属遍历阶段的「其他跳过」。
+
+    ``skip_dirs`` 是跳过目录名列表（默认 :data:`DEFAULT_SKIP_DIRS`，按任意层级
+    匹配，含斜杠的条目匹配相对根目录的路径后缀）；``skip_hidden`` 为真时跳过
+    隐藏文件与隐藏目录（名称以 ``.`` 开头，Windows 另含隐藏属性），默认关闭，
+    避免漏扫 ``.env`` 这类常见敏感配置。
     """
 
     recursive: bool = True
     max_depth: int = 0
     follow_symlinks: bool = False
+    skip_dirs: tuple[str, ...] = DEFAULT_SKIP_DIRS
+    skip_hidden: bool = False
     ext_whitelist: tuple[str, ...] = DEFAULT_SCAN_EXTENSIONS
     include_exts: tuple[str, ...] = ()
     force_exts: tuple[str, ...] = ()
@@ -346,6 +402,10 @@ class ScanStats:
     files_skipped_extension: int = 0
     # 后缀在白名单内，但被大小 / 修改时间过滤掉、从未读取的文件数。
     files_skipped_size_time: int = 0
+    # 因 ``skip_hidden`` 在遍历阶段直接跳过的文件数（从未读取）。
+    files_skipped_hidden: int = 0
+    # 被 ``skip_dirs`` / 隐藏目录剪枝、未下探的目录数（不是文件数）。
+    dirs_skipped: int = 0
     files_skipped_binary: int = 0
     files_skipped_other: int = 0
     files_skipped_encrypted: int = 0
@@ -361,8 +421,8 @@ class ScanStats:
 
     @property
     def files_out_of_scope(self) -> int:
-        """从未读取的文件数：后缀白名单外 + 大小 / 时间过滤。"""
-        return self.files_skipped_extension + self.files_skipped_size_time
+        """从未读取的文件数：后缀白名单外 + 大小 / 时间过滤 + 隐藏文件。"""
+        return self.files_skipped_extension + self.files_skipped_size_time + self.files_skipped_hidden
 
     @property
     def files_skipped_after_read(self) -> int:
@@ -405,6 +465,8 @@ class WalkResult:
     seen: int = 0
     skipped_extension: int = 0
     skipped_size: int = 0
+    skipped_hidden: int = 0
+    skipped_dirs: int = 0
     cancelled: bool = False
 
 
@@ -448,6 +510,41 @@ def normalize_exts(items: Sequence[str]) -> tuple[str, ...]:
         if value not in normalized:
             normalized.append(value)
     return tuple(normalized)
+
+
+def normalize_skip_dirs(items: Sequence[str]) -> tuple[str, ...]:
+    """规范化跳过目录列表：去空白、统一小写、去掉首尾斜杠并去重。
+
+    名称中的空格保留（如 ``program files``）；空条目丢弃。返回空元组表示
+    「不跳过任何目录」，由调用方决定是否回落到 :data:`DEFAULT_SKIP_DIRS`。
+    """
+    normalized: list[str] = []
+    for item in items:
+        value = item.strip().lower().replace("\\", "/").strip("/")
+        while "//" in value:
+            value = value.replace("//", "/")
+        if value and value not in normalized:
+            normalized.append(value)
+    return tuple(normalized)
+
+
+def parse_skip_dirs_text(text: str) -> tuple[str, ...]:
+    """把 ``.git;node_modules`` 之类的文本拆成规范化跳过目录元组。"""
+    return normalize_skip_dirs(text.replace(",", ";").split(";"))
+
+
+def _dir_skip_reason(name: str, relative: str, patterns: Sequence[str]) -> bool:
+    """目录名是否命中跳过列表；含斜杠的条目按相对根目录的路径后缀匹配。"""
+    if not patterns:
+        return False
+    lowered = name.lower()
+    for pattern in patterns:
+        if "/" in pattern:
+            if relative.lower() == pattern or relative.lower().endswith(f"/{pattern}"):
+                return True
+        elif lowered == pattern:
+            return True
+    return False
 
 
 def format_size(size: int) -> str:
@@ -532,7 +629,20 @@ def _filtered_file(size: int, mtime: float, options: ScanOptions, result: WalkRe
     return True
 
 
-def _classify_entry(
+def _is_hidden(entry: os.DirEntry[str]) -> bool:
+    """是否隐藏条目：名称以 ``.`` 开头，或（Windows）带隐藏属性。"""
+    if entry.name.startswith("."):
+        return True
+    if os.name != "nt":
+        return False
+    try:
+        attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_HIDDEN", 0))
+
+
+def _classify_entry(  # noqa: PLR0911 - 分支逐一处理目录/链接/文件，早返回最清晰
     entry: os.DirEntry[str],
     depth: int,
     options: ScanOptions,
@@ -542,7 +652,8 @@ def _classify_entry(
 
     后缀白名单在 ``stat`` 之前判断：被后缀挡掉的文件不需要大小，省掉一次
     系统调用（混合目录实测约占遍历时间 6%）。代价是这类条目即使 ``stat``
-    失败也归入「后缀跳过」，不再记错误。
+    失败也归入「后缀跳过」，不再记错误。隐藏过滤同样在 ``stat`` 前按名称
+    判定（Windows 隐藏属性需要额外一次 ``stat``，仅在开启时发生）。
     """
     path = Path(entry.path)
     try:
@@ -550,9 +661,16 @@ def _classify_entry(
             result.skipped.append(SkipRecord(path, REASON_SYMLINK))
             return None
         if entry.is_dir(follow_symlinks=options.follow_symlinks):
+            if options.skip_hidden and _is_hidden(entry):
+                result.skipped_dirs += 1
+                result.skipped.append(SkipRecord(path, REASON_HIDDEN_DIR))
+                return None
             descend = options.recursive and (options.max_depth == 0 or depth + 1 <= options.max_depth)
             return (path, depth + 1) if descend else None
         if not entry.is_file(follow_symlinks=options.follow_symlinks):
+            return None
+        if options.skip_hidden and _is_hidden(entry):
+            result.skipped_hidden += 1
             return None
         result.seen += 1
         if not _extension_selected(path, options):
@@ -569,6 +687,19 @@ def _classify_entry(
     return None
 
 
+def _is_skipped_dir(path: Path, root: Path, patterns: Sequence[str]) -> bool:
+    """子目录是否命中 ``skip_dirs``；仅当存在含斜杠的条目时才计算相对路径。"""
+    if not patterns:
+        return False
+    if not any("/" in item for item in patterns):
+        return _dir_skip_reason(path.name, "", patterns)
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        relative = path.name
+    return _dir_skip_reason(path.name, relative, patterns)
+
+
 def walk_files(
     roots: Sequence[Path],
     options: ScanOptions | None = None,
@@ -578,7 +709,9 @@ def walk_files(
 
     深度口径：根目录为 0 层，``max_depth=0`` 表示不限；``max_depth=1`` 表示
     只下探一层子目录。``follow_symlinks`` 为假时跳过全部符号链接（不越出根）。
-    后缀过滤按 :class:`ScanOptions` 的白名单 / 收窄 / 强制 / 排除顺序判定。
+    后缀过滤按 :class:`ScanOptions` 的白名单 / 收窄 / 强制 / 排除顺序判定；
+    ``skip_dirs`` / ``skip_hidden`` 在目录层剪枝，被剪掉的目录记入 ``skipped``
+    并累加 ``skipped_dirs``。
     """
     opts = options or ScanOptions()
     result = WalkResult()
@@ -609,8 +742,13 @@ def walk_files(
                 continue
             for entry in entries:
                 child = _classify_entry(entry, depth, opts, result)
-                if child is not None:
-                    stack.append(child)
+                if child is None:
+                    continue
+                if _is_skipped_dir(child[0], root, opts.skip_dirs):
+                    result.skipped_dirs += 1
+                    result.skipped.append(SkipRecord(child[0], REASON_SKIP_DIR))
+                    continue
+                stack.append(child)
 
     triples = sorted(zip(result.files, result.sizes, result.mtimes, strict=True), key=lambda item: str(item[0]))
     result.files = [path for path, _size, _mtime in triples]
@@ -1130,9 +1268,11 @@ def _offset_progress(
 def _finalize_stats(result: ScanResult, walk: WalkResult) -> None:
     """汇总跳过分类：未进入扫描范围 / 二进制 / 文档四类 / 其他。
 
-    后缀白名单外与大小、时间过滤的文件从未读取，单独计入
-    ``files_skipped_size_time``；文档的加密、损坏、无文本层、缺依赖分别独立计数，
-    剩余（符号链接、单文件超限）归入「其他」。各分类之和等于 ``files_skipped``。
+    后缀白名单外与大小、时间过滤、隐藏文件从未读取，分别计入
+    ``files_skipped_extension`` / ``files_skipped_size_time`` / ``files_skipped_hidden``；
+    文档的加密、损坏、无文本层、缺依赖分别独立计数，剩余（符号链接、单文件超限）
+    归入「其他」。目录剪枝记录（``REASON_SKIP_DIR`` / ``REASON_HIDDEN_DIR``）只是
+    跳过原因展示，不是文件，不计入任何文件分类。各文件分类之和等于 ``files_skipped``。
     """
     stats = result.stats
     encrypted = sum(1 for item in result.skipped if item.reason == REASON_DOC_ENCRYPTED)
@@ -1140,17 +1280,21 @@ def _finalize_stats(result: ScanResult, walk: WalkResult) -> None:
     no_text = sum(1 for item in result.skipped if item.reason == REASON_DOC_NO_TEXT)
     unsupported = sum(1 for item in result.skipped if item.reason.startswith(REASON_DOC_UNSUPPORTED))
     binary = sum(1 for item in result.skipped if item.reason == REASON_BINARY)
+    dirs = sum(1 for item in result.skipped if item.reason in (REASON_SKIP_DIR, REASON_HIDDEN_DIR))
     stats.files_skipped_extension = walk.skipped_extension
     stats.files_skipped_size_time = walk.skipped_size
+    stats.files_skipped_hidden = walk.skipped_hidden
+    stats.dirs_skipped = walk.skipped_dirs
     stats.files_skipped_binary = binary
     stats.files_skipped_encrypted = encrypted
     stats.files_skipped_corrupt = corrupt
     stats.files_skipped_no_text = no_text
     stats.files_skipped_unsupported = unsupported
-    stats.files_skipped_other = len(result.skipped) - binary - encrypted - corrupt - no_text - unsupported
+    stats.files_skipped_other = len(result.skipped) - dirs - binary - encrypted - corrupt - no_text - unsupported
     stats.files_skipped = (
         stats.files_skipped_extension
         + stats.files_skipped_size_time
+        + stats.files_skipped_hidden
         + stats.files_skipped_binary
         + stats.files_skipped_other
         + encrypted
