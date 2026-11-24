@@ -46,7 +46,7 @@ WINDOWS: tuple[tuple[str, str], ...] = (
     ("fcmd.apps.renamer._renamerw_qt", "RenamerWindow"),
     ("fcmd.apps.reshack._reshackw_qt", "ReshackWindow"),
     ("fcmd.apps.wslman._wslmanw_qt", "WslmanQtWindow"),
-    ("fcmd.tools.dev._mirrortoolw_qt", "MirrorToolWindow"),
+    ("fcmd.apps.envdev._mirrortoolw_qt", "MirrorToolWindow"),
     ("fcmd.tools.media._img2icow_qt", "Img2IcoWindow"),
     ("fcmd.tools.media._ncmconvertw_qt", "NcmConvertWindow"),
     ("fcmd.tools.media._videoconvw_qt", "VideoConvWindow"),

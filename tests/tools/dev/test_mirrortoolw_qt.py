@@ -21,18 +21,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QMessageBox
 
-from fcmd.gui import style as _qt_theme
-from fcmd.gui import theme as _guitheme
-from fcmd.gui.app import create_application
-from fcmd.gui.workers import EventBridge
-from fcmd.tools.dev import _mirrortoolw_qt
-from fcmd.tools.dev._mirrortoolw_qt import (
+from fcmd.apps.envdev import _mirrortoolw_qt
+from fcmd.apps.envdev._mirrortoolw_qt import (
     _THROUGHPUT_COLUMN,
     MirrorToolWindow,
     _work_apply,
     _work_probe,
 )
-from fcmd.tools.dev.mirrortoolw import (
+from fcmd.apps.envdev.mirrortoolw import (
     DEFAULT_TIMEOUT,
     MODE_SERVICE,
     MODE_SITES,
@@ -42,6 +38,10 @@ from fcmd.tools.dev.mirrortoolw import (
     config_location,
     config_path,
 )
+from fcmd.gui import style as _qt_theme
+from fcmd.gui import theme as _guitheme
+from fcmd.gui.app import create_application
+from fcmd.gui.workers import EventBridge
 
 
 @pytest.fixture()

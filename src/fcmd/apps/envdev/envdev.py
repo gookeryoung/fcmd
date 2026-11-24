@@ -13,10 +13,10 @@
 分组命令与一键命令编排。
 
 本模块是门面层：分组路由（lang / app / all / check）在此定义；语言级步骤在
-:mod:`fcmd.tools.dev._envdev_langs`，Linux 专用命令在
-:mod:`fcmd.tools.dev._envdev_linux`，镜像站点探测在
-:mod:`fcmd.tools.dev._envdev_mirrors`，公共辅助提取自
-:mod:`fcmd.tools.dev.envdev_core`。各子模块在导入时完成 ``fcmd.tool`` 注册，
+:mod:`fcmd.apps.envdev._langs`，Linux 专用命令在
+:mod:`fcmd.apps.envdev._linux`，镜像站点探测在
+:mod:`fcmd.apps.envdev._mirror_services`，公共辅助提取自
+:mod:`fcmd.apps.envdev._core`。各子模块在导入时完成 ``fcmd.tool`` 注册，
 本模块 re-export 其公开函数与常量，既有导入路径不变。
 
 示例
@@ -40,13 +40,16 @@ import shutil
 from typing import Literal
 
 import fcmd
-from fcmd.infras.command import run_command  # noqa: F401
-from fcmd.infras.net import check_urls, probe_mirrors  # noqa: F401
-
-# 门面层 re-export：保留拆分前的 ``envdev.<name>`` 访问路径（含私有常量 / 步骤函数），
-# 子模块在导入时完成 ``fcmd.tool`` 注册。
-from fcmd.infras.system import persist_env  # noqa: F401
-from fcmd.tools.dev._envdev_langs import (  # noqa: F401
+from fcmd.apps.envdev._core import (  # noqa: F401
+    _MIRROR_DEFAULT_UA,
+    _MIRROR_USER_AGENTS,
+    MirrorSpec,
+    apply_mirror_config,
+    mirror_supported,
+    pip_config_path,
+    resolve_mirror,
+)
+from fcmd.apps.envdev._langs import (  # noqa: F401
     _BUN_INSTALL_SCRIPT_URL,
     _CARGO_PROBE_URLS,
     _CARGO_REGISTRY_MIRRORS,
@@ -77,7 +80,7 @@ from fcmd.tools.dev._envdev_langs import (  # noqa: F401
     setup_python_mirror,
     setup_rust_env,
 )
-from fcmd.tools.dev._envdev_linux import (  # noqa: F401
+from fcmd.apps.envdev._linux import (  # noqa: F401
     _CHINESE_FONTS,
     _DOCKER_DAEMON_PATH,
     _DOCKER_REGISTRY_MIRRORS,
@@ -99,7 +102,7 @@ from fcmd.tools.dev._envdev_linux import (  # noqa: F401
     setup_linux_remote,
     setup_linux_system_mirror,
 )
-from fcmd.tools.dev._envdev_mirrors import (  # noqa: F401
+from fcmd.apps.envdev._mirror_services import (  # noqa: F401
     _CERNET_MIRROR_SITES,
     _MIRROR_SERVICE_APPLY,
     _MIRROR_SERVICE_CANDIDATES,
@@ -111,24 +114,21 @@ from fcmd.tools.dev._envdev_mirrors import (  # noqa: F401
     check_cernet_mirrors,
     fetch_mirrorz_sites,
 )
-from fcmd.tools.dev.envdev_core import (  # noqa: F401
-    _MIRROR_DEFAULT_UA,
-    _MIRROR_USER_AGENTS,
-    MirrorSpec,
-    apply_mirror_config,
-    mirror_supported,
-    pip_config_path,
-    resolve_mirror,
-)
-from fcmd.tools.dev.envdev_go import _GO_PROXY_PROBE_URLS, _setup_go_mirror, setup_go_env  # noqa: F401
-from fcmd.tools.dev.envdev_java import _MAVEN_PROBE_URLS, _setup_maven_mirror, setup_java_env  # noqa: F401
-from fcmd.tools.dev.envdev_node import (  # noqa: F401
+from fcmd.apps.envdev.envdev_go import _GO_PROXY_PROBE_URLS, _setup_go_mirror, setup_go_env  # noqa: F401
+from fcmd.apps.envdev.envdev_java import _MAVEN_PROBE_URLS, _setup_maven_mirror, setup_java_env  # noqa: F401
+from fcmd.apps.envdev.envdev_node import (  # noqa: F401
     _NPM_DEFAULT,
     _NPM_PROBE_URLS,
     _NPM_REGISTRY_MIRRORS,
     _setup_npm_mirror,
     setup_node_env,
 )
+from fcmd.infras.command import run_command  # noqa: F401
+from fcmd.infras.net import check_urls, probe_mirrors  # noqa: F401
+
+# 门面层 re-export：保留拆分前的 ``envdev.<name>`` 访问路径（含私有常量 / 步骤函数），
+# 子模块在导入时完成 ``fcmd.tool`` 注册。
+from fcmd.infras.system import persist_env  # noqa: F401
 
 __all__ = [
     "check_cernet_mirrors",

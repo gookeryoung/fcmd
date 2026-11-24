@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `envdev` / `mirrortool` / `mirrortoolw` 迁入 `apps/envdev`（命令与设置路径不变）；
+  镜像站 / 加速前缀 / 下载候选排序 / `MirrorSpec` 配置模板抽到
+  `infras/net/mirrors.py`，wslman 与 envdev 共用同一套机制，业务镜像清单仍留在各自应用。
 - `filescanw` 扫描性能：进度信号按 100ms / 每 200 个文件节流；结果树首批只建
   1000 个文件行、子命中展开时惰性创建并支持「加载更多结果」；只引用文件名 / 路径 /
   元数据等规则的扫描跳过正文读取（`bytes_read` 记 0）；缓存指纹去掉规则名称 /

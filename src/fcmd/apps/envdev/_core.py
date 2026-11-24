@@ -9,9 +9,18 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from collections.abc import Iterable
 from pathlib import Path
+
+from fcmd.infras.net.mirrors import (
+    MIRROR_DEFAULT_UA,
+    MIRROR_USER_AGENTS,
+    MirrorSpec,
+    apply_mirror_config,
+)
+
+_MIRROR_USER_AGENTS = MIRROR_USER_AGENTS
+_MIRROR_DEFAULT_UA = MIRROR_DEFAULT_UA  # 兼容旧导入名
 
 __all__ = [
     "MirrorSpec",
@@ -19,96 +28,6 @@ __all__ = [
     "auto_select_mirror",
     "resolve_mirror",
 ]
-
-
-# --------------------------------------------------------------------------- #
-# 镜像源配置模板
-# --------------------------------------------------------------------------- #
-
-
-@dataclass(slots=True)
-class MirrorSpec:
-    """单个镜像源的配置规格。
-
-    将"镜像源名称"、"需要持久化的环境变量"、"要写入的配置文件路径和内容"
-    捆绑在一起，供 :func:`apply_mirror_config` 统一执行。
-
-    Parameters
-    ----------
-    env_vars:
-        要持久化的 ``{名称: 值}`` 字典。
-    config_path:
-        要写入的配置文件路径（可选，为 ``None`` 时跳过写文件）。
-    config_content:
-        配置文件内容模板字符串。若为 ``None`` 则不写入；若为 ``callable``
-        则在执行时调用以生成内容（支持依赖 mirror 名称动态生成）。
-    ensure_dirs:
-        执行前必须创建的目录列表（可选），如 sccache 缓存目录。
-    """
-
-    env_vars: dict[str, str] = field(default_factory=dict)
-    config_path: Path | None = None
-    config_content: str | None = None
-    ensure_dirs: list[Path] = field(default_factory=list)
-
-
-def apply_mirror_config(
-    spec: MirrorSpec,
-    *,
-    persist_fn: Callable[[str, str], None] | None = None,
-    label: str = "",
-) -> None:
-    """执行镜像源配置：批量持久化环境变量 + 写入配置文件 + 创建目录。
-
-    Parameters
-    ----------
-    spec:
-        镜像源规格。
-    persist_fn:
-        环境变量持久化函数签名 ``(name, value) -> None``。
-        默认为 ``fcmd.infras.system.persist_env``，可注入假函数用于测试。
-    label:
-        打印日志时的标签（如 ``"Python"`` / ``"Rust"``）。
-    """
-    # 延迟导入避免反向依赖
-    if persist_fn is None:
-        from fcmd.infras.system import persist_env as persist_fn  # type: ignore[no-redef]
-
-    # 1) 环境变量
-    for name, value in spec.env_vars.items():
-        persist_fn(name, value)
-
-    # 2) 创建目录
-    for d in spec.ensure_dirs:
-        d.mkdir(parents=True, exist_ok=True)
-
-    # 3) 写入配置文件
-    if spec.config_path is None or spec.config_content is None:
-        return
-
-    spec.config_path.parent.mkdir(parents=True, exist_ok=True)
-    spec.config_path.write_text(spec.config_content, encoding="utf-8")
-
-    if label:
-        print(f"{label} 镜像源已配置 -> {spec.config_path}")
-
-
-# --------------------------------------------------------------------------- #
-# 镜像自动选优（按服务）
-# --------------------------------------------------------------------------- #
-
-# 按服务的探测 User-Agent：部分镜像站（如 NJU）会对非包管理器 UA 返回
-# 重定向循环，使用真实客户端 UA 才能得到与包管理器一致的可达性。
-_MIRROR_USER_AGENTS: dict[str, str] = {
-    "pip": "pip/24.0",
-    "conda": "conda/24.9.2",
-    "rustup": "rustup/1.27.1",
-    "cargo": "cargo/1.83.0",
-    "go": "go/1.22.0",
-    "maven": "Maven/3.9.6",
-    "npm": "npm/10.8.2 node/v20.17.0",
-}
-_MIRROR_DEFAULT_UA = "fcmd-mirror-probe/0.3.10"
 
 
 def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float = 5.0) -> str | None:
@@ -144,7 +63,7 @@ def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float 
     probes = probe_mirrors(
         list(candidates.values()),
         timeout=timeout,
-        user_agent=_MIRROR_USER_AGENTS.get(service, _MIRROR_DEFAULT_UA),
+        user_agent=MIRROR_USER_AGENTS.get(service, MIRROR_DEFAULT_UA),
         allow_html=service == "pip",
     )
     name_by_url = {url: name for name, url in candidates.items()}

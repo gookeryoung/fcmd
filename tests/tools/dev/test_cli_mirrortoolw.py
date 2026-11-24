@@ -1,6 +1,6 @@
 """mirrortoolw 工具测试。
 
-验证 ``fcmd.tools.dev.mirrortoolw`` 模块：
+验证 ``fcmd.apps.envdev.mirrortoolw`` 模块：
 - 工具注册
 - 设置文件读写、超时校验与窗口 geometry
 - 服务候选表 / 探测 / 过滤 / 推荐 / 应用 / 配置位置
@@ -16,11 +16,9 @@ from typing import Any
 
 import pytest
 
-import fcmd.tools.dev._envdev_mirrors as mirrors_mod
-from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.infras.net import UrlProbe
-from fcmd.tools.dev import mirrortoolw
-from fcmd.tools.dev.mirrortoolw import (
+import fcmd.apps.envdev._mirror_services as mirrors_mod
+from fcmd.apps.envdev import mirrortoolw
+from fcmd.apps.envdev.mirrortoolw import (
     DEFAULT_GEOMETRY,
     DEFAULT_TIMEOUT,
     MAX_TIMEOUT,
@@ -43,6 +41,8 @@ from fcmd.tools.dev.mirrortoolw import (
     service_candidates,
     valid_geometry,
 )
+from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.infras.net import UrlProbe
 
 
 # ============================================================================ #
@@ -389,16 +389,16 @@ class TestGuiEntry:
 
     def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """缺少 Qt 前端时提示安装并退出，不抛堆栈。"""
-        monkeypatch.setitem(sys.modules, "fcmd.tools.dev._mirrortoolw_qt", None)
+        monkeypatch.setitem(sys.modules, "fcmd.apps.envdev._mirrortoolw_qt", None)
         with pytest.raises(SystemExit, match="Qt"):
             mirrortoolw.run_gui()
 
     def test_run_gui_delegates_to_qt_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """正常路径把启动交给 Qt 入口，并转发自定义设置路径。"""
         calls: list[Path | None] = []
-        fake = types.ModuleType("fcmd.tools.dev._mirrortoolw_qt")
+        fake = types.ModuleType("fcmd.apps.envdev._mirrortoolw_qt")
         fake.run_qt = lambda settings_path=None: calls.append(settings_path)  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "fcmd.tools.dev._mirrortoolw_qt", fake)
+        monkeypatch.setitem(sys.modules, "fcmd.apps.envdev._mirrortoolw_qt", fake)
         mirrortoolw.run_gui(Path("custom.json"))
         assert calls == [Path("custom.json")]
 

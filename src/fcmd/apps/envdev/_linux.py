@@ -1,6 +1,6 @@
 """envdev 的 Linux 专用命令（系统镜像 / Qt 依赖 / 字体 / Docker / OpenSSH / 远程桌面）。
 
-从 :mod:`fcmd.tools.dev.envdev` 拆出；``envdev`` 仍 re-export 全部函数与常量，
+从 :mod:`fcmd.apps.envdev.envdev` 拆出；``envdev`` 仍 re-export 全部函数与常量，
 既有导入路径与 CLI 注册不变。
 """
 
@@ -13,9 +13,9 @@ import sys
 from pathlib import Path
 
 import fcmd
+from fcmd.apps.envdev._langs import _PIP_INDEX_URLS
 from fcmd.infras.command import run_command
 from fcmd.infras.net import check_urls
-from fcmd.tools.dev._envdev_langs import _PIP_INDEX_URLS
 
 _QT_LIBS: list[str] = [
     "build-essential",

@@ -1771,7 +1771,7 @@ class TestCoverageGaps:
 _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("archivex", "fcmd.tools.archive.archivex"),
     ("bumpversion", "fcmd.tools.dev.bumpversion"),
-    ("envdev", "fcmd.tools.dev.envdev"),
+    ("envdev", "fcmd.apps.envdev.envdev"),
     ("gittool", "fcmd.tools.dev.gittool"),
     ("lscalc", "fcmd.tools.calc.lscalc"),
     ("packtool", "fcmd.tools.dev.packtool"),

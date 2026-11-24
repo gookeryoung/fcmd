@@ -3,7 +3,7 @@
 把「勾选哪些项目、每个项目在实例里执行什么命令、如何判断当前状态」从 Qt
 控件里独立出来：界面只负责展示与调度，单测覆盖这里的脚本拼装与结果解析。
 
-执行口径与 :mod:`fcmd.tools.dev.envdev` 保持一致（国内系统镜像源用
+执行口径与 :mod:`fcmd.apps.envdev.envdev` 保持一致（国内系统镜像源用
 linuxmirrors，pip / uv / npm / bun / cargo 走国内镜像），但这里通过
 ``wsl.exe -d <实例> -- bash -lc`` 在目标实例内执行，不要求实例内安装 fcmd。
 

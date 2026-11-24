@@ -55,3 +55,4 @@
 | [0048](0048-config-format-convert.md) | 配置格式跨转换：`tomltool convert`（TOML → JSON/YAML）与 `yamtool convert`（YAML → JSON/TOML），自实现 `to_toml` 写方向序列化 | 已落地 |
 | [0049](0049-small-readonly-gaps.md) | 小型只读能力补齐：`env --vars [--prefix]`、`pathtool join` / `kind`、`completion powershell`、`txttool count` 字节数、`stattool percentile` | 已落地 |
 | [0050](0050-shared-ui-persistence.md) | GUI 数据持久化共用方案：设置 / 路径历史 / 最近文件 / 界面状态 / 防抖写盘，`ui/` 与 `cache/` 分层 | P0 / P1 已落地，P2 部分落地 |
+| [0051](0051-envdev-app-and-shared-mirrors.md) | envdev 迁入 `apps/envdev`；镜像站 / 加速前缀 / 候选排序 / 配置模板抽到 `infras/net/mirrors.py`，业务数据留应用 | 已落地 |

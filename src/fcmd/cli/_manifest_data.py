@@ -52,7 +52,7 @@ TOOLS: dict[str, ToolEntry] = {
     "dockercmd": ToolEntry("dockercmd", "python", "fcmd.tools.dev.dockercmd"),
     "dynacalc": ToolEntry("dynacalc", "python", "fcmd.apps.dynacalc.dynacalc"),
     "dynacalcw": ToolEntry("dynacalcw", "python", "fcmd.apps.dynacalc.dynacalcw"),
-    "envdev": ToolEntry("envdev", "python", "fcmd.tools.dev.envdev"),
+    "envdev": ToolEntry("envdev", "python", "fcmd.apps.envdev.envdev"),
     "envw": ToolEntry("envw", "python", "fcmd.tools.system.envw"),
     "filecheck": ToolEntry("filecheck", "python", "fcmd.tools.media.filecheck"),
     "filedate": ToolEntry("filedate", "python", "fcmd.tools.system.filedate"),
@@ -93,8 +93,8 @@ TOOLS: dict[str, ToolEntry] = {
     "llmw": ToolEntry("llmw", "python", "fcmd.apps.llm.llmw"),
     "lscalc": ToolEntry("lscalc", "python", "fcmd.tools.calc.lscalc"),
     "mathtool": ToolEntry("mathtool", "python", "fcmd.tools.text.mathtool"),
-    "mirrortool": ToolEntry("mirrortool", "python", "fcmd.tools.dev.mirrortool"),
-    "mirrortoolw": ToolEntry("mirrortoolw", "python", "fcmd.tools.dev.mirrortoolw"),
+    "mirrortool": ToolEntry("mirrortool", "python", "fcmd.apps.envdev.mirrortool"),
+    "mirrortoolw": ToolEntry("mirrortoolw", "python", "fcmd.apps.envdev.mirrortoolw"),
     "ncmconvertw": ToolEntry("ncmconvertw", "python", "fcmd.tools.media.ncmconvertw"),
     "nettool": ToolEntry("nettool", "python", "fcmd.tools.net.nettool"),
     "packtool": ToolEntry("packtool", "python", "fcmd.tools.dev.packtool"),
@@ -411,6 +411,12 @@ LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
     "apps/dynacalc/dynacalc.py",
     "apps/dynacalc/dynacalcw.py",
+    "apps/envdev/envdev.py",
+    "apps/envdev/envdev_go.py",
+    "apps/envdev/envdev_java.py",
+    "apps/envdev/envdev_node.py",
+    "apps/envdev/mirrortool.py",
+    "apps/envdev/mirrortoolw.py",
     "apps/filescan/filescan.py",
     "apps/filescan/filescanw.py",
     "apps/filesync/filesync.py",
@@ -466,14 +472,7 @@ LAYOUT: tuple[str, ...] = (
     "tools/dev/autofmt.py",
     "tools/dev/bumpversion.py",
     "tools/dev/dockercmd.py",
-    "tools/dev/envdev.py",
-    "tools/dev/envdev_core.py",
-    "tools/dev/envdev_go.py",
-    "tools/dev/envdev_java.py",
-    "tools/dev/envdev_node.py",
     "tools/dev/gittool.py",
-    "tools/dev/mirrortool.py",
-    "tools/dev/mirrortoolw.py",
     "tools/dev/packtool.py",
     "tools/dev/piptool.py",
     "tools/dev/pymake.py",
@@ -534,7 +533,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "4eaacbbef46762b1006f0dbbb71bf04f"
+DIGEST = "43f601979449c68f76523ab5e642de48"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

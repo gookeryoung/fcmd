@@ -1,6 +1,6 @@
 """envdev 的镜像站点探测（MirrorZ 动态列表 / 分服务测速与自动应用）。
 
-从 :mod:`fcmd.tools.dev.envdev` 拆出；``envdev`` 仍 re-export 全部函数与常量，
+从 :mod:`fcmd.apps.envdev.envdev` 拆出；``envdev`` 仍 re-export 全部函数与常量，
 既有导入路径与 CLI 注册不变。
 """
 
@@ -12,8 +12,8 @@ import re
 from typing import Literal
 
 import fcmd
-from fcmd.infras.net import check_urls, probe_mirrors
-from fcmd.tools.dev._envdev_langs import (
+from fcmd.apps.envdev._core import _MIRROR_DEFAULT_UA, _MIRROR_USER_AGENTS
+from fcmd.apps.envdev._langs import (
     _CARGO_PROBE_URLS,
     _CONDA_PROBE_URLS,
     _PIP_PROBE_URLS,
@@ -23,10 +23,10 @@ from fcmd.tools.dev._envdev_langs import (
     setup_conda_mirror,
     setup_python_mirror,
 )
-from fcmd.tools.dev.envdev_core import _MIRROR_DEFAULT_UA, _MIRROR_USER_AGENTS
-from fcmd.tools.dev.envdev_go import _GO_PROXY_PROBE_URLS, _setup_go_mirror
-from fcmd.tools.dev.envdev_java import _MAVEN_PROBE_URLS, _setup_maven_mirror
-from fcmd.tools.dev.envdev_node import _NPM_PROBE_URLS, _setup_npm_mirror
+from fcmd.apps.envdev.envdev_go import _GO_PROXY_PROBE_URLS, _setup_go_mirror
+from fcmd.apps.envdev.envdev_java import _MAVEN_PROBE_URLS, _setup_maven_mirror
+from fcmd.apps.envdev.envdev_node import _NPM_PROBE_URLS, _setup_npm_mirror
+from fcmd.infras.net import check_urls, probe_mirrors
 
 logger = logging.getLogger(__name__)
 

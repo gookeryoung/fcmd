@@ -1,7 +1,7 @@
 """``mirrortool`` —— 镜像源查询与配置的独立一级入口（薄壳）。
 
 镜像探测、按服务测速与自动应用的唯一实现在
-:mod:`fcmd.tools.dev._envdev_mirrors`；本模块只注册一级工具，``fcmd
+:mod:`fcmd.apps.envdev._mirror_services`；本模块只注册一级工具，``fcmd
 mirrortool`` 与 ``fcmd envdev mirror`` 共用同一份实现，不复制逻辑。
 
 示例
@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Literal
 
 import fcmd
-from fcmd.tools.dev._envdev_mirrors import check_cernet_mirrors
+from fcmd.apps.envdev._mirror_services import check_cernet_mirrors
 
 __all__ = ["mirror"]
 

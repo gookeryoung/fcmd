@@ -30,12 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd import __version__
-from fcmd.gui import config as _guiconfig
-from fcmd.gui.app import run_window
-from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, ElidedLabel, ProgressRow, button, make_table, make_table_item
-from fcmd.gui.workers import EventBridge, submit
-from fcmd.tools.dev.mirrortoolw import (
+from fcmd.apps.envdev.mirrortoolw import (
     DEFAULT_TIMEOUT,
     MAX_TIMEOUT,
     MIN_HEIGHT,
@@ -57,6 +52,11 @@ from fcmd.tools.dev.mirrortoolw import (
     recommend_mirror,
     save_settings,
 )
+from fcmd.gui import config as _guiconfig
+from fcmd.gui.app import run_window
+from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.widgets import Card, ElidedLabel, ProgressRow, button, make_table, make_table_item
+from fcmd.gui.workers import EventBridge, submit
 
 if TYPE_CHECKING:
     from fcmd.gui.theme import Theme

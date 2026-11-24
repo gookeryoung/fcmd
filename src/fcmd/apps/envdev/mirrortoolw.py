@@ -227,7 +227,7 @@ def service_candidates(service: str) -> dict[str, str]:
         服务名不在 ``pip`` / ``conda`` / ``rustup`` / ``cargo`` / ``go`` /
         ``maven`` / ``npm`` 中。
     """
-    from fcmd.tools.dev._envdev_mirrors import _MIRROR_SERVICE_CANDIDATES
+    from fcmd.apps.envdev._mirror_services import _MIRROR_SERVICE_CANDIDATES
 
     if service not in _MIRROR_SERVICE_CANDIDATES:
         raise ValueError(f"未知服务: {service}")
@@ -236,8 +236,8 @@ def service_candidates(service: str) -> dict[str, str]:
 
 def probe_service(service: str, timeout: float = DEFAULT_TIMEOUT) -> list[MirrorResult]:
     """探测单个服务的全部候选镜像，返回按实测吞吐与延迟排序的结果。"""
+    from fcmd.apps.envdev._core import _MIRROR_DEFAULT_UA, _MIRROR_USER_AGENTS
     from fcmd.infras.net import probe_mirrors
-    from fcmd.tools.dev.envdev_core import _MIRROR_DEFAULT_UA, _MIRROR_USER_AGENTS
 
     candidates = service_candidates(service)
     name_by_url = {url: name for name, url in candidates.items()}
@@ -263,8 +263,8 @@ def probe_service(service: str, timeout: float = DEFAULT_TIMEOUT) -> list[Mirror
 
 def probe_sites(timeout: float = DEFAULT_TIMEOUT, source: str = "auto") -> tuple[list[MirrorResult], str]:
     """探测教育网镜像站点，返回 ``(按速度排序的站点, 列表来源说明)``。"""
+    from fcmd.apps.envdev._mirror_services import _CERNET_MIRROR_SITES, fetch_mirrorz_sites
     from fcmd.infras.net import check_urls
-    from fcmd.tools.dev._envdev_mirrors import _CERNET_MIRROR_SITES, fetch_mirrorz_sites
 
     sites = dict(_CERNET_MIRROR_SITES)
     origin = "help.mirrors.cernet.edu.cn 内置列表"
@@ -307,7 +307,7 @@ def apply_service_mirror(service: str, mirror: str) -> str:
     ValueError
         服务或镜像名不在候选表中。
     """
-    from fcmd.tools.dev._envdev_mirrors import _MIRROR_SERVICE_APPLY
+    from fcmd.apps.envdev._mirror_services import _MIRROR_SERVICE_APPLY
 
     candidates = service_candidates(service)
     if mirror not in candidates:
@@ -323,7 +323,7 @@ def config_location(service: str) -> str:
     """返回服务配置位置：配置文件路径；仅环境变量的服务返回提示文案。"""
     if service not in SERVICE_LABELS:
         raise ValueError(f"未知服务: {service}")
-    from fcmd.tools.dev.envdev_core import pip_config_path
+    from fcmd.apps.envdev._core import pip_config_path
 
     if service == "pip":
         return str(pip_config_path())
@@ -342,7 +342,7 @@ def config_location(service: str) -> str:
 def run_gui(settings_path: Path | None = None) -> None:
     """启动 Qt 窗口（高 DPI 与主题由 ``gui.app`` 统一处理）。"""
     try:
-        from fcmd.tools.dev._mirrortoolw_qt import run_qt
+        from fcmd.apps.envdev._mirrortoolw_qt import run_qt
     except ImportError as exc:  # pragma: no cover - 安装完整时不会触发
         from fcmd.gui.compat import qt_import_failure
 

@@ -1,6 +1,6 @@
 """envdev 的语言级镜像配置（Python / Rust / JavaScript）。
 
-从 :mod:`fcmd.tools.dev.envdev` 拆出；``envdev`` 仍 re-export 公开函数与镜像表
+从 :mod:`fcmd.apps.envdev.envdev` 拆出；``envdev`` 仍 re-export 公开函数与镜像表
 常量，既有导入路径、CLI 注册顺序与输出契约不变。
 """
 
@@ -11,20 +11,20 @@ import sys
 from pathlib import Path
 
 import fcmd
-from fcmd.infras.command import run_command
-from fcmd.infras.system import persist_env
-from fcmd.tools.dev.envdev_core import (
+from fcmd.apps.envdev._core import (
     MirrorSpec,
     apply_mirror_config,
     mirror_supported,
     pip_config_path,
     resolve_mirror,
 )
-from fcmd.tools.dev.envdev_node import (
+from fcmd.apps.envdev.envdev_node import (
     _NPM_DEFAULT,
     _NPM_PROBE_URLS,
     _NPM_REGISTRY_MIRRORS,
 )
+from fcmd.infras.command import run_command
+from fcmd.infras.system import persist_env
 
 _PIP_INDEX_URLS: dict[str, str] = {
     "tsinghua": "https://pypi.tuna.tsinghua.edu.cn/simple",

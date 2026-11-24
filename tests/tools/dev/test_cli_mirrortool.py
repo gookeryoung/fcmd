@@ -2,7 +2,7 @@
 
 镜像探测/测速的实现语义由 ``tests/tools/dev/test_cli_envdev.py``
 （``TestCheckCernetMirrors`` 等）覆盖；本文件只验证一级入口已注册为
-单命令工具，且与 ``envdev mirror`` 共用 :mod:`fcmd.tools.dev._envdev_mirrors`
+单命令工具，且与 ``envdev mirror`` 共用 :mod:`fcmd.apps.envdev._mirror_services`
 的同一份实现（不复制逻辑）。
 """
 
@@ -13,9 +13,9 @@ from typing import Any
 
 import pytest
 
+import fcmd.apps.envdev._mirror_services as mirrors_mod
+import fcmd.apps.envdev.mirrortool
 import fcmd.infras.net
-import fcmd.tools.dev._envdev_mirrors as mirrors_mod
-import fcmd.tools.dev.mirrortool
 from fcmd.core.toolkit import _TOOL_REGISTRY, list_subcommands
 from fcmd.infras.net import UrlProbe, probe_score, unreachable_latency
 
@@ -59,7 +59,7 @@ def _run_main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> int:
     """以 ``argv`` 调用 ``mirrortool.main()``，返回退出码。"""
     monkeypatch.setattr(sys, "argv", ["mirrortool", *argv])
     with pytest.raises(SystemExit) as exc_info:
-        fcmd.tools.dev.mirrortool.main()
+        fcmd.apps.envdev.mirrortool.main()
     code = exc_info.value.code
     return 0 if code is None else int(code)
 
@@ -80,7 +80,7 @@ class TestMirrortoolRegistration:
         """``--help`` 暴露服务选项（argparse choices 来自注解 Literal）。"""
         monkeypatch.setattr(sys, "argv", ["mirrortool", "--help"])
         with pytest.raises(SystemExit) as exc_info:
-            fcmd.tools.dev.mirrortool.main()
+            fcmd.apps.envdev.mirrortool.main()
         assert exc_info.value.code == 0
         out = capsys.readouterr().out
         assert "--service" in out
@@ -96,7 +96,7 @@ class TestMirrortoolCli:
     def test_probe_builtin_sites(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """``--source builtin`` 探测内置站点列表，全部可达返回 0。"""
         probe = dict.fromkeys(mirrors_mod._CERNET_MIRROR_SITES.values(), (True, 10.0))
-        monkeypatch.setattr("fcmd.tools.dev._envdev_mirrors.check_urls", _fake_check_urls(probe))
+        monkeypatch.setattr("fcmd.apps.envdev._mirror_services.check_urls", _fake_check_urls(probe))
 
         assert _run_main(monkeypatch, ["--source", "builtin"]) == 0
         out = capsys.readouterr().out
@@ -108,9 +108,9 @@ class TestMirrortoolCli:
     ) -> None:
         """全部站点不可达时实现返回 1（与 ``envdev mirror`` 同一实现，CLI 层按 Python 任务语义仍退出 0）。"""
         probe = {url: (False, unreachable_latency()) for url in mirrors_mod._CERNET_MIRROR_SITES.values()}
-        monkeypatch.setattr("fcmd.tools.dev._envdev_mirrors.check_urls", _fake_check_urls(probe))
+        monkeypatch.setattr("fcmd.apps.envdev._mirror_services.check_urls", _fake_check_urls(probe))
 
-        assert fcmd.tools.dev.mirrortool.mirror(source="builtin") == 1
+        assert fcmd.apps.envdev.mirrortool.mirror(source="builtin") == 1
         assert "全部镜像站点不可达" in capsys.readouterr().out
 
     def test_service_apply_delegates_to_mirror_setup(
@@ -121,7 +121,7 @@ class TestMirrortoolCli:
         pip_urls = mirrors_mod._PIP_PROBE_URLS
         probe = dict.fromkeys(pip_urls.values(), (True, 100.0, 50.0))
         probe[pip_urls["nju"]] = (True, 12.0, 2000.0)
-        monkeypatch.setattr("fcmd.tools.dev._envdev_mirrors.probe_mirrors", _fake_probe_mirrors(probe))
+        monkeypatch.setattr("fcmd.apps.envdev._mirror_services.probe_mirrors", _fake_probe_mirrors(probe))
         monkeypatch.setitem(mirrors_mod._MIRROR_SERVICE_APPLY, "pip", applied.append)
 
         assert _run_main(monkeypatch, ["--service", "pip", "--apply"]) == 0
