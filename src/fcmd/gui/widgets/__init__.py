@@ -68,6 +68,7 @@ from fcmd.gui.widgets.metrics import (
     segment_band,
     segment_fill,
 )
+from fcmd.gui.widgets.responsive import ContentHeightGuard, ResponsiveLabel, fit_flow_widths
 from fcmd.gui.widgets.rows import ItemRow, RowDetailMixin, RowListWidget, SelectionRow
 from fcmd.gui.widgets.sidebar_list import SidebarActionButton, SidebarEntry, SidebarList
 from fcmd.gui.widgets.splitter import apply_splitter_sizes, make_splitter, splitter_sizes
@@ -105,6 +106,7 @@ __all__ = [
     "ChoiceCard",
     "ChoiceGroup",
     "Collapsible",
+    "ContentHeightGuard",
     "DiskAddTile",
     "DiskGrid",
     "DiskLocation",
@@ -128,6 +130,7 @@ __all__ = [
     "PillTabBar",
     "ProgressBar",
     "ProgressRow",
+    "ResponsiveLabel",
     "RowDetailMixin",
     "RowListWidget",
     "SectionHeader",
@@ -150,6 +153,7 @@ __all__ = [
     "confirm",
     "default_disk_locations",
     "fit_dialog_to_content",
+    "fit_flow_widths",
     "hint_label",
     "icon_button",
     "link_button",

@@ -167,3 +167,85 @@ def test_clock_hero_is_large_and_status_tracks_tone(window: Any) -> None:
     assert window.status.property("tone") == "accent"
     window.cancel_alarm()
     assert window.status.property("tone") == "muted"
+
+
+def test_clock_font_scales_down_on_narrow_window(window: Any) -> None:
+    """窄窗口自动降低时钟字号，避免数字被裁切。"""
+    window.show()
+    window.resize(620, 460)
+    QApplication.processEvents()
+    wide = window.clock_label.point_size
+    window.resize(460, 480)
+    QApplication.processEvents()
+    assert window.clock_label.point_size < wide
+    assert window.clock_label.point_size >= 24
+    assert window.clock_label.text() == _NOW.strftime(DIGITAL_FORMAT)
+
+
+def test_settings_grid_is_aligned_without_bottom_hint(window: Any) -> None:
+    """闹钟设置改成标签 / 输入框 / 主按钮同轴网格，底部说明行已移除。"""
+    from fcmd.gui.widgets import HintLabel
+
+    window.show()
+    QApplication.processEvents()
+    assert abs(window.time_edit.geometry().center().y() - window.set_button.geometry().center().y()) <= 1
+    assert window.findChildren(HintLabel) == []
+
+
+def test_time_and_set_button_align_with_delay_row(window: Any) -> None:
+    """时间输入框 + 设置按钮占满延时区域宽度；重置按钮文字不被裁切。"""
+    window.show()
+    QApplication.processEvents()
+
+    def _right(widget: Any) -> int:
+        return widget.mapTo(window, widget.rect().topRight()).x()
+
+    assert window.set_button.width() > 200
+    # 输入框 + 设置按钮与延时按钮组右缘对齐；宽窗口按钮封顶时也保持。
+    assert abs(_right(window.set_button) - _right(window._delay_buttons[-1])) <= 1
+    window.resize(720, 450)
+    QApplication.processEvents()
+    assert abs(_right(window.set_button) - _right(window._delay_buttons[-1])) <= 1
+    # 延时标签与按钮首行垂直居中对齐。
+    label_y = window.delay_label.mapTo(window, window.delay_label.rect().center()).y()
+    button_y = window._delay_buttons[0].mapTo(window, window._delay_buttons[0].rect().center()).y()
+    assert abs(label_y - button_y) <= 2
+    assert window.reset_button.width() >= window.reset_button.sizeHint().width()
+    assert window.reset_button.text() == "重置"
+
+
+def test_reminder_dialog_matches_main_theme(window: Any) -> None:
+    """提醒弹窗复用主界面的卡片 / 强调色 / 主按钮风格，不再使用随机浅色底。"""
+    from PySide6.QtWidgets import QSizePolicy
+
+    from fcmd.gui.widgets import Card
+
+    window.arm_alarm()
+    window.open_reminder()
+    assert window._reminder is not None
+    dialog = window._reminder
+    try:
+        assert dialog.objectName() == "AlarmReminderDialog"
+        assert dialog.hero.objectName() == "AlarmReminderHero"
+        assert dialog.label.objectName() == "AlarmReminderTitle"
+        assert "border-color" in dialog.hero.styleSheet()
+        assert dialog.close_button.objectName() == "Primary"
+        settings_card = next(card for card in window.findChildren(Card) if card.title() == "闹钟设置")
+        assert settings_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
+    finally:
+        dialog.close()
+
+
+def test_minimum_width_has_no_scroll_or_clipped_controls(window: Any) -> None:
+    """最小窗口下输入框、主按钮与延时按钮全部在容器内，不出现滚动 / 遮挡。"""
+    window.show()
+    # 关键回归：先加宽再缩回，不能因为旧布局宽度残留而再次遮挡。
+    for width, height in ((720, 500), (460, 300), (620, 380), (460, 200)):
+        window.resize(width, height)
+        QApplication.processEvents()
+        QApplication.processEvents()
+        assert window.height() >= window.minimumHeight()
+        assert window.scroll.verticalScrollBar().maximum() == 0
+        assert window.time_edit.geometry().right() < window._top_controls.width()
+        assert window.set_button.geometry().right() < window._top_controls.width()
+        assert all(button.geometry().right() < window.delay_host.width() for button in window._delay_buttons)

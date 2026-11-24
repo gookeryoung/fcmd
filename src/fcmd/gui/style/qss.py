@@ -123,10 +123,18 @@ QPushButton[alarmAction="true"] {
     font-size: ${font_body}pt; font-weight: 600;
 }
 QPushButton[alarmDelay="true"] {
-    min-width: 52px; max-width: 60px; min-height: 34px; max-height: 34px;
+    min-height: 32px; max-height: 32px; padding: 0 4px;
     font-size: ${font_small}pt; font-weight: 600;
 }
 QCheckBox#AlarmRepeat { font-size: ${font_body}pt; font-weight: 600; }
+QDialog#AlarmReminderDialog { background: $background; }
+QFrame#AlarmReminderHero {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 $surface, stop:1 $surface_hover);
+    border: 3px solid $danger; border-radius: 16px;
+}
+QLabel#AlarmReminderTitle { color: $danger; background: transparent; font-size: 40pt; font-weight: 700; }
+QLabel#AlarmReminderTitle[tone="warning"] { color: $warning; }
+QLabel#AlarmReminderHint { color: $muted; background: transparent; font-size: ${font_body}pt; font-weight: 600; }
 QLabel#StatusTag {
     min-height: 18px;
     max-height: 18px;
