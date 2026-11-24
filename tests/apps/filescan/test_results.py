@@ -37,6 +37,7 @@ def _result(root: Path) -> ScanResult:
                         context="客户电话 13800138000",
                         context_start=5,
                         location="段落 2",
+                        severity="high",
                     )
                 ],
             )
@@ -75,6 +76,7 @@ def test_result_roundtrip_keeps_raw_hits_and_stats(tmp_path: Path) -> None:
     assert match.excerpt == "13800138000"  # 原文保留，导出「原文」仍可用
     assert match.context_start == 5
     assert match.location == "段落 2"
+    assert match.severity == "high"
     assert result.skipped == original.skipped
     assert result.errors == original.errors
 

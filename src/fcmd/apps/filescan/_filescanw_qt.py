@@ -34,12 +34,14 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex, QPoint, QRectF, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import (
+    QBrush,
     QColor,
     QDesktopServices,
     QFont,
@@ -105,8 +107,11 @@ from fcmd.apps.filescan._report import (
     write_report,
 )
 from fcmd.apps.filescan._rules import (
+    DEFAULT_SEVERITY,
     MATCH_KEYWORD,
     MATCH_REGEX,
+    SEVERITY_LABELS,
+    SEVERITY_LEVELS,
     Matcher,
     Rule,
     RuleSet,
@@ -115,6 +120,7 @@ from fcmd.apps.filescan._rules import (
     load_ruleset,
     resolve_expression,
     save_ruleset,
+    severity_label,
 )
 from fcmd.gui import style as _qt_theme
 from fcmd.gui.page import AppPage, PageSpec
@@ -536,6 +542,11 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._kind.addItems([MATCH_KEYWORD, MATCH_REGEX])
         self._kind.setCurrentText(rule.matcher.kind if rule else MATCH_KEYWORD)
         grid.addWidget(self._kind, 5, 1)
+        grid.addWidget(QLabel("严重级"), 6, 0, Qt.AlignmentFlag.AlignRight)
+        self._severity = QComboBox(self)
+        self._severity.addItems([SEVERITY_LABELS[level] for level in SEVERITY_LEVELS])
+        self._severity.setCurrentIndex(SEVERITY_LEVELS.index(rule.severity if rule else DEFAULT_SEVERITY))
+        grid.addWidget(self._severity, 6, 1)
         outer.addLayout(grid)
 
         flags = QHBoxLayout()
@@ -578,6 +589,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             matcher=matcher,
             group=self._group.text().strip() or "自定义",
             enabled=self._enabled.isChecked(),
+            severity=SEVERITY_LEVELS[self._severity.currentIndex()],
         )
         self.accept()
 
@@ -615,6 +627,34 @@ def _context_parts(index: QModelIndex | QPersistentModelIndex) -> tuple[str, str
 def _utf16_units(text: str) -> int:
     """Python 字符数 → QTextDocument 位置单位（UTF-16，emoji 占两格）。"""
     return len(text.encode("utf-16-le")) // 2
+
+
+_SEVERITY_COLORS: dict[str, str] = {
+    "critical": "danger",
+    "high": "warning",
+    "medium": "accent",
+    "low": "muted",
+    "info": "muted",
+}
+"""严重级 → 主题调色板字段名；未登记的级别不着色。"""
+
+
+def _severity_color(severity: str) -> QColor | None:
+    """严重级对应的前景色；空值或未知级别返回 ``None``（沿用默认前景）。"""
+    tone = _SEVERITY_COLORS.get(severity)
+    if tone is None:
+        return None
+    return QColor(getattr(_qt_theme.active_theme().palette, tone))
+
+
+def _highest_severity(matches: Sequence[RuleMatch]) -> str:
+    """取一组命中的最高严重级；没有可识别级别时返回空串。"""
+    ranks = {level: index for index, level in enumerate(SEVERITY_LEVELS)}
+    best = ""
+    for match in matches:
+        if ranks.get(match.severity, -1) > ranks.get(best, -1):
+            best = match.severity
+    return best
 
 
 class _ContextDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
@@ -997,10 +1037,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         card.body.addLayout(action_bar)
 
         self._tree = QTreeWidget(card)
-        self._tree.setHeaderLabels(["文件 / 规则", "行号", "上下文（打码）"])
+        self._tree.setHeaderLabels(["文件 / 规则", "严重级", "行号", "上下文（打码）"])
         self._tree.setAlternatingRowColors(True)
-        self._tree.setColumnWidth(0, 420)
-        self._tree.setColumnWidth(1, 70)
+        self._tree.setColumnWidth(0, 400)
+        self._tree.setColumnWidth(1, 64)
+        self._tree.setColumnWidth(2, 64)
         self._tree.header().setStretchLastSection(True)
         self._tree.setMinimumHeight(240)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1009,7 +1050,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._tree.itemSelectionChanged.connect(self._update_result_actions)
         # 上下文列换行完整显示 + 命中底色；其余列继续用默认 delegate 单行绘制。
         self._context_delegate = _ContextDelegate(self._tree)
-        self._tree.setItemDelegateForColumn(2, self._context_delegate)
+        self._tree.setItemDelegateForColumn(3, self._context_delegate)
         # 列宽变化后旧排版的换行位置失效：清缓存并重算行高，避免行高停在首帧宽度上。
         self._tree.header().sectionResized.connect(self._context_layout_changed)
         card.body.addWidget(self._tree, 1)
@@ -1023,6 +1064,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._filter_rule = QComboBox(self)
         self._filter_rule.addItem("全部")
         filter_bar.addWidget(self._filter_rule)
+        filter_bar.addWidget(QLabel("严重级"))
+        self._filter_severity = QComboBox(self)
+        self._filter_severity.addItems(["全部", *[SEVERITY_LABELS[level] for level in SEVERITY_LEVELS]])
+        self._filter_severity.setToolTip("按规则严重级筛选命中；「全部」不筛选")
+        filter_bar.addWidget(self._filter_severity)
         filter_bar.addWidget(QLabel("路径包含"))
         self._filter_path = QLineEdit(self.settings.filter_path, self)
         self._filter_path.setClearButtonEnabled(True)
@@ -1047,9 +1093,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         layout = page.content
 
         self._rules_table = make_table(
-            ("启用", "分组", "名称", "匹配器"),
-            widths=(60, 110, 170, 560),
-            stretch_columns=(3,),
+            ("启用", "分组", "严重级", "名称", "匹配器"),
+            widths=(60, 110, 70, 170, 520),
+            stretch_columns=(4,),
             parent=page,
         )
         self._rules_table.setMinimumHeight(240)
@@ -1106,8 +1152,13 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             enabled.setData(Qt.ItemDataRole.UserRole, rule.id)
             self._rules_table.setItem(row, 0, enabled)
             self._rules_table.setItem(row, 1, make_table_item(rule.group))
-            self._rules_table.setItem(row, 2, make_table_item(rule.name))
-            self._rules_table.setItem(row, 3, make_table_item(rule.matcher.describe()))
+            severity_item = make_table_item(severity_label(rule.severity))
+            color = _severity_color(rule.severity)
+            if color is not None:
+                severity_item.setForeground(QBrush(color))
+            self._rules_table.setItem(row, 2, severity_item)
+            self._rules_table.setItem(row, 3, make_table_item(rule.name))
+            self._rules_table.setItem(row, 4, make_table_item(rule.matcher.describe()))
         self._expression.setText(self.ruleset.expression)
         self._rule_hint.setText(
             f"{len(self.ruleset.rules)} 条规则，启用 {self.ruleset.enabled_count()}；"
@@ -1748,14 +1799,18 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._tree.clear()
         self._context_delegate.reset()
         for index, hit in enumerate(result.hits):
+            highest = _highest_severity(hit.matches)
             parent = QTreeWidgetItem(
                 [
                     str(hit.path),
+                    severity_label(highest) if highest else "",
                     "",
                     f"{len(hit.matches)} 条 · {hit.encoding} · {format_size(hit.size)}",
                 ]
             )
             parent.setToolTip(0, str(hit.path))
+            if highest:
+                parent.setToolTip(1, f"该文件最高严重级：{severity_label(highest)}")
             parent.setData(0, _PATH_ROLE, str(hit.path))
             parent.setData(0, _MATCHES_ROLE, tuple(hit.matches))
             self._tree.addTopLevelItem(parent)
@@ -1764,6 +1819,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                 child = QTreeWidgetItem(
                     [
                         match.rule_name,
+                        severity_label(match.severity) if match.severity else "",
                         str(match.location or match.line_no),
                         rendered,
                     ]
@@ -1772,20 +1828,27 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                 child.setData(0, _MATCH_ROLE, match)
                 # 单元格文本仍是完整打码上下文（复制 / 悬停 / 测试可读）；
                 # 富文本绘制由 delegate 按三段重新排版，命中段另外上底色。
-                child.setData(2, _CONTEXT_ROLE, context_segments(match, False))
+                child.setData(3, _CONTEXT_ROLE, context_segments(match, False))
                 child.setToolTip(0, str(hit.path))
-                child.setToolTip(2, rendered)
+                if match.severity:
+                    child.setToolTip(1, f"严重级：{severity_label(match.severity)}")
+                child.setToolTip(3, rendered)
+                color = _severity_color(match.severity)
+                if color is not None:
+                    brush = QBrush(color)
+                    child.setForeground(0, brush)
+                    child.setForeground(1, brush)
                 parent.addChild(child)
             parent.setExpanded(True)
             if index >= 5000:  # 极端结果集下不再逐项展开，避免长时间占用 GUI 线程
                 break
         for item in result.skipped:
-            entry = QTreeWidgetItem([str(item.path), "", f"跳过：{item.reason}"])
+            entry = QTreeWidgetItem([str(item.path), "", "", f"跳过：{item.reason}"])
             entry.setToolTip(0, str(item.path))
             entry.setData(0, _PATH_ROLE, str(item.path))
             self._tree.addTopLevelItem(entry)
         for item in result.errors:
-            entry = QTreeWidgetItem([str(item.path), "", f"错误：{item.message}"])
+            entry = QTreeWidgetItem([str(item.path), "", "", f"错误：{item.message}"])
             entry.setToolTip(0, str(item.path))
             entry.setData(0, _PATH_ROLE, str(item.path))
             self._tree.addTopLevelItem(entry)
@@ -2011,7 +2074,14 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             return
         selected = self._filter_rule.currentText()
         rule_ids = None if selected in ("", "全部") else [selected]
-        filtered = filter_result(self.result, rule_ids=rule_ids, path_contains=self._filter_path.text())
+        level_index = self._filter_severity.currentIndex()
+        severities = None if level_index <= 0 else [SEVERITY_LEVELS[level_index - 1]]
+        filtered = filter_result(
+            self.result,
+            rule_ids=rule_ids,
+            path_contains=self._filter_path.text(),
+            severities=severities,
+        )
         self._render_result(filtered)
         self.set_page_status(
             "results",
@@ -2020,6 +2090,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
 
     def _reset_filter(self) -> None:
         self._filter_rule.setCurrentIndex(0)
+        self._filter_severity.setCurrentIndex(0)
         self._filter_path.clear()
         if self.result is not None:
             self._render_result(self.result)

@@ -33,6 +33,7 @@ def _match(  # noqa: PLR0913 - 测试构造器，参数各自独立
     context: str = "tel 13812345678 end",
     context_start: int = 4,
     location: str = "",
+    severity: str = "",
 ) -> RuleMatch:
     return RuleMatch(
         rule_id=rule_id,
@@ -44,6 +45,7 @@ def _match(  # noqa: PLR0913 - 测试构造器，参数各自独立
         context=context,
         context_start=context_start,
         location=location,
+        severity=severity,
     )
 
 
@@ -151,7 +153,7 @@ def test_result_to_csv_has_bom_header_and_rows() -> None:
     text = result_to_csv(_result())
     assert text.startswith("\ufeff")
     lines = text.lstrip("\ufeff").splitlines()
-    assert lines[0].startswith("文件,规则,行号")
+    assert lines[0].startswith("文件,规则,严重级,行号")
     assert "13*******78" in lines[1]
     raw = result_to_csv(_result(), include_raw=True)
     assert "13812345678" in raw
@@ -184,6 +186,17 @@ def test_filter_result_by_rule_and_path() -> None:
     none = filter_result(result, rule_ids=["missing"])
     assert none.hits == []
     assert none.stats.hit_files == 0
+
+
+def test_severity_appears_in_json_csv_text_and_filters() -> None:
+    hit = FileHit(Path("scan") / "a.txt", 10, "utf-8", [_match("a", severity="high")])
+    result = _result(hits=[hit])
+    payload = result_to_mapping(result)
+    assert payload["hits"][0]["matches"][0]["severity"] == "high"
+    assert "高" in result_to_csv(result).splitlines()[1]
+    assert "【高】" in format_text_report(result)
+    assert filter_result(result, severities=["high"]).stats.hit_count == 1
+    assert filter_result(result, severities=["low"]).hits == []
 
 
 def test_filter_result_keeps_expression_only_hit_by_path() -> None:

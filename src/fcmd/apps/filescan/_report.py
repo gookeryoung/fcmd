@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanResult, ScanStats, format_size
+from fcmd.apps.filescan._rules import severity_label
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -82,6 +83,7 @@ def _match_to_mapping(match: RuleMatch, include_raw: bool) -> dict[str, Any]:
     return {
         "rule_id": match.rule_id,
         "rule": match.rule_name,
+        "severity": match.severity,
         "line": match.line_no,
         "column": match.start + 1,
         "location": match.location,
@@ -144,13 +146,14 @@ def result_to_csv(result: ScanResult, include_raw: bool = False) -> str:
     """序列化为 CSV 文本（带 UTF-8 BOM，便于 Excel 直接打开）。"""
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(["文件", "规则", "行号", "列号", "编码", "位置", "命中内容", "上下文"])
+    writer.writerow(["文件", "规则", "严重级", "行号", "列号", "编码", "位置", "命中内容", "上下文"])
     for hit in result.hits:
         for match in hit.matches:
             writer.writerow(
                 [
                     str(hit.path),
                     match.rule_name,
+                    severity_label(match.severity) if match.severity else "",
                     match.line_no,
                     match.start + 1,
                     hit.encoding,
@@ -258,7 +261,10 @@ def format_text_report(result: ScanResult, include_raw: bool = False) -> str:
             continue
         for match in hit.matches:
             where = f"{match.location} " if match.location else ""
-            lines.append(f"  - {match.rule_name} @ {where}第 {match.line_no} 行：{render_context(match, include_raw)}")
+            level = f"【{severity_label(match.severity)}】" if match.severity else ""
+            lines.append(
+                f"  - {level}{match.rule_name} @ {where}第 {match.line_no} 行：{render_context(match, include_raw)}"
+            )
     if result.skipped:
         lines.append("跳过：")
         lines.extend(f"  - {item.path}：{item.reason}" for item in result.skipped)
@@ -273,16 +279,26 @@ def filter_result(
     *,
     rule_ids: Iterable[str] | None = None,
     path_contains: str = "",
+    severities: Iterable[str] | None = None,
 ) -> ScanResult:
-    """按规则 id 与路径子串过滤命中，并重算命中计数（跳过与错误保留）。"""
+    """按规则 id、严重级与路径子串过滤命中，并重算命中计数（跳过与错误保留）。
+
+    ``rule_ids`` / ``severities`` 为 ``None`` 表示不限；给定时保留任一条件命中的
+    明细，两个条件同时给定则取交集。``path_contains`` 大小写不敏感。
+    """
     wanted = None if rule_ids is None else frozenset(rule_ids)
+    levels = None if severities is None else frozenset(severities)
     needle = path_contains.strip().lower()
     hits: list[FileHit] = []
     for hit in result.hits:
         if needle and needle not in str(hit.path).lower():
             continue
-        matches = [match for match in hit.matches if wanted is None or match.rule_id in wanted]
-        if wanted is not None and not matches:
+        matches = [
+            match
+            for match in hit.matches
+            if (wanted is None or match.rule_id in wanted) and (levels is None or match.severity in levels)
+        ]
+        if (wanted is not None or levels is not None) and not matches:
             continue
         hits.append(replace(hit, matches=matches))
     stats = replace(

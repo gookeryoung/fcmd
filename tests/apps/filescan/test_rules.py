@@ -10,8 +10,13 @@ import pytest
 
 from fcmd.apps.filescan._rules import (
     DEFAULT_GROUP,
+    DEFAULT_SEVERITY,
     MATCH_KEYWORD,
     MATCH_REGEX,
+    SEVERITY_CRITICAL,
+    SEVERITY_HIGH,
+    SEVERITY_LEVELS,
+    SEVERITY_LOW,
     AndExpr,
     Matcher,
     NotExpr,
@@ -39,6 +44,7 @@ from fcmd.apps.filescan._rules import (
     ruleset_from_mapping,
     ruleset_to_mapping,
     save_ruleset,
+    severity_label,
 )
 
 
@@ -271,7 +277,34 @@ def test_rule_mapping_rejects_invalid_entries() -> None:
 def test_rule_record_roundtrip_defaults() -> None:
     rule = rule_from_mapping({"id": "a", "name": "x", "matcher": {"type": MATCH_KEYWORD, "text": "x"}})
     assert rule.group == DEFAULT_GROUP and rule.enabled is True
+    assert rule.severity == DEFAULT_SEVERITY
     assert rule_to_mapping(rule)["id"] == "a"
+    assert rule_to_mapping(rule)["severity"] == DEFAULT_SEVERITY
+
+
+def test_rule_severity_roundtrip_and_validation() -> None:
+    payload = {"id": "a", "name": "x", "severity": SEVERITY_CRITICAL, "matcher": {"type": MATCH_KEYWORD, "text": "x"}}
+    rule = rule_from_mapping(payload)
+    assert rule.severity == SEVERITY_CRITICAL
+    assert rule_to_mapping(rule)["severity"] == SEVERITY_CRITICAL
+    with pytest.raises(ValueError, match="severity 必须是"):
+        rule_from_mapping({**payload, "severity": "urgent"})
+    with pytest.raises(ValueError, match="severity 必须是"):
+        rule_from_mapping({**payload, "severity": 1})
+    with pytest.raises(ValueError, match="严重级非法"):
+        Rule(id="b", name="y", matcher=Matcher(kind=MATCH_KEYWORD, text="y"), severity="urgent").validate()
+    assert severity_label(SEVERITY_HIGH) == "高"
+    assert severity_label("urgent") == "urgent"
+
+
+def test_builtin_rules_carry_severity() -> None:
+    ruleset = builtin_ruleset()
+    levels = {rule.id: rule.severity for rule in ruleset.rules}
+    assert levels["aws_key"] == SEVERITY_CRITICAL
+    assert levels["private_key"] == SEVERITY_CRITICAL
+    assert levels["cn_id"] == SEVERITY_HIGH
+    assert levels["email"] == SEVERITY_LOW
+    assert all(level in SEVERITY_LEVELS for level in levels.values())
 
 
 def test_ruleset_mapping_rejects_invalid() -> None:

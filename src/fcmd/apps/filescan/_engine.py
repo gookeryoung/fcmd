@@ -351,7 +351,8 @@ class RuleMatch:
     """一条命中：规则、行号与上下文（原文，展示时再打码）。
 
     ``location`` 仅在文档路径下非空（如 ``段落 3`` / ``Sheet1!A12`` / ``幻灯片 2``），
-    纯文本路径保持空串，报告与导出据此保持向后兼容。
+    纯文本路径保持空串，报告与导出据此保持向后兼容。``severity`` 复制自规则，
+    便于报告 / GUI 无需回查规则集即可着色与筛选。
     """
 
     rule_id: str
@@ -363,6 +364,7 @@ class RuleMatch:
     context: str
     context_start: int
     location: str = ""
+    severity: str = ""
 
 
 @dataclass
@@ -808,6 +810,7 @@ def _build_match(  # noqa: PLR0913 - 命中五要素 + 可选位置，拆开反�
     return RuleMatch(
         rule_id=compiled.id,
         rule_name=compiled.name,
+        severity=compiled.severity,
         line_no=line_no,
         start=match.start(),
         end=match.end(),

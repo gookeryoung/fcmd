@@ -95,6 +95,7 @@ def _match_to_mapping(match: RuleMatch) -> dict[str, Any]:
     return {
         "rule_id": match.rule_id,
         "rule_name": match.rule_name,
+        "severity": match.severity,
         "line_no": match.line_no,
         "start": match.start,
         "end": match.end,
@@ -154,6 +155,7 @@ def _matches_value(raw: Any) -> list[RuleMatch]:
             RuleMatch(
                 rule_id=_str(item.get("rule_id")),
                 rule_name=_str(item.get("rule_name")),
+                severity=_str(item.get("severity")),
                 line_no=_int(item.get("line_no")),
                 start=_int(item.get("start")),
                 end=_int(item.get("end")),

@@ -25,9 +25,17 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_GROUP",
     "DEFAULT_RULESET_NAME",
+    "DEFAULT_SEVERITY",
     "MATCH_KEYWORD",
     "MATCH_KINDS",
     "MATCH_REGEX",
+    "SEVERITY_CRITICAL",
+    "SEVERITY_HIGH",
+    "SEVERITY_INFO",
+    "SEVERITY_LABELS",
+    "SEVERITY_LEVELS",
+    "SEVERITY_LOW",
+    "SEVERITY_MEDIUM",
     "AndExpr",
     "CompiledRule",
     "Expr",
@@ -53,6 +61,7 @@ __all__ = [
     "ruleset_from_mapping",
     "ruleset_to_mapping",
     "save_ruleset",
+    "severity_label",
 ]
 
 DEFAULT_GROUP = "内置"
@@ -61,6 +70,37 @@ DEFAULT_RULESET_NAME = "内置敏感规则"
 MATCH_KEYWORD = "keyword"
 MATCH_REGEX = "regex"
 MATCH_KINDS: tuple[str, ...] = (MATCH_KEYWORD, MATCH_REGEX)
+
+SEVERITY_INFO = "info"
+SEVERITY_LOW = "low"
+SEVERITY_MEDIUM = "medium"
+SEVERITY_HIGH = "high"
+SEVERITY_CRITICAL = "critical"
+SEVERITY_LEVELS: tuple[str, ...] = (
+    SEVERITY_INFO,
+    SEVERITY_LOW,
+    SEVERITY_MEDIUM,
+    SEVERITY_HIGH,
+    SEVERITY_CRITICAL,
+)
+"""严重级由低到高；用于报告列、CSV / JSON 导出与 GUI 筛选 / 着色。"""
+
+DEFAULT_SEVERITY = SEVERITY_MEDIUM
+
+SEVERITY_LABELS: dict[str, str] = {
+    SEVERITY_INFO: "提示",
+    SEVERITY_LOW: "低",
+    SEVERITY_MEDIUM: "中",
+    SEVERITY_HIGH: "高",
+    SEVERITY_CRITICAL: "严重",
+}
+"""严重级中文标签（文本报告、CSV 与 GUI 展示用；JSON 保留英文枚举值）。"""
+
+
+def severity_label(value: str) -> str:
+    """返回严重级的中文标签；未知值原样返回，避免展示层因脏数据崩溃。"""
+    return SEVERITY_LABELS.get(value, value)
+
 
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 _KEYWORDS = frozenset({"and", "or", "not"})
@@ -142,13 +182,16 @@ class Rule:
     matcher: Matcher
     group: str = DEFAULT_GROUP
     enabled: bool = True
+    severity: str = DEFAULT_SEVERITY
 
     def validate(self) -> None:
-        """校验规则 id / 名称 / 匹配器。"""
+        """校验规则 id / 名称 / 严重级 / 匹配器。"""
         if not _IDENT_RE.fullmatch(self.id):
             raise ValueError(f"规则 id 非法（{self.id!r}）：只允许字母、数字、下划线、点与连字符，且以字母或下划线开头")
         if not self.name:
             raise ValueError(f"规则 {self.id!r} 缺少名称")
+        if self.severity not in SEVERITY_LEVELS:
+            raise ValueError(f"规则 {self.id!r} 的严重级非法（{self.severity!r}）：只支持 {'/'.join(SEVERITY_LEVELS)}")
         self.matcher.validate()
 
 
@@ -166,6 +209,10 @@ class CompiledRule:
     @property
     def name(self) -> str:
         return self.rule.name
+
+    @property
+    def severity(self) -> str:
+        return self.rule.severity
 
 
 def compile_rule(rule: Rule) -> CompiledRule:
@@ -482,6 +529,7 @@ def rule_to_mapping(rule: Rule) -> dict[str, Any]:
         "name": rule.name,
         "group": rule.group,
         "enabled": rule.enabled,
+        "severity": rule.severity,
         "matcher": matcher_to_mapping(rule.matcher),
     }
 
@@ -494,6 +542,7 @@ def rule_from_mapping(raw: Any, *, index: int = 0) -> Rule:
     name = raw.get("name")
     group = raw.get("group", DEFAULT_GROUP)
     enabled = raw.get("enabled", True)
+    severity = raw.get("severity", DEFAULT_SEVERITY)
     if not isinstance(rule_id, str) or not rule_id:
         raise ValueError(f"第 {index + 1} 条规则缺少字符串 id")
     if not isinstance(name, str):
@@ -502,6 +551,8 @@ def rule_from_mapping(raw: Any, *, index: int = 0) -> Rule:
         raise ValueError(f"规则 {rule_id!r} 的 group 必须是非空字符串")
     if not isinstance(enabled, bool):
         raise ValueError(f"规则 {rule_id!r} 的 enabled 必须是布尔值")
+    if not isinstance(severity, str) or severity not in SEVERITY_LEVELS:
+        raise ValueError(f"规则 {rule_id!r} 的 severity 必须是 {'/'.join(SEVERITY_LEVELS)} 之一，实际为 {severity!r}")
     if "matcher" not in raw:
         raise ValueError(f"规则 {rule_id!r} 缺少 matcher")
     rule = Rule(
@@ -510,6 +561,7 @@ def rule_from_mapping(raw: Any, *, index: int = 0) -> Rule:
         matcher=matcher_from_mapping(raw["matcher"]),
         group=group,
         enabled=enabled,
+        severity=severity,
     )
     rule.validate()
     return rule
@@ -588,6 +640,7 @@ def _builtin_rules() -> tuple[Rule, ...]:
             id="cn_id",
             name="身份证号",
             group="个人信息",
+            severity=SEVERITY_HIGH,
             matcher=Matcher(
                 kind=MATCH_REGEX,
                 pattern=r"(?<![0-9A-Za-z])[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![0-9A-Za-z])",
@@ -597,24 +650,28 @@ def _builtin_rules() -> tuple[Rule, ...]:
             id="cn_phone",
             name="手机号",
             group="联系方式",
+            severity=SEVERITY_MEDIUM,
             matcher=Matcher(kind=MATCH_REGEX, pattern=r"(?<!\d)1[3-9]\d{9}(?!\d)"),
         ),
         Rule(
             id="email",
             name="邮箱地址",
             group="联系方式",
+            severity=SEVERITY_LOW,
             matcher=Matcher(kind=MATCH_REGEX, pattern=r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
         ),
         Rule(
             id="bank_card",
             name="银行卡号",
             group="财务信息",
+            severity=SEVERITY_HIGH,
             matcher=Matcher(kind=MATCH_REGEX, pattern=r"(?<!\d)(?:62|4\d|5[1-5])\d{13,17}(?!\d)"),
         ),
         Rule(
             id="api_key",
             name="API Key / 访问令牌",
             group="凭证",
+            severity=SEVERITY_HIGH,
             matcher=Matcher(
                 kind=MATCH_REGEX,
                 pattern=r"\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*[\"']?[A-Za-z0-9_\-.]{12,}",
@@ -625,12 +682,14 @@ def _builtin_rules() -> tuple[Rule, ...]:
             id="aws_key",
             name="AWS 访问密钥",
             group="凭证",
+            severity=SEVERITY_CRITICAL,
             matcher=Matcher(kind=MATCH_REGEX, pattern=r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
         ),
         Rule(
             id="private_key",
             name="私钥头",
             group="凭证",
+            severity=SEVERITY_CRITICAL,
             matcher=Matcher(
                 kind=MATCH_REGEX,
                 pattern=r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----",

@@ -7,6 +7,10 @@
 
 ### 变更
 
+- `filescan` 规则新增严重级 `severity`（`info` / `low` / `medium` / `high` / `critical`，
+  默认 `medium`，旧规则集自动补齐）：文本报告以「【高】」标注、CSV 增加「严重级」
+  列（中文标签）、JSON 输出英文枚举；GUI 结果树新增严重级列并按主题色着色
+  （严重 / 高 / 中 / 低），支持按严重级筛选，规则表与编辑对话框均展示 / 可改严重级。
 - `filescan` 新增扫描范围剪枝：内置跳过目录列表（`.git` / `node_modules` /
   `__pycache__` / `.venv` / `dist` / `build` 等，含斜杠条目按相对根目录路径后缀
   匹配），默认生效、可在设置页 / 配置 / CLI（`--skip-dir`）整体替换，空列表表示
