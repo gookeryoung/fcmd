@@ -57,4 +57,6 @@
 | [0050](0050-shared-ui-persistence.md) | GUI 数据持久化共用方案：设置 / 路径历史 / 最近文件 / 界面状态 / 防抖写盘，`ui/` 与 `cache/` 分层 | P0 / P1 已落地，P2 部分落地 |
 | [0051](0051-envdev-app-and-shared-mirrors.md) | envdev 迁入 `apps/envdev`；镜像站 / 加速前缀 / 候选排序 / 配置模板抽到 `infras/net/mirrors.py`，业务数据留应用 | 已落地 |
 | [0052](0052-help-doc-components.md) | 帮助文档通用组件：`shared/helpdoc` 数据层、`ToolSpec.help_sections`、`gui/help` 帮助窗口与菜单混入、包内 Markdown 单一来源 | 已落地 |
+| [0053](0053-help-dialog-visual-polish.md) | 帮助窗口视觉美化：顶部导航 + 无面板目录树 / 正文 + 1px 分隔线，Markdown 正文主题化，`Ctrl+F` 与目录滚动联动 | 已落地（P0 / P1） |
+| [0054](0054-quiet-splitter.md) | 公共分栏手柄 `QuietSplitter`：透明 4px handle + hover 强调色，`make_splitter` 默认使用，llmw 与应用分栏统一 | 已落地 |
 | [0055](0055-pptmake-editing-experience.md) | pptmake 布局设计与编辑体验升级：缩略图排序器 / 撤销 / 内容模型 v3 / 导出生态（S0–S3） | S0 已落地，S1–S3 待办 |

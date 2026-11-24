@@ -58,6 +58,7 @@ from fcmd.gui.widgets import (
     PillTabBar,
     ProgressBar,
     ProgressRow,
+    QuietSplitter,
     RowDetailMixin,
     RowListWidget,
     SectionHeader,
@@ -72,6 +73,7 @@ from fcmd.gui.widgets import (
     hint_label,
     icon_button,
     link_button,
+    make_splitter,
     mono_label,
     pill_tabs,
     segment_band,
@@ -1258,3 +1260,22 @@ def test_disk_grid_is_reusable_for_any_directory_list() -> None:
         assert add and add[0].text() == "添加工作目录"
     finally:
         grid.deleteLater()
+
+
+def test_make_splitter_defaults_to_quiet_handle() -> None:
+    """公共分栏默认走 llmw 口径：QuietSplitter + 4px 透明手柄。"""
+    from fcmd.gui.widgets.splitter import QUIET_HANDLE_WIDTH
+
+    parent = QWidget()
+    try:
+        splitter = make_splitter(Qt.Orientation.Horizontal, parent=parent)
+        assert isinstance(splitter, QuietSplitter)
+        assert splitter.objectName() == "QuietSplitter"
+        assert splitter.handleWidth() == QUIET_HANDLE_WIDTH
+        assert splitter.childrenCollapsible() is False
+
+        legacy = make_splitter(Qt.Orientation.Horizontal, parent=parent, quiet=False)
+        assert not isinstance(legacy, QuietSplitter)
+        assert legacy.handleWidth() == QUIET_HANDLE_WIDTH
+    finally:
+        parent.deleteLater()

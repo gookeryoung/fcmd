@@ -2651,7 +2651,7 @@ def test_chat_sidebar_width_is_resizable_and_persisted(window: Any) -> None:
     chat = window.page("chat")
     splitter = chat._splitter
     assert splitter.orientation() == Qt.Orientation.Horizontal
-    assert splitter.objectName() == "ChatSplitter"
+    assert splitter.objectName() == "QuietSplitter"
     assert splitter.handleWidth() == 4
     assert chat.sidebar.minimumWidth() == 120
     assert chat.sidebar.maximumWidth() == 480

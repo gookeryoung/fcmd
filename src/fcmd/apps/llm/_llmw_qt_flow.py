@@ -233,7 +233,6 @@ class WorkflowPage(AppPage):  # pragma: no cover - Qt 控件
     def _build(self) -> None:
         """左侧工作流列表 + 右侧配置 / 推荐 / 节点链。"""
         splitter = make_splitter(Qt.Orientation.Horizontal, sizes=(220, 880), parent=self)
-        splitter.setObjectName("ChatSplitter")
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         self.body.addWidget(splitter, 1)

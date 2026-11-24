@@ -363,8 +363,6 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
             sizes=(0 if self._sidebar_collapsed else self._sidebar_width, 760),
             parent=self,
         )
-        self._splitter.setObjectName("ChatSplitter")
-        self._splitter.setHandleWidth(4)
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
         outer.addWidget(self._splitter, 1)

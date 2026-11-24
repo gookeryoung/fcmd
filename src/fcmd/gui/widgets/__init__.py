@@ -71,7 +71,7 @@ from fcmd.gui.widgets.metrics import (
 from fcmd.gui.widgets.responsive import ContentHeightGuard, ResponsiveLabel, fit_flow_widths
 from fcmd.gui.widgets.rows import ItemRow, RowDetailMixin, RowListWidget, SelectionRow
 from fcmd.gui.widgets.sidebar_list import SidebarActionButton, SidebarEntry, SidebarList
-from fcmd.gui.widgets.splitter import apply_splitter_sizes, make_splitter, splitter_sizes
+from fcmd.gui.widgets.splitter import QuietSplitter, apply_splitter_sizes, make_splitter, splitter_sizes
 from fcmd.gui.widgets.storage import (
     DiskAddTile,
     DiskGrid,
@@ -130,6 +130,7 @@ __all__ = [
     "PillTabBar",
     "ProgressBar",
     "ProgressRow",
+    "QuietSplitter",
     "ResponsiveLabel",
     "RowDetailMixin",
     "RowListWidget",

@@ -85,6 +85,15 @@ def test_stylesheet_contains_expected_selectors() -> None:
         "QPushButton#Danger",
         "QPushButton#NavButton",
         "QToolButton#SidebarToggle",
+        "QFrame#HelpTopNav",
+        "QLabel#HelpBreadcrumb",
+        "QLabel#HelpTitle",
+        "QLineEdit#HelpSearch",
+        "QSplitter#HelpSplitter::handle",
+        "QLabel#HelpSidebarTitle",
+        "QTreeWidget#HelpToc",
+        "QTextBrowser#HelpBody",
+        "QSplitter#QuietSplitter::handle",
     ):
         assert selector in text
     assert f"{theme.fonts.body}pt" in text

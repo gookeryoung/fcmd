@@ -7,6 +7,13 @@
 
 ### 变更
 
+- GUI 分栏手柄统一为 `QuietSplitter`：`make_splitter()` 默认返回 4px 透明手柄，
+  hover / 拖动时显示强调色；llmw 对话与工作流去掉 `ChatSplitter` 自定义，
+  帮助窗口及其它分栏页面自动使用同一口径（ADR 0054）。
+- 帮助窗口视觉美化：改为「顶部导航 + 左侧文档栏 + 右侧正文」的 Web 文档站布局，
+  搜索收进顶部导航，目录与正文不套面板、只用 1px 分隔线区分，目录改为可展开收起的树、只保留节数（摘要留在正文）；移除顶部
+  不可用的文档操作按钮与底部快捷键提示；Markdown 标题、代码块、表格、链接按主题注入，
+  搜索支持 `Ctrl+F` 与正文高亮，目录随正文滚动联动（ADR 0053）。
 - 新增 GUI 自适应公共组件 `fcmd.gui.widgets.responsive`：`ContentHeightGuard`
   统一按内容抬高窗口最小高度避免滚动条，`ResponsiveLabel` 按 owner 宽度缩放字号，
   `fit_flow_widths` 让流式按钮按可用宽度均分；alarmclock 已迁移到这套组件。

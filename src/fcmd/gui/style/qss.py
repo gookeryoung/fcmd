@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from string import Template
 
+from .qss_help import HELP_QSS
+
 _QSS = Template(
     """
 QWidget { color: $text; font-size: ${font_body}pt; }
@@ -228,8 +230,9 @@ QFrame#ChatSidebar {
     border: none;
     border-radius: 0;
 }
-QSplitter#ChatSplitter::handle { background: transparent; }
-QSplitter#ChatSplitter::handle:hover { background: $accent_soft; }
+QSplitter#QuietSplitter::handle { background: transparent; }
+QSplitter#QuietSplitter::handle:hover { background: $accent_soft; }
+QSplitter#QuietSplitter::handle:pressed { background: $accent_soft_strong; }
 /* 通用侧边栏列表：条目由 SidebarList 的 delegate 自绘，这里只保留透明底。 */
 QListWidget#SidebarList { background: transparent; border: none; outline: 0; padding: 0; }
 /* 侧边栏主操作：与条目同宽同圆角，但底色更实、边框更深，和纯文字条目区分。 */
@@ -679,7 +682,11 @@ QFrame#ActionBar {
     background: $background;
     border-top: 1px solid $border;
 }
-QSplitter::handle { background: $border; }
+/* 通用分栏手柄：常态透明，hover / 拖动才浮出强调色；需要常驻线的页面由两侧
+   卡片自身边框承担，不再画一条贯穿整窗的粗线。 */
+QSplitter::handle { background: transparent; }
+QSplitter::handle:hover { background: $accent_soft; }
+QSplitter::handle:pressed { background: $accent_soft_strong; }
 QFrame#Sidebar { background: $surface; border-right: 1px solid $border; }
 QListWidget[rowList="true"] { background: transparent; border: none; outline: 0; }
 QListWidget[rowList="true"]::item {
@@ -779,3 +786,5 @@ QLabel#ScoreBadge[band="fair"] { color: $on_accent; background: $warning; border
 QLabel#ScoreBadge[band="limited"] { color: $on_accent; background: $danger; border-color: $danger; }
 """
 )
+
+_QSS = Template(_QSS.template + HELP_QSS)
