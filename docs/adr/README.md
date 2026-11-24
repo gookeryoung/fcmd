@@ -54,4 +54,4 @@
 | [0047](0047-confirm-gate-and-filetime.md) | 破坏性写操作的确认闸门（`requires_confirmation` + `--confirm`）与 `filetime` 工具（mtime/atime 读/写）；schema 增加 `json` / `requires_confirmation` 标记 | 已落地 |
 | [0048](0048-config-format-convert.md) | 配置格式跨转换：`tomltool convert`（TOML → JSON/YAML）与 `yamtool convert`（YAML → JSON/TOML），自实现 `to_toml` 写方向序列化 | 已落地 |
 | [0049](0049-small-readonly-gaps.md) | 小型只读能力补齐：`env --vars [--prefix]`、`pathtool join` / `kind`、`completion powershell`、`txttool count` 字节数、`stattool percentile` | 已落地 |
-| [0050](0050-shared-ui-persistence.md) | GUI 数据持久化共用方案：设置 / 路径历史 / 最近文件 / 界面状态 / 防抖写盘，`ui/` 与 `cache/` 分层 | P0 已落地（P1 / P2 待办） |
+| [0050](0050-shared-ui-persistence.md) | GUI 数据持久化共用方案：设置 / 路径历史 / 最近文件 / 界面状态 / 防抖写盘，`ui/` 与 `cache/` 分层 | P0 / P1 已落地，P2 部分落地 |

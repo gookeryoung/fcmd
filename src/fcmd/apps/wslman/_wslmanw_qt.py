@@ -27,6 +27,7 @@ import contextlib
 import shutil
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -283,6 +284,7 @@ class WslmanQtWindow(
             page = builders[spec.key]()
             page.hide()
             factories[spec.key] = lambda page=page: page
+        saved_page = self.settings.active_page
         self.add_pages(PAGES, factories)
         # 实例行要注明对应的在线镜像：启动时先把镜像缓存回显出来（同步读盘，
         # 只有几十 KB），镜像页进入时再按 30 分钟新鲜度决定是否联网刷新。
@@ -291,6 +293,8 @@ class WslmanQtWindow(
         self._images_cache_fresh = cache is not None and (time.time() - cache.fetched_at <= _images.CACHE_TTL_SECONDS)
         self._schedule_poll()
         self.refresh()
+        if saved_page in {spec.key for spec in PAGES} and saved_page != "distros":
+            self.show_page(saved_page)
         note = w.legacy_dir_note(self.settings)
         if note:
             self._log(f"[设置] {note}")
@@ -309,6 +313,8 @@ class WslmanQtWindow(
             super().show_page(key)
         finally:
             self._switching_page = False
+        if key in {spec.key for spec in PAGES}:
+            self.settings = replace(self.settings, active_page=key)
         if key == "images":
             self._open_images_page()
         elif key == "files":

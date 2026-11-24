@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from fcmd import __version__
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.uistate import dialog_remember, dialog_start
 from fcmd.gui.widgets import Card, ElidedLabel, FormGrid, ProgressRow, button, hint_label
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.media.img2icow import (
@@ -83,6 +84,8 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def __init__(self) -> None:
         self._settings = load_settings()
+        self._last_open_dir = self._settings.last_open_dir
+        self._last_save_dir = self._settings.last_save_dir
         self._busy = False
         self._bridge: EventBridge | None = None
         super().__init__(
@@ -193,13 +196,20 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 选择路径
     # ------------------------------------------------------------------ #
     def _browse_input_file(self) -> None:
-        filename, _ = QFileDialog.getOpenFileName(self, "选择输入图像", self._input.text(), _IMAGE_FILTER)
+        start = dialog_start(self._last_open_dir) or self._input.text()
+        filename, _ = QFileDialog.getOpenFileName(self, "选择输入图像", start, _IMAGE_FILTER)
         if filename:
+            self._last_open_dir = dialog_remember(filename)
             self._input.setText(filename)
 
     def _browse_input_dir(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "选择输入目录", self._input.text())
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "选择输入目录",
+            dialog_start(self._last_open_dir) or self._input.text(),
+        )
         if directory:
+            self._last_open_dir = dialog_remember(directory)
             self._input.setText(directory)
 
     def _browse_output(self) -> None:
@@ -207,12 +217,19 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         raw_input = self._input.text().strip()
         input_path = Path(raw_input).expanduser() if raw_input else None
         if input_path is not None and input_path.is_dir():
-            directory = QFileDialog.getExistingDirectory(self, "选择输出目录", self._output.text())
+            directory = QFileDialog.getExistingDirectory(
+                self,
+                "选择输出目录",
+                dialog_start(self._last_save_dir) or self._output.text(),
+            )
             if directory:
+                self._last_save_dir = dialog_remember(directory)
                 self._output.setText(directory)
             return
 
-        initial_dir = str(input_path.parent) if input_path is not None and input_path.parent.exists() else ""
+        initial_dir = dialog_start(self._last_save_dir) or (
+            str(input_path.parent) if input_path is not None and input_path.parent.exists() else ""
+        )
         initial_file = f"{input_path.stem}.ico" if input_path is not None else "icon.ico"
         filename, _ = QFileDialog.getSaveFileName(
             self,
@@ -221,6 +238,7 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             "ICO 图标 (*.ico);;所有文件 (*.*)",
         )
         if filename:
+            self._last_save_dir = dialog_remember(filename)
             self._output.setText(filename)
 
     # ------------------------------------------------------------------ #
@@ -318,6 +336,8 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
                 output_path=self._output.text(),
                 sizes=self._sizes.text(),
                 quality=self._quality.currentText(),
+                last_open_dir=self._last_open_dir,
+                last_save_dir=self._last_save_dir,
                 geometry=geometry,
             )
         )

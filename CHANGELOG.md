@@ -7,6 +7,13 @@
 
 ### 变更
 
+- GUI 持久化共享方案 P2（ADR 0050 部分落地）：`SettingsStore` 自动写入
+  `schema_version: 1`（旧文件缺失按 1 读取）；新增 `cache_path` 统一缓存目录；
+  pevieww / renamerw / img2icow / filesyncw / reshackw 记住最近打开 / 保存目录，
+  下次打开对话框直接落位。
+- GUI 持久化共享方案 P1（ADR 0050）：`WindowState` 统一页面 / 尺寸状态校验；
+  filescanw 重开恢复当前页与结果树列宽，llmw / wslmanw 恢复当前页，cmderw 恢复
+  双面板 / 快速查看分栏宽度。
 - GUI 持久化共享方案 P0（ADR 0050）：新增 `fcmd.gui.uistate`
   （`PathHistory` / `RecentFiles` / `DebouncedSaver`）；filescanw 的对话框目录改用
   `PathHistory`，pevieww 的最近文件改用共享去重 / 截断规则（Windows 大小写不敏感）。

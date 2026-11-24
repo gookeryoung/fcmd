@@ -87,7 +87,9 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._settings_page: Any = None
         self._bench_dialog: Any = None
 
+        saved_page = self.state.settings.active_page
         self.add_pages(PAGES, {spec.key: self._factory(spec.key) for spec in PAGES})
+        self.show_page(saved_page if any(spec.key == saved_page for spec in PAGES) else "overview")
 
         self.state.statusText.connect(self.set_status)
         self.state.pageStatus.connect(self.set_page_status)
@@ -245,6 +247,12 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if self._chat_page is not None:
             self._chat_page.refresh_services()
         self.run_page.refresh_paint_assets()
+
+    def show_page(self, key: str) -> None:
+        """切页时记住当前页；关窗时由 ``state.persist`` 写回设置。"""
+        super().show_page(key)
+        if key in {spec.key for spec in PAGES}:
+            self.state.settings.active_page = key
 
     def _persist_sidebar_collapsed(self, collapsed: bool) -> None:
         """折叠状态属于窗口设置，随 ``llmw.json`` 一起持久化。"""

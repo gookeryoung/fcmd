@@ -181,6 +181,7 @@ class TestSettings:
             active="right",
             show_hidden=True,
             geometry="1000x700+10+20",
+            splitter_sizes=[500, 620, 280],
             queue_parallel=3,
         )
         save_settings(settings)
@@ -194,6 +195,7 @@ class TestSettings:
         assert loaded.active == "right"
         assert loaded.show_hidden is True
         assert loaded.geometry == "1000x700+10+20"
+        assert loaded.splitter_sizes == [500, 620, 280]
         assert loaded.queue_parallel == 3
 
     def test_save_and_load_roundtrip_keeps_tab_metadata_and_filter(

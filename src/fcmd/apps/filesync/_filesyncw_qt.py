@@ -72,6 +72,7 @@ from fcmd.apps.filesync.filesyncw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.app import run_window
 from fcmd.gui.page import AppPage, PageSpec
+from fcmd.gui.uistate import dialog_remember, dialog_start
 from fcmd.gui.widgets import (
     Card,
     PageScroll,
@@ -555,9 +556,15 @@ class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # ------------------------------------------------------------------ #
     def _load_profile(self) -> None:
         """从 JSON 文件载入左右目录与选项。"""
-        selected, _ = QFileDialog.getOpenFileName(self, "载入配置", "", _JSON_FILTER)
+        selected, _ = QFileDialog.getOpenFileName(
+            self,
+            "载入配置",
+            dialog_start(self._settings.last_open_dir),
+            _JSON_FILTER,
+        )
         if not selected:
             return
+        self._settings.last_open_dir = dialog_remember(selected)
         raw = _guiconfig.read_settings(Path(selected))
         if raw is None:
             QMessageBox.critical(self, "载入配置", "配置文件无法解析。")
@@ -574,9 +581,16 @@ class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _save_profile(self) -> None:
         """把当前左右目录与选项保存到 JSON 文件。"""
-        selected, _ = QFileDialog.getSaveFileName(self, "保存配置", "filesync.json", _JSON_FILTER)
+        start = dialog_start(self._settings.last_save_dir)
+        selected, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存配置",
+            str(Path(start) / "filesync.json") if start else "filesync.json",
+            _JSON_FILTER,
+        )
         if not selected:
             return
+        self._settings.last_save_dir = dialog_remember(selected)
         if not Path(selected).suffix:
             selected = f"{selected}.json"
         save_settings(self._current_settings(self._settings.geometry), Path(selected))
@@ -597,6 +611,8 @@ class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             exclude=self._exclude.text(),
             skip_hidden=self._skip_hidden.isChecked(),
             show_equal=self._show_equal.isChecked(),
+            last_open_dir=self._settings.last_open_dir,
+            last_save_dir=self._settings.last_save_dir,
             geometry=geometry,
             sidebar_collapsed=self._settings.sidebar_collapsed,
         )

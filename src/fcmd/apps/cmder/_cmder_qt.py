@@ -156,7 +156,7 @@ class CmderQtWindow(QMainWindow):
         self.right_panel = FilePanelWidget(self, self.settings, "right", self.splitter)
         self.splitter.addWidget(self.left_panel)
         self.splitter.addWidget(self.right_panel)
-        self.splitter.setSizes([580, 580])
+        self.splitter.setSizes(self.settings.splitter_sizes if len(self.settings.splitter_sizes) >= 2 else [580, 580])
         # 只记录初始活动面板，激活动作留到 _wire_panels()；那时 quick_view 已建好，
         # set_active() 里的 _update_quick_view() 才不会踩到尚未赋值的属性。
         self.active = self.right_panel if self.settings.active == "right" else self.left_panel
@@ -482,6 +482,7 @@ class CmderQtWindow(QMainWindow):
         self.settings.queue_parallel = self.settings.queue_parallel
         self.settings.command_history = list(self._command_history[-100:])
         self.settings.geometry = self._geometry_text()
+        self.settings.splitter_sizes = list(self.splitter.sizes())
         core.save_settings(self.settings, self.settings_path)
 
     def _geometry_text(self) -> str:

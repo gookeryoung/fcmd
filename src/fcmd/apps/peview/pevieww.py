@@ -65,6 +65,7 @@ class PeviewSettings:
 
     file_path: str = ""
     recent_files: list[str] = field(default_factory=list)
+    last_open_dir: str = ""
     geometry: str | None = None
     splitter: tuple[int, int] | None = None
 
@@ -85,12 +86,15 @@ def load_settings(path: Path | None = None) -> PeviewSettings:
     settings = PeviewSettings()
     file_path = raw.get("file_path")
     recent = raw.get("recent_files")
+    last_open_dir = raw.get("last_open_dir")
     geometry = raw.get("geometry")
     splitter = raw.get("splitter")
     if isinstance(file_path, str):
         settings.file_path = file_path
     if isinstance(recent, list):
         settings.recent_files = normalize_recent(recent, limit=RECENT_LIMIT)
+    if isinstance(last_open_dir, str):
+        settings.last_open_dir = last_open_dir
     if isinstance(geometry, str) and valid_geometry(geometry):
         settings.geometry = geometry
     if isinstance(splitter, list) and len(splitter) == 2 and all(isinstance(item, int) for item in splitter):
@@ -103,6 +107,7 @@ def save_settings(settings: PeviewSettings, path: Path | None = None) -> None:
     payload = {
         "file_path": settings.file_path,
         "recent_files": settings.recent_files,
+        "last_open_dir": settings.last_open_dir,
         "geometry": settings.geometry,
         "splitter": list(settings.splitter) if settings.splitter is not None else None,
     }

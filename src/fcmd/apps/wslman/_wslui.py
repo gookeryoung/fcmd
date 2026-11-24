@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.wslman._mirrors import Candidate
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
-from fcmd.infras.system import fcmd_home
+from fcmd.shared.paths import cache_path as _cache_path
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -140,7 +140,7 @@ class WsluiCatalog:
 
 def cache_path() -> Path:
     """``${FCMD_HOME:-~/.fcmd}/cache/wslman-wslui-mirrors.json``。"""
-    return fcmd_home() / "cache" / "wslman-wslui-mirrors.json"
+    return _cache_path("wslman-wslui-mirrors.json")
 
 
 def _norm(text: str) -> str:

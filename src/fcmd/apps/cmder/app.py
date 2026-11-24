@@ -356,6 +356,7 @@ class CmderSettings:
     active: str = "left"
     show_hidden: bool = False
     geometry: str | None = None
+    splitter_sizes: list[int] = field(default_factory=list)
     theme: str = _guitheme.DEFAULT_THEME_NAME
     left_tabs: list[PanelState] = field(default_factory=list)
     right_tabs: list[PanelState] = field(default_factory=list)
@@ -513,6 +514,11 @@ def load_settings(path: Path | None = None) -> CmderSettings:
     geometry = raw.get("geometry")
     if isinstance(geometry, str):
         settings.geometry = _guiconfig.valid_geometry(geometry)
+    raw_sizes = raw.get("splitter_sizes")
+    if isinstance(raw_sizes, list):
+        sizes = [item for item in raw_sizes if isinstance(item, int) and not isinstance(item, bool) and item > 0]
+        if len(sizes) >= 2:
+            settings.splitter_sizes = sizes
     theme = raw.get("theme")
     settings.theme = _guitheme.resolve_theme(theme if isinstance(theme, str) else None).name
     settings.filter_definition = normalize_filter_definition(raw.get("filter_definition"))
@@ -531,6 +537,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "active": settings.active,
         "show_hidden": settings.show_hidden,
         "geometry": settings.geometry,
+        "splitter_sizes": list(settings.splitter_sizes),
         "theme": settings.theme,
         "left_tabs": [tab.to_dict() for tab in left_tabs],
         "right_tabs": [tab.to_dict() for tab in right_tabs],

@@ -10,6 +10,7 @@ from fcmd.gui.uistate import (
     DebouncedSaver,
     PathHistory,
     RecentFiles,
+    WindowState,
     merge_recent,
     normalize_recent,
 )
@@ -120,3 +121,20 @@ def test_debounced_saver_flushes_once_and_flush_is_immediate() -> None:
     saver.touch()
     saver.cancel()
     assert saver.pending() is False
+
+
+def test_window_state_validates_page_and_sizes() -> None:
+    payload: dict[str, object] = {"active_page": "rules", "result_columns": [260, 60, 52], "bad": "x"}
+    state = WindowState(payload)  # type: ignore[arg-type]
+
+    assert state.choice("active_page", ("scan", "results", "rules"), "scan") == "rules"
+    assert state.choice("active_page", ("scan",), "scan") == "scan"
+    assert state.text("missing", "fallback") == "fallback"
+    assert state.flag("active", True) is True
+    assert state.sizes("result_columns", count=3, default=(300, 56, 48)) == [260, 60, 52]
+    assert state.sizes("missing", count=3, default=(300, 56, 48)) == [300, 56, 48]
+    assert state.sizes("bad", count=1, default=(300,)) == [300]
+
+    state.set("active_page", "results")
+    state.remember_sizes("result_columns", [240, 58, 50])
+    assert payload == {"active_page": "results", "result_columns": [240, 58, 50], "bad": "x"}

@@ -15,7 +15,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-__all__ = ["SettingsStore"]
+SCHEMA_VERSION = 1
+"""设置文件结构版本；新写入文件自动带上，旧文件缺失视为 1。"""
+
+__all__ = ["SCHEMA_VERSION", "SettingsStore"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,5 +45,11 @@ class SettingsStore:
         return _guiconfig.read_settings(self.resolved_path())
 
     def save(self, payload: Mapping[str, Any]) -> None:
-        """原子写入设置并保留 ``.bak``；写入失败静默（关闭路径不应报错）。"""
-        _guiconfig.write_settings(payload, self.resolved_path())
+        """原子写入设置并保留 ``.bak``；自动补 ``schema_version``。
+
+        版本号只用于未来迁移判读，当前解析仍是「逐字段容错」；旧文件没有该字段时
+        按 1 处理，应用不需要改动。
+        """
+        data = dict(payload)
+        data.setdefault("schema_version", SCHEMA_VERSION)
+        _guiconfig.write_settings(data, self.resolved_path())

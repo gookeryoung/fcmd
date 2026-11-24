@@ -54,6 +54,7 @@ class LlmSettings:
     chat_sidebar_width: int = 120
     chat_sidebar_collapsed: bool = False
     sidebar_collapsed: bool = False
+    active_page: str = "overview"
     model_view: dict[str, Any] | None = None
     chat_history: list[dict[str, Any]] | None = None
     chat_active: int = 0
@@ -143,6 +144,9 @@ def load_settings(path: Path | None = None) -> LlmSettings:  # noqa: PLR0912 - é
         chat_active = raw.get("chat_active")
         if isinstance(chat_active, int) and not isinstance(chat_active, bool) and chat_active >= 0:
             settings.chat_active = chat_active
+        active_page = raw.get("active_page")
+        if isinstance(active_page, str) and active_page.strip():
+            settings.active_page = active_page.strip()
         paint = raw.get("paint")
         if isinstance(paint, dict):
             settings.paint = paint
@@ -170,6 +174,7 @@ def save_settings(settings: LlmSettings, path: Path | None = None) -> None:
             "model_view": settings.model_view,
             "chat_history": settings.chat_history,
             "chat_active": settings.chat_active,
+            "active_page": settings.active_page,
             "paint": settings.paint,
         },
     )

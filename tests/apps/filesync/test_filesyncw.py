@@ -41,6 +41,8 @@ def test_save_and_load_roundtrip(tmp_path: Path) -> None:
         exclude="tmp",
         skip_hidden=True,
         show_equal=True,
+        last_open_dir="D:/in",
+        last_save_dir="D:/out",
         geometry="1000x700+10+20",
     )
     filesyncw.save_settings(settings, path)

@@ -1,6 +1,6 @@
 # 0050 GUI 数据持久化共用方案：设置、界面状态与路径历史
 
-- 状态：P0 已落地（P1 / P2 待办）
+- 状态：P0 / P1 已落地，P2 部分落地
 - 日期：2026-11-24
 - 关联：[0042](0042-shared-gui-shell-and-theme.md)（GUI 外壳）、[0046](0046-large-qt-app-split.md)（状态归属）、
   [0019](0019-filescan.md)（filescan 已落地部分）、[0018](0018-peview.md)（recent_files）
@@ -107,5 +107,15 @@ saver.flush()
 - P0：已落地（`src/fcmd/gui/uistate.py` 提供 `PathHistory` / `RecentFiles` /
   `DebouncedSaver`；filescanw 的对话框目录改走 `PathHistory`，peview 的最近文件改走
   `merge_recent` / `normalize_recent`；单测见 `tests/gui/test_uistate.py`）。
-- P1：待办（`WindowState` 与页面 / 列宽恢复）。
-- P2：待办（各文件工具接入、`ui/` 与 `cache/` 边界清理、`schema_version` 迁移）。
+- P1：已落地（`WindowState` 提供页面 / 尺寸校验；filescanw 恢复当前页与结果树
+  前三列宽度，llmw / wslmanw 恢复当前页，cmderw 恢复双面板 / 快速查看分栏尺寸）。
+  页签 / 全部表格列宽与剩余窗口的接入沿用同一 API，按触达继续补齐。
+- P2：部分落地。
+  - `SettingsStore.save` 自动补 `schema_version: 1`；旧文件缺失按 1 读取，迁移测试见
+    `tests/gui/test_config.py`。
+  - 新增 `shared.paths.cache_path`，filescan / gguf 精度 / llmw 模型列表 / wslman
+    镜像与 wslui 缓存统一落到 `cache/`，不再各自拼路径。
+  - pevieww、renamerw、img2icow、filesyncw、reshackw 接入最近打开 / 保存目录；
+    ncmconvertw 原生的 `last_input_dir` 保持兼容。pdf / office / pptmake /
+    paramcad / paramesh 等工具已持久化 input/output 或 last_dir，对话框直接沿用
+    这些字段；后续若出现多条路径分叉再补独立 `last_open_dir` / `last_save_dir`。

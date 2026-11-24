@@ -294,6 +294,7 @@ class WslmanwSettings:
     max_downloads: int = DEFAULT_MAX_DOWNLOADS
     """镜像并发下载上限；队列里超出上限的条目保持「排队中」。"""
     sidebar_collapsed: bool = False
+    active_page: str = "distros"
     image_filter: str = DEFAULT_IMAGE_FILTER
     image_sort: str = DEFAULT_IMAGE_SORT
     image_source: str = DEFAULT_IMAGE_SOURCE
@@ -335,6 +336,7 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "mirror": settings.mirror,
         "max_downloads": settings.max_downloads,
         "sidebar_collapsed": settings.sidebar_collapsed,
+        "active_page": settings.active_page,
         "image_filter": settings.image_filter,
         "image_sort": settings.image_sort,
         "image_source": settings.image_source,
@@ -376,6 +378,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         mirror=mirror if mirror in _mirrors.identifiers() else "auto",
         max_downloads=download_limit(raw.get("max_downloads")),
         sidebar_collapsed=collapsed is True,
+        active_page=_str(raw, "active_page") or "distros",
         image_filter=_choice(raw, "image_filter", IMAGE_FILTERS, DEFAULT_IMAGE_FILTER),
         image_sort=_choice(raw, "image_sort", IMAGE_SORTS, DEFAULT_IMAGE_SORT),
         image_source=_choice(raw, "image_source", IMAGE_SOURCES, DEFAULT_IMAGE_SOURCE),

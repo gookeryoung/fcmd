@@ -81,6 +81,7 @@ from fcmd.apps.renamer.renamerw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.uistate import dialog_remember, dialog_start
 from fcmd.gui.widgets import (
     Card,
     button,
@@ -558,16 +559,26 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         return list(unique_paths(expanded))
 
     def _add_files(self) -> None:
-        selected, _filter = QFileDialog.getOpenFileNames(self, "选择待重命名文件")
+        selected, _filter = QFileDialog.getOpenFileNames(
+            self,
+            "选择待重命名文件",
+            dialog_start(self._settings.last_open_dir),
+        )
         if not selected:
             return
+        self._settings.last_open_dir = dialog_remember(selected[0])
         self._append_targets([Path(item) for item in selected])
         self._refresh_preview()
 
     def _add_dir(self) -> None:
-        selected = QFileDialog.getExistingDirectory(self, "选择目录（按当前递归 / 包含目录选项展开）")
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "选择目录（按当前递归 / 包含目录选项展开）",
+            dialog_start(self._settings.last_open_dir),
+        )
         if not selected:
             return
+        self._settings.last_open_dir = dialog_remember(selected)
         added = self._append_targets(self._expand_paths([Path(selected)]))
         self._refresh_preview()
         if not added:
@@ -704,11 +715,14 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         selected, _filter = QFileDialog.getSaveFileName(
             self,
             "保存规则",
-            "rename-rules.json",
+            str(Path(start) / "rename-rules.json")
+            if (start := dialog_start(self._settings.last_save_dir))
+            else "rename-rules.json",
             "JSON 规则 (*.json);;所有文件 (*.*)",
         )
         if not selected:
             return
+        self._settings.last_save_dir = dialog_remember(selected)
         try:
             Path(selected).write_text(rules_to_text(self._rules), encoding="utf-8")
         except OSError as exc:
@@ -720,11 +734,12 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         selected, _filter = QFileDialog.getOpenFileName(
             self,
             "载入规则",
-            "",
+            dialog_start(self._settings.last_open_dir),
             "JSON 规则 (*.json);;所有文件 (*.*)",
         )
         if not selected:
             return
+        self._settings.last_open_dir = dialog_remember(selected)
         try:
             self._rules = list(rules_from_text(Path(selected).read_text(encoding="utf-8")))
         except (OSError, RuleError) as exc:

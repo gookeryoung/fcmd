@@ -51,6 +51,7 @@ from fcmd.apps.peview.pevieww import (
 from fcmd.gui.app import run_window
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.toolwindow import QtToolWindow
+from fcmd.gui.uistate import dialog_remember, dialog_start
 from fcmd.gui.widgets import (
     ElidedLabel,
     apply_splitter_sizes,
@@ -312,7 +313,12 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 加载与展示
     # ------------------------------------------------------------------ #
     def _choose_file(self) -> None:
-        chosen, _ = QFileDialog.getOpenFileName(self, "选择 PE 文件", "", _PE_FILTER)
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 PE 文件",
+            dialog_start(self._settings.last_open_dir),
+            _PE_FILTER,
+        )
         if chosen:
             self._load_file(Path(chosen))
 
@@ -345,6 +351,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._current_file = path
         self._settings.file_path = str(path)
         self._settings.recent_files = add_recent_file(self._settings.recent_files, path)
+        self._settings.last_open_dir = dialog_remember(path)
         self._refresh_recent_menu()
         self.setWindowTitle(f"PE 查看器 v{__version__} - {path.name}")
         self._path_label.setText(str(path))

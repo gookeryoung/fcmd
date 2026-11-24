@@ -100,6 +100,8 @@ class ReshackSettings:
 
     file_path: str = ""
     recent_files: list[str] = field(default_factory=list)
+    last_open_dir: str = ""
+    last_save_dir: str = ""
     sidebar_collapsed: bool = False
     geometry: str | None = None
 
@@ -123,11 +125,17 @@ def load_settings(path: Path | None = None) -> ReshackSettings:
     settings = ReshackSettings()
     file_path = raw.get("file_path")
     recent = raw.get("recent_files")
+    last_open_dir = raw.get("last_open_dir")
+    last_save_dir = raw.get("last_save_dir")
     geometry = raw.get("geometry")
     if isinstance(file_path, str):
         settings.file_path = file_path
     if isinstance(recent, list):
         settings.recent_files = [item for item in recent if isinstance(item, str)][:RECENT_LIMIT]
+    if isinstance(last_open_dir, str):
+        settings.last_open_dir = last_open_dir
+    if isinstance(last_save_dir, str):
+        settings.last_save_dir = last_save_dir
     if isinstance(geometry, str) and valid_geometry(geometry):
         settings.geometry = geometry
     if raw.get("sidebar_collapsed") is True:
@@ -140,6 +148,8 @@ def save_settings(settings: ReshackSettings, path: Path | None = None) -> None:
     payload = {
         "file_path": settings.file_path,
         "recent_files": settings.recent_files,
+        "last_open_dir": settings.last_open_dir,
+        "last_save_dir": settings.last_save_dir,
         "sidebar_collapsed": settings.sidebar_collapsed,
         "geometry": settings.geometry,
     }

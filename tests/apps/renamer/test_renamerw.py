@@ -88,6 +88,8 @@ def test_settings_mapping_roundtrip() -> None:
         recursive=True,
         include_dirs=True,
         sort_key="modified",
+        last_open_dir="/data/in",
+        last_save_dir="/data/out",
         geometry="1000x700+10+10",
     )
     restored = renamerw.settings_from_mapping(renamerw.settings_to_mapping(settings))

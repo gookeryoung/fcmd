@@ -48,6 +48,7 @@ def test_save_and_load_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     settings = wslmanw.WslmanwSettings(
         geometry="1100x720+20+30",
+        active_page="images",
         download_dir=r"D:\WSL\downloads",
         backup_dir=r"D:/WSL/backups",
     )
@@ -110,6 +111,7 @@ def test_settings_mapping_is_json_friendly() -> None:
         "mirror": "auto",
         "max_downloads": 2,
         "sidebar_collapsed": False,
+        "active_page": "distros",
         "image_filter": "all",
         "image_sort": "name",
         "image_source": "all",

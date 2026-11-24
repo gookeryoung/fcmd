@@ -90,6 +90,8 @@ class FilesyncSettings:
     exclude: str = ""
     skip_hidden: bool = False
     show_equal: bool = False
+    last_open_dir: str = ""
+    last_save_dir: str = ""
     geometry: str | None = None
     sidebar_collapsed: bool = False
 
@@ -105,6 +107,8 @@ def settings_to_mapping(settings: FilesyncSettings) -> dict[str, Any]:
         "exclude": settings.exclude,
         "skip_hidden": settings.skip_hidden,
         "show_equal": settings.show_equal,
+        "last_open_dir": settings.last_open_dir,
+        "last_save_dir": settings.last_save_dir,
         "geometry": settings.geometry,
         "sidebar_collapsed": settings.sidebar_collapsed,
     }
@@ -138,6 +142,10 @@ def settings_from_mapping(
     for name in ("skip_hidden", "show_equal", "sidebar_collapsed"):
         value = raw.get(name)
         if isinstance(value, bool):
+            setattr(settings, name, value)
+    for name in ("last_open_dir", "last_save_dir"):
+        value = raw.get(name)
+        if isinstance(value, str):
             setattr(settings, name, value)
     geometry = raw.get("geometry")
     settings.geometry = geometry if isinstance(geometry, str) and valid_geometry(geometry) else None

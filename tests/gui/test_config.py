@@ -94,3 +94,25 @@ class TestSettingsIO:
         _guiconfig._backup_path(path).mkdir()
         _guiconfig.write_settings({"v": 2}, path)
         assert _guiconfig.read_settings(path) == {"v": 2}
+
+
+class TestSettingsStoreSchema:
+    def test_save_adds_schema_version_and_keeps_payload(self, tmp_path: Path) -> None:
+        from fcmd.gui.settings import SCHEMA_VERSION, SettingsStore
+
+        path = tmp_path / "ui" / "demo.json"
+        SettingsStore("demo", path).save({"geometry": "800x600"})
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        assert raw == {"geometry": "800x600", "schema_version": SCHEMA_VERSION}
+        loaded = SettingsStore("demo", path).load()
+        assert loaded is not None and loaded["geometry"] == "800x600"
+
+    def test_old_file_without_schema_version_still_loads(self, tmp_path: Path) -> None:
+        """缺失 schema_version 视为 1：旧设置照常读取，不被版本判断拦截。"""
+        from fcmd.gui.settings import SettingsStore
+
+        path = tmp_path / "ui" / "demo.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"geometry": "800x600"}), encoding="utf-8")
+        loaded = SettingsStore("demo", path).load()
+        assert loaded == {"geometry": "800x600"}

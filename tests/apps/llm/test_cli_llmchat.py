@@ -786,10 +786,11 @@ def test_settings_tolerates_bad_chat_history(tmp_path: Path) -> None:
     from fcmd.apps.llm._llmw_winsettings import LlmSettings, load_settings, save_settings
 
     path = tmp_path / "llmw.json"
-    save_settings(LlmSettings(chat_history=[{"title": "x"}], chat_active=2), path)
+    save_settings(LlmSettings(chat_history=[{"title": "x"}], chat_active=2, active_page="chat"), path)
     loaded = load_settings(path)
     assert loaded.chat_history == [{"title": "x"}]
     assert loaded.chat_active == 2
+    assert loaded.active_page == "chat"
     path.write_text(json.dumps({"chat_history": "bad", "chat_active": True}), encoding="utf-8")
     fallback = load_settings(path)
     assert fallback.chat_history is None

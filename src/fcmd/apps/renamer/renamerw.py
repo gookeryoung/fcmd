@@ -194,6 +194,8 @@ class RenamerSettings:
     recursive: bool = False
     include_dirs: bool = False
     sort_key: str = SORT_NAME
+    last_open_dir: str = ""
+    last_save_dir: str = ""
     geometry: str | None = None
 
 
@@ -205,6 +207,8 @@ def settings_to_mapping(settings: RenamerSettings) -> dict[str, Any]:
         "recursive": settings.recursive,
         "include_dirs": settings.include_dirs,
         "sort_key": settings.sort_key,
+        "last_open_dir": settings.last_open_dir,
+        "last_save_dir": settings.last_save_dir,
         "geometry": settings.geometry,
     }
 
@@ -233,6 +237,10 @@ def settings_from_mapping(
     sort_key = raw.get("sort_key")
     if isinstance(sort_key, str) and sort_key in SORT_KEYS:
         settings.sort_key = sort_key
+    for name in ("last_open_dir", "last_save_dir"):
+        value = raw.get(name)
+        if isinstance(value, str):
+            setattr(settings, name, value)
     geometry = raw.get("geometry")
     settings.geometry = geometry if isinstance(geometry, str) and valid_geometry(geometry) else None
     return settings

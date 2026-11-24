@@ -21,7 +21,16 @@ if TYPE_CHECKING:
 
     from PySide6.QtCore import QObject
 
-__all__ = ["DebouncedSaver", "PathHistory", "RecentFiles", "merge_recent", "normalize_recent"]
+__all__ = [
+    "DebouncedSaver",
+    "PathHistory",
+    "RecentFiles",
+    "WindowState",
+    "dialog_remember",
+    "dialog_start",
+    "merge_recent",
+    "normalize_recent",
+]
 
 RECENT_LIMIT = 10
 """最近文件 / 目录的默认上限。"""
@@ -108,6 +117,16 @@ def normalize_recent(raw: object, *, limit: int = RECENT_LIMIT) -> list[str]:
     return result
 
 
+def dialog_start(value: object) -> str:
+    """单字段版对话框初始目录：已存目录仍存在才返回，否则回落空串。"""
+    return _existing_dir(value)
+
+
+def dialog_remember(chosen: str | Path) -> str:
+    """单字段版「记住本次选择」：目录本身；文件 / 新文件名取父目录。"""
+    return _chosen_dir(chosen)
+
+
 class PathHistory:
     """文件 / 目录对话框的上次位置，读写都落在调用方的设置映射上。
 
@@ -125,11 +144,11 @@ class PathHistory:
 
     def start(self, key: str) -> str:
         """对话框初始目录：上次目录仍存在时返回，否则回落空串（系统默认）。"""
-        return _existing_dir(self._payload.get(key))
+        return dialog_start(self._payload.get(key))
 
     def remember(self, key: str, chosen: str | Path) -> str:
         """记录本次选择所在目录并返回；无法推导目录时保持原值。"""
-        directory = _chosen_dir(chosen)
+        directory = dialog_remember(chosen)
         if directory:
             self._payload[key] = directory
         return directory or self.raw(key)
@@ -138,6 +157,51 @@ class PathHistory:
         """保存对话框的默认路径：上次目录 + 文件名；没有历史时只用文件名。"""
         start = self.start(key)
         return str(Path(start) / filename) if start else filename
+
+
+class WindowState:
+    """轻量界面状态：页面、开关、分栏 / 表格尺寸，读写调用方的设置映射。
+
+    只收「小体积、可重建」的状态；展开项、滚动像素位置、选中行索引不在此列。
+    字段缺失 / 类型不符时一律回落默认值，避免旧设置把窗口恢复到不可用布局。
+    """
+
+    def __init__(self, payload: MutableMapping[str, Any]) -> None:
+        self._payload = payload
+
+    def text(self, key: str, default: str = "") -> str:
+        value = self._payload.get(key)
+        return value.strip() if isinstance(value, str) and value.strip() else default
+
+    def flag(self, key: str, default: bool = False) -> bool:
+        value = self._payload.get(key)
+        return value if isinstance(value, bool) else default
+
+    def choice(self, key: str, choices: Sequence[str], default: str) -> str:
+        value = self.text(key)
+        return value if value in choices else default
+
+    def set(self, key: str, value: Any) -> None:
+        self._payload[key] = value
+
+    def sizes(self, key: str, *, count: int, default: Sequence[int]) -> list[int]:
+        """读取固定数量的正整数尺寸；缺失 / 非法 / 数量不足时回落默认值。"""
+        raw = self._payload.get(key)
+        values = (
+            [item for item in raw if isinstance(item, int) and not isinstance(item, bool) and item > 0]
+            if isinstance(raw, (list, tuple))
+            else []
+        )
+        fallback = [max(1, int(item)) for item in default[:count]]
+        if len(values) < count:
+            return fallback
+        return values[:count]
+
+    def remember_sizes(self, key: str, sizes: Sequence[int]) -> list[int]:
+        values = [max(1, int(item)) for item in sizes if isinstance(item, int) and not isinstance(item, bool)]
+        if values:
+            self._payload[key] = values
+        return values
 
 
 class RecentFiles:

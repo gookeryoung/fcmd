@@ -68,6 +68,8 @@ class Img2IcoSettings:
     output_path: str = ""
     sizes: str = DEFAULT_SIZES_TEXT
     quality: str = DEFAULT_QUALITY
+    last_open_dir: str = ""
+    last_save_dir: str = ""
     geometry: str | None = None
 
 
@@ -108,11 +110,17 @@ def load_settings(path: Path | None = None) -> Img2IcoSettings:
     output_path = raw.get("output_path")
     sizes = raw.get("sizes")
     quality = raw.get("quality")
+    last_open_dir = raw.get("last_open_dir")
+    last_save_dir = raw.get("last_save_dir")
     geometry = raw.get("geometry")
     if isinstance(input_path, str):
         settings.input_path = input_path
     if isinstance(output_path, str):
         settings.output_path = output_path
+    if isinstance(last_open_dir, str):
+        settings.last_open_dir = last_open_dir
+    if isinstance(last_save_dir, str):
+        settings.last_save_dir = last_save_dir
     if isinstance(geometry, str) and valid_geometry(geometry):
         settings.geometry = geometry
     if isinstance(sizes, str) and sizes.strip():
@@ -133,6 +141,8 @@ def save_settings(settings: Img2IcoSettings, path: Path | None = None) -> None:
         "output_path": settings.output_path,
         "sizes": settings.sizes,
         "quality": settings.quality,
+        "last_open_dir": settings.last_open_dir,
+        "last_save_dir": settings.last_save_dir,
         "geometry": settings.geometry,
     }
     _guiconfig.write_settings(payload, path or config_path())

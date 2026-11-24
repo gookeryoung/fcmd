@@ -163,7 +163,7 @@ from fcmd.apps.filescan._scenarios import load_scenario, scenario_templates
 from fcmd.gui import style as _qt_theme
 from fcmd.gui.icons import icon
 from fcmd.gui.page import AppPage, PageSpec
-from fcmd.gui.uistate import PathHistory
+from fcmd.gui.uistate import PathHistory, WindowState
 from fcmd.gui.widgets import (
     ButtonStateMixin,
     Card,
@@ -1342,6 +1342,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             "last_export_dir": self.settings.last_export_dir,
         }
         self._paths = PathHistory(self._dialog_state)
+        # 界面状态（当前页 / 结果树列宽）也走共用 WindowState；落盘仍由设置字段承载。
+        self._ui_payload: dict[str, object] = {
+            "active_page": self.settings.active_page,
+            "result_columns": list(self.settings.result_columns),
+        }
+        self._ui = WindowState(self._ui_payload)  # type: ignore[arg-type]
         super().__init__(
             title=TITLE,
             config_name=fw.SETTINGS_NAME,
@@ -1381,6 +1387,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._refresh_options_tags()
         self._refresh_task_rows()
         self._restore_results_view()
+        saved_page = self.settings.active_page if self.settings.active_page in {spec.key for spec in PAGES} else "scan"
+        self.show_page(saved_page)
         self.set_page_status("scan", self._whitelist_notice or self._summary_text())
 
     # ------------------------------------------------------------------ #
@@ -1620,9 +1628,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._tree.setHeaderLabels(["文件 / 规则", "严重级", "行号", "上下文（打码）"])
         self._tree.setAlternatingRowColors(True)
         # 引擎 / 耗时并进文件行摘要，固定列宽只留给路径与两列短指标。
-        self._tree.setColumnWidth(0, 300)
-        self._tree.setColumnWidth(1, 56)
-        self._tree.setColumnWidth(2, 48)
+        restore_columns = self._ui.sizes("result_columns", count=3, default=(300, 56, 48))
+        for index, width in enumerate(restore_columns):
+            self._tree.setColumnWidth(index, width)
         self._tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self._tree.setToolTip("双击行定位文件，右键行可打开 / 复制更多")
         self._tree.header().setStretchLastSection(True)
@@ -2613,7 +2621,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._update_result_actions()
 
     def _context_layout_changed(self, *_args: object) -> None:
-        """列宽变化后重排上下文列：行高随换行结果重新计算。"""
+        """列宽变化后重排上下文列，并记住前三列宽度供下次启动恢复。"""
+        self._ui.remember_sizes("result_columns", [self._tree.columnWidth(index) for index in range(3)])
         self._context_delegate.reset()
         self._tree.scheduleDelayedItemsLayout()
 
@@ -3085,6 +3094,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             last_task_dir=self._paths.raw("last_task_dir"),
             last_import_dir=self._paths.raw("last_import_dir"),
             last_export_dir=self._paths.raw("last_export_dir"),
+            active_page=self._ui.choice("active_page", tuple(spec.key for spec in PAGES), "scan"),
+            result_columns=tuple(self._ui.sizes("result_columns", count=3, default=(300, 56, 48))),
         )
 
     def _persist_settings(self, geometry: str) -> None:
@@ -3106,6 +3117,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
 
     def show_page(self, key: str) -> None:
         """切页：结果页自动套用路径筛选；扫描页刷新「当前选项」摘要。"""
+        self._ui.set("active_page", key)
         super().show_page(key)
         if key == "scan":
             self._refresh_options_tags()

@@ -221,6 +221,8 @@ def test_settings_dialog_dirs_roundtrip() -> None:
         last_task_dir="D:/scan",
         last_import_dir="D:/in",
         last_export_dir="D:/out",
+        active_page="results",
+        result_columns=(260, 60, 52),
     )
     mapping = filescanw.settings_to_mapping(settings)
     assert mapping["last_task_dir"] == "D:/scan"
@@ -228,6 +230,8 @@ def test_settings_dialog_dirs_roundtrip() -> None:
     assert mapping["last_export_dir"] == "D:/out"
     loaded = filescanw.settings_from_mapping(mapping)
     assert (loaded.last_task_dir, loaded.last_import_dir, loaded.last_export_dir) == ("D:/scan", "D:/in", "D:/out")
+    assert loaded.active_page == "results"
+    assert loaded.result_columns == (260, 60, 52)
     fallback = filescanw.settings_from_mapping({"last_export_dir": 3})
     assert fallback.last_export_dir == ""
 

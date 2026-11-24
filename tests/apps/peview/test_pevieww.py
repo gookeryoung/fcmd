@@ -86,6 +86,7 @@ class TestConfig:
                 {
                     "file_path": "/app.exe",
                     "recent_files": ["/a.exe", 42],
+                    "last_open_dir": "/samples",
                     "geometry": "1000x700+1+2",
                 }
             ),
@@ -94,6 +95,7 @@ class TestConfig:
         settings = load_settings(path)
         assert settings.file_path == "/app.exe"
         assert settings.recent_files == ["/a.exe"]
+        assert settings.last_open_dir == "/samples"
         assert settings.geometry == "1000x700+1+2"
 
     def test_load_settings_invalid_geometry(self, tmp_path: Path) -> None:

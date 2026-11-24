@@ -26,7 +26,7 @@ from typing import Any
 from fcmd.apps.wslman._decode import OnlineRow
 from fcmd.apps.wslman._errors import runtime_error
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
-from fcmd.infras.system import fcmd_home
+from fcmd.shared.paths import cache_path as _cache_path
 
 __all__ = [
     "CACHE_TTL_SECONDS",
@@ -154,7 +154,7 @@ class ImageCatalog:
 
 def cache_path() -> Path:
     """``${FCMD_HOME:-~/.fcmd}/cache/wslman-available.json``。"""
-    return fcmd_home() / "cache" / "wslman-available.json"
+    return _cache_path("wslman-available.json")
 
 
 def _sha256(value: Any) -> str | None:

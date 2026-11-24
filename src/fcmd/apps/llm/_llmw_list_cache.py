@@ -21,9 +21,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fcmd.apps.llm import _llmconfig
 from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
+from fcmd.shared.paths import cache_path
 
 __all__ = [
     "DEFAULT_MAX_ENTRIES",
@@ -45,7 +45,7 @@ _SCHEMA = 1
 
 def default_cache_path() -> Path:
     """磁盘缓存路径：``${FCMD_HOME:-~/.fcmd}/cache/llmw-model-list.json``。"""
-    return _llmconfig.home_dir() / "cache" / "llmw-model-list.json"
+    return cache_path("llmw-model-list.json")
 
 
 def cache_key(keyword: str, page: int, page_size: int, sort: str) -> str:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["fcmd_home", "ui_config_path"]
+__all__ = ["cache_path", "fcmd_home", "ui_config_path"]
 
 
 def fcmd_home() -> Path:
@@ -22,3 +22,8 @@ def fcmd_home() -> Path:
 def ui_config_path(name: str) -> Path:
     """返回 GUI 设置文件路径 ``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``。"""
     return fcmd_home() / "ui" / f"{name}.json"
+
+
+def cache_path(name: str) -> Path:
+    """返回可重建缓存路径 ``${FCMD_HOME:-~/.fcmd}/cache/<name>``。"""
+    return fcmd_home() / "cache" / name

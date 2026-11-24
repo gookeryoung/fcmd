@@ -246,6 +246,8 @@ class FilescanSettings:
     last_task_dir: str = ""
     last_import_dir: str = ""
     last_export_dir: str = ""
+    active_page: str = "scan"
+    result_columns: tuple[int, int, int] = (300, 56, 48)
     report_format: str = "text"
     sidebar_collapsed: bool = False
     geometry: str | None = None
@@ -297,6 +299,8 @@ def settings_to_mapping(settings: FilescanSettings) -> dict[str, Any]:
         "last_task_dir": settings.last_task_dir,
         "last_import_dir": settings.last_import_dir,
         "last_export_dir": settings.last_export_dir,
+        "active_page": settings.active_page,
+        "result_columns": list(settings.result_columns),
         "report_format": settings.report_format,
         "sidebar_collapsed": settings.sidebar_collapsed,
         "geometry": settings.geometry,
@@ -362,6 +366,15 @@ def _groups_value(raw: Mapping[str, Any]) -> tuple[tuple[str, tuple[str, ...]], 
     return tuple(groups)
 
 
+def _columns_value(value: object) -> tuple[int, int, int]:
+    """结果树前三列宽度；非法 / 数量不足时回落默认值。"""
+    default = (300, 56, 48)
+    if not isinstance(value, (list, tuple)):
+        return default
+    numbers = [item for item in value if isinstance(item, int) and not isinstance(item, bool) and item > 0]
+    return (max(1, numbers[0]), max(1, numbers[1]), max(1, numbers[2])) if len(numbers) >= 3 else default
+
+
 def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
     """从字典恢复设置；缺失或非法字段逐项回落默认值，规则集损坏时载入内置规则。"""
     paths_raw = raw.get("paths", [])
@@ -411,6 +424,8 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
         last_task_dir=_str_value(raw, "last_task_dir"),
         last_import_dir=_str_value(raw, "last_import_dir"),
         last_export_dir=_str_value(raw, "last_export_dir"),
+        active_page=_str_value(raw, "active_page", "scan"),
+        result_columns=_columns_value(raw.get("result_columns")),
         report_format=_format_value(raw),
         sidebar_collapsed=_bool_value(raw, "sidebar_collapsed", False),
         geometry=_guiconfig.valid_geometry(_str_value(raw, "geometry") or None),

@@ -667,6 +667,24 @@ def test_add_remove_and_clear_tasks(home: Path, tmp_path: Path, monkeypatch: pyt
         window.deleteLater()
 
 
+def test_restores_active_page_and_result_columns(home: Path, tmp_path: Path) -> None:
+    """重开窗口恢复上次页面与结果树列宽（其余列宽仍按默认）。"""
+    path = tmp_path / "filescanw.json"
+    filescanw.save_settings(
+        filescanw.FilescanSettings(active_page="rules", result_columns=(260, 60, 52)),
+        path,
+    )
+    window = _window(settings_path=path)
+    try:
+        assert window.nav.selected() == "rules"
+        assert window.current_page() == "rules"
+        assert [window._tree.columnWidth(index) for index in range(3)] == [260, 60, 52]
+        assert window._current_settings().active_page == "rules"
+        assert window._current_settings().result_columns == (260, 60, 52)
+    finally:
+        window.deleteLater()
+
+
 def test_file_dialogs_remember_last_directory(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """添加任务 / 导入导出记住上次目录，下次打开直接落在同一位置。"""
     from PySide6.QtWidgets import QFileDialog

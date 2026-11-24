@@ -72,6 +72,7 @@ from fcmd.apps.reshack.reshackw import (
     save_settings,
 )
 from fcmd.gui.page import PageBody, PageSpec
+from fcmd.gui.uistate import dialog_remember, dialog_start
 from fcmd.gui.widgets import (
     Card,
     ItemRow,
@@ -602,8 +603,14 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
     # 打开 / 导出 / 替换
     # ------------------------------------------------------------------ #
     def _choose_file(self) -> None:
-        filename, _ = QFileDialog.getOpenFileName(self, "打开 PE 文件", "", _PE_FILTER)
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "打开 PE 文件",
+            dialog_start(self._settings.last_open_dir),
+            _PE_FILTER,
+        )
         if filename:
+            self._settings.last_open_dir = dialog_remember(filename)
             self._start_load(Path(filename))
 
     def _start_load(self, path: Path) -> None:
@@ -692,14 +699,17 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
 
     def _export_resource(self, resource: Any) -> None:
         extension = resource_extension(resource.type_id)
+        start = dialog_start(self._settings.last_save_dir)
+        default_name = default_export_name(resource)
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "导出资源",
-            default_export_name(resource),
+            str(Path(start) / default_name) if start else default_name,
             f"资源文件 (*{extension});;所有文件 (*.*)",
         )
         if not filename:
             return
+        self._settings.last_save_dir = dialog_remember(filename)
         output = Path(filename).expanduser()
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -723,9 +733,14 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
             return
         if self._busy:
             return
-        filename, _ = QFileDialog.getOpenFileName(self, "选择新的资源数据")
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择新的资源数据",
+            dialog_start(self._settings.last_open_dir),
+        )
         if not filename:
             return
+        self._settings.last_open_dir = dialog_remember(filename)
         try:
             new_data = Path(filename).read_bytes()
         except OSError as exc:
@@ -753,9 +768,14 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
             return
         if self._busy:
             return
-        directory = QFileDialog.getExistingDirectory(self, "选择全部导出目录")
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "选择全部导出目录",
+            dialog_start(self._settings.last_save_dir),
+        )
         if not directory:
             return
+        self._settings.last_save_dir = dialog_remember(directory)
         target = Path(directory).expanduser() / f"{self._current_file.stem}_resources"
         self._set_busy(True)
         self._set_status("正在导出全部资源…")
@@ -912,14 +932,17 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
         """把当前预览图像另存为 PNG / ICO / BMP。"""
         if self._preview_image is None:
             return
+        start = dialog_start(self._settings.last_save_dir)
+        default_name = self._preview_default_name()
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "保存图像",
-            self._preview_default_name(),
+            str(Path(start) / default_name) if start else default_name,
             "PNG 图像 (*.png);;ICO 图标 (*.ico);;BMP 图像 (*.bmp)",
         )
         if not filename:
             return
+        self._settings.last_save_dir = dialog_remember(filename)
         output = Path(filename).expanduser()
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -1038,6 +1061,8 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
             ReshackSettings(
                 file_path=self._settings.file_path,
                 recent_files=self._settings.recent_files[:RECENT_LIMIT],
+                last_open_dir=self._settings.last_open_dir,
+                last_save_dir=self._settings.last_save_dir,
                 sidebar_collapsed=self.nav.is_collapsed(),
                 geometry=geometry,
             ),

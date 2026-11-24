@@ -191,6 +191,8 @@ class TestResolveGeometry:
         settings = ReshackSettings(
             file_path="/app.exe",
             recent_files=["/app.exe"],
+            last_open_dir="/samples",
+            last_save_dir="/exports",
             geometry="900x600+1+2",
         )
         save_settings(settings, path)
