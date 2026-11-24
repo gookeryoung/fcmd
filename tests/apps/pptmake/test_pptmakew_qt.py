@@ -73,8 +73,12 @@ def test_initial_sidebar_layout(window: Any) -> None:
     assert window._layout_list.count() == len(LAYOUT_OPTIONS)
     assert len(window._color_buttons) == len(core.PALETTE_FIELDS)
     assert window._splitter.count() == 3
+    assert window._style_splitter.count() == 2
     assert window._title_edit.text()
     assert window.status_text() == "就绪"
+    assert "第 1/" in window.status_detail_text()
+    assert "处溢出" in window.status_detail_text()
+    assert window._slide_overflow_count(0) == 0
 
 
 def test_style_page_has_live_preview_and_controls(window: Any) -> None:
@@ -83,8 +87,34 @@ def test_style_page_has_live_preview_and_controls(window: Any) -> None:
     assert window._name_edit.text() == window._template.name
     assert window._intensity_value.text().endswith("%")
     assert window._style_canvas in window._canvases
+    # 样式页左右并排：左侧设置卡、右侧实时预览。
+    assert window._style_splitter.widget(1) is window._style_canvas.parentWidget()
     window.show_page("design")
     assert window.current_page() == "design"
+
+
+def test_overflow_badge_and_status_detail(window: Any) -> None:
+    """溢出页在缩略图与状态栏使用同一计数（角标数据源）。"""
+    window._slides_list.setCurrentRow(0)
+    window._layout_combo.setCurrentIndex(window._layout_combo.findData(core.LAYOUT_BULLETS))
+    window._bullets_text.setPlainText("\n".join(["这是一行非常长的要点文字" * 8] * 12))
+    window._apply_form()
+    count = window._slide_overflow_count(0)
+    assert count > 0
+    assert f"{count} 处溢出" in window.status_detail_text()
+    assert window._thumbs.count() == window._slides_list.count()
+    assert not window._thumbs.item(0).icon().isNull()
+
+
+def test_splitter_sizes_persist(window: Any, tmp_path: Path) -> None:
+
+    window._splitter.setSizes([240, 620, 320])
+    window._style_splitter.setSizes([360, 700])
+    window._persist_settings("1200x760+10+20")
+    settings = _pptmakew_qt.load_settings(tmp_path / "ui" / "pptmakew.json")
+    assert len(settings.design_splitter) == 3
+    assert len(settings.style_splitter) == 2
+    assert all(size > 0 for size in settings.design_splitter + settings.style_splitter)
 
 
 def test_slide_add_duplicate_move_delete(window: Any) -> None:

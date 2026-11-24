@@ -70,7 +70,16 @@ from fcmd.apps.pptmake.pptmakew import (
 )
 from fcmd.gui.icons import set_icon as _set_icon
 from fcmd.gui.page import AppPage, PageSpec
-from fcmd.gui.widgets import Card, PageScroll, button, icon_button, make_splitter
+from fcmd.gui.widgets import (
+    Card,
+    FlowLayout,
+    PageScroll,
+    apply_splitter_sizes,
+    button,
+    icon_button,
+    make_splitter,
+    splitter_sizes,
+)
 from fcmd.gui.window import QtMainWindow
 
 __all__ = ["PAGES", "PptmakeQtWindow", "run_qt"]
@@ -237,6 +246,24 @@ def _paint_slide(  # noqa: PLR0913 - 画布、缩略图与错误提示共用入�
                 int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                 f"提示：{len(issues)} 个文本框可能溢出",
             )
+
+
+def _draw_overflow_badge(painter: QPainter, width: float, count: int, ui: Any) -> None:
+    """缩略图右上角的溢出角标：数字表示该页预计溢出的文本框数量。"""
+    text = str(count)
+    font = QFont(QApplication.font())
+    font.setPixelSize(10)
+    font.setBold(True)
+    painter.setFont(font)
+    badge_width = max(14.0, painter.fontMetrics().horizontalAdvance(text) + 8.0)
+    badge = QRectF(width - badge_width - 3.0, 3.0, badge_width, 14.0)
+    painter.save()
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(ui.warning))
+    painter.drawRoundedRect(badge, 7.0, 7.0)
+    painter.setPen(QPen(QColor(ui.background)))
+    painter.drawText(badge, int(Qt.AlignmentFlag.AlignCenter), text)
+    painter.restore()
 
 
 def _paint_message(painter: QPainter, width: float, height: float, text: str, color: str) -> None:
@@ -470,15 +497,22 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setStretchFactor(2, 0)
+        apply_splitter_sizes(self._splitter, list(self._settings.design_splitter))
         page.content.addWidget(self._splitter, 1)
         return page
 
     def _build_style_page(self) -> _PptmakePage:
-        """样式页：模板名称、风格 / 画幅 / 装饰 / 密度 / 装饰强度、配色与实时预览。"""
+        """样式页：左侧设置卡、右侧实时预览，宽屏并排、窄屏自动换行。"""
         page = _PptmakePage(self, "style")
         body = page.content
 
-        template = Card("模板", page)
+        left = QWidget(page)
+        left.setMinimumWidth(320)
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        template = Card("模板", left)
         name_row = QHBoxLayout()
         name_row.setContentsMargins(0, 0, 0, 0)
         name_row.setSpacing(8)
@@ -487,9 +521,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._name_edit.textChanged.connect(self._on_name_changed)
         name_row.addWidget(self._name_edit, 1)
         template.body.addLayout(name_row)
-        body.addWidget(template)
+        left_layout.addWidget(template)
 
-        controls = Card("风格与画幅", page)
+        controls = Card("风格与画幅", left)
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(8)
@@ -518,9 +552,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
         controls.body.addLayout(grid)
-        body.addWidget(controls)
+        left_layout.addWidget(controls)
 
-        colors = Card("配色（点击修改）", page)
+        colors = Card("配色（点击修改）", left)
         color_grid = QGridLayout()
         color_grid.setContentsMargins(0, 0, 0, 0)
         color_grid.setSpacing(4)
@@ -534,14 +568,24 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         for column in range(3):
             color_grid.setColumnStretch(column, 1)
         colors.body.addLayout(color_grid)
-        body.addWidget(colors)
+        left_layout.addWidget(colors)
+        left_layout.addStretch(1)
 
         preview = Card("实时预览", page)
+        preview.setMinimumWidth(260)
         self._style_canvas = _PreviewCanvas(self, preview)
-        self._style_canvas.setMinimumHeight(220)
+        self._style_canvas.setMinimumHeight(260)
         self._canvases.append(self._style_canvas)
         preview.body.addWidget(self._style_canvas, 1)
-        body.addWidget(preview, 1)
+
+        self._style_splitter = make_splitter(Qt.Orientation.Horizontal, parent=page)
+        self._style_splitter.addWidget(left)
+        self._style_splitter.addWidget(preview)
+        self._style_splitter.setSizes([380, 640])
+        self._style_splitter.setStretchFactor(0, 0)
+        self._style_splitter.setStretchFactor(1, 1)
+        apply_splitter_sizes(self._style_splitter, list(self._settings.style_splitter))
+        body.addWidget(self._style_splitter, 1)
         return page
 
     def _build_pages_pane(self, parent: QWidget) -> QWidget:
@@ -557,9 +601,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._slides_list.setMinimumHeight(100)
         self._slides_list.currentRowChanged.connect(self._on_slide_selected)
         pages.body.addWidget(self._slides_list, 1)
-        page_buttons = QHBoxLayout()
-        page_buttons.setContentsMargins(0, 0, 0, 0)
-        page_buttons.setSpacing(4)
+        # 动作条用流式布局：窄面板下整块换行，不再把后面的按钮裁掉。
+        page_buttons = FlowLayout(h_spacing=4, v_spacing=4)
         for icon, tooltip, handler in (
             ("plus", "添加页面", self._add_slide),
             ("copy", "复制页面", self._duplicate_slide),
@@ -570,7 +613,6 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             widget = _action_button(icon, tooltip)
             widget.clicked.connect(handler)
             page_buttons.addWidget(widget)
-        page_buttons.addStretch(1)
         pages.body.addLayout(page_buttons)
         layout.addWidget(pages, 3)
 
@@ -589,10 +631,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         """设计页中栏：缩放工具栏 + 实时预览 + 页面缩略图。"""
         card = Card("预览", parent)
         card.setMinimumWidth(220)
-        toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(0, 0, 0, 0)
-        toolbar.setSpacing(4)
-        toolbar.addStretch(1)
+        toolbar = FlowLayout(h_spacing=4, v_spacing=4)
         self._zoom_label = QLabel("适应窗口", card)
         toolbar.addWidget(self._zoom_label)
         for icon, tooltip, text, handler in (
@@ -798,6 +837,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                         ui=ui,
                         skip_text=True,
                     )
+                issues = self._slide_overflow_count(index)
+                if issues:
+                    _draw_overflow_badge(painter, float(page_width), issues, ui)
                 painter.end()
                 item = QListWidgetItem(QIcon(pixmap), str(index + 1))
                 item.setSizeHint(QSize(page_width + 8, round(THUMB_HEIGHT) + 24))
@@ -805,6 +847,26 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._thumbs.setCurrentRow(self.selected)
         finally:
             self._syncing_thumb = False
+            self._update_status_detail()
+
+    def _slide_overflow_count(self, index: int) -> int:
+        """当前模板第 ``index`` 页的预计溢出文本框数量（构建失败时记 0）。"""
+        if not 0 <= index < len(self._template.slides):
+            return 0
+        try:
+            primitives = build_draw_list(self._template.slides[index], self._template)
+        except core.TemplateError:
+            return 0
+        return len(preview.overflow_issues(primitives))
+
+    def _update_status_detail(self) -> None:
+        """设计页状态栏右侧：当前页码 / 总页数与溢出数量。"""
+        total = len(self._template.slides)
+        if not total:
+            self.set_page_status_detail("design", "尚无页面")
+            return
+        index = min(self.selected, total - 1)
+        self.set_page_status_detail("design", f"第 {index + 1}/{total} 页 · {self._slide_overflow_count(index)} 处溢出")
 
     # ------------------------------------------------------------------ #
     # 控件回调
@@ -1145,6 +1207,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             geometry=geometry,
             sidebar_collapsed=self.nav.is_collapsed(),
             active_page=self.current_page() or self._settings.active_page,
+            design_splitter=tuple(splitter_sizes(self._splitter)),
+            style_splitter=tuple(splitter_sizes(self._style_splitter)),
         )
         self._settings = settings
         save_settings(settings, self._own_settings_path)

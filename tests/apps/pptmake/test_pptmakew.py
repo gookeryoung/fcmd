@@ -73,9 +73,27 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
 
 
 def test_settings_parse_sidebar_page() -> None:
-    settings = pptmakew.settings_from_mapping({"sidebar_collapsed": True, "active_page": "style"})
+    settings = pptmakew.settings_from_mapping(
+        {
+            "sidebar_collapsed": True,
+            "active_page": "style",
+            "design_splitter": [240, 600, 320],
+            "style_splitter": [360, 720],
+        }
+    )
     assert settings.sidebar_collapsed is True
     assert settings.active_page == "style"
+    assert settings.design_splitter == (240, 600, 320)
+    assert settings.style_splitter == (360, 720)
+
+
+def test_settings_splitter_tolerates_bad_values() -> None:
+    settings = pptmakew.settings_from_mapping(
+        {"design_splitter": [0, -1], "style_splitter": "wide"},
+        pptmakew.PptmakeSettings(design_splitter=(250, 600, 300)),
+    )
+    assert settings.design_splitter == (250, 600, 300)
+    assert settings.style_splitter == ()
 
 
 def test_settings_from_mapping_keeps_base() -> None:
@@ -97,12 +115,16 @@ def test_settings_mapping_roundtrip() -> None:
         last_dir="D:/slides",
         sidebar_collapsed=True,
         active_page="style",
+        design_splitter=(240, 600, 320),
+        style_splitter=(360, 720),
     )
     mapping = pptmakew.settings_to_mapping(settings)
     assert mapping["style"] == core.STYLE_CORAL
     assert mapping["last_dir"] == "D:/slides"
     assert mapping["sidebar_collapsed"] is True
     assert mapping["active_page"] == "style"
+    assert mapping["design_splitter"] == [240, 600, 320]
+    assert mapping["style_splitter"] == [360, 720]
     assert pptmakew.settings_from_mapping(mapping) == settings
 
 

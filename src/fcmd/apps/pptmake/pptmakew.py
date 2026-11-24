@@ -26,6 +26,7 @@ from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _tokens as tokens
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _guiwindow
+from fcmd.gui.layout import parse_sizes
 from fcmd.gui.settings import SettingsStore
 
 if TYPE_CHECKING:
@@ -83,7 +84,7 @@ HELP_TEXT = """1. 侧边栏「设计」页：左侧「页面」选择要编辑�
 4. 设计页中间画布实时预览；缩略图点击即可跳页，工具栏可「适应窗口」或缩放。
 5. 「文件 → 导出模板」保存 .pptmtpl.json，「文件 → 导出 PPTX」生成演示文稿。
 6. 「文件 → 导入」既支持模板 JSON，也支持从现有 .pptx 提取配色与文字。
-7. 预览底部出现「文本框可能溢出」提示时，可精简文字或调整版式。
+7. 预览底部与缩略图角标 / 状态栏会提示文本框溢出，可精简文字或调整版式。
 8. 「文件 → 精确预览」需本机安装 LibreOffice，未安装时保持画布预览。
 9. 标题行、页面按钮与预览工具条只显示图标，悬停可见提示；标题行的
    「新建 / 导入 / 导出模板 / 导出 PPTX」与菜单动作等价。
@@ -101,6 +102,8 @@ class PptmakeSettings:
     geometry: str | None = None
     sidebar_collapsed: bool = False
     active_page: str = PAGE_KEYS[0]
+    design_splitter: tuple[int, ...] = ()
+    style_splitter: tuple[int, ...] = ()
 
 
 def config_path() -> Path:
@@ -118,6 +121,8 @@ def settings_to_mapping(settings: PptmakeSettings) -> dict[str, Any]:
         "geometry": settings.geometry,
         "sidebar_collapsed": settings.sidebar_collapsed,
         "active_page": settings.active_page,
+        "design_splitter": list(settings.design_splitter),
+        "style_splitter": list(settings.style_splitter),
     }
 
 
@@ -146,6 +151,10 @@ def settings_from_mapping(raw: Mapping[str, Any], base: PptmakeSettings | None =
     page = raw.get("active_page")
     if isinstance(page, str) and page in PAGE_KEYS:
         settings.active_page = page
+    for field_name in ("design_splitter", "style_splitter"):
+        sizes = parse_sizes(raw.get(field_name))
+        if sizes is not None:
+            setattr(settings, field_name, tuple(sizes))
     return settings
 
 
