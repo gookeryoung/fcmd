@@ -250,8 +250,8 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 |------|------|------|
 | `docdiff` | - | 对比两个 doc/docx 文档（调用本机 Word 生成带修订标记的对比文档，标题、original/revised 模式与是否显示修订可设），依赖 Windows + Word + `fcmd[win32]` |
 | `docdiffw` | - | 文档对比窗口版（Qt，旧/新文档与输出选择、标题/模式/显示修订设置、后台对比与日志，设置持久化），依赖 Windows + Word + `fcmd[win32]` |
-| `pptmake` | - | PPT 模板生成（`presets`/`init`/`inspect`/`export`/`import`/`validate`/`doctor`；十三种版式 + 四套风格 + 四种装饰，模板 JSON 导入导出，可渲染为 `.pptx` / PDF 或从 `.pptx` 反向导入主题与文字），导出依赖 `fcmd[ppt]` |
-| `pptmakew` | - | PPT 模板设计器窗口版（Qt 侧边栏分页：`设计` 页缩略图排序器 + QPainter 实时预览 + 「内容 / 版式 / 备注」检查器，`样式` 页风格 / 画幅 / 装饰 / 字体 / 页脚 / 六色配色 + 实时预览；支持撤销重做、自动草稿、图片与页内强调色、F5 放映、页码选择导出与 PDF，设置持久化到 `~/.fcmd/ui/pptmakew.json`），导出依赖 `fcmd[ppt]` |
+| `pptmake` | - | PPT 模板生成（`presets`/`init`/`inspect`/`export`/`import`/`validate`/`doctor`/`build`；十三种版式 + 四套风格 + 四种装饰，模板 JSON 导入导出，可渲染为 `.pptx` / PDF 或从 `.pptx` 反向导入主题与文字），导出依赖 `fcmd[ppt]` |
+| `pptmakew` | - | PPT 模板设计器窗口版（Qt 侧边栏分页：`设计` 页缩略图排序器 + QPainter 实时预览 + 「内容 / 版式 / 备注」检查器，`样式` 页风格 / 画幅 / 装饰 / 字体 / 页脚 / 六色配色 + 实时预览；支持撤销重做、自动草稿、图片 / 要点层级 / 页内强调色、页脚页码与 Logo、字体选择、F5 放映、页码选择导出与 PDF，设置持久化到 `~/.fcmd/ui/pptmakew.json`），导出依赖 `fcmd[ppt]` |
 
 ### 多媒体（可选依赖）
 

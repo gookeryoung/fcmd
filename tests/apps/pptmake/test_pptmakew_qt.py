@@ -285,7 +285,9 @@ def test_footer_and_font_controls(window: Any) -> None:
 
     window._footer_edit.setText("品牌页脚")
     window._page_number_check.setChecked(False)
+    window._logo_edit.setText("assets/logo.png")
     assert window._template.theme.footer == "品牌页脚"
+    assert window._template.theme.logo == "assets/logo.png"
     assert window._template.theme.show_page_number is False
 
     window._heading_font_combo.setCurrentFont(QFont("Arial"))

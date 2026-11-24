@@ -300,6 +300,16 @@ def test_image_layout_emits_picture_when_path_set() -> None:
     assert pictures[0].fit == core.IMAGE_FIT_COVER
 
 
+def test_logo_renders_top_right() -> None:
+    template = _template()
+    template = replace(template, theme=replace(template.theme, logo="assets/logo.png"))
+    primitives = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_COVER), template)
+    logos = [item for item in primitives if isinstance(item, design.Picture)]
+    assert len(logos) == 1
+    assert logos[0].x > 1280 / 2
+    assert logos[0].fit == "contain"
+
+
 def test_footer_and_page_number_only_when_requested() -> None:
     template = _template()
     template = replace(template, theme=replace(template.theme, footer="品牌页脚"))

@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -42,6 +43,8 @@ from fcmd.apps.pptmake._core import (
     palette_for_style,
     save_template,
     summary_lines,
+    template_from_mapping,
+    template_to_mapping,
 )
 from fcmd.apps.pptmake._design import build_draw_list
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
@@ -49,6 +52,7 @@ from fcmd.apps.pptmake._preview import overflow_issues
 from fcmd.console import print_error
 
 __all__ = [
+    "build_command",
     "doctor_command",
     "export_command",
     "import_command",
@@ -250,6 +254,54 @@ def export_command(
                 _print_error(f"PDF 导出失败：{exc}")
             else:
                 print(f"已生成 PDF：{converted}")
+
+
+@fcmd.tool("pptmake", subcommand="build", help="用数据文件批量生成 PPTX", description=_DESCRIPTION)
+def build_command(
+    data: Path,
+    template: Path | None = None,
+    output: Path | None = None,
+    overwrite: bool = False,
+) -> None:
+    """按 JSON 数据文件生成 PPTX；每项字段与模板 ``slides`` 一致。
+
+    Parameters
+    ----------
+    data:
+        数据 JSON：幻灯片对象数组，或 ``{"slides": [...]}``
+    template:
+        基础模板（提供风格 / 品牌 / 字体）；缺省用内置默认风格
+    output:
+        输出 PPTX 路径；缺省与数据文件同名
+    overwrite:
+        允许覆盖已存在的输出
+    """
+    if not data.is_file():
+        _print_error(f"数据文件不存在：{data}")
+        return
+    try:
+        raw = json.loads(data.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _print_error(f"读取数据失败：{exc}")
+        return
+    slides = raw.get("slides") if isinstance(raw, dict) else raw
+    if not isinstance(slides, (list, tuple)):
+        _print_error("数据文件需为幻灯片数组，或包含 slides 数组的对象")
+        return
+    target = output or default_pptx_path(data)
+    if target.exists() and not overwrite:
+        _print_error(f"输出已存在：{target}（使用 --overwrite 覆盖）")
+        return
+    try:
+        base = load_template(template) if template is not None else new_template(slides=())
+        mapping = template_to_mapping(base)
+        mapping["slides"] = list(slides)
+        spec = template_from_mapping(mapping)
+        count = export_pptx(spec, target)
+    except TemplateError as exc:
+        _print_error(str(exc))
+        return
+    print(f"已生成 PPTX：{target}（{count} 页）")
 
 
 @fcmd.tool("pptmake", subcommand="import", help="把现有 PPTX 转换为模板 JSON", description=_DESCRIPTION)

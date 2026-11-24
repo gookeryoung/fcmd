@@ -789,6 +789,21 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._name_edit.textChanged.connect(self._on_name_changed)
         name_row.addWidget(self._name_edit, 1)
         template.body.addLayout(name_row)
+        logo_row = QHBoxLayout()
+        logo_row.setContentsMargins(0, 0, 0, 0)
+        logo_row.setSpacing(4)
+        logo_row.addWidget(QLabel("品牌 Logo", template))
+        self._logo_edit = QLineEdit(self._template.theme.logo, template)
+        self._logo_edit.setPlaceholderText("每页右上角（空则不显示）")
+        self._logo_edit.textChanged.connect(self._on_logo_changed)
+        logo_row.addWidget(self._logo_edit, 1)
+        logo_pick = button("选择…")
+        logo_pick.clicked.connect(self._pick_logo)
+        logo_row.addWidget(logo_pick)
+        logo_clear = button("清除")
+        logo_clear.clicked.connect(self._logo_edit.clear)
+        logo_row.addWidget(logo_clear)
+        template.body.addLayout(logo_row)
         left_layout.addWidget(template)
 
         controls = Card("风格与画幅", left)
@@ -1223,6 +1238,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             theme = self._template.theme
             self._footer_edit.setText(theme.footer)
             self._page_number_check.setChecked(theme.show_page_number)
+            self._logo_edit.setText(theme.logo)
             self._heading_font_combo.setCurrentFont(QFont(theme.heading_font))
             self._body_font_combo.setCurrentFont(QFont(theme.body_font))
             style = self._template.theme.style
@@ -1453,6 +1469,28 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         self._commit(replace(self._template, name=text), "修改模板名称", coalesce_key="name")
         self.set_status("模板名称已更新")
+
+    def _on_logo_changed(self, text: str) -> None:
+        if self._loading:
+            return
+        theme = replace(self._template.theme, logo=text.strip())
+        if self._commit(replace(self._template, theme=theme), "修改品牌 Logo", coalesce_key="logo"):
+            self._refresh_slides()
+            self._refresh_canvases()
+
+    def _pick_logo(self) -> None:
+        """选择品牌 Logo 图片（每页右上角 contain 显示）。"""
+        start = self._settings.last_dir or str(Path.home())
+        path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "选择 Logo",
+            start,
+            "图片 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*.*)",
+        )
+        if not path:
+            return
+        self._settings.last_dir = str(Path(path).parent)
+        self._logo_edit.setText(path)
 
     def _on_footer_changed(self, text: str) -> None:
         if self._loading:

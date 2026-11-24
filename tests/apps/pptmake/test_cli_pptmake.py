@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import cast
 
@@ -22,6 +23,7 @@ def test_tool_registration() -> None:
         "import",
         "validate",
         "doctor",
+        "build",
     }
 
 
@@ -88,6 +90,26 @@ def test_inspect_prints_summary(tmp_path: Path, capsys: pytest.CaptureFixture[st
 def test_inspect_reports_load_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     pptmake.inspect_command(tmp_path / "missing.json")
     assert "读取模板失败" in capsys.readouterr().out
+
+
+def test_build_from_json_data(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    data = tmp_path / "deck.json"
+    data.write_text(
+        json.dumps({"slides": [{"layout": "cover", "title": "批量封面"}, {"layout": "closing", "title": "谢谢"}]}),
+        encoding="utf-8",
+    )
+    target = tmp_path / "deck.pptx"
+    pptmake.build_command(data, output=target, overwrite=True)
+    output = capsys.readouterr().out
+    assert "已生成 PPTX" in output
+    assert pptx_slide_count(target) == 2
+
+
+def test_build_rejects_bad_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    data = tmp_path / "deck.json"
+    data.write_text("{not json", encoding="utf-8")
+    pptmake.build_command(data, output=tmp_path / "deck.pptx")
+    assert "读取数据失败" in capsys.readouterr().out
 
 
 def test_validate_passes_clean_template(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

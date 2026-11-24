@@ -284,6 +284,7 @@ class Theme:
     tokens: DesignTokens = field(default_factory=DesignTokens)
     footer: str = ""
     show_page_number: bool = True
+    logo: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,6 +566,7 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
             "tokens": tokens_to_mapping(template.theme.tokens),
             "footer": template.theme.footer,
             "show_page_number": template.theme.show_page_number,
+            "logo": template.theme.logo,
         },
         "layouts": list(template.layouts),
         "slides": [
@@ -681,6 +683,7 @@ def template_from_mapping(raw: object) -> TemplateSpec:
         tokens=tokens,
         footer=str(theme_raw.get("footer") or ""),
         show_page_number=bool(theme_raw.get("show_page_number", True)),
+        logo=str(theme_raw.get("logo") or ""),
     )
 
     layouts_raw = raw.get("layouts", LAYOUTS)

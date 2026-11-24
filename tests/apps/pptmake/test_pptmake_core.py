@@ -119,13 +119,14 @@ def test_mapping_carries_image_brand_and_footer() -> None:
     )
     template = core.replace(
         template,
-        theme=core.replace(template.theme, footer="品牌页脚", show_page_number=False),
+        theme=core.replace(template.theme, footer="品牌页脚", show_page_number=False, logo="assets/logo.png"),
     )
     raw = core.template_to_mapping(template)
     assert raw["slides"][0]["image"] == "assets/hero.png"
     assert raw["slides"][0]["image_fit"] == core.IMAGE_FIT_CONTAIN
     assert raw["theme"]["footer"] == "品牌页脚"
     assert raw["theme"]["show_page_number"] is False
+    assert raw["theme"]["logo"] == "assets/logo.png"
     assert core.template_from_mapping(raw) == template
 
 

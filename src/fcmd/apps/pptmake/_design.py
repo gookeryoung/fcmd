@@ -1407,6 +1407,24 @@ _RENDERERS = {
 }
 
 
+def _paint_logo(out: list[Primitive], ctx: _Ctx) -> None:
+    """品牌 Logo：模板配置了 ``theme.logo`` 时固定放右上角（contain 显示）。"""
+    if not ctx.theme.logo:
+        return
+    width = round(ctx.type_scale.body * 4.6)
+    height = round(ctx.type_scale.body * 1.9)
+    out.append(
+        Picture(
+            ctx.width - ctx.margin - width,
+            round(ctx.margin * 0.5),
+            width,
+            height,
+            ctx.theme.logo,
+            "contain",
+        )
+    )
+
+
 def _paint_footer(
     out: list[Primitive],
     ctx: _Ctx,
@@ -1476,5 +1494,6 @@ def build_draw_list(  # noqa: PLR0913 - 版式入口需要页码 / 画布尺寸�
     _paint_decor(out, ctx)
     renderer = _RENDERERS.get(slide.layout, _render_bullets)
     renderer(out, ctx, slide)
+    _paint_logo(out, ctx)
     _paint_footer(out, ctx, page_number=page_number, page_total=page_total)
     return tuple(out)
