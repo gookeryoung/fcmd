@@ -1369,6 +1369,42 @@ class TestBuiltinEnv:
         assert "optional_deps" in data
         assert isinstance(data["optional_deps"], list)
 
+    def test_env_vars_lists_matching_prefix(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--vars --prefix 只列出匹配前缀的变量（大小写不敏感）。"""
+        monkeypatch.setenv("FCMD_TEST_ENV_VAR", "hello")
+        app = FcmdApp(["env", "--vars", "--prefix", "fcmd_test_env"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "FCMD_TEST_ENV_VAR=hello" in out
+        assert "环境信息" not in out
+
+    def test_env_prefix_implies_vars(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """只给 --prefix 也走环境变量列表（隐含 --vars）。"""
+        monkeypatch.setenv("FCMD_PREFIX_ONLY", "1")
+        app = FcmdApp(["env", "--prefix", "FCMD_PREFIX"])
+        assert app.run() == 0
+        assert "FCMD_PREFIX_ONLY=1" in capsys.readouterr().out
+
+    def test_env_vars_json(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """--vars --json 输出含 count / prefix / vars 的 JSON。"""
+        import json as json_mod
+
+        monkeypatch.setenv("FCMD_JSON_VAR", "value")
+        app = FcmdApp(["env", "--vars", "--json", "--prefix", "FCMD_JSON"])
+        assert app.run() == 0
+        data = json_mod.loads(capsys.readouterr().out)
+        assert data["prefix"] == "FCMD_JSON"
+        assert data["count"] == 1
+        assert data["vars"] == {"FCMD_JSON_VAR": "value"}
+
+    def test_env_vars_no_match(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """无匹配前缀时提示无结果。"""
+        app = FcmdApp(["env", "--vars", "--prefix", "FCMD_NO_SUCH_PREFIX_XYZ"])
+        assert app.run() == 0
+        assert "无匹配的环境变量" in capsys.readouterr().out
+
     def test_env_routes_through_run_builtin(self, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd env 通过 run() 入口正确路由（覆盖 _run_builtin 分发）。"""
         app = FcmdApp(["env"])

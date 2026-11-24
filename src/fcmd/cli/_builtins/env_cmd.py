@@ -1,8 +1,9 @@
-"""``fcmd env`` 内建命令：展示当前运行环境信息。"""
+"""``fcmd env`` 内建命令：展示当前运行环境信息，或只读查询环境变量。"""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -32,23 +33,63 @@ def _tool_stats() -> tuple[int, int]:
     return len(tool_names()), sum(len(subs) for subs in _TOOL_REGISTRY.values())
 
 
+def _select_vars(prefix: str | None) -> dict[str, str]:
+    """按前缀（大小写不敏感）筛选进程环境变量，按键名排序。"""
+    items = sorted(os.environ.items())
+    if prefix:
+        upper = prefix.upper()
+        items = [(name, value) for name, value in items if name.upper().startswith(upper)]
+    return dict(items)
+
+
+def _run_vars(prefix: str | None, json_output: bool) -> int:
+    """处理 ``--vars`` / ``--prefix``：只读列出环境变量。"""
+    selected = _select_vars(prefix)
+    if json_output:
+        import json as json_mod
+
+        payload = {
+            "prefix": prefix,
+            "count": len(selected),
+            "vars": selected,
+        }
+        sys.stdout.write(json_mod.dumps(payload, ensure_ascii=False, indent=2))
+        sys.stdout.flush()
+        return 0
+    console = get_console()
+    if not selected:
+        console.print("[dim](无匹配的环境变量)[/dim]")
+        return 0
+    for name, value in selected.items():
+        console.print(f"{name}={value}", highlight=False)
+    return 0
+
+
 def run(argv: list[str]) -> int:
     """``fcmd env``。
 
-    展示当前运行环境信息（只读，用于调试与问题排查）：
+    默认展示当前运行环境信息（只读，用于调试与问题排查）：
 
     - fcmd 版本与安装路径
     - Python 版本、平台、解释器路径
     - 已注册工具数与子命令总数
     - 可选依赖（pdf/ocr/svg/crypto/archive/filecheck/color/pe/ppt）的安装状态与版本
+
+    ``--vars`` 改为只读列出进程环境变量（``--prefix`` 按前缀过滤，``--json``
+    输出机读结构），不写入任何系统状态。
     """
     parser = argparse.ArgumentParser(
         prog="fcmd env",
-        description="展示当前运行环境信息",
+        description="展示当前运行环境信息，或用 --vars 只读查询环境变量",
     )
     parser.add_argument("--json", action="store_true", help="以 JSON 格式输出")
+    parser.add_argument("--vars", action="store_true", help="只列出进程环境变量")
+    parser.add_argument("--prefix", default=None, help="按前缀过滤环境变量名（大小写不敏感，隐含 --vars）")
     # argv 非空但首参数为 --help 时 argparse 自动处理；空 argv 时打印信息（env 无必需参数）
     parsed = parser.parse_args(argv) if argv else parser.parse_args([])
+
+    if parsed.vars or parsed.prefix is not None:
+        return _run_vars(parsed.prefix, parsed.json)
 
     from fcmd import __version__ as fcmd_version
 
