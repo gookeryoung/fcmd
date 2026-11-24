@@ -7,6 +7,10 @@
 
 ### 变更
 
+- `filescan` 规则新增 `kind=filetype`（魔数识别 pdf/zip/exe 等，发现 rename 文件）与
+  `target=archive_path`（zip / tar 成员路径匹配，不解压）；规则集 `version: 5`。
+- `filescanw` 规则类型下拉改为中文名称（关键词 / 正则 / 时间 / 文件大小 / 文件类型），
+  新增「文件类型」类型与「归档成员路径」匹配对象。
 - `filescan` 规则继续扩展（规则集 `version: 4`）：新增 `target=path` 完整路径匹配、
   `kind=size` 文件大小规则（`lt` / `gt` / `between`，支持 10KB / 1.5MB / 裸字节）、
   `regex.validator`（Luhn / 身份证 / 统一社会信用代码 / IBAN）与规则级

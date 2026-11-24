@@ -110,6 +110,7 @@ from fcmd.apps.filescan._report import (
 )
 from fcmd.apps.filescan._rules import (
     DEFAULT_SEVERITY,
+    MATCH_FILETYPE,
     MATCH_KEYWORD,
     MATCH_REGEX,
     MATCH_SIZE,
@@ -120,6 +121,7 @@ from fcmd.apps.filescan._rules import (
     SIZE_LT,
     SIZE_OP_LABELS,
     SIZE_OPS,
+    TARGET_ARCHIVE_PATH,
     TARGET_CONTENT,
     TARGET_FILENAME,
     TARGET_PATH,
@@ -529,6 +531,16 @@ class _WhitelistDialog(QDialog):  # pragma: no cover - 模态对话框
         return self._result
 
 
+_KIND_LABELS: dict[str, str] = {
+    MATCH_KEYWORD: "关键词",
+    MATCH_REGEX: "正则",
+    MATCH_TIME: "时间",
+    MATCH_SIZE: "文件大小",
+    MATCH_FILETYPE: "文件类型",
+}
+"""规则类型下拉的中文名称（内部仍用稳定 id）。"""
+
+
 def _collapse_multiline(text: str) -> str:
     """把多行输入合并为单行：换行只用于排版，行首缩进一并去掉。"""
     return "".join(part.strip() for part in text.splitlines()).strip()
@@ -572,8 +584,9 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._name = QLineEdit(rule.name if rule else "", self)
         self._group = QLineEdit(rule.group if rule else "自定义", self)
         self._kind = QComboBox(self)
-        self._kind.addItems([MATCH_KEYWORD, MATCH_REGEX, MATCH_TIME, MATCH_SIZE])
-        self._kind.setCurrentText(current_kind)
+        for kind, label in _KIND_LABELS.items():
+            self._kind.addItem(label, kind)
+        self._kind.setCurrentIndex(max(self._kind.findData(current_kind), 0))
         self._text = self._make_multiline_editor("关键词原文，如 password")
         self._text.setPlainText(rule.matcher.text if rule else "")
         self._pattern = self._make_multiline_editor("正则表达式，如 \\d{11}；可换行，保存时合并为单行")
@@ -585,6 +598,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._target.addItem("文件内容", TARGET_CONTENT)
         self._target.addItem("文件名", TARGET_FILENAME)
         self._target.addItem("完整路径", TARGET_PATH)
+        self._target.addItem("归档成员路径", TARGET_ARCHIVE_PATH)
         current_target = (
             rule.matcher.target if rule and rule.matcher.target in (TARGET_CONTENT, TARGET_FILENAME) else TARGET_CONTENT
         )
@@ -612,6 +626,10 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._size_value.setPlaceholderText("如 10MB / 1048576")
         self._size_end = QLineEdit(rule.matcher.value2 if rule and rule.matcher.kind == MATCH_SIZE else "", self)
         self._size_end.setPlaceholderText("结束大小（介于时必填）")
+        self._filetype_value = QLineEdit(
+            rule.matcher.value if rule and rule.matcher.kind == MATCH_FILETYPE else "", self
+        )
+        self._filetype_value.setPlaceholderText(" pdf,zip,exe（逗号分隔）")
         self._validator = QComboBox(self)
         for validator in VALIDATORS:
             self._validator.addItem(VALIDATOR_LABELS[validator], validator)
@@ -677,6 +695,9 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._validator_label = _label("校验器")
         grid.addWidget(self._validator_label, 15, 0)
         grid.addWidget(self._validator, 15, 1)
+        self._filetype_label = _label("文件类型")
+        grid.addWidget(self._filetype_label, 16, 0)
+        grid.addWidget(self._filetype_value, 16, 1)
         outer.addLayout(grid)
 
         flags = QHBoxLayout()
@@ -709,7 +730,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         flags.addStretch(1)
         outer.addLayout(flags)
 
-        self._kind.currentTextChanged.connect(self._sync_kind_fields)
+        self._kind.currentIndexChanged.connect(lambda _index: self._sync_kind_fields(self._current_kind))
         self._time_op.currentIndexChanged.connect(self._sync_time_end)
         self._size_op.currentIndexChanged.connect(self._sync_size_end)
         self._sync_kind_fields(current_kind)
@@ -727,7 +748,8 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
 
     @property
     def _current_kind(self) -> str:
-        return self._kind.currentText()
+        data = self._kind.currentData()
+        return data if isinstance(data, str) and data else MATCH_KEYWORD
 
     def _remember_case(self, checked: bool) -> None:
         kind = self._current_kind
@@ -760,6 +782,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         regex = kind == MATCH_REGEX
         time_rule = kind == MATCH_TIME
         size_rule = kind == MATCH_SIZE
+        filetype_rule = kind == MATCH_FILETYPE
         pattern_rule = keyword or regex
         self._text.setVisible(keyword)
         self._text_label.setVisible(keyword)
@@ -771,6 +794,8 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._target_label.setVisible(pattern_rule)
         self._validator.setVisible(regex)
         self._validator_label.setVisible(regex)
+        self._filetype_value.setVisible(filetype_rule)
+        self._filetype_label.setVisible(filetype_rule)
         for text in ("时间字段", "时间条件", "起始时间"):
             self._time_labels[text].setVisible(time_rule)
         self._time_field.setVisible(time_rule)
@@ -789,6 +814,8 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             hint = "时间：按文件时间戳比较；创建时间在 Linux 上退化为 ctime（更接近元数据变更时间）。"
         elif size_rule:
             hint = "大小：按文件字节数比较，支持 10KB / 1.5MB / 2GB 或裸字节数；区间为半开 [起始, 结束)。"
+        elif filetype_rule:
+            hint = "文件类型：按魔数识别真实类型（逗号分隔，如 pdf,zip,exe），可发现改名文件。"
         elif keyword:
             hint = "关键词：按原文包含匹配，可勾选整词；默认不区分大小写。可换行，保存时合并为单行。"
         else:
@@ -808,6 +835,8 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
                 value=self._time_value.text().strip(),
                 value2=self._time_end.text().strip() if compare == TIME_BETWEEN else "",
             )
+        elif kind == MATCH_FILETYPE:
+            matcher = Matcher(kind=kind, value=self._filetype_value.text().strip())
         elif kind == MATCH_SIZE:
             compare = self._size_op.currentData() or SIZE_LT
             matcher = Matcher(

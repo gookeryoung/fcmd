@@ -641,7 +641,7 @@ def test_ruleset_time_rule_roundtrip_and_near_guard() -> None:
     restored = ruleset_from_mapping(ruleset_to_mapping(ruleset))
     assert restored.find("old") is not None
     assert restored.find("old").matcher.target == TIME_MODIFIED  # type: ignore[union-attr]
-    assert ruleset_to_mapping(restored)["version"] == 4
+    assert ruleset_to_mapping(restored)["version"] == 5
 
     bad = RuleSet(
         rules=(Rule(id="old", name="旧文件", matcher=_time_matcher()),),

@@ -91,7 +91,7 @@
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "name": "示例规则集",
   "rules": [
     {"id": "cn_id", "name": "身份证号", "group": "个人信息", "enabled": true,
@@ -694,6 +694,17 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   实际有效片段数（不受 `max_hits_per_file` 截断影响）。
 - 规则集 `version` 升到 4；`min_hits` / `max_hits` 与默认一致时不写入 JSON。
 
+### D18 文件类型与归档成员（2026-11-25）
+
+- **文件类型规则** `kind=filetype`：按魔数识别真实类型（`text` / `pdf` / `zip` /
+  `gzip` / `7z` / `rar` / `exe` / `ole` / `image` / `other`），`value` 为逗号分隔的
+  类型集合；命中 `location=文件类型`、`sensitive=False`，可发现扩展名与内容不符的文件。
+- **归档成员规则** `target=archive_path`：对 zip / tar 的成员路径做关键词 / 正则匹配
+  （只读成员名，不解压内容，单归档上限 5000 项），命中 `location=归档成员`。
+- 两者都属于元数据阶段：内容被跳过 / 二进制时仍照常报告；`near[k]` 不参与。
+- 规则集 `version` 升到 5。GUI 规则类型下拉改用中文名称（关键词 / 正则 / 时间 /
+  文件大小 / 文件类型），内部仍存稳定 id。
+
 ### D15 邻近表达式 near[k]（2026-11-24）
 
 表达式新增二元（可链式）邻近算子：``a near[k] b`` / ``a within[k] b``，表示
@@ -768,6 +779,8 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   0 命中诊断与真实复现见 D12）。
 - 文件名规则：已落地（`Matcher.target` / `CompiledRule.matches_filename` +
   引擎 `_match_filename`，报告与 GUI 规则对话框同步，见 D13）。
+- 文件类型 / 归档成员：已落地（`_filetype` + `_engine._match_filetype` /
+  `_match_archive`，GUI「文件类型」类型与「归档成员路径」目标，见 D18）。
 - 路径 / 大小 / 校验器 / 命中阈值：已落地（`_matcher` 路径与大小类型、
   `_validators` 校验器、`_engine._match_size` / `_apply_thresholds`，GUI 类型切换
   与阈值输入同步，见 D17）。

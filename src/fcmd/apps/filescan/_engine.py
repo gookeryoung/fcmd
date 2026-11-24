@@ -36,6 +36,7 @@ from fcmd.apps.filescan._extract import (
     TextUnit,
     extract_document,
 )
+from fcmd.apps.filescan._filetype import archive_members, detect_file_type
 from fcmd.apps.filescan._rules import (
     SIZE_BETWEEN,
     SIZE_GT,
@@ -128,6 +129,8 @@ LOCATION_FILENAME = "文件名"
 
 LOCATION_PATH = "路径"
 LOCATION_SIZE = "文件大小"
+LOCATION_FILETYPE = "文件类型"
+LOCATION_ARCHIVE = "归档成员"
 LOCATION_TIME_LABELS = TIME_TARGET_LABELS
 """时间命中的位置标签（修改时间 / 创建时间 / 访问时间），``line_no`` 同样为 0。"""
 
@@ -1182,6 +1185,83 @@ def _match_times(
     return matched_ids, matches, {}, rule_counts
 
 
+def _match_filetype(
+    path: Path,
+    compiled_rules: Sequence[CompiledRule],
+) -> tuple[set[str], list[RuleMatch], dict[str, int]]:
+    """按魔数判断真实文件类型（扩展名不可信时仍能识别改名文件）。"""
+    rules = [item for item in compiled_rules if item.file_types]
+    if not rules:
+        return set(), [], {}
+    file_type = detect_file_type(path)
+    matched_ids: set[str] = set()
+    matches: list[RuleMatch] = []
+    rule_counts: dict[str, int] = {}
+    for compiled in rules:
+        if file_type not in compiled.file_types:
+            continue
+        matched_ids.add(compiled.id)
+        rule_counts[compiled.id] = 1
+        matches.append(
+            RuleMatch(
+                rule_id=compiled.id,
+                rule_name=compiled.name,
+                line_no=0,
+                start=0,
+                end=0,
+                excerpt=file_type,
+                context=file_type,
+                context_start=0,
+                location=LOCATION_FILETYPE,
+                severity=compiled.severity,
+                sensitive=False,
+            )
+        )
+    return matched_ids, matches, rule_counts
+
+
+def _match_archive(
+    path: Path,
+    compiled_rules: Sequence[CompiledRule],
+    options: ScanOptions,
+) -> tuple[set[str], list[RuleMatch], dict[str, int]]:
+    """对 zip / tar 归档的成员路径求值（只读成员名，不解压内容）。"""
+    rules = [item for item in compiled_rules if item.rule.matcher.target == "archive_path"]
+    if not rules:
+        return set(), [], {}
+    file_type = detect_file_type(path)
+    members = archive_members(path, file_type)
+    if not members:
+        return set(), [], {}
+    limit = max(1, options.max_hits_per_file)
+    matched_ids: set[str] = set()
+    matches: list[RuleMatch] = []
+    rule_counts: dict[str, int] = {}
+    for compiled in rules:
+        regex = compiled.regex
+        if regex is None:
+            continue
+        validator = compiled.rule.matcher.validator
+        for member in members:
+            for match in regex.finditer(member):
+                if validator and not validate_value(match.group(0), validator):
+                    continue
+                matched_ids.add(compiled.id)
+                rule_counts[compiled.id] = rule_counts.get(compiled.id, 0) + 1
+                if len(matches) < limit:
+                    matches.append(
+                        _build_match(
+                            compiled,
+                            member,
+                            0,
+                            match,
+                            options.context_chars,
+                            location=LOCATION_ARCHIVE,
+                        )
+                    )
+    return matched_ids, matches, rule_counts
+
+
 def _match_size(
     path: Path,
     compiled_rules: Sequence[CompiledRule],
@@ -1323,9 +1403,17 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
     )
     time_ids, time_matches, time_lines, time_counts = _match_times(path, context.compiled_rules, context.options)
     size_ids, size_matches, size_counts = _match_size(path, context.compiled_rules, context.options, size)
-    metadata_matches = [*name_matches, *time_matches, *size_matches]
-    metadata_ids = name_ids | time_ids | size_ids
-    metadata_counts = {**name_counts, **time_counts, **size_counts}
+    type_ids, type_matches, type_counts = _match_filetype(path, context.compiled_rules)
+    archive_ids, archive_matches, archive_counts = _match_archive(path, context.compiled_rules, context.options)
+    metadata_matches = [*name_matches, *time_matches, *size_matches, *type_matches, *archive_matches]
+    metadata_ids = name_ids | time_ids | size_ids | type_ids | archive_ids
+    metadata_counts = {
+        **name_counts,
+        **time_counts,
+        **size_counts,
+        **type_counts,
+        **archive_counts,
+    }
     suffix = path.suffix.lower()
     if context.options.scan_documents and suffix in DOCUMENT_EXTENSIONS:
         outcome = _scan_document(path, context, suffix, size)

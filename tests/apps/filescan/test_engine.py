@@ -46,6 +46,7 @@ from fcmd.apps.filescan._rules import (
     MATCH_TIME,
     SIZE_BETWEEN,
     SIZE_LT,
+    TARGET_ARCHIVE_PATH,
     TARGET_FILENAME,
     TARGET_PATH,
     TIME_AFTER,
@@ -1117,3 +1118,25 @@ def test_rule_min_and_max_hits_thresholds(tmp_path: Path) -> None:
 
     at_most_one = RuleSet(rules=(Rule(id="few", name="少", matcher=matcher, max_hits=1),))
     assert [hit.path.name for hit in scan_paths([tmp_path], at_most_one, ScanOptions()).hits] == ["one.txt"]
+
+
+def test_archive_member_rule_matches_zip_entry(tmp_path: Path) -> None:
+    import zipfile
+
+    archive = tmp_path / "data.txt"
+    with zipfile.ZipFile(archive, "w") as handle:
+        handle.writestr("secret/customers.xlsx", "x")
+    ruleset = RuleSet(
+        rules=(
+            Rule(
+                id="member",
+                name="归档成员",
+                matcher=Matcher(kind=MATCH_REGEX, pattern="customers", target=TARGET_ARCHIVE_PATH),
+            ),
+        ),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+    assert len(result.hits) == 1
+    match = result.hits[0].matches[0]
+    assert match.excerpt == "customers"
+    assert match.location == "归档成员"

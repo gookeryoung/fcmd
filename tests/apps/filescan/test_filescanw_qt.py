@@ -186,7 +186,7 @@ def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
     try:
         dialog = _RuleDialog(window, None)
         try:
-            assert dialog._kind.currentText() == MATCH_KEYWORD
+            assert dialog._kind.currentData() == MATCH_KEYWORD
             assert dialog._text.isHidden() is False
             assert dialog._text_label.isHidden() is False
             assert dialog._pattern.isHidden() is True
@@ -195,7 +195,7 @@ def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
             assert dialog._case.isChecked() is False
             assert "关键词" in dialog._kind_hint.text()
 
-            dialog._kind.setCurrentText(MATCH_REGEX)
+            dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_REGEX))
             assert dialog._text.isHidden() is True
             assert dialog._text_label.isHidden() is True
             assert dialog._pattern.isHidden() is False
@@ -206,13 +206,13 @@ def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
 
             # 每种类型记住自己的大小写选择。
             dialog._case.setChecked(False)
-            dialog._kind.setCurrentText(MATCH_KEYWORD)
+            dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_KEYWORD))
             assert dialog._case.isChecked() is False
-            dialog._kind.setCurrentText(MATCH_REGEX)
+            dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_REGEX))
             assert dialog._case.isChecked() is False
 
             # 关键词同样支持多行排版，保存时合并为单行。
-            dialog._kind.setCurrentText(MATCH_KEYWORD)
+            dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_KEYWORD))
             dialog._text.setPlainText("pass\n  word")
             dialog._commit()
             result = dialog.value()
@@ -225,7 +225,7 @@ def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
         rule = Rule(id="r", name="R", matcher=Matcher(kind=MATCH_REGEX, pattern=r"\d+"))
         dialog = _RuleDialog(window, rule)
         try:
-            assert dialog._kind.currentText() == MATCH_REGEX
+            assert dialog._kind.currentData() == MATCH_REGEX
             assert dialog._pattern.toPlainText() == r"\d+"
             assert dialog._pattern.isHidden() is False
             assert dialog._text.isHidden() is True
@@ -253,7 +253,7 @@ def test_rule_dialog_time_type_switches_fields(home: Path) -> None:
     try:
         dialog = _RuleDialog(window, None)
         try:
-            dialog._kind.setCurrentText(MATCH_TIME)
+            dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_TIME))
             assert dialog._text.isHidden() is True
             assert dialog._pattern.isHidden() is True
             assert dialog._target.isHidden() is True
@@ -289,7 +289,7 @@ def test_rule_dialog_time_type_switches_fields(home: Path) -> None:
         )
         dialog = _RuleDialog(window, rule)
         try:
-            assert dialog._kind.currentText() == MATCH_TIME
+            assert dialog._kind.currentData() == MATCH_TIME
             assert dialog._time_field.currentData() == TIME_CREATED
             assert dialog._time_op.currentData() == TIME_AFTER
             assert dialog._time_value.text() == "2026-01-01"
@@ -309,7 +309,7 @@ def test_rule_dialog_size_validator_and_thresholds(home: Path) -> None:
     try:
         dialog = _RuleDialog(window, None)
         try:
-            dialog._kind.setCurrentText(MATCH_SIZE)
+            dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_SIZE))
             assert dialog._text.isHidden() is True
             assert dialog._pattern.isHidden() is True
             assert dialog._target.isHidden() is True
@@ -333,7 +333,7 @@ def test_rule_dialog_size_validator_and_thresholds(home: Path) -> None:
 
         dialog = _RuleDialog(window, None)
         try:
-            dialog._kind.setCurrentText(MATCH_REGEX)
+            dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_REGEX))
             assert dialog._validator.isHidden() is False
             dialog._pattern.setPlainText(r"\d{16}")
             dialog._validator.setCurrentIndex(dialog._validator.findData("luhn"))

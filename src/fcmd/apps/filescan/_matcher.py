@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from fcmd.apps.filescan._filetype import FILE_TYPES
 from fcmd.apps.filescan._sizeutil import SIZE_BETWEEN, SIZE_LT, SIZE_OPS, parse_size_value
 from fcmd.apps.filescan._timeutil import (
     TIME_AFTER,
@@ -32,12 +33,14 @@ MATCH_KEYWORD = "keyword"
 MATCH_REGEX = "regex"
 MATCH_TIME = "time"
 MATCH_SIZE = "size"
-MATCH_KINDS: tuple[str, ...] = (MATCH_KEYWORD, MATCH_REGEX, MATCH_TIME, MATCH_SIZE)
+MATCH_FILETYPE = "filetype"
+MATCH_KINDS: tuple[str, ...] = (MATCH_KEYWORD, MATCH_REGEX, MATCH_TIME, MATCH_SIZE, MATCH_FILETYPE)
 
 TARGET_CONTENT = "content"
 TARGET_FILENAME = "filename"
 TARGET_PATH = "path"
-CONTENT_TARGETS: tuple[str, ...] = (TARGET_CONTENT, TARGET_FILENAME, TARGET_PATH)
+TARGET_ARCHIVE_PATH = "archive_path"
+CONTENT_TARGETS: tuple[str, ...] = (TARGET_CONTENT, TARGET_FILENAME, TARGET_PATH, TARGET_ARCHIVE_PATH)
 MATCH_TARGETS: tuple[str, ...] = (*CONTENT_TARGETS, *TIME_TARGETS)
 """匹配对象：内容 / 文件名 / 路径 / 修改、创建、访问时间；合法组合由 ``Matcher.validate`` 约束。"""
 
@@ -74,6 +77,8 @@ class Matcher:
             if self.compare == TIME_BETWEEN:
                 return f"{field} {op} {self.value} ~ {self.value2}"
             return f"{field} {op} {self.value}"
+        if self.kind == MATCH_FILETYPE:
+            return f"文件类型: {self.value}"
         if self.kind == MATCH_SIZE:
             op = _SIZE_OP_LABELS.get(self.compare, self.compare)
             if self.compare == SIZE_BETWEEN:
@@ -113,7 +118,7 @@ class Matcher:
         """是否文件大小规则。"""
         return self.kind == MATCH_SIZE
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # noqa: PLR0912 - 逐类型校验字段
         """校验匹配器字段；非法时抛 ``ValueError``（中文说明）。"""
         if self.kind not in MATCH_KINDS:
             raise ValueError(f"未知匹配器类型: {self.kind!r}，只支持 {'/'.join(MATCH_KINDS)}")
@@ -122,6 +127,14 @@ class Matcher:
             return
         if self.kind == MATCH_SIZE:
             self._validate_size()
+            return
+        if self.kind == MATCH_FILETYPE:
+            types = [item.strip() for item in self.value.split(",") if item.strip()]
+            if not types:
+                raise ValueError("文件类型规则需要至少一个类型（如 pdf,zip）")
+            unknown = [item for item in types if item not in FILE_TYPES]
+            if unknown:
+                raise ValueError(f"未知文件类型: {'/'.join(unknown)}，只支持 {'/'.join(FILE_TYPES)}")
             return
         if self.target not in CONTENT_TARGETS:
             raise ValueError(
@@ -184,6 +197,9 @@ def matcher_to_mapping(matcher: Matcher) -> dict[str, Any]:
         if matcher.compare == TIME_BETWEEN:
             payload["value2"] = matcher.value2
         return payload
+    if matcher.kind == MATCH_FILETYPE:
+        payload["value"] = matcher.value
+        return payload
     if matcher.kind == MATCH_SIZE:
         payload["compare"] = matcher.compare
         payload["value"] = matcher.value
@@ -226,6 +242,13 @@ def matcher_from_mapping(raw: Any) -> Matcher:  # noqa: PLR0912 - 逐类型校�
         if target == TARGET_CONTENT:
             target = "modified"
         matcher = Matcher(kind=kind, target=target, compare=compare, value=value, value2=value2)
+        matcher.validate()
+        return matcher
+    if kind == MATCH_FILETYPE:
+        value = raw.get("value", "")
+        if not isinstance(value, str):
+            raise ValueError("文件类型规则的 value 必须是字符串")
+        matcher = Matcher(kind=kind, value=value)
         matcher.validate()
         return matcher
     if kind == MATCH_SIZE:

@@ -39,12 +39,14 @@ from fcmd.apps.filescan._expr import (
 )
 from fcmd.apps.filescan._matcher import (
     CONTENT_TARGETS,
+    MATCH_FILETYPE,
     MATCH_KEYWORD,
     MATCH_KINDS,
     MATCH_REGEX,
     MATCH_SIZE,
     MATCH_TARGETS,
     MATCH_TIME,
+    TARGET_ARCHIVE_PATH,
     TARGET_CONTENT,
     TARGET_FILENAME,
     TARGET_PATH,
@@ -81,6 +83,7 @@ __all__ = [
     "DEFAULT_GROUP",
     "DEFAULT_RULESET_NAME",
     "DEFAULT_SEVERITY",
+    "MATCH_FILETYPE",
     "MATCH_KEYWORD",
     "MATCH_KINDS",
     "MATCH_REGEX",
@@ -99,6 +102,7 @@ __all__ = [
     "SIZE_LT",
     "SIZE_OPS",
     "SIZE_OP_LABELS",
+    "TARGET_ARCHIVE_PATH",
     "TARGET_CONTENT",
     "TARGET_FILENAME",
     "TARGET_PATH",
@@ -224,6 +228,7 @@ class CompiledRule:
     time_end: float | None = None
     size_start: int | None = None
     size_end: int | None = None
+    file_types: frozenset[str] = frozenset()
 
     @property
     def id(self) -> str:
@@ -256,6 +261,10 @@ def compile_rule(rule: Rule) -> CompiledRule:
         start = parse_time_value(matcher.value)
         end = parse_time_value(matcher.value2) if matcher.compare == TIME_BETWEEN else None
         return CompiledRule(rule=rule, regex=None, time_start=start, time_end=end)
+    if matcher.kind == MATCH_FILETYPE:
+        matcher.validate()
+        types = frozenset(item.strip() for item in matcher.value.split(",") if item.strip())
+        return CompiledRule(rule=rule, regex=None, file_types=types)
     if matcher.kind == MATCH_SIZE:
         matcher.validate()
         start = parse_size_value(matcher.value)
@@ -580,7 +589,7 @@ def expression_from_mapping(raw: Any, *, index: int = 0) -> Expression:
 def ruleset_to_mapping(ruleset: RuleSet) -> dict[str, Any]:
     """规则集转可写入 JSON 的字典（``version`` 3：规则 + 组合式 + 时间规则）。"""
     return {
-        "version": 4,
+        "version": 5,
         "name": ruleset.name,
         "rules": [rule_to_mapping(rule) for rule in ruleset.rules],
         "expressions": [expression_to_mapping(item) for item in ruleset.expressions],
