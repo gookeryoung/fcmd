@@ -177,6 +177,73 @@ def test_rules_enable_and_expression_list(home: Path) -> None:
         window.deleteLater()
 
 
+def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
+    """类型切换只显示对应字段；大小写默认值按类型记忆，保存时只带当前类型内容。"""
+    from fcmd.apps.filescan._filescanw_qt import _RuleDialog
+    from fcmd.apps.filescan._rules import MATCH_KEYWORD, MATCH_REGEX
+
+    window = _window()
+    try:
+        dialog = _RuleDialog(window, None)
+        try:
+            assert dialog._kind.currentText() == MATCH_KEYWORD
+            assert dialog._text.isHidden() is False
+            assert dialog._text_label.isHidden() is False
+            assert dialog._pattern.isHidden() is True
+            assert dialog._pattern_label.isHidden() is True
+            assert dialog._whole.isHidden() is False
+            assert dialog._case.isChecked() is False
+            assert "关键词" in dialog._kind_hint.text()
+
+            dialog._kind.setCurrentText(MATCH_REGEX)
+            assert dialog._text.isHidden() is True
+            assert dialog._text_label.isHidden() is True
+            assert dialog._pattern.isHidden() is False
+            assert dialog._pattern_label.isHidden() is False
+            assert dialog._whole.isHidden() is True
+            assert dialog._case.isChecked() is True
+            assert "正则" in dialog._kind_hint.text()
+
+            # 每种类型记住自己的大小写选择。
+            dialog._case.setChecked(False)
+            dialog._kind.setCurrentText(MATCH_KEYWORD)
+            assert dialog._case.isChecked() is False
+            dialog._kind.setCurrentText(MATCH_REGEX)
+            assert dialog._case.isChecked() is False
+
+            # 关键词同样支持多行排版，保存时合并为单行。
+            dialog._kind.setCurrentText(MATCH_KEYWORD)
+            dialog._text.setPlainText("pass\n  word")
+            dialog._commit()
+            result = dialog.value()
+            assert result is not None
+            assert result.matcher.kind == MATCH_KEYWORD
+            assert result.matcher.text == "password"
+        finally:
+            dialog.deleteLater()
+
+        rule = Rule(id="r", name="R", matcher=Matcher(kind=MATCH_REGEX, pattern=r"\d+"))
+        dialog = _RuleDialog(window, rule)
+        try:
+            assert dialog._kind.currentText() == MATCH_REGEX
+            assert dialog._pattern.toPlainText() == r"\d+"
+            assert dialog._pattern.isHidden() is False
+            assert dialog._text.isHidden() is True
+            assert dialog._case.isChecked() is True
+            # 多行正则：换行 / 缩进只用于排版，保存时合并为单行。
+            dialog._pattern.setPlainText("(foo\\d+\n  |bar\\w+)")
+            dialog._commit()
+            result = dialog.value()
+            assert result is not None
+            assert result.matcher.pattern == r"(foo\d+|bar\w+)"
+            assert result.matcher.text == ""
+            assert result.matcher.whole_word is False
+        finally:
+            dialog.deleteLater()
+    finally:
+        window.deleteLater()
+
+
 def test_scan_worker_masks_context(home: Path, sample: Path) -> None:
     from fcmd.apps.filescan._engine import CancelToken, ScanOptions
     from fcmd.apps.filescan._filescanw_qt import _scan_worker, _ScanProgress

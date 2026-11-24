@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -512,14 +513,36 @@ class _WhitelistDialog(QDialog):  # pragma: no cover - 模态对话框
         return self._result
 
 
+def _collapse_multiline(text: str) -> str:
+    """把多行输入合并为单行：换行只用于排版，行首缩进一并去掉。"""
+    return "".join(part.strip() for part in text.splitlines()).strip()
+
+
 class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
     """新增 / 编辑单条规则；校验（id 唯一、匹配器合法）由窗口侧统一执行。"""
+
+    @staticmethod
+    def _make_multiline_editor(placeholder: str) -> QPlainTextEdit:
+        """统一的「单行语义 / 多行排版」输入框：按宽度折行，保存时压成一行。"""
+        editor = QPlainTextEdit()
+        editor.setPlaceholderText(placeholder)
+        editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        editor.setMinimumHeight(64)
+        editor.setMaximumHeight(96)
+        editor.setTabChangesFocus(True)
+        return editor
 
     def __init__(self, parent: QWidget, rule: Rule | None) -> None:
         super().__init__(parent)
         self.setWindowTitle("编辑规则" if rule is not None else "新增规则")
-        self.setMinimumWidth(640)
+        self.setMinimumWidth(660)
         self._result: Rule | None = None
+
+        current_kind = rule.matcher.kind if rule is not None else MATCH_KEYWORD
+        # 两种类型各自记住大小写开关：新增时用类型默认值（关键词不区分、正则区分）。
+        self._case_by_kind = {MATCH_KEYWORD: False, MATCH_REGEX: True}
+        if rule is not None:
+            self._case_by_kind[current_kind] = rule.matcher.is_case_sensitive()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
@@ -532,35 +555,49 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._id = QLineEdit(rule.id if rule else "", self)
         self._name = QLineEdit(rule.name if rule else "", self)
         self._group = QLineEdit(rule.group if rule else "自定义", self)
-        self._text = QLineEdit(rule.matcher.text if rule else "", self)
-        self._pattern = QLineEdit(rule.matcher.pattern if rule else "", self)
-        for row, (label, widget) in enumerate(
-            (
-                ("规则 id", self._id),
-                ("名称", self._name),
-                ("分组", self._group),
-                ("关键词", self._text),
-                ("正则", self._pattern),
-            )
-        ):
-            grid.addWidget(QLabel(label), row, 0, Qt.AlignmentFlag.AlignRight)
-            grid.addWidget(widget, row, 1)
-        grid.addWidget(QLabel("类型"), 5, 0, Qt.AlignmentFlag.AlignRight)
         self._kind = QComboBox(self)
         self._kind.addItems([MATCH_KEYWORD, MATCH_REGEX])
-        self._kind.setCurrentText(rule.matcher.kind if rule else MATCH_KEYWORD)
-        grid.addWidget(self._kind, 5, 1)
-        grid.addWidget(QLabel("严重级"), 6, 0, Qt.AlignmentFlag.AlignRight)
+        self._kind.setCurrentText(current_kind)
+        self._text = self._make_multiline_editor("关键词原文，如 password")
+        self._text.setPlainText(rule.matcher.text if rule else "")
+        self._pattern = self._make_multiline_editor("正则表达式，如 \\d{11}；可换行，保存时合并为单行")
+        self._pattern.setPlainText(rule.matcher.pattern if rule else "")
         self._severity = QComboBox(self)
         self._severity.addItems([SEVERITY_LABELS[level] for level in SEVERITY_LEVELS])
         self._severity.setCurrentIndex(SEVERITY_LEVELS.index(rule.severity if rule else DEFAULT_SEVERITY))
-        grid.addWidget(self._severity, 6, 1)
-        grid.addWidget(QLabel("匹配对象"), 7, 0, Qt.AlignmentFlag.AlignRight)
         self._target = QComboBox(self)
         self._target.addItem("文件内容", TARGET_CONTENT)
         self._target.addItem("文件名", TARGET_FILENAME)
         current_target = rule.matcher.target if rule else TARGET_CONTENT
         self._target.setCurrentIndex(max(self._target.findData(current_target), 0))
+
+        def _label(text: str) -> QLabel:
+            label = QLabel(text, self)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            return label
+
+        for row, (text, widget) in enumerate(
+            (
+                ("规则 id", self._id),
+                ("名称", self._name),
+                ("分组", self._group),
+                ("类型", self._kind),
+            )
+        ):
+            grid.addWidget(_label(text), row, 0)
+            grid.addWidget(widget, row, 1)
+        # 关键词 / 正则共用第 4 行：切换类型时只显示对应标签与输入框。
+        self._text_label = _label("关键词")
+        self._pattern_label = _label("正则")
+        grid.addWidget(self._text_label, 4, 0)
+        grid.addWidget(self._text, 4, 1)
+        grid.addWidget(self._pattern_label, 4, 0)
+        grid.addWidget(self._pattern, 4, 1)
+        self._kind_hint = hint_label("", wrap=True)
+        grid.addWidget(self._kind_hint, 5, 1)
+        grid.addWidget(_label("严重级"), 6, 0)
+        grid.addWidget(self._severity, 6, 1)
+        grid.addWidget(_label("匹配对象"), 7, 0)
         grid.addWidget(self._target, 7, 1)
         outer.addLayout(grid)
 
@@ -568,15 +605,20 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         flags.setContentsMargins(0, 0, 0, 0)
         flags.setSpacing(12)
         self._case = QCheckBox("区分大小写", self)
-        self._case.setChecked(rule.matcher.is_case_sensitive() if rule else False)
-        self._whole = QCheckBox("整词匹配（关键词）", self)
+        self._case.setChecked(self._case_by_kind[current_kind])
+        self._case.toggled.connect(self._remember_case)
+        self._whole = QCheckBox("整词匹配", self)
         self._whole.setChecked(rule.matcher.whole_word if rule else False)
+        self._whole.setToolTip("仅关键词类型可用；按词边界匹配，避免中文关键词被误判")
         self._enabled = QCheckBox("启用", self)
         self._enabled.setChecked(rule.enabled if rule else True)
         for widget in (self._case, self._whole, self._enabled):
             flags.addWidget(widget)
         flags.addStretch(1)
         outer.addLayout(flags)
+
+        self._kind.currentTextChanged.connect(self._sync_kind_fields)
+        self._sync_kind_fields(current_kind)
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
@@ -589,14 +631,44 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         actions.addWidget(confirm)
         outer.addLayout(actions)
 
+    @property
+    def _current_kind(self) -> str:
+        return self._kind.currentText()
+
+    def _remember_case(self, checked: bool) -> None:
+        self._case_by_kind[self._current_kind] = checked
+
+    def _sync_kind_fields(self, kind: str) -> None:
+        """按类型切换可见字段：关键词显示文本 / 整词，正则显示表达式。"""
+        keyword = kind == MATCH_KEYWORD
+        self._text.setVisible(keyword)
+        self._text_label.setVisible(keyword)
+        self._pattern.setVisible(not keyword)
+        self._pattern_label.setVisible(not keyword)
+        self._whole.setVisible(keyword)
+        self._case.blockSignals(True)
+        self._case.setChecked(self._case_by_kind.get(kind, False))
+        self._case.blockSignals(False)
+        self._kind_hint.setText(
+            "关键词：按原文包含匹配，可勾选整词；默认不区分大小写。可换行，保存时合并为单行。"
+            if keyword
+            else "正则：按行逐条匹配（Python re 语法）；默认区分大小写。可换行，保存时合并为单行。"
+        )
+        # 显隐切换后让对话框高度跟随内容重新计算（隐藏字段不占空间）。
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        if self.isVisible():
+            self.adjustSize()
+
     def _commit(self) -> None:
-        kind = self._kind.currentText()
+        kind = self._current_kind
         matcher = Matcher(
             kind=kind,
-            text=self._text.text().strip() if kind == MATCH_KEYWORD else "",
-            pattern=self._pattern.text().strip() if kind == MATCH_REGEX else "",
+            text=_collapse_multiline(self._text.toPlainText()) if kind == MATCH_KEYWORD else "",
+            pattern=_collapse_multiline(self._pattern.toPlainText()) if kind == MATCH_REGEX else "",
             case_sensitive=self._case.isChecked(),
-            whole_word=self._whole.isChecked(),
+            whole_word=self._whole.isChecked() if kind == MATCH_KEYWORD else False,
             target=self._target.currentData() or TARGET_CONTENT,
         )
         self._result = Rule(
