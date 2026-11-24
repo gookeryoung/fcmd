@@ -239,11 +239,14 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
     """扫描任务行卡：与 wslmanw 实例行同一套 ItemRow 骨架。
 
     标题是任务名，副标题是目录；目录旁用标签显示扫描时间与命中情况，行尾是最近一次
-    扫描状态。行内只放「扫描（加宽主按钮）→ 查看结果」两个动作；移除统一走卡片
-    右上角，避免在行内误点。展开箭头就地显示完整目录、状态、时间与精简结果摘要。
+    扫描状态。行内动作依次是「扫描（加宽主按钮）→ 增量扫描 → 全量重扫 → 查看结果」；
+    移除统一走卡片右上角，避免在行内误点。展开箭头就地显示完整目录、状态、时间与
+    精简结果摘要。
     """
 
     scanRequested = Signal(str)
+    incrementalRequested = Signal(str)
+    fullRequested = Signal(str)
     stopRequested = Signal(str)
     resultRequested = Signal(str)
 
@@ -273,11 +276,28 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
         self.status_tag = StatusTag("", tone="muted", parent=self.header)
         self.add_tag(self.status_tag)
 
-        # 扫描是每行最先看到的主动作：加宽到普通图标按钮的两倍。
-        self.scan_button = button("", kind="primary", icon="scan")
-        self.scan_button.setMinimumWidth(68)
+        # 扫描是每行最先看到的主动作：带文字并加宽到普通图标按钮的两倍。
+        self.scan_button = button("扫描", kind="primary", icon="scan")
+        self.scan_button.setMinimumWidth(88)
         self.scan_button.clicked.connect(self._on_scan_clicked)
         self.add_action(self.scan_button)
+        # 扫描按钮右侧：增量扫描（只重扫变动的文件）与全量重扫（忽略缓存重读）。
+        self.incremental_button = button(
+            "增量扫描",
+            kind="ghost",
+            icon="refresh",
+            tooltip="只重扫新增或改动过的文件，其余复用缓存（目录变动不大时用）",
+        )
+        self.incremental_button.clicked.connect(lambda: self.incrementalRequested.emit(self.task.id))
+        self.add_action(self.incremental_button)
+        self.full_button = button(
+            "全量重扫",
+            kind="ghost",
+            icon="rotate-ccw",
+            tooltip="忽略缓存重新读取所有文件（目录 / 文件大改后校正结果）",
+        )
+        self.full_button.clicked.connect(lambda: self.fullRequested.emit(self.task.id))
+        self.add_action(self.full_button)
         self.result_button = button("", kind="ghost", icon="search")
         self.result_button.clicked.connect(lambda: self.resultRequested.emit(self.task.id))
         self.add_action(self.result_button)
@@ -324,12 +344,19 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
 
         self.result_button.setEnabled(has_result and not busy)
         self.result_button.setToolTip("查看该任务的扫描结果" if has_result else "还没有该任务的扫描结果，先扫描一次")
+        incremental_tip = "增量扫描：只重扫新增或改动过的文件，其余复用缓存"
+        full_tip = "全量重扫：忽略缓存重新读取所有文件"
+        for extra, tip in ((self.incremental_button, incremental_tip), (self.full_button, full_tip)):
+            extra.setEnabled(not busy)
+            extra.setToolTip("已有扫描在进行" if busy else tip)
         if active:
+            self.scan_button.set_text("停止中" if stopping else "停止")
             self.scan_button.set_kind("danger")
             self.scan_button.set_icon_name("stop", tone="danger" if not stopping else "muted")
             self.scan_button.setToolTip("停止扫描" if not stopping else "正在停止")
             self.scan_button.setEnabled(not stopping)
         else:
+            self.scan_button.set_text("扫描")
             self.scan_button.set_kind("primary")
             self.scan_button.set_icon_name("scan", tone="on_accent" if not busy else "muted")
             self.scan_button.setToolTip("已有扫描在进行" if busy else f"扫描 {task.display_name}")
@@ -439,6 +466,7 @@ def _scan_worker(  # noqa: PLR0913 - 扫描参数成组传入，与 scan_paths �
     *,
     use_cache: bool,
     mask: bool,
+    refresh: bool = False,
 ) -> tuple[ScanResult, str]:
     """在线程池里执行扫描；返回 ``(结果, 缓存降级说明)``。"""
     store = ScanCache() if use_cache else None
@@ -455,6 +483,7 @@ def _scan_worker(  # noqa: PLR0913 - 扫描参数成组传入，与 scan_paths �
             progress=lambda done, total, path: bridge.progress.emit(done, total, str(path)),
             cache=store,
             cache_key=key,
+            refresh=refresh,
         )
         if store is not None and store.error and store.error not in notes:
             notes.append(store.error)
@@ -559,19 +588,35 @@ def _collapse_multiline(text: str) -> str:
     return "".join(part.strip() for part in text.splitlines()).strip()
 
 
+def _list_text(text: str) -> str:
+    """把多行列表合并为以分号分隔的单行：这里换行是列表分隔符。"""
+    return ";".join(part.strip() for part in text.splitlines() if part.strip())
+
+
+def _multiline_editor(
+    text: str = "",
+    placeholder: str = "",
+    *,
+    min_height: int = 64,
+    max_height: int = 96,
+) -> QPlainTextEdit:
+    """「单行语义 / 多行排版」输入框：按宽度折行，保存时再压成一行或按分隔符解析。
+
+    用于可能很长的配置文字（跳过目录、后缀列表、正则表达式、组合式表达式）：单行
+    ``QLineEdit`` 会把内容藏在水平滚动后面，这里固定高度内自动换行。
+    """
+    editor = QPlainTextEdit()
+    editor.setPlainText(text)
+    editor.setPlaceholderText(placeholder)
+    editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+    editor.setMinimumHeight(min_height)
+    editor.setMaximumHeight(max_height)
+    editor.setTabChangesFocus(True)
+    return editor
+
+
 class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
     """新增 / 编辑单条规则；校验（id 唯一、匹配器合法）由窗口侧统一执行。"""
-
-    @staticmethod
-    def _make_multiline_editor(placeholder: str) -> QPlainTextEdit:
-        """统一的「单行语义 / 多行排版」输入框：按宽度折行，保存时压成一行。"""
-        editor = QPlainTextEdit()
-        editor.setPlaceholderText(placeholder)
-        editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        editor.setMinimumHeight(64)
-        editor.setMaximumHeight(96)
-        editor.setTabChangesFocus(True)
-        return editor
 
     def __init__(self, parent: QWidget, rule: Rule | None) -> None:
         super().__init__(parent)
@@ -600,9 +645,9 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         for kind, label in _KIND_LABELS.items():
             self._kind.addItem(label, kind)
         self._kind.setCurrentIndex(max(self._kind.findData(current_kind), 0))
-        self._text = self._make_multiline_editor("关键词原文，如 password")
+        self._text = _multiline_editor(placeholder="关键词原文，如 password")
         self._text.setPlainText(rule.matcher.text if rule else "")
-        self._pattern = self._make_multiline_editor("正则表达式，如 \\d{11}；可换行，保存时合并为单行")
+        self._pattern = _multiline_editor(placeholder="正则表达式，如 \\d{11}；可换行，保存时合并为单行")
         self._pattern.setPlainText(rule.matcher.pattern if rule else "")
         self._severity = QComboBox(self)
         self._severity.addItems([SEVERITY_LABELS[level] for level in SEVERITY_LEVELS])
@@ -650,7 +695,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._metadata_key.setCurrentIndex(max(self._metadata_key.findData(current_key), 0))
         self._metadata_text = QLineEdit(rule.matcher.text if rule and rule.matcher.kind == MATCH_METADATA else "", self)
         self._metadata_text.setPlaceholderText("元数据中包含的文本（忽略大小写）")
-        self._extra = self._make_multiline_editor("每行一个词条 / SHA-256")
+        self._extra = _multiline_editor(placeholder="每行一个词条 / SHA-256")
         if rule and rule.matcher.kind in (MATCH_DICTIONARY, MATCH_HASH):
             self._extra.setPlainText(rule.matcher.value)
         self._entropy_value = QLineEdit(
@@ -1416,8 +1461,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._force_ext = QLineEdit(self.settings.force_ext, options)
         self._modified_after = QLineEdit(self.settings.modified_after, options)
         self._modified_before = QLineEdit(self.settings.modified_before, options)
-        self._skip_dirs = QLineEdit(self.settings.skip_dirs, options)
-        self._skip_dirs.setPlaceholderText("分号分隔，如 .git;node_modules；留空表示不跳过目录")
+        self._skip_dirs = _multiline_editor(
+            self.settings.skip_dirs,
+            "分号分隔，如 .git;node_modules；留空表示不跳过目录",
+            min_height=64,
+            max_height=96,
+        )
         self._skip_dirs.setToolTip("跳过目录名，按任意层级匹配；含斜杠的条目匹配相对根目录的路径后缀")
         self._modified_after.setPlaceholderText("YYYY-MM-DD HH:MM:SS，可空")
         self._modified_before.setPlaceholderText("YYYY-MM-DD HH:MM:SS，可空")
@@ -1744,6 +1793,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             )
             row.toggleRequested.connect(lambda row: self.toggle_row("tasks", row))
             row.scanRequested.connect(self._start_task_scan)
+            row.incrementalRequested.connect(lambda task_id: self._start_task_scan(task_id, mode="incremental"))
+            row.fullRequested.connect(lambda task_id: self._start_task_scan(task_id, mode="full"))
             row.stopRequested.connect(self._cancel_task_scan)
             row.resultRequested.connect(self._show_task_result)
             item.setSizeHint(QSize(0, row.sizeHint().height()))
@@ -2203,7 +2254,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             recursive=self._recursive.isChecked(),
             max_depth=max(0, self._max_depth.value()),
             follow_symlinks=self._follow.isChecked(),
-            skip_dirs=parse_skip_dirs_text(self._skip_dirs.text()),
+            skip_dirs=parse_skip_dirs_text(_list_text(self._skip_dirs.toPlainText())),
             skip_hidden=self._skip_hidden.isChecked(),
             ext_whitelist=self._whitelist_exts() or DEFAULT_SCAN_EXTENSIONS,
             include_exts=parse_ext_text(self._include_ext.text()),
@@ -2221,8 +2272,13 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             context_chars=max(0, self._context_chars.value()),
         )
 
-    def _start_task_scan(self, task_id: str) -> None:
-        """从任务行启动扫描；规则 / 选项仍用设置页里的全局配置。"""
+    def _start_task_scan(self, task_id: str, *, mode: str = "default") -> None:
+        """从任务行启动扫描；规则 / 选项仍用设置页里的全局配置。
+
+        ``mode`` 决定缓存口径：``default`` 跟随设置页的「使用缓存」开关，
+        ``incremental`` 强制只重扫变动的文件（复用缓存），``full`` 忽略缓存复用、
+        逐个文件重新读盘（本次结果仍回写缓存，供后续增量扫描使用）。
+        """
         if self._worker_running:
             return
         task = self._task_by_id(task_id)
@@ -2258,8 +2314,18 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._worker_running = True
         self._scan_meter.reset()
         self._refresh_task_rows(update_status=False)
-        self.set_page_status("scan", f"正在扫描「{task.display_name}」…")
-        self.show_progress("扫描准备中…", 0, None)
+        use_cache = self._use_cache.isChecked()
+        refresh = False
+        action = "扫描"
+        if mode == "incremental":
+            # 增量扫描就是要复用未变动文件的结果，不受「使用缓存」开关影响。
+            use_cache = True
+            action = "增量扫描"
+        elif mode == "full":
+            refresh = True
+            action = "全量重扫"
+        self.set_page_status("scan", f"正在{action}「{task.display_name}」…")
+        self.show_progress(f"{action}准备中…", 0, None)
         submit(
             _scan_worker,
             [Path(task.path)],
@@ -2267,8 +2333,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             options,
             self._token,
             self._bridge,
-            use_cache=self._use_cache.isChecked(),
+            use_cache=use_cache,
             mask=not self._export_raw.isChecked(),
+            refresh=refresh,
             on_done=self._scan_done,
             on_error=self._scan_error,
             on_finished=self._scan_finished,
@@ -2858,7 +2925,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             recursive=self._recursive.isChecked(),
             max_depth=max(0, self._max_depth.value()),
             follow_symlinks=self._follow.isChecked(),
-            skip_dirs=self._skip_dirs.text().strip(),
+            skip_dirs=_list_text(self._skip_dirs.toPlainText()),
             skip_hidden=self._skip_hidden.isChecked(),
             ext_whitelist=";".join(self._whitelist_exts()),
             whitelist_groups=tuple(self._whitelist_rows()),

@@ -17,7 +17,7 @@ from fcmd.apps.filescan._cache import (
     cache_fingerprint,
     default_cache_path,
 )
-from fcmd.apps.filescan._engine import ScanOptions, ScanResult, scan_paths
+from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanOptions, ScanResult, scan_paths
 from fcmd.apps.filescan._report import no_hit_hint
 from fcmd.apps.filescan._rules import MATCH_KEYWORD, MATCH_TIME, Expression, Matcher, Rule, RuleSet
 
@@ -152,6 +152,50 @@ def test_clear_removes_entries_and_forces_rescan(cache: ScanCache, corpus: Path)
     result = _scan(corpus, cache)
     assert result.stats.files_reused == 0
     assert result.stats.files_scanned == 3
+
+
+def test_refresh_ignores_cache_but_repopulates_it(cache: ScanCache, corpus: Path) -> None:
+    """全量重扫（``refresh``）跳过缓存复用，但本次实扫结果仍回写供下次增量使用。"""
+    rules = _ruleset()
+    options = ScanOptions(workers=1)
+    key = cache_fingerprint(rules, options)
+    first = _scan(corpus, cache, rules, options)
+    assert first.stats.files_scanned == 3
+
+    # 先篡改缓存：把无命中的 clean.txt 标成命中，普通扫描会直接复用它。
+    target = corpus / "clean.txt"
+    stat = target.stat()
+    fake = FileHit(
+        path=target,
+        size=stat.st_size,
+        encoding="utf-8",
+        matches=[
+            RuleMatch(
+                rule_id="phone",
+                rule_name="手机号",
+                line_no=1,
+                start=0,
+                end=11,
+                excerpt="13812345678",
+                context="13812345678",
+                context_start=0,
+            )
+        ],
+    )
+    cache.store_many(key, [(target, stat.st_size, stat.st_mtime_ns, fake)])
+    cached = _scan(corpus, cache, rules, options)
+    assert cached.stats.files_reused == 3
+    assert any(hit.path == target for hit in cached.hits)
+
+    refreshed = scan_paths([corpus], rules, options, cache=cache, cache_key=key, refresh=True)
+    assert refreshed.stats.files_reused == 0
+    assert refreshed.stats.files_scanned == 3
+    assert not any(hit.path == target for hit in refreshed.hits)
+
+    # 回写后普通增量扫描继续复用刷新结果，不会再读到篡改的旧条目。
+    again = _scan(corpus, cache, rules, options)
+    assert again.stats.files_reused == 3
+    assert not any(hit.path == target for hit in again.hits)
 
 
 def test_lookup_and_store_without_cache_key_are_noops(cache: ScanCache, corpus: Path) -> None:

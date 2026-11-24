@@ -685,6 +685,11 @@ def test_settings_page_holds_options_whitelist_and_cache(home: Path, sample: Pat
             window._use_cache,
         ):
             assert window._settings_page.isAncestorOf(widget), widget.objectName()
+        # 可能很长的列表型配置用多行编辑器，不再藏在单行输入框的水平滚动里。
+        from PySide6.QtWidgets import QPlainTextEdit
+
+        assert isinstance(window._skip_dirs, QPlainTextEdit)
+        assert window._skip_dirs.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
 
         # 扫描页只剩「扫描任务」一张卡（列表 + 选项标签 + 添加任务）。
         scan_titles = [card.title() for card in window._scan_page.findChildren(Card)]
@@ -733,6 +738,7 @@ def test_task_scan_button_toggles_and_stops(home: Path, sample: Path, monkeypatc
         row = window._task_row(task.id)
         assert row is not None
         assert row.scan_button.objectName() == "Danger"
+        assert row.scan_button.text() == "停止"
         assert row.result_button.isEnabled() is False
         assert window._remove_task_button.isEnabled() is False
 
@@ -748,8 +754,86 @@ def test_task_scan_button_toggles_and_stops(home: Path, sample: Path, monkeypatc
         assert row is not None
         assert window._worker_running is False
         assert row.scan_button.objectName() == "Primary"
+        assert row.scan_button.text() == "扫描"
         assert row.scan_button.isEnabled() is True
         assert window._remove_task_button.isEnabled() is True
+    finally:
+        window.deleteLater()
+
+
+def test_task_row_has_incremental_and_full_rescan_actions(
+    home: Path, sample: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """扫描按钮右侧依次是增量扫描 / 全量重扫，忙时禁用，点击各自下发对应模式。"""
+    from fcmd.apps.filescan import _filescanw_qt as qt_module
+
+    window = _window()
+    try:
+        task = filescanw.new_scan_task(str(sample))
+        window._tasks = [task]
+        window._refresh_task_rows()
+        row = window._task_row(task.id)
+        assert row is not None
+        index = row.header_row.indexOf
+        assert (
+            index(row.scan_button) < index(row.incremental_button) < index(row.full_button) < index(row.result_button)
+        )
+        assert row.scan_button.text() == "扫描"
+        assert row.incremental_button.text() == "增量扫描"
+        assert row.full_button.text() == "全量重扫"
+        assert row.incremental_button.property("fcmdIconName") == "refresh"
+        assert row.full_button.property("fcmdIconName") == "rotate-ccw"
+        assert row.incremental_button.isEnabled() is True
+        assert row.full_button.isEnabled() is True
+
+        calls: list[dict[str, object]] = []
+        monkeypatch.setattr(qt_module, "submit", lambda *args, **kwargs: calls.append(kwargs))
+        row.incremental_button.click()
+        assert calls[-1]["use_cache"] is True
+        assert calls[-1]["refresh"] is False
+        assert "增量扫描" in window.page_status("scan")
+        row = window._task_row(task.id)
+        assert row is not None
+        assert row.incremental_button.isEnabled() is False
+        assert row.full_button.isEnabled() is False
+        window._scan_finished()
+        row = window._task_row(task.id)
+        assert row is not None
+        assert row.incremental_button.isEnabled() is True
+
+        row.full_button.click()
+        assert calls[-1]["refresh"] is True
+        assert "全量重扫" in window.page_status("scan")
+    finally:
+        window.deleteLater()
+
+
+def test_task_scan_modes_override_cache_setting(home: Path, sample: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认扫描跟随「使用缓存」；增量强制复用缓存；全量重扫跳过复用但仍写回。"""
+    from fcmd.apps.filescan import _filescanw_qt as qt_module
+
+    window = _window()
+    try:
+        task = filescanw.new_scan_task(str(sample))
+        window._tasks = [task]
+        window._refresh_task_rows()
+        window._use_cache.setChecked(False)
+        calls: list[dict[str, object]] = []
+        monkeypatch.setattr(qt_module, "submit", lambda *args, **kwargs: calls.append(kwargs))
+
+        window._start_task_scan(task.id)
+        assert calls[-1]["use_cache"] is False
+        assert calls[-1]["refresh"] is False
+        window._scan_finished()
+
+        window._start_task_scan(task.id, mode="incremental")
+        assert calls[-1]["use_cache"] is True
+        assert calls[-1]["refresh"] is False
+        window._scan_finished()
+
+        window._start_task_scan(task.id, mode="full")
+        assert calls[-1]["use_cache"] is False
+        assert calls[-1]["refresh"] is True
     finally:
         window.deleteLater()
 
@@ -767,6 +851,7 @@ def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> No
         window._workers.setValue(3)
         window._context_chars.setValue(12)
         window._include_ext.setText(".txt")
+        window._skip_dirs.setPlainText(".git\nnode_modules")
         window._use_cache.setChecked(False)
         options = window._scan_options()
         assert options.recursive is False
@@ -777,6 +862,7 @@ def test_settings_page_changes_feed_scan_options(home: Path, sample: Path) -> No
         assert options.workers == 3
         assert options.context_chars == 12
         assert options.include_exts == (".txt",)
+        assert options.skip_dirs == (".git", "node_modules")
         assert window._use_cache.isChecked() is False
         assert window._current_settings().use_cache is False
     finally:

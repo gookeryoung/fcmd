@@ -1775,6 +1775,7 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
     progress: Callable[[int, int, Path], None] | None = None,
     cache: ScanCache | None = None,
     cache_key: str = "",
+    refresh: bool = False,
 ) -> ScanResult:
     """扫描若干目录并返回按路径排序的结果。
 
@@ -1794,6 +1795,9 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
         可选的扫描结果缓存；仅主进程读写，worker 不接触数据库
     cache_key:
         缓存指纹（规则与命中相关选项的哈希）；为空表示不启用缓存
+    refresh:
+        全量重扫：跳过缓存复用、逐个文件重新读盘，但本次结果仍写回缓存；
+        用于目录 / 文件大改后校正结果，或怀疑缓存与磁盘不一致时
     """
     opts = options or ScanOptions()
     started = time.perf_counter()
@@ -1827,7 +1831,11 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
     # 路径 → (大小, mtime_ns)，缓存校验与回写都以遍历阶段的一次 stat 为准。
     meta = {path: (size, mtime) for path, size, mtime in zip(walk.files, walk.sizes, walk.mtimes, strict=True)}
     hits: list[FileHit] = []
-    files, sizes, reused = _take_cached(files, meta, cache, cache_key, hits)
+    if refresh:
+        sizes = [meta[path][0] for path in files]
+        reused = 0
+    else:
+        files, sizes, reused = _take_cached(files, meta, cache, cache_key, hits)
     result.stats.files_reused = reused
     total_files = len(meta)
     scan_progress = _offset_progress(progress, reused, total_files) if reused and progress is not None else progress

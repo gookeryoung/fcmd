@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `filescanw` 任务行扫描按钮右侧新增「增量扫描」与「全量重扫」：增量扫描强制复用缓存，
+  只重扫新增 / 改动过的文件；全量重扫跳过缓存复用、逐个文件重新读盘（结果仍回写缓存），
+  用于目录大改后校正结果。引擎 `scan_paths` 同步新增 `refresh` 参数。
 - `filescan` 收录 12 组场景规则模板（改写自 uniscan `examples/rules`，MIT 署名见
   `rules/scenarios/NOTICE`）：CLI 用 `--scenario <slug>` 或
   `rules --action scenarios`，GUI 规则页新增「载入场景」。
