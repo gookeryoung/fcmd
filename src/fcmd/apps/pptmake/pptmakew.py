@@ -62,6 +62,9 @@ MIN_HEIGHT = 700
 MAX_RECENT = 8
 """「最近模板」保留条数。"""
 
+SORTER_VIEWS: tuple[str, ...] = ("grid", "list")
+"""页面排序器视图：缩略图网格 / 紧凑列表。"""
+
 STYLE_OPTIONS: tuple[tuple[str, str], ...] = (
     *((core.STYLE_TEXT[style], style) for style in core.STYLES),
     (core.STYLE_TEXT[core.STYLE_CUSTOM], core.STYLE_CUSTOM),
@@ -92,8 +95,10 @@ HELP_TEXT = """1. 侧边栏「设计」页：左侧「页面」选择要编辑�
 8. 「文件 → 精确预览」需本机安装 LibreOffice，未安装时保持画布预览。
 9. 标题行、页面按钮与预览工具条只显示图标，悬停可见提示；标题行的
    「新建 / 导入 / 导出模板 / 导出 PPTX」与菜单动作等价。
-10. 页面列表支持 Ctrl / Shift 多选、删除 / 复制与拖拽排序；「编辑 → 撤销 / 重做」
-    （Ctrl+Z / Ctrl+Y）可回退编辑。布局库为版式缩略图，双击即可添加。
+10. 页面排序器支持缩略图 / 列表切换（工具条最右按钮）、Ctrl / Shift 多选、
+    删除 / 复制与拖拽排序；「编辑 → 撤销 / 重做」（Ctrl+Z / Ctrl+Y）可回退编辑。
+    右侧检查器分「内容 / 版式 / 备注」三页，标题行右侧按钮可收起检查器。
+    布局库为版式缩略图，双击即可添加。
 11. 有未保存改动时标题栏带 ``*``，每 60 秒自动写草稿；异常退出后下次启动可恢复。
 12. ``Alt+1`` / ``Alt+2`` 在设计页与样式页之间切换。"""
 
@@ -112,6 +117,8 @@ class PptmakeSettings:
     design_splitter: tuple[int, ...] = ()
     style_splitter: tuple[int, ...] = ()
     recent_templates: tuple[str, ...] = ()
+    sorter_view: str = "grid"
+    inspector_visible: bool = True
 
 
 def config_path() -> Path:
@@ -132,6 +139,8 @@ def settings_to_mapping(settings: PptmakeSettings) -> dict[str, Any]:
         "design_splitter": list(settings.design_splitter),
         "style_splitter": list(settings.style_splitter),
         "recent_templates": list(settings.recent_templates),
+        "sorter_view": settings.sorter_view,
+        "inspector_visible": settings.inspector_visible,
     }
 
 
@@ -167,6 +176,12 @@ def settings_from_mapping(raw: Mapping[str, Any], base: PptmakeSettings | None =
     recent = raw.get("recent_templates")
     if isinstance(recent, (list, tuple)):
         settings.recent_templates = tuple(item for item in recent if isinstance(item, str) and item)[:MAX_RECENT]
+    view = raw.get("sorter_view")
+    if view in SORTER_VIEWS:
+        settings.sorter_view = view
+    visible = raw.get("inspector_visible")
+    if isinstance(visible, bool):
+        settings.inspector_visible = visible
     return settings
 
 

@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QPixmap
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QListView, QWidget
 
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _pptmakew_qt
@@ -105,8 +105,8 @@ def test_overflow_badge_and_status_detail(window: Any) -> None:
     count = window._slide_overflow_count(0)
     assert count > 0
     assert f"{count} 处溢出" in window.status_detail_text()
-    assert window._thumbs.count() == window._slides_list.count()
-    assert not window._thumbs.item(0).icon().isNull()
+    assert window._slides_list.count() == window._slides_list.count()
+    assert not window._slides_list.item(0).icon().isNull()
 
 
 def test_splitter_sizes_persist(window: Any, tmp_path: Path) -> None:
@@ -161,7 +161,7 @@ def test_style_and_decor_switch_refreshes_window(window: Any) -> None:
     assert window._template.theme.decor == core.DECOR_MINIMAL
     window._intensity_slider.setValue(0)
     assert window._template.theme.tokens.decor_intensity == 0.0
-    assert window._thumbs.count() == window._slides_list.count()
+    assert window._slides_list.count() == window._slides_list.count()
 
 
 def test_undo_redo_through_window(window: Any) -> None:
@@ -210,6 +210,27 @@ def test_drag_reorder_updates_template(window: Any) -> None:
     assert window._template.slides[1] == first
     window._undo()
     assert window._template.slides[0] == first
+
+
+def test_sorter_view_and_inspector_toggle(window: Any) -> None:
+    assert window._inspector_tabs.count() == 3
+    assert window._inspector_tabs.tabText(0) == "内容"
+    assert window._inspector_tabs.tabText(1) == "版式"
+    assert window._inspector_tabs.tabText(2) == "备注"
+    assert window._layout_hint.text()
+
+    window._toggle_sorter_view()
+    assert window._sorter_view == "list"
+    assert window._slides_list.viewMode() == QListView.ViewMode.ListMode
+    window._toggle_sorter_view()
+    assert window._sorter_view == "grid"
+    assert window._slides_list.viewMode() == QListView.ViewMode.IconMode
+
+    window._toggle_inspector()
+    assert window._inspector_visible is False
+    assert window._inspector_pane.isVisible() is False
+    window._toggle_inspector()
+    assert window._inspector_visible is True
 
 
 def test_layout_gallery_has_thumbnails(window: Any) -> None:

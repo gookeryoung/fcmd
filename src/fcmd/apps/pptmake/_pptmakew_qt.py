@@ -83,6 +83,7 @@ from fcmd.gui.widgets import (
     icon_button,
     make_splitter,
     splitter_sizes,
+    tab_widget,
 )
 from fcmd.gui.window import QtMainWindow
 
@@ -99,9 +100,18 @@ PAGES: tuple[PageSpec, ...] = (
 
 assert tuple(spec.key for spec in PAGES) == PAGE_KEYS
 THUMB_HEIGHT = 54.0
-THUMB_STRIP_HEIGHT = 92
 
 _PALETTE_LABELS = dict(core.PALETTE_FIELDS)
+
+_LAYOUT_HINTS: dict[str, str] = {
+    core.LAYOUT_METRICS: "数据页要点写成「98%|交付准时率」，每行一个指标。",
+    core.LAYOUT_TIMELINE: "时间线要点写成「01|调研」，序号在前、标题在后。",
+    core.LAYOUT_TWO_COLUMN: "双栏页副标题写成「左栏标题|右栏标题」，要点按行分配。",
+    core.LAYOUT_COMPARISON: "对比矩阵要点写成「维度|方案A|方案B」，每行一个维度。",
+    core.LAYOUT_CHART: "图表要点写成「Q1|42」，竖线前的标签作为横轴。",
+    core.LAYOUT_CONTACT: "联系页要点写成「邮箱|hello@example.com」，每行一个渠道。",
+}
+_LAYOUT_HINT_DEFAULT = "切换布局后会保留标题、要点与备注内容；格式提示按布局变化。"
 
 
 def _action_button(icon_name: str, tooltip: str, *, text: str = "") -> QWidget:
@@ -373,6 +383,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._history = TemplateHistory(self._template)
         self._dirty = False
         self._layout_icons: dict[str, QIcon] = {}
+        self._sorter_view = self._settings.sorter_view
+        self._inspector_visible = self._settings.inspector_visible
         super().__init__(
             title=f"pptmake - PPT 模板设计器 v{__version__}",
             config_name="pptmakew",
@@ -551,6 +563,12 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             widget = _action_button(icon, tooltip)
             widget.clicked.connect(handler)
             widgets.append(widget)
+        self._inspector_toggle = _action_button(
+            "panel-left-close" if self._inspector_visible else "panel-left-open",
+            "收起 / 展开页面设置",
+        )
+        self._inspector_toggle.clicked.connect(self._toggle_inspector)
+        widgets.append(self._inspector_toggle)
         return tuple(widgets)
 
     def _build_design_page(self) -> _PptmakePage:
@@ -560,7 +578,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._splitter = make_splitter(Qt.Orientation.Horizontal, parent=page)
         self._splitter.addWidget(self._build_pages_pane(page))
         self._splitter.addWidget(self._build_preview_pane(page))
-        self._splitter.addWidget(self._build_inspector_pane(page))
+        self._inspector_pane = self._build_inspector_pane(page)
+        self._inspector_pane.setVisible(self._inspector_visible)
+        self._splitter.addWidget(self._inspector_pane)
         self._splitter.setSizes([260, 660, 320])
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
@@ -686,6 +706,10 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             widget = _action_button(icon, tooltip)
             widget.clicked.connect(handler)
             page_buttons.addWidget(widget)
+        self._view_button = _action_button("log", "切换为列表视图")
+        self._view_button.clicked.connect(self._toggle_sorter_view)
+        page_buttons.addWidget(self._view_button)
+        self._sync_sorter_view_button()
         pages.body.addLayout(page_buttons)
         layout.addWidget(pages, 3)
 
@@ -731,20 +755,6 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._canvas.setMinimumHeight(200)
         self._canvases.append(self._canvas)
         card.body.addWidget(self._canvas, 1)
-
-        card.body.addWidget(QLabel("页面缩略图", card))
-        self._thumbs = QListWidget(card)
-        self._thumbs.setViewMode(QListView.ViewMode.IconMode)
-        self._thumbs.setFlow(QListView.Flow.LeftToRight)
-        self._thumbs.setWrapping(False)
-        self._thumbs.setResizeMode(QListView.ResizeMode.Adjust)
-        self._thumbs.setMovement(QListView.Movement.Static)
-        self._thumbs.setSpacing(4)
-        self._thumbs.setFixedHeight(THUMB_STRIP_HEIGHT)
-        self._thumbs.setHorizontalScrollMode(QListView.ScrollMode.ScrollPerPixel)
-        self._thumbs.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._thumbs.currentRowChanged.connect(self._on_thumb_selected)
-        card.body.addWidget(self._thumbs)
         return card
 
     def _build_inspector_pane(self, parent: QWidget) -> QWidget:
@@ -756,11 +766,6 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         layout.setSpacing(8)
 
         form_card = Card("页面设置", panel)
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
-        grid.setColumnStretch(1, 1)
         self._layout_combo = QComboBox(form_card)
         for text, value in LAYOUT_OPTIONS:
             self._layout_combo.addItem(text, value)
@@ -773,21 +778,51 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._bullets_text.setMinimumHeight(120)
         self._bullets_text.textChanged.connect(self._schedule_apply)
         self._note_text = QPlainTextEdit(form_card)
-        self._note_text.setMinimumHeight(64)
+        self._note_text.setMinimumHeight(120)
         self._note_text.textChanged.connect(self._schedule_apply)
+
+        self._inspector_tabs = tab_widget(form_card)
+        content_tab = QWidget(self._inspector_tabs)
+        content_grid = QGridLayout(content_tab)
+        content_grid.setContentsMargins(4, 6, 4, 4)
+        content_grid.setHorizontalSpacing(8)
+        content_grid.setVerticalSpacing(6)
+        content_grid.setColumnStretch(1, 1)
         for row, (label, widget) in enumerate(
             (
-                ("布局", self._layout_combo),
                 ("标题", self._title_edit),
                 ("副标题", self._subtitle_edit),
                 ("要点", self._bullets_text),
-                ("备注", self._note_text),
             )
         ):
-            grid.addWidget(QLabel(label, form_card), row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-            grid.addWidget(widget, row, 1)
-        grid.setRowStretch(3, 1)
-        form_card.body.addLayout(grid, 1)
+            content_grid.addWidget(
+                QLabel(label, content_tab), row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
+            )
+            content_grid.addWidget(widget, row, 1)
+        content_grid.setRowStretch(2, 1)
+        self._inspector_tabs.addTab(content_tab, "内容")
+
+        layout_tab = QWidget(self._inspector_tabs)
+        layout_grid = QGridLayout(layout_tab)
+        layout_grid.setContentsMargins(4, 6, 4, 4)
+        layout_grid.setHorizontalSpacing(8)
+        layout_grid.setVerticalSpacing(6)
+        layout_grid.setColumnStretch(1, 1)
+        layout_grid.addWidget(QLabel("布局", layout_tab), 0, 0)
+        layout_grid.addWidget(self._layout_combo, 0, 1)
+        self._layout_hint = QLabel("", layout_tab)
+        self._layout_hint.setWordWrap(True)
+        self._layout_hint.setObjectName("Hint")
+        layout_grid.addWidget(self._layout_hint, 1, 0, 1, 2)
+        layout_grid.setRowStretch(2, 1)
+        self._inspector_tabs.addTab(layout_tab, "版式")
+
+        notes_tab = QWidget(self._inspector_tabs)
+        notes_layout = QVBoxLayout(notes_tab)
+        notes_layout.setContentsMargins(4, 6, 4, 4)
+        notes_layout.addWidget(self._note_text, 1)
+        self._inspector_tabs.addTab(notes_tab, "备注")
+        form_card.body.addWidget(self._inspector_tabs, 1)
         layout.addWidget(form_card, 1)
         return panel
 
@@ -928,11 +963,10 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _refresh_all(self) -> None:
         self._refresh_style_controls()
-        self._refresh_slide_list()
         self._refresh_form()
         self._refresh_color_buttons()
         self._refresh_layout_icons()
-        self._refresh_thumbnails()
+        self._refresh_slides()
         self._refresh_canvases()
         self._sync_history_actions()
 
@@ -969,22 +1003,70 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         if index >= 0:
             combo.setCurrentIndex(index)
 
-    def _refresh_slide_list(self) -> None:
-        self._slides_list.blockSignals(True)
-        self._slides_list.clear()
-        for index, slide in enumerate(self._template.slides, start=1):
-            item = QListWidgetItem(slide_label(index, slide))
-            item.setData(Qt.ItemDataRole.UserRole, index - 1)
-            self._slides_list.addItem(item)
-        if self._template.slides:
-            self.selected = min(self.selected, len(self._template.slides) - 1)
-            self._slides_list.setCurrentRow(self.selected)
-            item = self._slides_list.item(self.selected)
-            if item is not None:
-                self._slides_list.scrollToItem(item)
-        else:
-            self.selected = 0
-        self._slides_list.blockSignals(False)
+    def _refresh_slides(self) -> None:
+        """重建页面排序器：缩略图 / 列表两种视图共用同一份页面与角标数据。"""
+        self._syncing_thumb = True
+        try:
+            self._slides_list.blockSignals(True)
+            self._slides_list.clear()
+            design_width, design_height = core.ASPECT_DESIGN[self._template.aspect]
+            scale = THUMB_HEIGHT / design_height
+            page_width = round(design_width * scale)
+            grid = self._sorter_view == "grid"
+            if grid:
+                self._slides_list.setViewMode(QListView.ViewMode.IconMode)
+                self._slides_list.setFlow(QListView.Flow.LeftToRight)
+                self._slides_list.setResizeMode(QListView.ResizeMode.Adjust)
+                self._slides_list.setIconSize(QSize(page_width, round(THUMB_HEIGHT)))
+                self._slides_list.setGridSize(QSize(page_width + 12, round(THUMB_HEIGHT) + 30))
+                self._slides_list.setWrapping(True)
+            else:
+                self._slides_list.setViewMode(QListView.ViewMode.ListMode)
+                self._slides_list.setFlow(QListView.Flow.TopToBottom)
+                self._slides_list.setIconSize(QSize(64, 36))
+                self._slides_list.setGridSize(QSize())
+            dpr = self.devicePixelRatioF()
+            ui = self.theme().palette
+            for index, slide in enumerate(self._template.slides):
+                if grid:
+                    pixmap = QPixmap(round(page_width * dpr), round(THUMB_HEIGHT * dpr))
+                    pixmap.setDevicePixelRatio(dpr)
+                    pixmap.fill(QColor(self._template.theme.palette.background))
+                    painter = QPainter(pixmap)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    with contextlib.suppress(core.TemplateError):
+                        _paint_slide(
+                            painter,
+                            self._template,
+                            slide,
+                            float(page_width),
+                            THUMB_HEIGHT,
+                            zoom=scale,
+                            ui=ui,
+                            skip_text=True,
+                        )
+                    issues = self._slide_overflow_count(index)
+                    if issues:
+                        _draw_overflow_badge(painter, float(page_width), issues, ui)
+                    painter.end()
+                    item = QListWidgetItem(QIcon(pixmap), slide_label(index + 1, slide))
+                    item.setSizeHint(QSize(page_width + 8, round(THUMB_HEIGHT) + 24))
+                else:
+                    item = QListWidgetItem(slide_label(index + 1, slide))
+                item.setData(Qt.ItemDataRole.UserRole, index)
+                self._slides_list.addItem(item)
+            if self._template.slides:
+                self.selected = min(self.selected, len(self._template.slides) - 1)
+                self._slides_list.setCurrentRow(self.selected)
+                current = self._slides_list.item(self.selected)
+                if current is not None:
+                    self._slides_list.scrollToItem(current)
+            else:
+                self.selected = 0
+        finally:
+            self._slides_list.blockSignals(False)
+            self._syncing_thumb = False
+            self._update_status_detail()
 
     def _refresh_form(self) -> None:
         self._loading = True
@@ -995,6 +1077,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 self._subtitle_edit.clear()
                 self._bullets_text.clear()
                 self._note_text.clear()
+                self._layout_hint.setText("")
                 return
             slide = self._template.slides[self.selected]
             self._select_value(self._layout_combo, slide.layout)
@@ -1002,6 +1085,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._subtitle_edit.setText(slide.subtitle)
             self._bullets_text.setPlainText("\n".join(slide.bullets))
             self._note_text.setPlainText(slide.note)
+            self._layout_hint.setText(_LAYOUT_HINTS.get(slide.layout, _LAYOUT_HINT_DEFAULT))
         finally:
             self._loading = False
 
@@ -1058,46 +1142,36 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             item.setIcon(icon)
             item.setSizeHint(QSize(104, 76))
 
-    def _refresh_thumbnails(self) -> None:
-        self._syncing_thumb = True
-        try:
-            self._thumbs.clear()
-            if not self._template.slides:
-                return
-            design_width, design_height = core.ASPECT_DESIGN[self._template.aspect]
-            scale = THUMB_HEIGHT / design_height
-            page_width = round(design_width * scale)
-            dpr = self.devicePixelRatioF()
-            self._thumbs.setIconSize(QSize(page_width, round(THUMB_HEIGHT)))
-            ui = self.theme().palette
-            for index, slide in enumerate(self._template.slides):
-                pixmap = QPixmap(round(page_width * dpr), round(THUMB_HEIGHT * dpr))
-                pixmap.setDevicePixelRatio(dpr)
-                pixmap.fill(QColor(self._template.theme.palette.background))
-                painter = QPainter(pixmap)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                with contextlib.suppress(core.TemplateError):
-                    _paint_slide(
-                        painter,
-                        self._template,
-                        slide,
-                        float(page_width),
-                        THUMB_HEIGHT,
-                        zoom=scale,
-                        ui=ui,
-                        skip_text=True,
-                    )
-                issues = self._slide_overflow_count(index)
-                if issues:
-                    _draw_overflow_badge(painter, float(page_width), issues, ui)
-                painter.end()
-                item = QListWidgetItem(QIcon(pixmap), str(index + 1))
-                item.setSizeHint(QSize(page_width + 8, round(THUMB_HEIGHT) + 24))
-                self._thumbs.addItem(item)
-            self._thumbs.setCurrentRow(self.selected)
-        finally:
-            self._syncing_thumb = False
-            self._update_status_detail()
+    def _toggle_sorter_view(self) -> None:
+        """在缩略图网格与紧凑列表之间切换页面排序器。"""
+        self._sorter_view = "list" if self._sorter_view == "grid" else "grid"
+        self._sync_sorter_view_button()
+        self._refresh_slides()
+        self.set_status("页面视图：列表" if self._sorter_view == "list" else "页面视图：缩略图网格")
+
+    def _sync_sorter_view_button(self) -> None:
+        """视图切换按钮的图标 / 提示跟随当前视图（显示的是「切过去」的动作）。"""
+        button = getattr(self, "_view_button", None)
+        if button is None:
+            return
+        if self._sorter_view == "grid":
+            _set_icon(button, "log", tone="muted")
+            button.setToolTip("切换为列表视图")
+        else:
+            _set_icon(button, "overview", tone="muted")
+            button.setToolTip("切换为缩略图网格")
+
+    def _toggle_inspector(self) -> None:
+        """收起 / 展开右侧页面设置栏（窄窗口下把画布让出来）。"""
+        self._inspector_visible = not self._inspector_visible
+        self._inspector_pane.setVisible(self._inspector_visible)
+        _set_icon(
+            self._inspector_toggle,
+            "panel-left-close" if self._inspector_visible else "panel-left-open",
+            tone="muted",
+        )
+        self._inspector_toggle.setToolTip("收起页面设置" if self._inspector_visible else "展开页面设置")
+        self.set_status("已展开页面设置" if self._inspector_visible else "已收起页面设置")
 
     def _slide_overflow_count(self, index: int) -> int:
         """当前模板第 ``index`` 页的预计溢出文本框数量（构建失败时记 0）。"""
@@ -1137,7 +1211,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             aspect = str(self._aspect_combo.currentData())
             self._commit(replace(self._template, aspect=aspect), "切换画幅")
             self._refresh_layout_icons()
-            self._refresh_thumbnails()
+            self._refresh_slides()
             self._refresh_canvases()
             self.set_status(f"已切换画幅：{core.ASPECT_TEXT[aspect]}")
         elif sender is self._decor_combo:
@@ -1161,7 +1235,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._refresh_layout_icons()
         self._refresh_style_controls()
         self._refresh_color_buttons()
-        self._refresh_thumbnails()
+        self._refresh_slides()
         self._refresh_canvases()
         self.set_status(f"已切换风格：{core.style_label(style)}")
 
@@ -1170,7 +1244,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._commit(replace(self._template, theme=theme), "切换装饰")
         self._refresh_layout_icons()
         self._refresh_style_controls()
-        self._refresh_thumbnails()
+        self._refresh_slides()
         self._refresh_canvases()
         self.set_status(f"已切换装饰：{core.DECOR_TEXT.get(decor, decor)}")
 
@@ -1187,7 +1261,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             "调整装饰强度",
             coalesce_key="intensity",
         )
-        self._refresh_thumbnails()
+        self._refresh_slides()
         self._refresh_canvases()
         self.set_status(f"装饰强度：{intensity * 100:.0f}%")
 
@@ -1196,25 +1270,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         self.selected = index
         self._refresh_form()
-        self._syncing_thumb = True
-        try:
-            self._thumbs.setCurrentRow(self.selected)
-        finally:
-            self._syncing_thumb = False
         self._refresh_canvases()
-
-    def _on_thumb_selected(self, index: int) -> None:
-        if self._syncing_thumb or index < 0:
-            return
-        self.selected = index
-        self._slides_list.blockSignals(True)
-        self._slides_list.setCurrentRow(self.selected)
-        item = self._slides_list.item(self.selected)
-        if item is not None:
-            self._slides_list.scrollToItem(item)
-        self._slides_list.blockSignals(False)
-        self._refresh_form()
-        self._refresh_canvases()
+        self._update_status_detail()
 
     def _schedule_apply(self) -> None:
         if self._loading:
@@ -1239,10 +1296,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             "编辑页面内容",
             coalesce_key="form",
         )
-        item = self._slides_list.item(self.selected)
-        if item is not None:
-            item.setText(slide_label(self.selected + 1, updated))
-        self._refresh_thumbnails()
+        self._refresh_slides()
         self._refresh_canvases()
         self.set_status(f"第 {self.selected + 1} 页已更新")
 
@@ -1255,10 +1309,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         slide = core.new_slide(layout)
         self._commit(replace(self._template, slides=(*self._template.slides, slide)), "添加页面")
         self.selected = len(self._template.slides) - 1
-        self._refresh_slide_list()
-        self._refresh_form()
-        self._refresh_thumbnails()
-        self._refresh_canvases()
+        self._refresh_after_slide_change()
         self.set_status(f"已添加「{core.layout_label(layout)}」页面")
 
     def _selected_rows(self) -> list[int]:
@@ -1328,9 +1379,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _refresh_after_slide_change(self) -> None:
         """页面增删 / 排序后的统一刷新。"""
-        self._refresh_slide_list()
         self._refresh_form()
-        self._refresh_thumbnails()
+        self._refresh_slides()
         self._refresh_canvases()
 
     def _pick_color(self, field: str) -> None:
@@ -1355,7 +1405,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._refresh_layout_icons()
         self._refresh_style_controls()
         self._refresh_color_buttons()
-        self._refresh_thumbnails()
+        self._refresh_slides()
         self._refresh_canvases()
         self.set_status(f"已更新{label}颜色：{normalized}")
 
@@ -1500,7 +1550,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         """切换主题后重画画布、缩略图与布局库（其余控件由全局样式表处理）。"""
         super().set_theme(theme)
         self._refresh_layout_icons()
-        self._refresh_thumbnails()
+        self._refresh_slides()
         self._refresh_canvases()
 
     def _persist_settings(self, geometry: str) -> None:
@@ -1516,6 +1566,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             design_splitter=tuple(splitter_sizes(self._splitter)),
             style_splitter=tuple(splitter_sizes(self._style_splitter)),
             recent_templates=self._settings.recent_templates,
+            sorter_view=self._sorter_view,
+            inspector_visible=self._inspector_visible,
         )
         self._settings = settings
         save_settings(settings, self._own_settings_path)

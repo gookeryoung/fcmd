@@ -118,6 +118,8 @@ def test_settings_mapping_roundtrip() -> None:
         design_splitter=(240, 600, 320),
         style_splitter=(360, 720),
         recent_templates=("D:/a.pptmtpl.json",),
+        sorter_view="list",
+        inspector_visible=False,
     )
     mapping = pptmakew.settings_to_mapping(settings)
     assert mapping["style"] == core.STYLE_CORAL
@@ -127,6 +129,8 @@ def test_settings_mapping_roundtrip() -> None:
     assert mapping["design_splitter"] == [240, 600, 320]
     assert mapping["style_splitter"] == [360, 720]
     assert mapping["recent_templates"] == ["D:/a.pptmtpl.json"]
+    assert mapping["sorter_view"] == "list"
+    assert mapping["inspector_visible"] is False
     assert pptmakew.settings_from_mapping(mapping) == settings
 
 
@@ -143,6 +147,21 @@ def test_remember_path_dedupes_and_limits(tmp_path: Path) -> None:
     limited = pptmakew.remember_path(many, tmp_path / "new.json")
     assert len(limited) == pptmakew.MAX_RECENT
     assert limited[0] == str(tmp_path / "new.json")
+
+
+def test_settings_sorter_and_inspector_parse() -> None:
+    settings = pptmakew.settings_from_mapping(
+        {"sorter_view": "list", "inspector_visible": False},
+        pptmakew.PptmakeSettings(),
+    )
+    assert settings.sorter_view == "list"
+    assert settings.inspector_visible is False
+    fallback = pptmakew.settings_from_mapping(
+        {"sorter_view": "mosaic", "inspector_visible": "yes"},
+        pptmakew.PptmakeSettings(sorter_view="grid", inspector_visible=True),
+    )
+    assert fallback.sorter_view == "grid"
+    assert fallback.inspector_visible is True
 
 
 def test_settings_recent_templates_parse() -> None:
