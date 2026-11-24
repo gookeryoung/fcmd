@@ -45,6 +45,7 @@ from fcmd.apps.filescan._rules import (
     SIZE_BETWEEN,
     SIZE_GT,
     SIZE_LT,
+    TARGET_CONTENT,
     TIME_ACCESSED,
     TIME_AFTER,
     TIME_BEFORE,
@@ -1516,6 +1517,20 @@ def _scan_text(path: Path, context: ScanContext, size: int | None) -> _Outcome:
     )
 
 
+def _rules_need_content(context: ScanContext) -> bool:
+    """表达式引用的规则里是否真的有需要读取正文的匹配器。
+
+    文件名 / 路径 / 时间 / 大小 / 文件类型 / 元数据 / 哈希 / 归档成员都有各自的
+    读取路径；只有正文正则与高熵串依赖 ``_read_text`` / 文档抽取，可据此免读。
+    """
+    for compiled in context.compiled_rules:
+        if compiled.threshold is not None:  # 高熵串必须读取正文
+            return True
+        if compiled.regex is not None and compiled.rule.matcher.target == TARGET_CONTENT:
+            return True
+    return False
+
+
 def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Outcome:
     """扫描单个文件并记录耗时（结果页「耗时」列与报告用）。"""
     started = time.perf_counter()
@@ -1524,7 +1539,11 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
     return outcome
 
 
-def _scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Outcome:
+def _scan_file(  # noqa: PLR0911, PLR0912 - 元数据预筛增加免读分支
+    path: Path,
+    context: ScanContext,
+    size: int | None = None,
+) -> _Outcome:
     """扫描单个文件：文件名规则 + 文档抽取或文本读取，再做逐行匹配与文件级求值。
 
     ``size`` 由遍历阶段传入以免重复 ``stat``；省略时按需自行获取。文件名规则
@@ -1560,11 +1579,16 @@ def _scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Ou
         **meta_counts,
         **hash_counts,
     }
-    suffix = path.suffix.lower()
-    if context.options.scan_documents and suffix in DOCUMENT_EXTENSIONS:
-        outcome = _scan_document(path, context, suffix, size)
+    needs_content = _rules_need_content(context)
+    if needs_content:
+        suffix = path.suffix.lower()
+        if context.options.scan_documents and suffix in DOCUMENT_EXTENSIONS:
+            outcome = _scan_document(path, context, suffix, size)
+        else:
+            outcome = _scan_text(path, context, size)
     else:
-        outcome = _scan_text(path, context, size)
+        # 规则全部不依赖正文：跳过读盘 / 文档抽取，只合并元数据类命中。
+        outcome = _Outcome(path=path, size=size or 0)
     if outcome.cancelled or outcome.error is not None:
         return outcome
     counts = {**outcome.rule_counts}
@@ -1576,6 +1600,16 @@ def _scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Ou
     for rule_id, lines in (*name_lines.items(), *time_lines.items()):
         rule_lines.setdefault(rule_id, set()).update(lines)
     line_sets = {rule_id: frozenset(rule_lines.get(rule_id, ())) for rule_id in ids}
+    if not needs_content:
+        if not evaluate_expression(context.expression, line_sets):
+            return _Outcome(
+                path=path,
+                matched_ids=frozenset(ids),
+                rule_lines=rule_lines,
+                rule_counts=counts,
+                size=outcome.size,
+            )
+        return _metadata_only_outcome(path, context, metadata_matches, size, ids)
     if outcome.skipped is not None:
         if not evaluate_expression(context.expression, line_sets):
             return outcome

@@ -1239,3 +1239,60 @@ def test_reveal_command_per_platform(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     assert reveal_command(path)[0] == "xdg-open"
     assert reveal_command(path)[-1].endswith("data")
+
+
+def test_progress_sampler_throttles_and_flushes() -> None:
+    """GUI 进度按步长 / 时间节流，结束前补发最后一帧。"""
+    from fcmd.apps.filescan._filescanw_qt import _ProgressSampler
+
+    events: list[tuple[int, int, str]] = []
+    sampler = _ProgressSampler(lambda done, total, path: events.append((done, total, path)), steps=10)
+    for done in range(1, 101):
+        sampler.update(done, 100, Path(f"{done}.txt"))
+    sampler.flush()
+    assert events[0][0] == 1
+    assert events[-1][0] == 100 and events[-1][2] == "100.txt"
+    assert len(events) <= 12
+
+
+def test_result_tree_children_are_built_lazily_and_load_more(home: Path, tmp_path: Path) -> None:
+    """文件行先建、子命中展开时才建；超出首批的文件行由「加载更多结果」追加。"""
+    from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanResult, ScanStats
+
+    def _hit(path: Path, name: str) -> FileHit:
+        match = RuleMatch(
+            rule_id="cn_phone",
+            rule_name="手机号",
+            line_no=1,
+            start=0,
+            end=11,
+            excerpt="13800138000",
+            context="13800138000",
+            context_start=0,
+        )
+        return FileHit(path=path, size=10, encoding="utf-8", matches=[match])
+
+    first = _hit(tmp_path / "a.txt", "a")
+    second = _hit(tmp_path / "b.txt", "b")
+    result = ScanResult(roots=(tmp_path,), stats=ScanStats(hit_files=2, hit_count=2), hits=[first, second])
+    window = _window()
+    try:
+        window._render_result(result)
+        assert window._tree.topLevelItemCount() == 2
+        first_item = window._tree.topLevelItem(0)
+        second_item = window._tree.topLevelItem(1)
+        # 首个文件默认展开；其余文件只建行，展开后才补子命中。
+        assert first_item.childCount() == 1
+        assert second_item.childCount() == 0
+        second_item.setExpanded(True)
+        assert second_item.childCount() == 1
+
+        window._render_limit = 1
+        window._render_result(result, reset_limit=False)
+        assert window._tree.topLevelItemCount() == 1
+        assert window._load_more_button.isHidden() is False
+        window._load_more_button.click()
+        assert window._tree.topLevelItemCount() == 2
+        assert window._load_more_button.isHidden() is True
+    finally:
+        window.deleteLater()

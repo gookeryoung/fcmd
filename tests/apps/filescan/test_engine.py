@@ -1232,3 +1232,31 @@ def test_file_risk_score_and_allowlist() -> None:
     assert file_risk_score(hit) == 20
     ruleset = add_path_allowlist(RuleSet(rules=(), expressions=()), "F:/x/y.txt")
     assert ruleset.expressions and "allow_" in ruleset.expressions[-1].expression
+
+
+def test_filename_only_rules_skip_reading_file_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """表达式只引用文件名规则时不应读正文：命中与字节数都走元数据路径。"""
+    from fcmd.apps.filescan import _engine
+
+    _write(tmp_path, "secret-notes.txt", "正文完全不需要读取")
+    ruleset = RuleSet(
+        rules=(
+            Rule(
+                id="name_hit",
+                name="文件名命中",
+                matcher=Matcher(kind=MATCH_KEYWORD, text="secret", target=TARGET_FILENAME),
+            ),
+        ),
+        expressions=(Expression(id="expr", name="组合式", expression="name_hit"),),
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("只引用文件名规则时不应读取正文")
+
+    monkeypatch.setattr(_engine, "_read_text", _boom)
+    result = scan_paths([tmp_path], ruleset, ScanOptions(workers=1, use_processes=False))
+
+    assert result.stats.files_scanned == 1
+    assert result.stats.bytes_read == 0
+    assert result.stats.hit_files == 1
+    assert result.hits[0].matches[0].rule_id == "name_hit"

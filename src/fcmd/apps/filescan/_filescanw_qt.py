@@ -34,7 +34,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -456,6 +457,41 @@ class _ScanTaskDetailView(QWidget):  # pragma: no cover - Qt 控件
             widget.setToolTip(text)
 
 
+class _ProgressSampler:
+    """把逐文件进度压成低频信号：按时间 / 进度步长触发，结束前 flush 最后一帧。"""
+
+    def __init__(self, emit: Callable[[int, int, str], None], *, interval: float = 0.1, steps: int = 200) -> None:
+        self._emit = emit
+        self._interval = max(0.0, interval)
+        self._steps = max(1, steps)
+        self._last_time = 0.0
+        self._last_done = 0
+        self._pending: tuple[int, int, str] | None = None
+
+    def update(self, done: int, total: int, path: Path) -> None:
+        now = time.monotonic()
+        step = max(total // self._steps, 1) if total > 0 else 1
+        due = (
+            self._last_time == 0.0
+            or done >= total
+            or done - self._last_done >= step
+            or now - self._last_time >= self._interval
+        )
+        if due:
+            self._emit(done, total, str(path))
+            self._last_time = now
+            self._last_done = done
+            self._pending = None
+            return
+        self._pending = (done, total, str(path))
+
+    def flush(self) -> None:
+        """扫描结束 / 取消时补发最后一帧。"""
+        if self._pending is not None:
+            self._emit(*self._pending)
+            self._pending = None
+
+
 class _ScanProgress(QObject):  # pragma: no cover - Qt 信号桥
     """扫描线程 → 主线程的进度信号（跨线程自动排队）。"""
 
@@ -478,6 +514,7 @@ def _scan_worker(  # noqa: PLR0913 - 扫描参数成组传入，与 scan_paths �
     notes: list[str] = []
     if store is not None and store.error:
         notes.append(store.error)
+    sampler = _ProgressSampler(bridge.progress.emit)
     try:
         key = cache_fingerprint(ruleset, options, mask=mask) if store is not None else ""
         result = scan_paths(
@@ -485,7 +522,7 @@ def _scan_worker(  # noqa: PLR0913 - 扫描参数成组传入，与 scan_paths �
             ruleset,
             options,
             token=token,
-            progress=lambda done, total, path: bridge.progress.emit(done, total, str(path)),
+            progress=sampler.update,
             cache=store,
             cache_key=key,
             refresh=refresh,
@@ -494,6 +531,7 @@ def _scan_worker(  # noqa: PLR0913 - 扫描参数成组传入，与 scan_paths �
             notes.append(store.error)
         return result, "；".join(notes)
     finally:
+        sampler.flush()
         if store is not None:
             store.close()
 
@@ -1014,7 +1052,11 @@ _CONTEXT_PADDING = 4
 _PATH_ROLE = Qt.ItemDataRole.UserRole + 12
 _MATCH_ROLE = Qt.ItemDataRole.UserRole + 13
 _MATCHES_ROLE = Qt.ItemDataRole.UserRole + 14
-"""结果树的数据角色：上下文列内边距（像素）、文件路径、单条命中与文件全部命中。"""
+_CHILDREN_ROLE = Qt.ItemDataRole.UserRole + 15
+"""结果树的数据角色：上下文列内边距（像素）、文件路径、单条命中、文件全部命中、子行已构建。"""
+
+_RESULT_PAGE_SIZE = 1000
+"""结果树首批渲染的文件行数；超出部分用「加载更多结果」按需追加。"""
 
 
 def reveal_command(path: Path) -> list[str]:
@@ -1337,6 +1379,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._stopping_task_id = ""
         self._viewing_task_id = ""
         self._rendered_result: ScanResult | None = None
+        self._render_limit = _RESULT_PAGE_SIZE
         self._whitelist_notice = ""
         # 文件 / 目录对话框的上次位置：与设置字段同名，读写交给共用 PathHistory。
         self._dialog_state: dict[str, str] = {
@@ -1642,6 +1685,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._tree.customContextMenuRequested.connect(self._open_result_menu)
         self._tree.itemDoubleClicked.connect(self._result_item_double_clicked)
         self._tree.itemSelectionChanged.connect(self._update_result_actions)
+        self._tree.itemExpanded.connect(self._populate_result_children)
         # 上下文列换行完整显示 + 命中底色；其余列继续用默认 delegate 单行绘制。
         self._context_delegate = _ContextDelegate(self._tree, compact=self.settings.compact_mode)
         self._tree.setItemDelegateForColumn(3, self._context_delegate)
@@ -1681,6 +1725,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         export_bar.setContentsMargins(0, 0, 0, 0)
         export_bar.setSpacing(6)
         export_bar.addWidget(hint_label("双击行定位文件，右键行可打开 / 复制更多", wrap=False), 1)
+        self._load_more_button = button("加载更多结果", kind="ghost")
+        self._load_more_button.setToolTip("结果较多时首批只渲染前 1000 个文件，点击继续追加")
+        self._load_more_button.clicked.connect(self._load_more_results)
+        self._load_more_button.setVisible(False)
+        export_bar.addWidget(self._load_more_button)
         self._compact_mode = QCheckBox("紧凑模式", self)
         self._compact_mode.setToolTip("任务行、结果行与规则表使用更紧凑的高度；结果上下文只显示单行，悬停看全文")
         self._compact_mode.setChecked(self.settings.compact_mode)
@@ -2553,75 +2602,108 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         """清掉结果页与任务的关联（目录改变 / 移除 / 重新扫描时）。"""
         self.result = None
         self._rendered_result = None
+        self._render_limit = _RESULT_PAGE_SIZE
         self._viewing_task_id = ""
         self._tree.clear()
+        self._load_more_button.setVisible(False)
         self._sync_result_switcher()
         self.set_page_status("results", message)
 
-    def _render_result(self, result: ScanResult) -> None:
+    def _render_result(self, result: ScanResult, *, reset_limit: bool = True) -> None:
+        """渲染结果树：首批只建文件行，子命中在该文件展开时按需构建。"""
         self._rendered_result = result
+        if reset_limit:
+            self._render_limit = _RESULT_PAGE_SIZE
         self._tree.clear()
         self._context_delegate.reset()
-        for index, hit in enumerate(result.hits):
-            highest = _highest_severity(hit.matches)
-            parent = QTreeWidgetItem(
-                [
-                    str(hit.path),
-                    severity_label(highest) if highest else "",
-                    "",
-                    _hit_summary(hit),
-                ]
-            )
-            parent.setToolTip(0, str(hit.path))
-            parent.setToolTip(
-                3, f"命中 {len(hit.matches)} 条 · 引擎 {engine_label(hit.engine)} · 耗时 {hit.elapsed * 1000:.2f} ms"
-            )
-            if highest:
-                parent.setToolTip(1, f"该文件最高严重级：{severity_label(highest)}")
-            parent.setData(0, _PATH_ROLE, str(hit.path))
-            parent.setData(0, _MATCHES_ROLE, tuple(hit.matches))
-            self._tree.addTopLevelItem(parent)
-            for match in hit.matches:
-                rendered = render_context(match, False)
-                child = QTreeWidgetItem(
+        hits = result.hits[: self._render_limit]
+        self._tree.setUpdatesEnabled(False)
+        try:
+            for index, hit in enumerate(hits):
+                highest = _highest_severity(hit.matches)
+                parent = QTreeWidgetItem(
                     [
-                        match.rule_name,
-                        severity_label(match.severity) if match.severity else "",
-                        str(match.location or match.line_no),
-                        rendered,
+                        str(hit.path),
+                        severity_label(highest) if highest else "",
+                        "",
+                        _hit_summary(hit),
                     ]
                 )
-                child.setData(0, _PATH_ROLE, str(hit.path))
-                child.setData(0, _MATCH_ROLE, match)
-                # 单元格文本仍是完整打码上下文（复制 / 悬停 / 测试可读）；
-                # 富文本绘制由 delegate 按三段重新排版，命中段另外上底色。
-                child.setData(3, _CONTEXT_ROLE, context_segments(match, False))
-                child.setToolTip(0, str(hit.path))
-                if match.severity:
-                    child.setToolTip(1, f"严重级：{severity_label(match.severity)}")
-                child.setToolTip(3, rendered)
-                color = _severity_color(match.severity)
-                if color is not None:
-                    brush = QBrush(color)
-                    child.setForeground(0, brush)
-                    child.setForeground(1, brush)
-                parent.addChild(child)
-            parent.setExpanded(True)
-            if index >= 5000:  # 极端结果集下不再逐项展开，避免长时间占用 GUI 线程
-                break
-        for item in result.skipped:
-            if not self._show_skipped.isChecked():
-                break
-            entry = QTreeWidgetItem([str(item.path), "", "", f"跳过：{item.reason}"])
-            entry.setToolTip(0, str(item.path))
-            entry.setData(0, _PATH_ROLE, str(item.path))
-            self._tree.addTopLevelItem(entry)
-        for item in result.errors:
-            entry = QTreeWidgetItem([str(item.path), "", "", f"错误：{item.message}"])
-            entry.setToolTip(0, str(item.path))
-            entry.setData(0, _PATH_ROLE, str(item.path))
-            self._tree.addTopLevelItem(entry)
+                parent.setToolTip(0, str(hit.path))
+                parent.setToolTip(
+                    3,
+                    f"命中 {len(hit.matches)} 条 · 引擎 {engine_label(hit.engine)} · 耗时 {hit.elapsed * 1000:.2f} ms",
+                )
+                if highest:
+                    parent.setToolTip(1, f"该文件最高严重级：{severity_label(highest)}")
+                parent.setData(0, _PATH_ROLE, str(hit.path))
+                parent.setData(0, _MATCHES_ROLE, tuple(hit.matches))
+                if hit.matches:
+                    parent.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
+                self._tree.addTopLevelItem(parent)
+                if index == 0 and hit.matches:
+                    # 首个文件默认展开，兼顾「打开即看到命中」与惰性构建。
+                    parent.setExpanded(True)
+            for item in result.skipped:
+                if not self._show_skipped.isChecked():
+                    break
+                entry = QTreeWidgetItem([str(item.path), "", "", f"跳过：{item.reason}"])
+                entry.setToolTip(0, str(item.path))
+                entry.setData(0, _PATH_ROLE, str(item.path))
+                self._tree.addTopLevelItem(entry)
+            for item in result.errors:
+                entry = QTreeWidgetItem([str(item.path), "", "", f"错误：{item.message}"])
+                entry.setToolTip(0, str(item.path))
+                entry.setData(0, _PATH_ROLE, str(item.path))
+                self._tree.addTopLevelItem(entry)
+        finally:
+            self._tree.setUpdatesEnabled(True)
+        self._load_more_button.setVisible(len(result.hits) > self._render_limit)
         self._update_result_actions()
+
+    def _populate_result_children(self, item: QTreeWidgetItem) -> None:
+        """首次展开文件行时再创建命中子项；之后直接复用已建子项。"""
+        if item.data(0, _CHILDREN_ROLE):
+            return
+        matches = item.data(0, _MATCHES_ROLE)
+        if not isinstance(matches, tuple):
+            return
+        item.setData(0, _CHILDREN_ROLE, True)
+        path = self._item_path(item)
+        for match in matches:
+            if not isinstance(match, RuleMatch):
+                continue
+            rendered = render_context(match, False)
+            child = QTreeWidgetItem(
+                [
+                    match.rule_name,
+                    severity_label(match.severity) if match.severity else "",
+                    str(match.location or match.line_no),
+                    rendered,
+                ]
+            )
+            child.setData(0, _PATH_ROLE, str(path) if path is not None else "")
+            child.setData(0, _MATCH_ROLE, match)
+            # 单元格文本仍是完整打码上下文（复制 / 悬停 / 测试可读）；
+            # 富文本绘制由 delegate 按三段重新排版，命中段另外上底色。
+            child.setData(3, _CONTEXT_ROLE, context_segments(match, False))
+            child.setToolTip(0, str(path) if path is not None else "")
+            if match.severity:
+                child.setToolTip(1, f"严重级：{severity_label(match.severity)}")
+            child.setToolTip(3, rendered)
+            color = _severity_color(match.severity)
+            if color is not None:
+                brush = QBrush(color)
+                child.setForeground(0, brush)
+                child.setForeground(1, brush)
+            item.addChild(child)
+
+    def _load_more_results(self) -> None:
+        """追加下一批文件行（保留当前结果与筛选范围）。"""
+        if self._rendered_result is None:
+            return
+        self._render_limit += _RESULT_PAGE_SIZE
+        self._render_result(self._rendered_result, reset_limit=False)
 
     def _context_layout_changed(self, *_args: object) -> None:
         """列宽变化后重排上下文列，并记住前三列宽度供下次启动恢复。"""
@@ -3031,7 +3113,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         """默认隐藏跳过 / 范围外条目；勾选后就地重渲染当前结果（保留筛选后的集合）。"""
         self.settings = replace(self.settings, show_skipped=show)
         if self._rendered_result is not None:
-            self._render_result(self._rendered_result)
+            self._render_result(self._rendered_result, reset_limit=False)
         self._persist_settings(self.geometry_text())
 
     def _apply_compact_mode(

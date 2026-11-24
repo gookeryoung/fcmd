@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `filescanw` 扫描性能：进度信号按 100ms / 每 200 个文件节流；结果树首批只建
+  1000 个文件行、子命中展开时惰性创建并支持「加载更多结果」；只引用文件名 / 路径 /
+  元数据等规则的扫描跳过正文读取（`bytes_read` 记 0）。
 - GUI 持久化共享方案 P2（ADR 0050 部分落地）：`SettingsStore` 自动写入
   `schema_version: 1`（旧文件缺失按 1 读取）；新增 `cache_path` 统一缓存目录；
   pevieww / renamerw / img2icow / filesyncw / reshackw 记住最近打开 / 保存目录，
