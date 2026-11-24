@@ -106,6 +106,7 @@ def install() -> None:
 
 def _patch_binding() -> None:
     """补齐 Qt6 → Qt5 的少类别名；重复调用安全。"""
+    core = importlib.import_module("PySide2.QtCore")
     gui = importlib.import_module("PySide2.QtGui")
     widgets = importlib.import_module("PySide2.QtWidgets")
 
@@ -113,8 +114,13 @@ def _patch_binding() -> None:
         if not hasattr(gui, name) and hasattr(widgets, name):
             setattr(gui, name, getattr(widgets, name))
 
-    for cls_name in ("QApplication", "QDialog", "QMenu"):
-        cls = getattr(widgets, cls_name, None)
+    for module, cls_name in (
+        (widgets, "QApplication"),
+        (widgets, "QDialog"),
+        (widgets, "QMenu"),
+        (core, "QEventLoop"),
+    ):
+        cls = getattr(module, cls_name, None)
         if cls is not None and not hasattr(cls, "exec") and hasattr(cls, "exec_"):
             cls.exec = cls.exec_  # type: ignore[attr-defined]
 

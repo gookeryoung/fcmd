@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -39,8 +40,6 @@ from fcmd.tools.system.alarmclock import (
     DELAY_STEPS,
     DIGITAL_BORDER_COLORS,
     DIGITAL_FORMAT,
-    MIN_HEIGHT,
-    MIN_WIDTH,
     REMINDER_TEXT,
     REMINDER_TITLE,
     AlarmSettings,
@@ -57,7 +56,8 @@ if TYPE_CHECKING:
 
 __all__ = ["AlarmClockQtWindow", "run_qt"]
 
-DEFAULT_SIZE = (480, 400)
+DEFAULT_SIZE = (680, 700)
+_WINDOW_MIN_SIZE = (620, 600)
 _CLOCK_COLORS = DIGITAL_BORDER_COLORS
 _BG_COLORS = BLINK_BG_COLORS
 
@@ -128,7 +128,7 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
             title="定时提醒",
             config_name="alarmclock",
             default_size=DEFAULT_SIZE,
-            min_size=(MIN_WIDTH, MIN_HEIGHT),
+            min_size=_WINDOW_MIN_SIZE,
             on_close=self._close_allowed,
             persist=self._persist_settings,
         )
@@ -143,63 +143,94 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
     # 构建
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
-        self.clock_label = QLabel(datetime.now().strftime(DIGITAL_FORMAT), self)
-        font = QFont("Consolas")
-        font.setPointSize(44)
-        font.setBold(True)
-        font.setItalic(True)
-        self.clock_label.setFont(font)
-        self.clock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.clock_label.setMinimumHeight(96)
-        self.add(self.clock_label)
+        self.clock_panel = QFrame(self)
+        self.clock_panel.setObjectName("AlarmClockHero")
+        hero = QVBoxLayout(self.clock_panel)
+        hero.setContentsMargins(24, 18, 24, 18)
+        hero.setSpacing(4)
 
-        settings_card = Card("时间设置")
+        self.date_label = QLabel("", self.clock_panel)
+        self.date_label.setObjectName("AlarmClockDate")
+        self.date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hero.addWidget(self.date_label)
+
+        self.clock_label = QLabel(datetime.now().strftime(DIGITAL_FORMAT), self.clock_panel)
+        self.clock_label.setObjectName("AlarmClockTime")
+        clock_font = QFont()
+        clock_font.setFamilies(("Cascadia Mono", "Consolas", "Menlo", "DejaVu Sans Mono"))
+        clock_font.setPointSize(72)
+        clock_font.setBold(True)
+        self.clock_label.setFont(clock_font)
+        self.clock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.clock_label.setMinimumHeight(118)
+        hero.addWidget(self.clock_label)
+
+        self.status = QLabel("未设置闹钟", self.clock_panel)
+        self.status.setObjectName("AlarmClockStatus")
+        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status.setWordWrap(True)
+        self.status.setMinimumHeight(30)
+        self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        hero.addWidget(self.status)
+        self._show_status("未设置闹钟", "muted")
+        self.add(self.clock_panel)
+
+        settings_card = Card("闹钟设置")
         time_row = QHBoxLayout()
         time_row.setContentsMargins(0, 0, 0, 0)
-        time_row.setSpacing(6)
-        time_row.addWidget(QLabel("闹钟时间："))
+        time_row.setSpacing(10)
+        time_label = QLabel("闹钟时间", settings_card)
+        time_label.setObjectName("AlarmFormLabel")
+        time_row.addWidget(time_label)
         self.time_edit = QLineEdit(self._initial_alarm_text(), settings_card)
+        self.time_edit.setObjectName("AlarmTimeInput")
         self.time_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.time_edit.setMaximumWidth(140)
+        self.time_edit.setMinimumWidth(160)
+        self.time_edit.setMaximumWidth(190)
         self.time_edit.returnPressed.connect(self.toggle_alarm)
         time_row.addWidget(self.time_edit)
         time_row.addStretch(1)
         self.set_button = button("设置闹钟", kind="primary")
+        self.set_button.setProperty("alarmAction", "true")
+        self.set_button.setMinimumWidth(120)
         self.set_button.clicked.connect(self.toggle_alarm)
         time_row.addWidget(self.set_button)
         settings_card.body.addLayout(time_row)
 
         delay_row = QHBoxLayout()
         delay_row.setContentsMargins(0, 0, 0, 0)
-        delay_row.setSpacing(4)
-        delay_row.addWidget(QLabel("延时(分钟)："))
+        delay_row.setSpacing(6)
+        delay_label = QLabel("延时(分钟)", settings_card)
+        delay_label.setObjectName("AlarmFormLabel")
+        delay_row.addWidget(delay_label)
         for minutes in DELAY_STEPS:
             widget = button(str(minutes))
-            widget.setMaximumWidth(52)
+            widget.setProperty("alarmDelay", "true")
             widget.clicked.connect(lambda _checked=False, value=minutes: self.set_delay(value))
             delay_row.addWidget(widget)
         reset = button("重置")
+        reset.setProperty("alarmDelay", "true")
         reset.clicked.connect(self.reset_time)
         delay_row.addWidget(reset)
         delay_row.addStretch(1)
         settings_card.body.addLayout(delay_row)
 
         self.repeat = QCheckBox("重复（每天）", settings_card)
+        self.repeat.setObjectName("AlarmRepeat")
         self.repeat.setChecked(self._settings.repeat)
         self.repeat.toggled.connect(self._sync_repeat)
         settings_card.body.addWidget(self.repeat)
         self.add(settings_card)
 
-        self.status = QLabel("未设置闹钟", self)
-        self.status.setObjectName("Danger")
-        status_font = QFont(self.font())
-        status_font.setPointSize(10)
-        status_font.setBold(True)
-        self.status.setFont(status_font)
-        self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.add(self.status)
         self.add(hint_label("到点后弹窗置顶闪烁，点击「关闭提醒」结束本次提醒。"))
         self.add_stretch()
+
+    def _show_status(self, text: str, tone: str) -> None:
+        """更新提醒状态文字与语义色（muted / accent / success / danger）。"""
+        self.status.setText(text)
+        self.status.setProperty("tone", tone)
+        self.status.style().unpolish(self.status)
+        self.status.style().polish(self.status)
 
     def _initial_alarm_text(self) -> str:
         """初始时间输入框内容：恢复上次设定，否则为 1 分钟后。"""
@@ -217,12 +248,12 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
             self.open_reminder()
 
     def refresh_clock(self, now: datetime) -> None:
-        """刷新时钟文本、边框颜色与状态栏剩余时间。"""
+        """刷新时钟文本、日期、强调边框与状态栏剩余时间。"""
+        weekdays = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
         self.clock_label.setText(now.strftime(DIGITAL_FORMAT))
+        self.date_label.setText(f"{now:%Y-%m-%d}  {weekdays[now.weekday()]}")
         self._border_color = next_border_color(self._border_color)
-        self.clock_label.setStyleSheet(
-            f"border: 2px solid {self._border_color}; padding: 12px; background: transparent;"
-        )
+        self.clock_panel.setStyleSheet(f"QFrame#AlarmClockHero {{ border: 3px solid {self._border_color}; }}")
         self.refresh_status(now)
 
     def refresh_status(self, now: datetime) -> None:
@@ -257,14 +288,14 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         self.time_edit.setText(target.strftime(DIGITAL_FORMAT))
         self.set_button.setText("取消闹钟")
         self.set_button.setObjectName("Danger")
-        self.status.setText(f"已设置闹钟: {target.strftime(DIGITAL_FORMAT)}")
+        self._show_status(f"已设置闹钟: {target.strftime(DIGITAL_FORMAT)}", "accent")
 
     def cancel_alarm(self) -> None:
         """取消闹钟并恢复按钮文案。"""
         self._state.cancel()
         self.set_button.setText("设置闹钟")
         self.set_button.setObjectName("Primary")
-        self.status.setText("闹钟已取消")
+        self._show_status("闹钟已取消", "muted")
 
     def set_delay(self, minutes: int) -> None:
         """把闹钟时间设为当前时间 + ``minutes`` 分钟。"""
@@ -288,7 +319,7 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         dialog.setMinimumWidth(360)
         dialog.start()
         self._reminder = dialog
-        self.status.setText("⏰ 闹钟响了！")
+        self._show_status("⏰ 闹钟响了！", "danger")
 
     def close_reminder(self) -> None:
         """关闭提醒窗口，并按「重复」设置决定是否顺延。"""
@@ -298,11 +329,11 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         if self._state.armed:
             assert self._state.target is not None
             self.time_edit.setText(self._state.target.strftime(DIGITAL_FORMAT))
-            self.status.setText(f"下次提醒: {self._state.target.strftime(DIGITAL_FORMAT)}")
+            self._show_status(f"下次提醒: {self._state.target.strftime(DIGITAL_FORMAT)}", "success")
         else:
             self.set_button.setText("设置闹钟")
             self.set_button.setObjectName("Primary")
-            self.status.setText("闹钟已关闭")
+            self._show_status("闹钟已关闭", "muted")
 
     # ------------------------------------------------------------------ #
     # 生命周期

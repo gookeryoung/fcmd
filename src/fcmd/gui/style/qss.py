@@ -101,6 +101,32 @@ QLabel#OwnerTag {
     background: $surface_active;
     border: 1px solid $border;
 }
+/* 定时提醒：大号时钟面板与放大的操作控件。颜色全部走主题 token，切主题后自动跟随。 */
+QFrame#AlarmClockHero {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 $surface, stop:1 $surface_hover);
+    border: 1px solid $border_strong; border-radius: 14px;
+}
+QLabel#AlarmClockTime { color: $text; background: transparent; font-size: 50pt; font-weight: 700; }
+QLabel#AlarmClockDate { color: $muted; background: transparent; font-size: ${font_body}pt; font-weight: 600; }
+QLabel#AlarmClockStatus { color: $muted; background: transparent; font-size: ${font_heading}pt; font-weight: 700; }
+QLabel#AlarmClockStatus[tone="accent"] { color: $accent; }
+QLabel#AlarmClockStatus[tone="success"] { color: $success; }
+QLabel#AlarmClockStatus[tone="warning"] { color: $warning; }
+QLabel#AlarmClockStatus[tone="danger"] { color: $danger; }
+QLabel#AlarmFormLabel { color: $muted; font-size: ${font_body}pt; font-weight: 600; }
+QLineEdit#AlarmTimeInput {
+    color: $text; font-size: ${font_heading}pt; font-weight: 700;
+    min-height: 42px; max-height: 42px; padding: 0 10px;
+}
+QPushButton[alarmAction="true"] {
+    min-height: 42px; max-height: 42px; padding: 0 18px;
+    font-size: ${font_body}pt; font-weight: 600;
+}
+QPushButton[alarmDelay="true"] {
+    min-width: 52px; max-width: 60px; min-height: 34px; max-height: 34px;
+    font-size: ${font_small}pt; font-weight: 600;
+}
+QCheckBox#AlarmRepeat { font-size: ${font_body}pt; font-weight: 600; }
 QLabel#StatusTag {
     min-height: 18px;
     max-height: 18px;

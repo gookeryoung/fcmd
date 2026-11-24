@@ -151,3 +151,19 @@ def test_settings_persisted_on_close(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert raw["alarm"] == "08:15:00"
     assert raw["repeat"] is True
     assert raw["geometry"] == "480x400+10+20"
+
+
+def test_clock_hero_is_large_and_status_tracks_tone(window: Any) -> None:
+    """大号时钟面板：时钟字号、日期行与状态语义色都按新视觉层级呈现。"""
+    assert window.clock_panel.objectName() == "AlarmClockHero"
+    assert window.clock_label.objectName() == "AlarmClockTime"
+    assert window.clock_label.font().pointSize() >= 40
+    assert window.date_label.text().startswith("2026-01-01")
+    assert window.time_edit.objectName() == "AlarmTimeInput"
+    assert window.status.objectName() == "AlarmClockStatus"
+    assert window.status.property("tone") == "muted"
+
+    window.arm_alarm()
+    assert window.status.property("tone") == "accent"
+    window.cancel_alarm()
+    assert window.status.property("tone") == "muted"
