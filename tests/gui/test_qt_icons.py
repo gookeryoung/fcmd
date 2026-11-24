@@ -88,6 +88,31 @@ def test_icon_for_text_maps_common_actions() -> None:
     assert icons.icon_for_text("关闭") == "x"
     assert icons.icon_for_text("关闭全部") == "power"
     assert icons.icon_for_text("关于") is None
+    # 本轮扩充的常用动作：比较 / 分割 / 预览 / 暂停 / 撤销 / 缩放 / 加密等。
+    assert icons.icon_for_text("开始比较") == "git-compare"
+    assert icons.icon_for_text("开始分割") == "scissors"
+    assert icons.icon_for_text("预览") == "eye"
+    assert icons.icon_for_text("暂停队列") == "pause"
+    assert icons.icon_for_text("撤销本次") == "undo"
+    assert icons.icon_for_text("适应窗口") == "maximize"
+    assert icons.icon_for_text("放大") == "zoom-in"
+    assert icons.icon_for_text("缩小") == "zoom-out"
+    assert icons.icon_for_text("解密") == "lock-open"
+    assert icons.icon_for_text("校验") == "shield-check"
+    assert icons.icon_for_text("载入示例") == "folder-open"
+    assert icons.icon_for_text("移除选中") == "minus"
+    assert icons.icon_for_text("模型管理") == "settings"
+    assert icons.icon_for_text("开始测速") == "gauge"
+    assert icons.icon_for_text("开始测试") == "flask"
+
+
+def test_every_keyword_and_icon_body_is_renderable() -> None:
+    """所有按钮关键词都指向已登记图标，且全部图标都能渲染成非空位图。"""
+    QApplication.instance() or QApplication([])
+    for _text, name in icons.BUTTON_ICON_KEYWORDS:
+        assert name in icons.ICON_BODIES, name
+    for name in icons.ICON_BODIES:
+        assert icons.pixmap(name, size=16).isNull() is False, name
 
 
 def test_distro_icon_matches_common_distributions_with_generic_fallback() -> None:

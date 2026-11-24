@@ -7,6 +7,9 @@
 
 ### 变更
 
+- GUI 图标库扩充：新增比较 / 分割 / 预览 / 暂停 / 撤销 / 缩放 / 适应窗口 /
+  加密解密 / 校验 / 载入 / 移除 / 移动 / 计算 / 帮助等 Lucide 图标，并补齐
+  「开始比较」「暂停队列」「适应窗口」等按钮文案的自动映射。
 - `envdev` / `mirrortool` / `mirrortoolw` 迁入 `apps/envdev`（命令与设置路径不变）；
   镜像站 / 加速前缀 / 下载候选排序 / `MirrorSpec` 配置模板抽到
   `infras/net/mirrors.py`，wslman 与 envdev 共用同一套机制，业务镜像清单仍留在各自应用。
