@@ -13,13 +13,17 @@ from fcmd.apps.filescan._rules import (
     DEFAULT_SEVERITY,
     MATCH_KEYWORD,
     MATCH_REGEX,
+    MATCH_SIZE,
     MATCH_TIME,
     SEVERITY_CRITICAL,
     SEVERITY_HIGH,
     SEVERITY_LEVELS,
     SEVERITY_LOW,
+    SIZE_BETWEEN,
+    SIZE_LT,
     TARGET_CONTENT,
     TARGET_FILENAME,
+    TARGET_PATH,
     TIME_AFTER,
     TIME_BEFORE,
     TIME_BETWEEN,
@@ -322,9 +326,9 @@ def test_matcher_target_roundtrip_and_describe() -> None:
 
 def test_matcher_target_rejects_unknown_value() -> None:
     with pytest.raises(ValueError, match="未知匹配对象"):
-        matcher_from_mapping({"type": MATCH_KEYWORD, "text": "x", "target": "path"})
+        matcher_from_mapping({"type": MATCH_KEYWORD, "text": "x", "target": "unknown_target"})
     with pytest.raises(ValueError, match="匹配对象必须是"):
-        Matcher(kind=MATCH_KEYWORD, text="x", target="path").validate()
+        Matcher(kind=MATCH_KEYWORD, text="x", target="unknown_target").validate()
 
 
 @pytest.mark.parametrize(
@@ -625,7 +629,7 @@ def test_time_matcher_compiles_to_window() -> None:
     assert compiled.time_end is None
     between = compile_rule(Rule(id="b", name="区间", matcher=_time_matcher(compare=TIME_BETWEEN, value2="2027-01-01")))
     assert between.time_end is not None and between.time_end > between.time_start  # type: ignore[operator]
-    with pytest.raises(ValueError, match="时间规则不编译正则"):
+    with pytest.raises(ValueError, match="不编译正则"):
         compile_matcher(_time_matcher())
 
 
@@ -637,7 +641,7 @@ def test_ruleset_time_rule_roundtrip_and_near_guard() -> None:
     restored = ruleset_from_mapping(ruleset_to_mapping(ruleset))
     assert restored.find("old") is not None
     assert restored.find("old").matcher.target == TIME_MODIFIED  # type: ignore[union-attr]
-    assert ruleset_to_mapping(restored)["version"] == 3
+    assert ruleset_to_mapping(restored)["version"] == 4
 
     bad = RuleSet(
         rules=(Rule(id="old", name="旧文件", matcher=_time_matcher()),),
@@ -649,3 +653,63 @@ def test_ruleset_time_rule_roundtrip_and_near_guard() -> None:
 
 def test_time_target_labels_cover_all_targets() -> None:
     assert set(TIME_TARGET_LABELS) == {TIME_MODIFIED, TIME_CREATED, "accessed"}
+
+
+def test_size_matcher_describe_validate_and_mapping() -> None:
+    matcher = Matcher(kind=MATCH_SIZE, compare=SIZE_LT, value="10MB")
+    assert matcher.describe() == "文件大小 小于 10MB"
+    between = Matcher(kind=MATCH_SIZE, compare=SIZE_BETWEEN, value="1KB", value2="2MB")
+    assert between.describe() == "文件大小 介于 1KB ~ 2MB"
+    payload = matcher_to_mapping(between)
+    assert matcher_from_mapping(payload) == between
+    compiled = compile_rule(Rule(id="big", name="大文件", matcher=between))
+    assert compiled.regex is None
+    assert compiled.size_start == 1024 and compiled.size_end == 2 * 1024**2
+    with pytest.raises(ValueError, match="大小区间的结束值必须大于开始值"):
+        Matcher(kind=MATCH_SIZE, compare=SIZE_BETWEEN, value="2MB", value2="1KB").validate()
+    with pytest.raises(ValueError, match="大小条件"):
+        Matcher(kind=MATCH_SIZE, compare="before", value="1KB").validate()
+    with pytest.raises(ValueError, match="大小值不能为空"):
+        Matcher(kind=MATCH_SIZE, compare=SIZE_LT, value="").validate()
+
+
+def test_path_target_and_validator_mapping() -> None:
+    path_rule = Matcher(kind=MATCH_REGEX, pattern="财务", target=TARGET_PATH)
+    payload = matcher_to_mapping(path_rule)
+    assert payload["target"] == TARGET_PATH
+    assert matcher_from_mapping(payload) == path_rule
+    assert path_rule.matches_path() is True
+    assert path_rule.describe().startswith("路径 · ")
+
+    checked = Matcher(kind=MATCH_REGEX, pattern=r"\d{16}", target=TARGET_CONTENT, validator="luhn")
+    payload = matcher_to_mapping(checked)
+    assert payload["validator"] == "luhn"
+    assert matcher_from_mapping(payload) == checked
+    assert "Luhn" in checked.describe()
+    with pytest.raises(ValueError, match="未知校验器"):
+        Matcher(kind=MATCH_REGEX, pattern="x", validator="nope").validate()
+    with pytest.raises(ValueError, match="关键词规则不支持校验器"):
+        Matcher(kind=MATCH_KEYWORD, text="x", validator="luhn").validate()
+
+
+def test_rule_hit_thresholds_defaults_and_mapping() -> None:
+    rule = Rule(id="many", name="多次命中", matcher=Matcher(kind=MATCH_REGEX, pattern="x"), min_hits=3, max_hits=10)
+    payload = rule_to_mapping(rule)
+    assert payload["min_hits"] == 3
+    assert payload["max_hits"] == 10
+    assert rule_from_mapping(payload).min_hits == 3
+    default_payload = rule_to_mapping(_rule("a"))
+    assert "min_hits" not in default_payload and "max_hits" not in default_payload
+    with pytest.raises(ValueError, match="min_hits"):
+        Rule(id="bad", name="bad", matcher=Matcher(kind=MATCH_KEYWORD, text="x"), min_hits=0).validate()
+    with pytest.raises(ValueError, match="max_hits"):
+        Rule(id="bad", name="bad", matcher=Matcher(kind=MATCH_KEYWORD, text="x"), min_hits=5, max_hits=3).validate()
+    with pytest.raises(ValueError, match="max_hits 必须是"):
+        rule_from_mapping(
+            {
+                "id": "bad",
+                "name": "bad",
+                "matcher": {"type": MATCH_KEYWORD, "text": "x"},
+                "max_hits": -1,
+            }
+        )

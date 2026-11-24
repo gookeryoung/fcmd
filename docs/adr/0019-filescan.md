@@ -46,13 +46,18 @@
 - `id`（规则集内唯一，表达式引用它）、`name`、`group`（分组名，默认「内置」）、
   `enabled`、`severity`（严重级，`info` / `low` / `medium` / `high` / `critical`，
   默认 `medium`；旧规则集缺省时按 `medium` 补齐，非法值报中文错误）；
-- 匹配器三选一：
+- 匹配器四选一：
   - `keyword`：`text` + `case_sensitive` + `whole_word`（整词按 `\b` 边界，
     仅对首尾为词字符的关键词生效，避免中文关键词被误判）；
   - `regex`：`pattern` + `ignore_case`（不支持跨行匹配，逐行求值）；
   - `time`：`target`（`modified` / `created` / `accessed`）+ `compare`
-    （`before` / `after` / `between`）+ `value`（+ `between` 时的 `value2`），见 D16。
-- 内容类 `target`：`content`（默认，匹配正文）或 `filename`（匹配文件名，见 D13）。
+    （`before` / `after` / `between`）+ `value`（+ `between` 时的 `value2`），见 D16；
+  - `size`：`compare`（`lt` / `gt` / `between`）+ `value` / `value2`（``10MB`` 等），
+    见 D17。
+- 内容类 `target`：`content`（默认，匹配正文）、`filename`（匹配文件名，见 D13）
+  或 `path`（匹配完整路径，见 D17）。
+- `regex` 可带 `validator`（`luhn` / `cn_id` / `credit_code` / `iban`），命中片段
+  通过校验才算命中；`Rule.min_hits` / `max_hits` 控制文件级命中次数阈值（见 D17）。
 
 组合式（`Expression`）是独立的命名条目：`id`、`name`、`expression`、`enabled`。
 表达式采用可嵌套的文本 DSL：`rule_id` / `组合式 id`、`and` / `or` / `not`、圆括号，
@@ -86,7 +91,7 @@
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "name": "示例规则集",
   "rules": [
     {"id": "cn_id", "name": "身份证号", "group": "个人信息", "enabled": true,
@@ -95,7 +100,10 @@
      "matcher": {"type": "keyword", "text": "test"}},
     {"id": "old_files", "name": "历史文件", "group": "时间", "enabled": true,
      "matcher": {"type": "time", "target": "modified", "compare": "before",
-                 "value": "2026-01-01T00:00:00"}}
+                 "value": "2026-01-01T00:00:00"}},
+    {"id": "big_card_dump", "name": "批量卡号", "group": "财务", "enabled": true,
+     "matcher": {"type": "regex", "pattern": "\d{16}", "validator": "luhn"},
+     "min_hits": 5}
   ],
   "expressions": [
     {"id": "pii", "name": "个人信息", "expression": "cn_id and not test_id", "enabled": true},
@@ -245,8 +253,9 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
    摘要；双击行直接编辑）与 **组合式表**（启用、ID、名称、表达式）。规则表支持
    新增/编辑/删除（编辑对话框含严重级与匹配对象下拉）、启用/禁用、载入内置、清空、
    导入/导出/保存规则集；组合式表支持新增/编辑/删除、启用/禁用。规则对话框按
-   「类型」切换字段：关键词显示文本与整词选项，正则只显示表达式，时间显示时间字段 /
-   条件 / 起止时间（`介于` 才显示结束时间）；大小写开关按类型
+   「类型」切换字段：关键词显示文本与整词选项，正则显示表达式 + 校验器，时间显示
+   时间字段 / 条件 / 起止时间（`介于` 才显示结束时间），大小显示条件与起止值；
+   另可设置最少 / 最多命中次数阈值；大小写开关按类型
    各记一份（关键词默认不区分、正则默认区分），保存时只带当前类型的字段。关键词
    与正则都用可换行的多行编辑器（按宽度折行、高度 64–96px），换行 / 行首缩进只用于
    排版，保存时合并为单行；切换类型时对话框高度随可见字段自动调整。组合式对话框里可
@@ -671,6 +680,20 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 - 全局 `modified_after` / `modified_before` 仍是遍历期剪枝，范围外的文件不会被
   时间规则命中。
 
+### D17 路径 / 大小 / 校验器 / 命中阈值（2026-11-25）
+
+- **路径规则**：`target=path`，对完整路径文本做关键词 / 正则匹配，命中
+  `line_no=0`、`location=路径`；用于按目录 / 项目限定范围，也可进组合式做 `not`。
+- **大小规则**：`kind=size`，`compare=lt/gt/between` + `value` / `value2`；解析
+  `10KB` / `1.5MB` / 裸字节数（1024 进制），区间 `[start, end)`。命中
+  `location=文件大小`、`sensitive=False`。
+- **校验器**：`regex` 的 `validator` 作用于每个命中片段（Luhn、身份证、统一社会
+  信用代码、IBAN），不通过的不计入命中次数与明细，用于显著降低误报。
+- **命中阈值**：`Rule.min_hits`（默认 1）与 `Rule.max_hits`（0 表示不限）在文件级
+  聚合后过滤规则 id；阈值不满足时该规则视为未命中，命中明细同步过滤。计数按
+  实际有效片段数（不受 `max_hits_per_file` 截断影响）。
+- 规则集 `version` 升到 4；`min_hits` / `max_hits` 与默认一致时不写入 JSON。
+
 ### D15 邻近表达式 near[k]（2026-11-24）
 
 表达式新增二元（可链式）邻近算子：``a near[k] b`` / ``a within[k] b``，表示
@@ -745,6 +768,9 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   0 命中诊断与真实复现见 D12）。
 - 文件名规则：已落地（`Matcher.target` / `CompiledRule.matches_filename` +
   引擎 `_match_filename`，报告与 GUI 规则对话框同步，见 D13）。
+- 路径 / 大小 / 校验器 / 命中阈值：已落地（`_matcher` 路径与大小类型、
+  `_validators` 校验器、`_engine._match_size` / `_apply_thresholds`，GUI 类型切换
+  与阈值输入同步，见 D17）。
 - 时间规则：已落地（`Matcher.kind=time` + `_timeutil` 解析 / 格式化 +
   `CompiledRule.time_start/time_end` + 引擎 `_match_times`，GUI 类型切换与
   规则表摘要同步，见 D16）。

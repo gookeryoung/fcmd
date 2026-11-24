@@ -42,8 +42,12 @@ from fcmd.apps.filescan._engine import (
 from fcmd.apps.filescan._rules import (
     MATCH_KEYWORD,
     MATCH_REGEX,
+    MATCH_SIZE,
     MATCH_TIME,
+    SIZE_BETWEEN,
+    SIZE_LT,
     TARGET_FILENAME,
+    TARGET_PATH,
     TIME_AFTER,
     TIME_BEFORE,
     TIME_BETWEEN,
@@ -1049,3 +1053,67 @@ def test_time_match_context_is_not_masked() -> None:
         sensitive=False,
     )
     assert render_context(match) == format_time_value(timestamp)
+
+
+def test_path_rule_matches_full_path(tmp_path: Path) -> None:
+    _write(tmp_path, "secret/notes.txt", "hello")
+    _write(tmp_path, "public/notes.txt", "hello")
+    ruleset = RuleSet(
+        rules=(
+            Rule(id="secret", name="敏感目录", matcher=Matcher(kind=MATCH_REGEX, pattern="secret", target=TARGET_PATH)),
+        ),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions(recursive=True))
+    assert [hit.path.parent.name for hit in result.hits] == ["secret"]
+    assert result.hits[0].matches[0].location == "路径"
+
+
+def test_size_rule_matches_window(tmp_path: Path) -> None:
+    small = _write(tmp_path, "small.txt", "x")
+    large = _write(tmp_path, "large.txt", "x" * 4096)
+    assert small.stat().st_size < large.stat().st_size
+
+    ruleset = RuleSet(
+        rules=(Rule(id="big", name="大文件", matcher=Matcher(kind=MATCH_SIZE, compare=SIZE_LT, value="2KB")),),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+    assert [hit.path.name for hit in result.hits] == ["small.txt"]
+
+    between = RuleSet(
+        rules=(
+            Rule(
+                id="mid",
+                name="中等",
+                matcher=Matcher(kind=MATCH_SIZE, compare=SIZE_BETWEEN, value="2KB", value2="8KB"),
+            ),
+        ),
+    )
+    assert [hit.path.name for hit in scan_paths([tmp_path], between, ScanOptions()).hits] == ["large.txt"]
+
+
+def test_regex_validator_filters_false_positives(tmp_path: Path) -> None:
+    _write(tmp_path, "invalid.txt", "卡号 4539578763621487")
+    _write(tmp_path, "valid.txt", "卡号 4539578763621486")
+    ruleset = RuleSet(
+        rules=(
+            Rule(
+                id="card",
+                name="银行卡",
+                matcher=Matcher(kind=MATCH_REGEX, pattern=r"\d{16}", validator="luhn"),
+            ),
+        ),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+    assert [hit.path.name for hit in result.hits] == ["valid.txt"]
+
+
+def test_rule_min_and_max_hits_thresholds(tmp_path: Path) -> None:
+    _write(tmp_path, "one.txt", "13800138000")
+    _write(tmp_path, "two.txt", "13800138000 13900139000")
+    matcher = Matcher(kind=MATCH_REGEX, pattern=r"1\d{10}")
+
+    at_least_two = RuleSet(rules=(Rule(id="many", name="多", matcher=matcher, min_hits=2),))
+    assert [hit.path.name for hit in scan_paths([tmp_path], at_least_two, ScanOptions()).hits] == ["two.txt"]
+
+    at_most_one = RuleSet(rules=(Rule(id="few", name="少", matcher=matcher, max_hits=1),))
+    assert [hit.path.name for hit in scan_paths([tmp_path], at_most_one, ScanOptions()).hits] == ["one.txt"]

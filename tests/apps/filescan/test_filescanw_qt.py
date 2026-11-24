@@ -300,6 +300,56 @@ def test_rule_dialog_time_type_switches_fields(home: Path) -> None:
         window.deleteLater()
 
 
+def test_rule_dialog_size_validator_and_thresholds(home: Path) -> None:
+    """大小类型只显示大小字段；正则显示校验器；阈值随规则提交。"""
+    from fcmd.apps.filescan._filescanw_qt import _RuleDialog
+    from fcmd.apps.filescan._rules import MATCH_REGEX, MATCH_SIZE, SIZE_BETWEEN, TARGET_PATH
+
+    window = _window()
+    try:
+        dialog = _RuleDialog(window, None)
+        try:
+            dialog._kind.setCurrentText(MATCH_SIZE)
+            assert dialog._text.isHidden() is True
+            assert dialog._pattern.isHidden() is True
+            assert dialog._target.isHidden() is True
+            assert dialog._time_value.isHidden() is True
+            assert dialog._size_value.isHidden() is False
+            assert dialog._validator.isHidden() is True
+            dialog._size_op.setCurrentIndex(dialog._size_op.findData(SIZE_BETWEEN))
+            assert dialog._size_end.isHidden() is False
+            dialog._size_value.setText("1KB")
+            dialog._size_end.setText("2MB")
+            dialog._min_hits.setValue(2)
+            dialog._max_hits.setValue(50)
+            dialog._commit()
+            result = dialog.value()
+            assert result is not None
+            assert result.matcher.kind == MATCH_SIZE
+            assert result.matcher.compare == SIZE_BETWEEN
+            assert (result.min_hits, result.max_hits) == (2, 50)
+        finally:
+            dialog.deleteLater()
+
+        dialog = _RuleDialog(window, None)
+        try:
+            dialog._kind.setCurrentText(MATCH_REGEX)
+            assert dialog._validator.isHidden() is False
+            dialog._pattern.setPlainText(r"\d{16}")
+            dialog._validator.setCurrentIndex(dialog._validator.findData("luhn"))
+            assert dialog._target.findData(TARGET_PATH) >= 0
+            dialog._target.setCurrentIndex(dialog._target.findData(TARGET_PATH))
+            dialog._commit()
+            result = dialog.value()
+            assert result is not None
+            assert result.matcher.validator == "luhn"
+            assert result.matcher.target == TARGET_PATH
+        finally:
+            dialog.deleteLater()
+    finally:
+        window.deleteLater()
+
+
 def test_scan_worker_masks_context(home: Path, sample: Path) -> None:
     from fcmd.apps.filescan._engine import CancelToken, ScanOptions
     from fcmd.apps.filescan._filescanw_qt import _scan_worker, _ScanProgress

@@ -7,6 +7,12 @@
 
 ### 变更
 
+- `filescan` 规则继续扩展（规则集 `version: 4`）：新增 `target=path` 完整路径匹配、
+  `kind=size` 文件大小规则（`lt` / `gt` / `between`，支持 10KB / 1.5MB / 裸字节）、
+  `regex.validator`（Luhn / 身份证 / 统一社会信用代码 / IBAN）与规则级
+  `min_hits` / `max_hits` 命中次数阈值。时间 / 大小命中均为非敏感，报告与复制不打码。
+- `filescanw` 规则对话框新增「大小」类型、路径匹配对象、正则校验器下拉与
+  最少 / 最多命中次数；类型切换时同步显隐并自适应高度。
 - `filescan` 规则新增 `kind=time` 时间匹配：`target=modified/created/accessed` +
   `compare=before/after/between` + `value`（+ `value2`），按文件时间戳求值，不读内容；
   与内容 / 文件名规则可在同一表达式里组合，内容被跳过时时间命中照常报告；时间值

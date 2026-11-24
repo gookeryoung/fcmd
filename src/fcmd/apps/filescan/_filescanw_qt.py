@@ -112,11 +112,17 @@ from fcmd.apps.filescan._rules import (
     DEFAULT_SEVERITY,
     MATCH_KEYWORD,
     MATCH_REGEX,
+    MATCH_SIZE,
     MATCH_TIME,
     SEVERITY_LABELS,
     SEVERITY_LEVELS,
+    SIZE_BETWEEN,
+    SIZE_LT,
+    SIZE_OP_LABELS,
+    SIZE_OPS,
     TARGET_CONTENT,
     TARGET_FILENAME,
+    TARGET_PATH,
     TIME_BEFORE,
     TIME_BETWEEN,
     TIME_MODIFIED,
@@ -124,6 +130,8 @@ from fcmd.apps.filescan._rules import (
     TIME_OPS,
     TIME_TARGET_LABELS,
     TIME_TARGETS,
+    VALIDATOR_LABELS,
+    VALIDATORS,
     Expression,
     Matcher,
     Rule,
@@ -564,7 +572,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._name = QLineEdit(rule.name if rule else "", self)
         self._group = QLineEdit(rule.group if rule else "自定义", self)
         self._kind = QComboBox(self)
-        self._kind.addItems([MATCH_KEYWORD, MATCH_REGEX, MATCH_TIME])
+        self._kind.addItems([MATCH_KEYWORD, MATCH_REGEX, MATCH_TIME, MATCH_SIZE])
         self._kind.setCurrentText(current_kind)
         self._text = self._make_multiline_editor("关键词原文，如 password")
         self._text.setPlainText(rule.matcher.text if rule else "")
@@ -576,6 +584,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._target = QComboBox(self)
         self._target.addItem("文件内容", TARGET_CONTENT)
         self._target.addItem("文件名", TARGET_FILENAME)
+        self._target.addItem("完整路径", TARGET_PATH)
         current_target = (
             rule.matcher.target if rule and rule.matcher.target in (TARGET_CONTENT, TARGET_FILENAME) else TARGET_CONTENT
         )
@@ -594,6 +603,20 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._time_value.setPlaceholderText("2026-01-01T00:00:00 或 epoch 秒")
         self._time_end = QLineEdit(rule.matcher.value2 if rule and rule.matcher.kind == MATCH_TIME else "", self)
         self._time_end.setPlaceholderText("结束时间（介于时必填）")
+        self._size_op = QComboBox(self)
+        for op in SIZE_OPS:
+            self._size_op.addItem(SIZE_OP_LABELS[op], op)
+        current_size_op = rule.matcher.compare if rule and rule.matcher.kind == MATCH_SIZE else SIZE_LT
+        self._size_op.setCurrentIndex(max(self._size_op.findData(current_size_op), 0))
+        self._size_value = QLineEdit(rule.matcher.value if rule and rule.matcher.kind == MATCH_SIZE else "", self)
+        self._size_value.setPlaceholderText("如 10MB / 1048576")
+        self._size_end = QLineEdit(rule.matcher.value2 if rule and rule.matcher.kind == MATCH_SIZE else "", self)
+        self._size_end.setPlaceholderText("结束大小（介于时必填）")
+        self._validator = QComboBox(self)
+        for validator in VALIDATORS:
+            self._validator.addItem(VALIDATOR_LABELS[validator], validator)
+        current_validator = rule.matcher.validator if rule else ""
+        self._validator.setCurrentIndex(max(self._validator.findData(current_validator), 0))
 
         def _label(text: str) -> QLabel:
             label = QLabel(text, self)
@@ -638,6 +661,22 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             self._time_labels[text] = label
             grid.addWidget(label, row, 0)
             grid.addWidget(widget, row, 1)
+        self._size_labels: dict[str, QLabel] = {}
+        for row, (text, widget) in enumerate(
+            (
+                ("大小条件", self._size_op),
+                ("起始大小", self._size_value),
+                ("结束大小", self._size_end),
+            ),
+            start=12,
+        ):
+            label = _label(text)
+            self._size_labels[text] = label
+            grid.addWidget(label, row, 0)
+            grid.addWidget(widget, row, 1)
+        self._validator_label = _label("校验器")
+        grid.addWidget(self._validator_label, 15, 0)
+        grid.addWidget(self._validator, 15, 1)
         outer.addLayout(grid)
 
         flags = QHBoxLayout()
@@ -653,11 +692,26 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._enabled.setChecked(rule.enabled if rule else True)
         for widget in (self._case, self._whole, self._enabled):
             flags.addWidget(widget)
+        flags.addSpacing(12)
+        flags.addWidget(QLabel("最少命中", self))
+        self._min_hits = QSpinBox(self)
+        self._min_hits.setRange(1, 9999)
+        self._min_hits.setValue(rule.min_hits if rule else 1)
+        self._min_hits.setToolTip("同一文件内至少命中多少次才算该规则命中（默认 1）")
+        flags.addWidget(self._min_hits)
+        flags.addWidget(QLabel("最多命中", self))
+        self._max_hits = QSpinBox(self)
+        self._max_hits.setRange(0, 9999)
+        self._max_hits.setSpecialValueText("不限")
+        self._max_hits.setValue(rule.max_hits if rule else 0)
+        self._max_hits.setToolTip("同一文件最多命中多少次；0 表示不限。超过上限视为规则未命中")
+        flags.addWidget(self._max_hits)
         flags.addStretch(1)
         outer.addLayout(flags)
 
         self._kind.currentTextChanged.connect(self._sync_kind_fields)
         self._time_op.currentIndexChanged.connect(self._sync_time_end)
+        self._size_op.currentIndexChanged.connect(self._sync_size_end)
         self._sync_kind_fields(current_kind)
 
         actions = QHBoxLayout()
@@ -685,6 +739,15 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         between = self._current_kind == MATCH_TIME and self._time_op.currentData() == TIME_BETWEEN
         self._time_end.setVisible(between)
         self._time_labels["结束时间"].setVisible(between)
+
+    def _sync_size_end(self, *_args: object) -> None:
+        """大小「介于」才显示结束大小。"""
+        between = self._current_kind == MATCH_SIZE and self._size_op.currentData() == SIZE_BETWEEN
+        self._size_end.setVisible(between)
+        self._size_labels["结束大小"].setVisible(between)
+        self._relayout()
+
+    def _relayout(self) -> None:
         layout = self.layout()
         if layout is not None:
             layout.activate()
@@ -692,40 +755,47 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             self.adjustSize()
 
     def _sync_kind_fields(self, kind: str) -> None:
-        """按类型切换可见字段：关键词 / 正则 / 时间各显示自己的输入项。"""
+        """按类型切换可见字段：关键词 / 正则 / 时间 / 大小各显示自己的输入项。"""
         keyword = kind == MATCH_KEYWORD
         regex = kind == MATCH_REGEX
         time_rule = kind == MATCH_TIME
+        size_rule = kind == MATCH_SIZE
+        pattern_rule = keyword or regex
         self._text.setVisible(keyword)
         self._text_label.setVisible(keyword)
         self._pattern.setVisible(regex)
         self._pattern_label.setVisible(regex)
         self._whole.setVisible(keyword)
-        self._case.setVisible(keyword or regex)
-        self._target.setVisible(not time_rule)
-        self._target_label.setVisible(not time_rule)
+        self._case.setVisible(pattern_rule)
+        self._target.setVisible(pattern_rule)
+        self._target_label.setVisible(pattern_rule)
+        self._validator.setVisible(regex)
+        self._validator_label.setVisible(regex)
         for text in ("时间字段", "时间条件", "起始时间"):
             self._time_labels[text].setVisible(time_rule)
         self._time_field.setVisible(time_rule)
         self._time_op.setVisible(time_rule)
         self._time_value.setVisible(time_rule)
         self._sync_time_end()
+        for text in ("大小条件", "起始大小"):
+            self._size_labels[text].setVisible(size_rule)
+        self._size_op.setVisible(size_rule)
+        self._size_value.setVisible(size_rule)
+        self._sync_size_end()
         self._case.blockSignals(True)
         self._case.setChecked(self._case_by_kind.get(kind, False))
         self._case.blockSignals(False)
         if time_rule:
             hint = "时间：按文件时间戳比较；创建时间在 Linux 上退化为 ctime（更接近元数据变更时间）。"
+        elif size_rule:
+            hint = "大小：按文件字节数比较，支持 10KB / 1.5MB / 2GB 或裸字节数；区间为半开 [起始, 结束)。"
         elif keyword:
             hint = "关键词：按原文包含匹配，可勾选整词；默认不区分大小写。可换行，保存时合并为单行。"
         else:
-            hint = "正则：按行逐条匹配（Python re 语法）；默认区分大小写。可换行，保存时合并为单行。"
+            hint = "正则：按行逐条匹配（Python re 语法）；可选校验器过滤误报。可换行，保存时合并为单行。"
         self._kind_hint.setText(hint)
         # 显隐切换后让对话框高度跟随内容重新计算（隐藏字段不占空间）。
-        layout = self.layout()
-        if layout is not None:
-            layout.activate()
-        if self.isVisible():
-            self.adjustSize()
+        self._relayout()
 
     def _commit(self) -> None:
         kind = self._current_kind
@@ -738,6 +808,14 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
                 value=self._time_value.text().strip(),
                 value2=self._time_end.text().strip() if compare == TIME_BETWEEN else "",
             )
+        elif kind == MATCH_SIZE:
+            compare = self._size_op.currentData() or SIZE_LT
+            matcher = Matcher(
+                kind=kind,
+                compare=compare,
+                value=self._size_value.text().strip(),
+                value2=self._size_end.text().strip() if compare == SIZE_BETWEEN else "",
+            )
         else:
             matcher = Matcher(
                 kind=kind,
@@ -746,6 +824,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
                 case_sensitive=self._case.isChecked(),
                 whole_word=self._whole.isChecked() if kind == MATCH_KEYWORD else False,
                 target=self._target.currentData() or TARGET_CONTENT,
+                validator=self._validator.currentData() if kind == MATCH_REGEX else "",
             )
         self._result = Rule(
             id=self._id.text().strip(),
@@ -754,6 +833,8 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             group=self._group.text().strip() or "自定义",
             enabled=self._enabled.isChecked(),
             severity=SEVERITY_LEVELS[self._severity.currentIndex()],
+            min_hits=self._min_hits.value(),
+            max_hits=self._max_hits.value(),
         )
         self.accept()
 

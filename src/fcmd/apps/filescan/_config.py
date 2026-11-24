@@ -5,7 +5,7 @@
     {
       "version": 2,
       "roots": ["D:/data"],
-      "rules": {"version": 3, "name": "…", "rules": [...], "expressions": [...]},
+      "rules": {"version": 4, "name": "…", "rules": [...], "expressions": [...]},
       "options": {
         "recursive": true, "max_depth": 0, "follow_symlinks": false,
         "skip_dirs": [".git", "node_modules"], "skip_hidden": false,
