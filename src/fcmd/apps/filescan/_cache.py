@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.filescan._engine import FileHit, RuleMatch
-from fcmd.apps.filescan._rules import ruleset_to_mapping
+from fcmd.apps.filescan._rules import matcher_to_mapping
 from fcmd.shared.paths import cache_path
 
 if TYPE_CHECKING:
@@ -97,10 +97,27 @@ def _now() -> int:
     return int(time.time())
 
 
-def _fingerprint_payload(ruleset: RuleSet, options: ScanOptions, mask: bool) -> dict[str, Any]:
-    """取出会影响单文件命中结果的字段；只影响展示 / 调度的选项不参与。"""
+def _fingerprint_payload(ruleset: RuleSet, options: ScanOptions) -> dict[str, Any]:
+    """取出会影响单文件命中结果的字段；只影响展示 / 调度的选项不参与。
+
+    规则名称 / 分组 / 严重级与规则集名称不参与：缓存里只存原文命中，展示时按
+    rule id 重新套用当前名称与严重级即可；``mask`` 同理，打码发生在展示 / 报告
+    阶段，不改变缓存内容。
+    """
     return {
-        "ruleset": ruleset_to_mapping(ruleset),
+        "rules": [
+            {
+                "id": rule.id,
+                "enabled": rule.enabled,
+                "min_hits": rule.min_hits,
+                "max_hits": rule.max_hits,
+                "matcher": matcher_to_mapping(rule.matcher),
+            }
+            for rule in ruleset.rules
+        ],
+        "expressions": [
+            {"id": item.id, "enabled": item.enabled, "expression": item.expression} for item in ruleset.expressions
+        ],
         "options": {
             "skip_binary": options.skip_binary,
             "scan_documents": options.scan_documents,
@@ -110,19 +127,20 @@ def _fingerprint_payload(ruleset: RuleSet, options: ScanOptions, mask: bool) -> 
             "context_chars": options.context_chars,
             "max_hits_per_file": options.max_hits_per_file,
         },
-        "mask": mask,
     }
 
 
 def cache_fingerprint(ruleset: RuleSet, options: ScanOptions, *, mask: bool = True) -> str:
     """计算缓存指纹。
 
-    参与计算的字段：完整规则集（含表达式）、``skip_binary`` / ``scan_documents`` /
-    ``normalize_text`` / ``max_file_bytes`` / ``encodings`` / ``context_chars`` /
-    ``max_hits_per_file`` 与 ``mask``。递归深度、后缀与大小/时间过滤、并发数、
-    报告格式等只影响「扫哪些文件」或「怎么输出」，不改变单文件命中，故不参与指纹。
+    参与计算的字段：规则 id / 启用 / 阈值 / 匹配器、表达式文本与启用状态、
+    ``skip_binary`` / ``scan_documents`` / ``normalize_text`` / ``max_file_bytes`` /
+    ``encodings`` / ``context_chars`` / ``max_hits_per_file``。规则名称 / 分组 /
+    严重级、规则集名称、``mask``、递归深度、后缀与大小/时间过滤、并发数、报告格式
+    只影响展示或「扫哪些文件」，不改变缓存里的原文命中，故不参与指纹。
     """
-    payload = json.dumps(_fingerprint_payload(ruleset, options, mask), ensure_ascii=False, sort_keys=True)
+    del mask  # 兼容旧签名；缓存存原文，打码在展示 / 报告阶段做
+    payload = json.dumps(_fingerprint_payload(ruleset, options), ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

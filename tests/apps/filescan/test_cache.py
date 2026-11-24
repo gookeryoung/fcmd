@@ -134,13 +134,35 @@ def test_content_change_with_same_size_invalidates_via_mtime(cache: ScanCache, c
 
 
 def test_different_cache_key_misses(cache: ScanCache, corpus: Path) -> None:
-    """指纹变化（规则或命中相关选项变化）后整批失效。"""
+    """匹配器变化（真正影响命中）后整批失效。"""
     _scan(corpus, cache)
-    renamed = replace(_ruleset(), rules=tuple(replace(rule, name=f"{rule.name}（改名）") for rule in _ruleset().rules))
+    changed = replace(
+        _ruleset(),
+        rules=(replace(_ruleset().rules[0], matcher=Matcher(kind=MATCH_KEYWORD, text="139")),),
+    )
     options = ScanOptions(workers=1)
-    result = scan_paths([corpus], renamed, options, cache=cache, cache_key=cache_fingerprint(renamed, options))
+    result = scan_paths([corpus], changed, options, cache=cache, cache_key=cache_fingerprint(changed, options))
     assert result.stats.files_reused == 0
     assert result.stats.files_scanned == 3
+
+
+def test_rule_rename_reuses_cache_and_refreshes_display(cache: ScanCache, corpus: Path) -> None:
+    """只改名称 / 分组 / 严重级不重扫：缓存命中后按当前规则刷新展示字段。"""
+    first = _scan(corpus, cache)
+    assert first.stats.hit_files == 1
+
+    renamed_rules = tuple(
+        replace(rule, name=f"{rule.name}（新）", group="新分组", severity="high") for rule in _ruleset().rules
+    )
+    renamed = replace(_ruleset(), rules=renamed_rules)
+    options = ScanOptions(workers=1)
+    result = scan_paths([corpus], renamed, options, cache=cache, cache_key=cache_fingerprint(renamed, options))
+
+    assert result.stats.files_reused == 3
+    assert result.stats.files_scanned == 0
+    assert result.hits
+    assert all(match.rule_name.endswith("（新）") for hit in result.hits for match in hit.matches)
+    assert all(match.severity == "high" for hit in result.hits for match in hit.matches)
 
 
 def test_clear_removes_entries_and_forces_rescan(cache: ScanCache, corpus: Path) -> None:
@@ -421,11 +443,19 @@ def test_hit_affecting_options_change_fingerprint(options: ScanOptions) -> None:
     assert cache_fingerprint(_ruleset(), options) != cache_fingerprint(_ruleset(), ScanOptions(workers=1))
 
 
-def test_rules_and_mask_change_fingerprint() -> None:
-    """规则增删改、表达式变化与打码开关都改变指纹。"""
+def test_rules_and_view_changes_change_fingerprint() -> None:
+    """匹配器 / 表达式变化改变指纹；名称、分组、严重级与打码开关不改变。"""
     base = cache_fingerprint(_ruleset(), ScanOptions())
     assert cache_fingerprint(_ruleset("phone"), ScanOptions()) != base
-    assert cache_fingerprint(_ruleset(expression=""), ScanOptions(), mask=False) != base
+    assert cache_fingerprint(_ruleset(), ScanOptions(), mask=False) == base
+
+    renamed = replace(
+        _ruleset(),
+        rules=tuple(
+            replace(rule, name=f"{rule.name}（改名）", group="新组", severity="high") for rule in _ruleset().rules
+        ),
+    )
+    assert cache_fingerprint(renamed, ScanOptions()) == base
 
     added = replace(_ruleset(), rules=(*_ruleset().rules, Rule("email", "邮箱", Matcher(MATCH_KEYWORD, text="邮箱"))))
     assert cache_fingerprint(added, ScanOptions()) != base
@@ -438,6 +468,9 @@ def test_rules_and_mask_change_fingerprint() -> None:
 
     disabled = replace(_ruleset(), rules=(replace(_ruleset().rules[0], enabled=False),))
     assert cache_fingerprint(disabled, ScanOptions()) != base
+
+    threshold = replace(_ruleset(), rules=(replace(_ruleset().rules[0], min_hits=2),))
+    assert cache_fingerprint(threshold, ScanOptions()) != base
 
 
 def test_default_cache_path_prefers_fcmd_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

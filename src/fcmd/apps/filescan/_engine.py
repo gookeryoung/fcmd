@@ -1870,6 +1870,7 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
         reused = 0
     else:
         files, sizes, reused = _take_cached(files, meta, cache, cache_key, hits)
+        _refresh_cached_rule_meta(hits, compiled)
     result.stats.files_reused = reused
     total_files = len(meta)
     scan_progress = _offset_progress(progress, reused, total_files) if reused and progress is not None else progress
@@ -1923,6 +1924,23 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
     _finalize_stats(result, walk)
     result.stats.elapsed = time.perf_counter() - started
     return result
+
+
+def _refresh_cached_rule_meta(hits: Sequence[FileHit], compiled: Sequence[CompiledRule]) -> None:
+    """缓存只存原文命中；复用后按当前规则名称 / 严重级刷新展示字段。
+
+    缓存指纹不含名称 / 分组 / 严重级，改名或调级不必重扫；旧名称不能继续显示。
+    """
+    by_id = {item.id: item for item in compiled}
+    for hit in hits:
+        refreshed: list[RuleMatch] = []
+        for match in hit.matches:
+            rule = by_id.get(match.rule_id)
+            if rule is None:
+                refreshed.append(match)
+                continue
+            refreshed.append(replace(match, rule_name=rule.name, severity=rule.severity))
+        hit.matches = refreshed
 
 
 def _take_cached(

@@ -459,6 +459,9 @@ make bench-filescan                                          # 同上（独立 t
    正则 / 高熵串才走 `_read_text` / 文档抽取。文件名 / 路径 / 时间 / 大小 /
    类型 / 元数据 / 哈希 / 归档成员规则全部命中时跳过读盘，`bytes_read` 记 0，
    结果与逐条求值口径一致。
+4. **缓存指纹收敛**：规则名称 / 分组 / 严重级、规则集名称与 `mask` 不再参与
+   指纹；缓存命中后按 rule id 套用当前名称 / 严重级。改名、调级、切换打码 /
+   原文不再触发全量重扫，只有匹配器 / 阈值 / 表达式 / 规则增删才失效（见 D11）。
 
 验证：`_ProgressSampler` 节流 / flush 单测、结果树惰性与「加载更多」单测、
 「仅文件名规则不读正文」对拍测试；既有扫描结果与缓存测试保持不变。
@@ -587,15 +590,16 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 
 **指纹口径（`cache_fingerprint`）：**
 
-| 参与（改变即失效） | 不参与（只影响扫哪些文件或怎么输出） |
+| 参与（改变即失效） | 不参与（只影响展示 / 扫哪些文件 / 怎么输出） |
 |---|---|
-| 完整规则集映射：规则增删改、启用状态、匹配器、表达式 | 递归 / 深度 / 符号链接 |
-| `skip_binary` / `scan_documents` / `max_file_bytes` | 后缀白名单、包含 / 强制 / 排除后缀 |
-| `encodings` / `context_chars` / `max_hits_per_file` | 大小与修改时间过滤 |
-| `mask`（打码 / 原文口径决定 `matches` 内容） | `workers` / `use_processes` / 报告格式 |
+| 规则 id / 启用 / `min_hits` / `max_hits` / 匹配器；表达式文本与启用状态 | 规则名称 / 分组 / 严重级、规则集名称 |
+| `skip_binary` / `scan_documents` / `max_file_bytes` | `mask`（打码在展示 / 报告阶段） |
+| `encodings` / `context_chars` / `max_hits_per_file` | 递归 / 深度 / 符号链接、后缀白名单、大小与时间过滤 |
+| 规则增删与匹配器变化 | `workers` / `use_processes` / 报告格式 |
 
 摘要为 `sha256`（键排序的 JSON），不同配置在库里共存，切回旧配置仍能命中。
-规则集的 `name` 也在映射内，改名同样会失效——这是有意的保守取舍。
+名称 / 分组 / 严重级只在缓存复用后按当前规则刷新展示字段，不触发重扫；打码 /
+原文切换也不重扫。改匹配器、阈值、表达式或规则增删才会失效。
 
 **并发安全：**
 
