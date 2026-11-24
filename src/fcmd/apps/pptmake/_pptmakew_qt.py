@@ -29,9 +29,13 @@ from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, Q
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
+    QFontComboBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -43,6 +47,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -52,7 +57,7 @@ from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _office
 from fcmd.apps.pptmake import _preview as preview
 from fcmd.apps.pptmake import _tokens as tokens
-from fcmd.apps.pptmake._design import Line, Oval, Rect, Text, build_draw_list
+from fcmd.apps.pptmake._design import Line, Oval, Picture, Rect, Text, build_draw_list
 from fcmd.apps.pptmake._history import TemplateHistory
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.apps.pptmake.pptmakew import (
@@ -135,7 +140,52 @@ def _pen(color: str, width: float = 1.0) -> QPen:
     return pen
 
 
-def _paint_primitive(painter: QPainter, primitive: Any, view: preview.Viewport) -> None:
+def _paint_picture(painter: QPainter, primitive: Picture, view: preview.Viewport, ui: Any) -> None:
+    """按 cover / contain 把本地图片画进图元矩形；缺失时画占位提示。"""
+    scale = view.scale
+    x, y = view.to_canvas(primitive.x, primitive.y)
+    width = primitive.w * scale
+    height = primitive.h * scale
+    if width <= 0 or height <= 0:
+        return
+    target = QRectF(x, y, width, height)
+    pixmap = QPixmap(primitive.path) if primitive.path else QPixmap()
+    painter.save()
+    painter.setClipRect(target)
+    if pixmap.isNull():
+        painter.setPen(QPen(QColor(ui.muted)))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(target)
+        painter.drawText(target, int(Qt.AlignmentFlag.AlignCenter), "图片缺失")
+        painter.restore()
+        return
+    image_width = pixmap.width()
+    image_height = pixmap.height()
+    box_ratio = width / height
+    image_ratio = image_width / max(image_height, 1)
+    if primitive.fit == "contain":
+        scaled = pixmap.scaled(
+            round(width),
+            round(height),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        left = x + (width - scaled.width()) / 2
+        top = y + (height - scaled.height()) / 2
+        painter.drawPixmap(QRectF(left, top, scaled.width(), scaled.height()), scaled, QRectF(scaled.rect()))
+        painter.restore()
+        return
+    if image_ratio > box_ratio:
+        source_width = image_height * box_ratio
+        source = QRectF((image_width - source_width) / 2, 0, source_width, image_height)
+    else:
+        source_height = image_width / box_ratio
+        source = QRectF(0, (image_height - source_height) / 2, image_width, source_height)
+    painter.drawPixmap(target, pixmap, source)
+    painter.restore()
+
+
+def _paint_primitive(painter: QPainter, primitive: Any, view: preview.Viewport, ui: Any) -> None:
     """把一个设计图元画到画布坐标；几何与既有换算口径一致。"""
     scale = view.scale
     if isinstance(primitive, Rect):
@@ -161,6 +211,9 @@ def _paint_primitive(painter: QPainter, primitive: Any, view: preview.Viewport) 
         painter.setBrush(_brush(primitive.fill))
         painter.setPen(_pen(primitive.line, primitive.line_width * scale))
         painter.drawEllipse(QRectF(x, y, width, height))
+        return
+    if isinstance(primitive, Picture):
+        _paint_picture(painter, primitive, view, ui)
         return
     if isinstance(primitive, Line):
         x1, y1 = view.to_canvas(primitive.x1, primitive.y1)
@@ -219,6 +272,8 @@ def _paint_slide(  # noqa: PLR0913 - 画布、缩略图与错误提示共用入�
     ui: Any,
     with_overflow_hint: bool = False,
     skip_text: bool = False,
+    page_number: int | None = None,
+    page_total: int | None = None,
 ) -> None:
     """在 ``width×height`` 画布上绘制一页；裁剪严格限制在页面矩形内。"""
     design_width, design_height = core.ASPECT_DESIGN[template.aspect]
@@ -236,14 +291,14 @@ def _paint_slide(  # noqa: PLR0913 - 画布、缩略图与错误提示共用入�
         )
     x0, y0, x1, y1 = view.page_rect()
     page = QRectF(x0, y0, x1 - x0, y1 - y0)
-    primitives = build_draw_list(slide, template)
+    primitives = build_draw_list(slide, template, page_number=page_number, page_total=page_total)
     painter.save()
     painter.setClipRect(page)
     painter.fillRect(page, QColor(template.theme.palette.background))
     for primitive in primitives:
         if skip_text and isinstance(primitive, Text):
             continue
-        _paint_primitive(painter, primitive, view)
+        _paint_primitive(painter, primitive, view, ui)
     painter.restore()
     painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.setPen(QPen(QColor(ui.border)))
@@ -325,6 +380,114 @@ class _PptmakePage(AppPage):  # pragma: no cover - Qt 控件
         return self._header
 
 
+class _ExportOptionsDialog(QDialog):  # pragma: no cover - 对话框
+    """导出选项：页码范围与是否同时导出 PDF。"""
+
+    def __init__(self, total: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("导出 PPTX")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(8)
+        range_row = QHBoxLayout()
+        range_row.setContentsMargins(0, 0, 0, 0)
+        range_row.addWidget(QLabel("页码范围", self))
+        self.start = QSpinBox(self)
+        self.start.setRange(1, max(total, 1))
+        self.start.setValue(1)
+        self.end = QSpinBox(self)
+        self.end.setRange(1, max(total, 1))
+        self.end.setValue(max(total, 1))
+        range_row.addWidget(self.start)
+        range_row.addWidget(QLabel("至", self))
+        range_row.addWidget(self.end)
+        range_row.addStretch(1)
+        layout.addLayout(range_row)
+        self.pdf = QCheckBox("同时导出 PDF（需要 LibreOffice）", self)
+        self.pdf.setChecked(False)
+        layout.addWidget(self.pdf)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.resize(360, self.sizeHint().height())
+
+    def options(self) -> tuple[int, int, bool]:
+        """返回 ``(起始页, 结束页, 是否导出 PDF)``；页码从 1 开始。"""
+        start = min(self.start.value(), self.end.value())
+        end = max(self.start.value(), self.end.value())
+        return start, end, self.pdf.isChecked()
+
+
+class _PresenterWindow(QWidget):  # pragma: no cover - 需要 Qt 事件循环
+    """F5 全屏放映：←/→ 翻页、Home/End 跳转、Esc 退出。"""
+
+    def __init__(self, window: PptmakeQtWindow, start: int) -> None:
+        super().__init__(None, Qt.WindowType.Window)
+        self._window = window
+        self._index = max(0, min(start, len(window.template.slides) - 1))
+        self.setWindowTitle("pptmake 放映")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setStyleSheet("background: black;")
+
+    def paintEvent(self, event: Any) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        ui = self._window.theme().palette
+        painter.fillRect(self.rect(), QColor("#000000"))
+        template = self._window.template
+        if not template.slides:
+            _paint_message(painter, float(self.width()), float(self.height()), "没有可放映的页面", ui.muted)
+            return
+        slide = template.slides[self._index]
+        _paint_slide(
+            painter,
+            template,
+            slide,
+            float(self.width()),
+            float(self.height()),
+            zoom=None,
+            ui=ui,
+            page_number=self._index + 1,
+            page_total=len(template.slides),
+        )
+
+    def keyPressEvent(self, event: Any) -> None:
+        key = event.key()
+        if key in (Qt.Key.Key_Escape, Qt.Key.Key_F5):
+            self.close()
+            return
+        if key in (
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_Space,
+            Qt.Key.Key_PageDown,
+        ):
+            self._go(self._index + 1)
+            return
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Up, Qt.Key.Key_Backspace, Qt.Key.Key_PageUp):
+            self._go(self._index - 1)
+            return
+        if key == Qt.Key.Key_Home:
+            self._go(0)
+            return
+        if key == Qt.Key.Key_End:
+            self._go(len(self._window.template.slides) - 1)
+            return
+        super().keyPressEvent(event)
+
+    def _go(self, index: int) -> None:
+        total = len(self._window.template.slides)
+        if total == 0:
+            return
+        self._index = max(0, min(index, total - 1))
+        self.update()
+
+
 class _PreviewCanvas(QWidget):  # pragma: no cover - Qt 控件
     """PPT 预览画布：按当前模板与缩放绘制一页。"""
 
@@ -358,6 +521,8 @@ class _PreviewCanvas(QWidget):  # pragma: no cover - Qt 控件
                 zoom=self._window.zoom,
                 ui=ui,
                 with_overflow_hint=True,
+                page_number=self._window.selected + 1,
+                page_total=len(template.slides),
             )
         except core.TemplateError as exc:
             _paint_message(painter, width, height, f"预览失败\n{exc}", ui.muted)
@@ -436,6 +601,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
     def _build_menus(self) -> None:
         """在骨架菜单上补齐文件 / 编辑 / 样式，保持「文件 → 编辑 → 样式 → 视图 → 帮助」顺序。"""
         quit_action = self.file_menu.actions()[-1]
+        new_action: QAction | None = None
         for text, handler in (
             ("新建模板", self._new_template),
             ("导入模板 / PPTX…", self._import_file),
@@ -443,6 +609,15 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             action = QAction(text, self)
             action.triggered.connect(handler)
             self.file_menu.insertAction(quit_action, action)
+            if text == "新建模板":
+                new_action = action
+        sample_menu = QMenu("从示例模板新建", self)
+        for style in core.STYLES:
+            action = QAction(core.STYLE_TEXT[style], self)
+            action.triggered.connect(lambda _checked=False, item=style: self._new_from_sample(item))
+            sample_menu.addAction(action)
+        if new_action is not None:
+            self.file_menu.insertMenu(new_action, sample_menu)
         self.file_menu.insertSeparator(quit_action)
         self._recent_menu = QMenu("最近模板", self)
         self.file_menu.insertMenu(quit_action, self._recent_menu)
@@ -513,6 +688,11 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         help_action.triggered.connect(self._show_help)
         self.help_menu.insertAction(anchor, help_action)
         self.help_menu.insertSeparator(anchor)
+
+        self._present_action = QAction("放映预览", self)
+        self._present_action.setShortcut("F5")
+        self._present_action.triggered.connect(self._present)
+        self.view_menu.addAction(self._present_action)
         self._sync_history_actions()
         self.menuBar().update()
 
@@ -637,6 +817,22 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         grid.addWidget(QLabel("装饰强度", controls), 2, 0)
         grid.addWidget(self._intensity_slider, 2, 1, 1, 2)
         grid.addWidget(self._intensity_value, 2, 3)
+        self._footer_edit = QLineEdit(self._template.theme.footer, controls)
+        self._footer_edit.setPlaceholderText("页脚文字（空则不显示）")
+        self._footer_edit.textChanged.connect(self._on_footer_changed)
+        self._page_number_check = QCheckBox("显示页码", controls)
+        self._page_number_check.toggled.connect(self._on_page_number_toggled)
+        grid.addWidget(QLabel("页脚", controls), 3, 0)
+        grid.addWidget(self._footer_edit, 3, 1, 1, 2)
+        grid.addWidget(self._page_number_check, 3, 3)
+        self._heading_font_combo = QFontComboBox(controls)
+        self._heading_font_combo.currentFontChanged.connect(lambda _font: self._on_font_changed(True))
+        self._body_font_combo = QFontComboBox(controls)
+        self._body_font_combo.currentFontChanged.connect(lambda _font: self._on_font_changed(False))
+        grid.addWidget(QLabel("标题字体", controls), 4, 0)
+        grid.addWidget(self._heading_font_combo, 4, 1)
+        grid.addWidget(QLabel("正文字体", controls), 4, 2)
+        grid.addWidget(self._body_font_combo, 4, 3)
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
         controls.body.addLayout(grid)
@@ -814,7 +1010,45 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._layout_hint.setWordWrap(True)
         self._layout_hint.setObjectName("Hint")
         layout_grid.addWidget(self._layout_hint, 1, 0, 1, 2)
-        layout_grid.setRowStretch(2, 1)
+
+        self._image_edit = QLineEdit(layout_tab)
+        self._image_edit.setPlaceholderText("图片路径（可留空）")
+        self._image_edit.textChanged.connect(lambda _text: self._schedule_apply())
+        image_row = QHBoxLayout()
+        image_row.setContentsMargins(0, 0, 0, 0)
+        image_row.setSpacing(4)
+        image_row.addWidget(self._image_edit, 1)
+        browse = button("选择…")
+        browse.clicked.connect(self._pick_image)
+        image_row.addWidget(browse)
+        clear = button("清除")
+        clear.clicked.connect(self._image_edit.clear)
+        image_row.addWidget(clear)
+        layout_grid.addWidget(QLabel("图片", layout_tab), 2, 0, Qt.AlignmentFlag.AlignTop)
+        layout_grid.addLayout(image_row, 2, 1)
+
+        self._image_fit_combo = QComboBox(layout_tab)
+        for value in core.IMAGE_FITS:
+            self._image_fit_combo.addItem(core.IMAGE_FIT_TEXT[value], value)
+        self._image_fit_combo.currentIndexChanged.connect(lambda _index: self._schedule_apply())
+        layout_grid.addWidget(QLabel("填充", layout_tab), 3, 0)
+        layout_grid.addWidget(self._image_fit_combo, 3, 1)
+
+        self._accent_value = ""
+        self._accent_button = button("本页强调色")
+        self._accent_button.setMinimumWidth(120)
+        self._accent_button.clicked.connect(self._pick_slide_accent)
+        accent_clear = button("恢复默认")
+        accent_clear.clicked.connect(self._clear_slide_accent)
+        accent_row = QHBoxLayout()
+        accent_row.setContentsMargins(0, 0, 0, 0)
+        accent_row.setSpacing(4)
+        accent_row.addWidget(self._accent_button)
+        accent_row.addWidget(accent_clear)
+        accent_row.addStretch(1)
+        layout_grid.addWidget(QLabel("强调色", layout_tab), 4, 0)
+        layout_grid.addLayout(accent_row, 4, 1)
+        layout_grid.setRowStretch(5, 1)
         self._inspector_tabs.addTab(layout_tab, "版式")
 
         notes_tab = QWidget(self._inspector_tabs)
@@ -986,6 +1220,11 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             intensity = round(self._template.theme.tokens.decor_intensity * 100)
             self._intensity_slider.setValue(intensity)
             self._intensity_value.setText(f"{intensity}%")
+            theme = self._template.theme
+            self._footer_edit.setText(theme.footer)
+            self._page_number_check.setChecked(theme.show_page_number)
+            self._heading_font_combo.setCurrentFont(QFont(theme.heading_font))
+            self._body_font_combo.setCurrentFont(QFont(theme.body_font))
             style = self._template.theme.style
             self._style_group.setExclusive(False)
             for value, action in self._style_actions.items():
@@ -1044,6 +1283,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                             zoom=scale,
                             ui=ui,
                             skip_text=True,
+                            page_number=index + 1,
+                            page_total=len(self._template.slides),
                         )
                     issues = self._slide_overflow_count(index)
                     if issues:
@@ -1078,6 +1319,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 self._bullets_text.clear()
                 self._note_text.clear()
                 self._layout_hint.setText("")
+                self._image_edit.clear()
+                self._accent_value = ""
+                self._refresh_accent_button()
                 return
             slide = self._template.slides[self.selected]
             self._select_value(self._layout_combo, slide.layout)
@@ -1086,6 +1330,10 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._bullets_text.setPlainText("\n".join(slide.bullets))
             self._note_text.setPlainText(slide.note)
             self._layout_hint.setText(_LAYOUT_HINTS.get(slide.layout, _LAYOUT_HINT_DEFAULT))
+            self._image_edit.setText(slide.image)
+            self._select_value(self._image_fit_combo, slide.image_fit)
+            self._accent_value = slide.accent
+            self._refresh_accent_button()
         finally:
             self._loading = False
 
@@ -1178,7 +1426,12 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         if not 0 <= index < len(self._template.slides):
             return 0
         try:
-            primitives = build_draw_list(self._template.slides[index], self._template)
+            primitives = build_draw_list(
+                self._template.slides[index],
+                self._template,
+                page_number=index + 1,
+                page_total=len(self._template.slides),
+            )
         except core.TemplateError:
             return 0
         return len(preview.overflow_issues(primitives))
@@ -1200,6 +1453,38 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         self._commit(replace(self._template, name=text), "修改模板名称", coalesce_key="name")
         self.set_status("模板名称已更新")
+
+    def _on_footer_changed(self, text: str) -> None:
+        if self._loading:
+            return
+        theme = replace(self._template.theme, footer=text)
+        if self._commit(replace(self._template, theme=theme), "修改页脚", coalesce_key="footer"):
+            self._refresh_slides()
+            self._refresh_canvases()
+
+    def _on_page_number_toggled(self, checked: bool) -> None:
+        if self._loading:
+            return
+        theme = replace(self._template.theme, show_page_number=checked)
+        if self._commit(replace(self._template, theme=theme), "切换页码"):
+            self._refresh_slides()
+            self._refresh_canvases()
+
+    def _on_font_changed(self, heading: bool) -> None:
+        if self._loading:
+            return
+        combo = self._heading_font_combo if heading else self._body_font_combo
+        family = combo.currentFont().family().strip()
+        if not family:
+            return
+        theme = self._template.theme
+        key = "heading_font" if heading else "body_font"
+        if getattr(theme, key) == family:
+            return
+        updated = replace(theme, **{key: family})
+        if self._commit(replace(self._template, theme=updated), f"切换{'标题' if heading else '正文'}字体"):
+            self._refresh_slides()
+            self._refresh_canvases()
 
     def _on_combo_changed(self, _index: int) -> None:
         if self._loading:
@@ -1278,6 +1563,47 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         self._apply_timer.start()
 
+    def _pick_image(self) -> None:
+        """选择本页图片：写入路径，预览立即刷新。"""
+        start = self._settings.last_dir or str(Path.home())
+        path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "选择图片",
+            start,
+            "图片 (*.png *.jpg *.jpeg *.webp *.bmp);;所有文件 (*.*)",
+        )
+        if not path:
+            return
+        self._settings.last_dir = str(Path(path).parent)
+        self._image_edit.setText(path)
+
+    def _pick_slide_accent(self) -> None:
+        """选择本页强调色（写入 ``SlideSpec.accent``）。"""
+        current = self._accent_value or self._template.theme.palette.accent
+        chosen = QColorDialog.getColor(QColor(current), self, "选择本页强调色")
+        if not chosen.isValid():
+            return
+        self._accent_value = core.normalize_hex(chosen.name())
+        self._refresh_accent_button()
+        self._schedule_apply()
+
+    def _clear_slide_accent(self) -> None:
+        """清除本页强调色，回落到模板强调色。"""
+        self._accent_value = ""
+        self._refresh_accent_button()
+        self._schedule_apply()
+
+    def _refresh_accent_button(self) -> None:
+        """强调色按钮的底色 / 文字色随当前值刷新。"""
+        value = self._accent_value or self._template.theme.palette.accent
+        foreground = "#111111" if core.relative_luminance(value) > 0.5 else "#FFFFFF"
+        suffix = "" if self._accent_value else "（默认）"
+        self._accent_button.setText(f"本页强调色{suffix}")
+        self._accent_button.setStyleSheet(
+            f"background-color: {value}; color: {foreground}; border: 1px solid rgba(0, 0, 0, 60);"
+            f"border-radius: 6px; padding: 4px 6px;"
+        )
+
     def _apply_form(self) -> None:
         if not self._template.slides:
             return
@@ -1290,6 +1616,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             subtitle=self._subtitle_edit.text(),
             bullets=bullets,
             note=self._note_text.toPlainText(),
+            image=self._image_edit.text().strip(),
+            image_fit=str(self._image_fit_combo.currentData()),
+            accent=self._accent_value,
         )
         self._commit(
             core.replace_slide(self._template, self.selected, updated),
@@ -1433,6 +1762,15 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._refresh_all()
         self.set_status("已新建模板")
 
+    def _new_from_sample(self, style: str) -> None:
+        """按内置风格新建一份完整示例模板（覆盖封面到结尾的演示页）。"""
+        self._template = core.default_template(style=style, aspect=self._template.aspect)
+        self._history.reset(self._template)
+        self.selected = 0
+        self._mark_dirty(True)
+        self._refresh_all()
+        self.set_status(f"已从示例模板新建：{core.STYLE_TEXT.get(style, style)}")
+
     def _import_file(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(
             self,
@@ -1478,6 +1816,14 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         return True
 
     def _export_pptx(self) -> None:
+        if not self._template.slides:
+            QMessageBox.information(self, "导出 PPTX", "当前模板还没有页面。")
+            return
+        options = _ExportOptionsDialog(len(self._template.slides), self)
+        if options.exec() != QDialog.DialogCode.Accepted:
+            return
+        start, end, with_pdf = options.options()
+        sliced = replace(self._template, slides=self._template.slides[start - 1 : end])
         default_name = f"{safe_filename(self._template.name)}.pptx"
         path, _filter = QFileDialog.getSaveFileName(
             self,
@@ -1489,13 +1835,32 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         target = Path(path)
         try:
-            count = export_pptx(self._template, target)
+            count = export_pptx(sliced, target)
         except core.TemplateError as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
             return
         self._settings.last_dir = str(target.parent)
+        pdf_note = ""
+        if with_pdf:
+            if _office.find_soffice() is None:
+                pdf_note = "\n未检测到 LibreOffice，PDF 未导出。"
+            else:
+                try:
+                    pdf = _office.convert_to_pdf(target, target.parent)
+                except _office.OfficeError as exc:
+                    pdf_note = f"\nPDF 导出失败：{exc}"
+                else:
+                    pdf_note = f"\nPDF：{pdf}"
         self.set_status(f"PPTX 已导出：{target}（{count} 页）")
-        QMessageBox.information(self, "导出完成", f"已生成 {count} 页：\n{target}")
+        QMessageBox.information(self, "导出完成", f"已生成 {count} 页：\n{target}{pdf_note}")
+
+    def _present(self) -> None:
+        """F5 从当前页开始全屏放映。"""
+        if not self._template.slides:
+            return
+        self._presenter = _PresenterWindow(self, self.selected)
+        self._presenter.showFullScreen()
+        self._presenter.setFocus()
 
     def _precise_preview(self) -> None:
         if _office.find_soffice() is None:

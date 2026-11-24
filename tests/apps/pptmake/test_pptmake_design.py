@@ -290,6 +290,44 @@ def test_image_layout_has_placeholder_panel() -> None:
     assert panels[-1].radius == core.DesignTokens().radius.card
 
 
+def test_image_layout_emits_picture_when_path_set() -> None:
+    template = _template()
+    slide = core.SlideSpec(layout=core.LAYOUT_IMAGE, title="主视觉", image="assets/hero.png")
+    primitives = design.build_draw_list(slide, template)
+    pictures = [item for item in primitives if isinstance(item, design.Picture)]
+    assert len(pictures) == 1
+    assert pictures[0].path == "assets/hero.png"
+    assert pictures[0].fit == core.IMAGE_FIT_COVER
+
+
+def test_footer_and_page_number_only_when_requested() -> None:
+    template = _template()
+    template = replace(template, theme=replace(template.theme, footer="品牌页脚"))
+    slide = core.SlideSpec(layout=core.LAYOUT_BULLETS, title="页脚")
+    without = design.build_draw_list(slide, template)
+    without_text = "\n".join(line for item in without if isinstance(item, design.Text) for line in item.paragraphs)
+    assert "品牌页脚" in without_text
+    assert "01 /" not in without_text and "02 /" not in without_text
+
+    with_footer = design.build_draw_list(slide, template, page_number=2, page_total=8)
+    text = "\n".join(line for item in with_footer if isinstance(item, design.Text) for line in item.paragraphs)
+    assert "品牌页脚" in text
+    assert "02 / 08" in text
+
+
+def test_bullet_levels_indent_and_keep_text() -> None:
+    template = _template()
+    slide = core.SlideSpec(layout=core.LAYOUT_BULLETS, title="层级", bullets=("顶层", "  - 子项"))
+    primitives = design.build_draw_list(slide, template)
+    texts = [item for item in primitives if isinstance(item, design.Text) and item.paragraphs]
+    top = next(item for item in texts if item.paragraphs[0] == "顶层")
+    child = next(item for item in texts if item.paragraphs[0] == "子项")
+    assert child.x > top.x
+    assert child.level == 1
+    margin = round(template.theme.tokens.spacing.margin_x * 1280)
+    assert top.x == margin + round(template.theme.tokens.type_scale.body * 1.5)
+
+
 def test_image_layout_falls_back_to_defaults() -> None:
     template = _template()
     primitives = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_IMAGE), template)

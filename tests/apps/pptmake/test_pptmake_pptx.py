@@ -54,6 +54,47 @@ def test_draw_edge_primitives_and_save(tmp_path: Path) -> None:
     assert _pptx.pptx_slide_count(output) == 1
 
 
+def test_export_embeds_picture_and_paragraph_levels(tmp_path: Path) -> None:
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    image_path = tmp_path / "hero.png"
+    Image.new("RGB", (200, 100), "#3366FF").save(image_path)
+    template = core.new_template(
+        slides=(
+            core.SlideSpec(
+                layout=core.LAYOUT_IMAGE,
+                title="主视觉",
+                image=str(image_path),
+                image_fit=core.IMAGE_FIT_CONTAIN,
+            ),
+            core.SlideSpec(layout=core.LAYOUT_BULLETS, title="层级", bullets=("顶层", "  - 子项")),
+        )
+    )
+    target = tmp_path / "image.pptx"
+    assert _pptx.export_pptx(template, target) == 2
+    api = _pptx._api()
+    presentation = api.Presentation(str(target))
+    slides = list(presentation.slides)
+    assert any(shape.shape_type == 13 for shape in slides[0].shapes)  # MSO_SHAPE_TYPE.PICTURE
+    levels = [
+        paragraph.level
+        for shape in slides[1].shapes
+        if shape.has_text_frame
+        for paragraph in shape.text_frame.paragraphs
+        if paragraph.text in ("顶层", "子项")
+    ]
+    assert 1 in levels
+
+
+def test_export_missing_picture_reports_error(tmp_path: Path) -> None:
+    template = core.new_template(
+        slides=(core.SlideSpec(layout=core.LAYOUT_IMAGE, title="缺图", image=str(tmp_path / "missing.png")),)
+    )
+    with pytest.raises(core.TemplateError, match="图片不存在"):
+        _pptx.export_pptx(template, tmp_path / "missing.pptx")
+
+
 def test_export_reports_save_error(tmp_path: Path) -> None:
     blocker = tmp_path / "blocker"
     blocker.write_text("x", encoding="utf-8")

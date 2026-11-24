@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 import fcmd
+from fcmd.apps.pptmake import _office
 from fcmd.apps.pptmake._core import (
     ASPECT_4_3,
     ASPECT_16_9,
@@ -42,15 +43,19 @@ from fcmd.apps.pptmake._core import (
     save_template,
     summary_lines,
 )
+from fcmd.apps.pptmake._design import build_draw_list
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
+from fcmd.apps.pptmake._preview import overflow_issues
 from fcmd.console import print_error
 
 __all__ = [
+    "doctor_command",
     "export_command",
     "import_command",
     "init_command",
     "inspect_command",
     "presets_command",
+    "validate_command",
 ]
 
 _DESCRIPTION = "PPT 模板生成器：内置十三种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿"
@@ -156,9 +161,62 @@ def inspect_command(template: Path) -> None:
     print("\n".join(summary_lines(spec)))
 
 
+@fcmd.tool("pptmake", subcommand="validate", help="检查模板结构与文本溢出", description=_DESCRIPTION)
+def validate_command(template: Path) -> None:
+    """校验模板：布局 / 颜色 / 图片路径与逐页文本溢出。
+
+    Parameters
+    ----------
+    template:
+        模板 JSON 路径
+    """
+    try:
+        spec = load_template(template)
+    except TemplateError as exc:
+        _print_error(str(exc))
+        return
+    total = 0
+    missing_images = 0
+    for index, slide in enumerate(spec.slides, start=1):
+        if slide.image and not Path(slide.image).is_file():
+            missing_images += 1
+            _print_error(f"第 {index} 页图片不存在：{slide.image}")
+        primitives = build_draw_list(slide, spec, page_number=index, page_total=len(spec.slides))
+        issues = overflow_issues(primitives)
+        if issues:
+            total += len(issues)
+            print(f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{len(issues)} 处可能溢出")
+            for issue in issues[:3]:
+                print(f"  - {issue.message}")
+    if total or missing_images:
+        print(f"共有 {total} 处文本溢出、{missing_images} 个缺失图片；建议在 pptmakew 中精简文字 / 修正路径。")
+        return
+    print(f"校验通过：{len(spec.slides)} 页，未发现文本溢出或缺失图片。")
+
+
+@fcmd.tool("pptmake", subcommand="doctor", help="检查 PPTX / PDF 依赖与运行环境", description=_DESCRIPTION)
+def doctor_command() -> None:
+    """检查 python-pptx、Pillow 与 LibreOffice 是否可用。"""
+    import importlib.util
+
+    def status(module: str) -> str:
+        return "已安装" if importlib.util.find_spec(module) is not None else "未安装"
+
+    print(f"python-pptx：{status('pptx')}")
+    print(f"Pillow：{status('PIL')}")
+    soffice = _office.find_soffice()
+    print(f"LibreOffice：{soffice if soffice is not None else '未检测到（精确预览 / PDF 导出不可用）'}")
+    print("提示：导出 PPTX 需要安装 fcmd[ppt]；PDF 需要本机 LibreOffice。")
+
+
 @fcmd.tool("pptmake", subcommand="export", help="把模板渲染为 PPTX", description=_DESCRIPTION)
-def export_command(template: Path, output: Path | None = None, overwrite: bool = False) -> None:
-    """把模板渲染成 ``.pptx``。
+def export_command(
+    template: Path,
+    output: Path | None = None,
+    overwrite: bool = False,
+    pdf: bool = False,
+) -> None:
+    """把模板渲染成 ``.pptx``，可选再转一份 PDF。
 
     Parameters
     ----------
@@ -168,6 +226,8 @@ def export_command(template: Path, output: Path | None = None, overwrite: bool =
         输出 PPTX 路径；缺省与模板同名
     overwrite:
         允许覆盖已存在的 PPTX
+    pdf:
+        同时用 LibreOffice 转出同目录 PDF（未安装时给出提示）
     """
     target = output or default_pptx_path(template)
     if target.exists() and not overwrite:
@@ -180,6 +240,16 @@ def export_command(template: Path, output: Path | None = None, overwrite: bool =
         _print_error(str(exc))
         return
     print(f"已生成 PPTX：{target}（{count} 页）")
+    if pdf:
+        if _office.find_soffice() is None:
+            _print_error("未检测到 LibreOffice，PDF 未导出")
+        else:
+            try:
+                converted = _office.convert_to_pdf(target, target.parent)
+            except _office.OfficeError as exc:
+                _print_error(f"PDF 导出失败：{exc}")
+            else:
+                print(f"已生成 PDF：{converted}")
 
 
 @fcmd.tool("pptmake", subcommand="import", help="把现有 PPTX 转换为模板 JSON", description=_DESCRIPTION)

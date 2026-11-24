@@ -14,7 +14,15 @@ from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
 def test_tool_registration() -> None:
-    assert set(_TOOL_REGISTRY["pptmake"]) == {"presets", "init", "inspect", "export", "import"}
+    assert set(_TOOL_REGISTRY["pptmake"]) == {
+        "presets",
+        "init",
+        "inspect",
+        "export",
+        "import",
+        "validate",
+        "doctor",
+    }
 
 
 def test_presets_lists_styles_layouts_and_decors(capsys: pytest.CaptureFixture[str]) -> None:
@@ -80,6 +88,42 @@ def test_inspect_prints_summary(tmp_path: Path, capsys: pytest.CaptureFixture[st
 def test_inspect_reports_load_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     pptmake.inspect_command(tmp_path / "missing.json")
     assert "读取模板失败" in capsys.readouterr().out
+
+
+def test_validate_passes_clean_template(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "clean.pptmtpl.json"
+    core.save_template(core.new_template(slides=(core.new_slide(core.LAYOUT_COVER),)), target)
+    capsys.readouterr()
+    pptmake.validate_command(target)
+    output = capsys.readouterr().out
+    assert "校验通过" in output
+
+
+def test_validate_reports_overflow_and_missing_image(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    template = core.new_template(
+        slides=(
+            core.SlideSpec(
+                layout=core.LAYOUT_BULLETS,
+                title="溢出",
+                bullets=tuple("这是一行非常长的要点文字" * 8 for _ in range(12)),
+            ),
+            core.SlideSpec(layout=core.LAYOUT_IMAGE, title="图", image=str(tmp_path / "missing.png")),
+        )
+    )
+    target = tmp_path / "bad.pptmtpl.json"
+    core.save_template(template, target)
+    pptmake.validate_command(target)
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "可能溢出" in output
+    assert "图片不存在" in output
+
+
+def test_doctor_prints_environment(capsys: pytest.CaptureFixture[str]) -> None:
+    pptmake.doctor_command()
+    output = capsys.readouterr().out
+    assert "python-pptx" in output
+    assert "LibreOffice" in output
 
 
 def test_export_creates_pptx(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

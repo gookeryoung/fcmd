@@ -264,6 +264,35 @@ def test_recent_templates_persist(window: Any, tmp_path: Path) -> None:
     assert settings.recent_templates[0] == str(path)
 
 
+def test_slide_image_and_accent_controls(window: Any) -> None:
+    window._slides_list.setCurrentRow(0)
+    window._image_edit.setText("assets/hero.png")
+    window._image_fit_combo.setCurrentIndex(window._image_fit_combo.findData(core.IMAGE_FIT_CONTAIN))
+    window._accent_value = "#123456"
+    window._apply_form()
+    slide = window._template.slides[0]
+    assert slide.image == "assets/hero.png"
+    assert slide.image_fit == core.IMAGE_FIT_CONTAIN
+    assert slide.accent == "#123456"
+
+    window._clear_slide_accent()
+    window._apply_form()
+    assert window._template.slides[0].accent == ""
+
+
+def test_footer_and_font_controls(window: Any) -> None:
+    from PySide6.QtGui import QFont
+
+    window._footer_edit.setText("品牌页脚")
+    window._page_number_check.setChecked(False)
+    assert window._template.theme.footer == "品牌页脚"
+    assert window._template.theme.show_page_number is False
+
+    window._heading_font_combo.setCurrentFont(QFont("Arial"))
+    family = window._heading_font_combo.currentFont().family()
+    assert window._template.theme.heading_font == family
+
+
 def test_all_layouts_render_without_error(window: Any) -> None:
     theme = _guitheme.resolve_theme("dark-blue")
     for layout in core.LAYOUTS:
@@ -285,6 +314,33 @@ def test_all_layouts_render_without_error(window: Any) -> None:
         finally:
             painter.end()
         assert not pixmap.isNull()
+
+
+def test_export_options_dialog(window: Any) -> None:
+    dialog = _pptmakew_qt._ExportOptionsDialog(10, window)
+    try:
+        dialog.start.setValue(3)
+        dialog.end.setValue(5)
+        dialog.pdf.setChecked(True)
+        assert dialog.options() == (3, 5, True)
+        dialog.start.setValue(7)
+        dialog.end.setValue(2)
+        assert dialog.options() == (2, 7, True)
+    finally:
+        dialog.deleteLater()
+
+
+def test_presenter_window_renders(window: Any) -> None:
+    presenter = _pptmakew_qt._PresenterWindow(window, 0)
+    try:
+        presenter.resize(480, 270)
+        presenter.show()
+        create_application("pptmakew-test").processEvents()
+        assert not presenter.grab().isNull()
+        presenter._go(1)
+        assert presenter._index == 1
+    finally:
+        presenter.close()
 
 
 def test_zoom_controls(window: Any) -> None:

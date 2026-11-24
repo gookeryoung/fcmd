@@ -110,6 +110,45 @@ def test_mapping_roundtrip() -> None:
     assert core.template_from_mapping(mapping) == template
 
 
+def test_mapping_carries_image_brand_and_footer() -> None:
+    template = core.default_template()
+    template = core.replace_slide(
+        template,
+        0,
+        core.replace(template.slides[0], image="assets/hero.png", image_fit=core.IMAGE_FIT_CONTAIN),
+    )
+    template = core.replace(
+        template,
+        theme=core.replace(template.theme, footer="品牌页脚", show_page_number=False),
+    )
+    raw = core.template_to_mapping(template)
+    assert raw["slides"][0]["image"] == "assets/hero.png"
+    assert raw["slides"][0]["image_fit"] == core.IMAGE_FIT_CONTAIN
+    assert raw["theme"]["footer"] == "品牌页脚"
+    assert raw["theme"]["show_page_number"] is False
+    assert core.template_from_mapping(raw) == template
+
+
+def test_v2_template_gets_v3_defaults() -> None:
+    template = core.template_from_mapping(
+        {
+            "version": 2,
+            "name": "v2 模板",
+            "slides": [{"layout": "bullets", "title": "旧页"}],
+        }
+    )
+    assert template.version == core.TEMPLATE_VERSION
+    assert template.slides[0].image == ""
+    assert template.slides[0].image_fit == core.IMAGE_FIT_COVER
+    assert template.theme.footer == ""
+    assert template.theme.show_page_number is True
+
+
+def test_invalid_image_fit_rejected() -> None:
+    with pytest.raises(core.TemplateError, match="image_fit"):
+        core.template_from_mapping({"slides": [{"layout": "image", "image": "a.png", "image_fit": "stretch"}]})
+
+
 def test_mapping_tolerates_missing_optional_fields() -> None:
     template = core.template_from_mapping(
         {
@@ -244,9 +283,9 @@ def test_summary_lines_without_author_or_description() -> None:
     assert "页面：0 页" in text
 
 
-def test_tokens_defaults_in_v2_mapping() -> None:
+def test_tokens_defaults_in_mapping() -> None:
     template = core.default_template()
-    assert core.TEMPLATE_VERSION == 2
+    assert core.TEMPLATE_VERSION == 3
     assert template.theme.tokens == core.DesignTokens()
     raw = core.template_to_mapping(template)["theme"]["tokens"]
     assert raw["density"] == "comfortable"

@@ -364,7 +364,7 @@ HELP: dict[str, str] = {
     "pevieww": "usage: pevieww [-h] [--file FILE] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开 PE 查看器窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --file FILE          启动时打开的 PE 文件路径；省略时打开空窗口或恢复上次文件\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "piptool": "piptool 子命令\n+-------------------------------+\n| 子命令 | 说明                 |\n|--------+----------------------|\n| d      | 下载包               |\n| f      | 导出依赖             |\n| i      | 安装包               |\n| r      | 重装包               |\n| u      | 卸载包（支持通配符） |\n| up     | 升级 pip             |\n+-------------------------------+\n",
     "portcheck": "portcheck 子命令\n+-----------------------+\n| 子命令 | 说明         |\n|--------+--------------|\n| c      | 检查端口占用 |\n| s      | 扫描端口范围 |\n+-----------------------+\n",
-    "pptmake": "pptmake 子命令\n+----------------------------------------+\n| 子命令  | 说明                         |\n|---------+------------------------------|\n| export  | 把模板渲染为 PPTX            |\n| import  | 把现有 PPTX 转换为模板 JSON  |\n| init    | 生成示例模板 JSON            |\n| inspect | 查看模板摘要                 |\n| presets | 列出内置风格、布局与装饰样式 |\n+----------------------------------------+\n",
+    "pptmake": "pptmake 子命令\n+-------------------------------------------+\n| 子命令   | 说明                           |\n|----------+--------------------------------|\n| doctor   | 检查 PPTX / PDF 依赖与运行环境 |\n| export   | 把模板渲染为 PPTX              |\n| import   | 把现有 PPTX 转换为模板 JSON    |\n| init     | 生成示例模板 JSON              |\n| inspect  | 查看模板摘要                   |\n| presets  | 列出内置风格、布局与装饰样式   |\n| validate | 检查模板结构与文本溢出         |\n+-------------------------------------------+\n",
     "pptmakew": "usage: pptmakew [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开 PPT 模板设计器（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "pymake": "pymake 子命令\n+---------------------------------------------------------+\n| 子命令 | 说明                                           |\n|--------+------------------------------------------------|\n| b      | 构建分发包 (uv build)                          |\n| bump   | 升级 patch 版本号 (bump-my-version bump patch) |\n| bumpma | 升级主版本号 (bump-my-version bump major)      |\n| bumpmi | 升级次版本号 (bump-my-version bump minor)      |\n| c      | 清理构建产物与缓存目录                         |\n| chk    | 类型检查 (清理 + pyrefly + lint + test_fast)   |\n| cov    | 测试并生成覆盖率                               |\n| lint   | 代码检查与自动修复 (ruff check --fix)          |\n| push   | 推送代码到所有远程仓库                         |\n| sync   | 同步开发依赖 (uv sync --extra dev)             |\n| t      | 运行测试 (pytest)                              |\n| tc     | 类型检查 (清理 + pyrefly + lint)               |\n| tf     | 快速测试 (遇到失败立即停止)                    |\n| tn     | 运行测试 (pytest)                              |\n| tox    | 多版本测试 (tox -p auto)                       |\n| ts     | 测试 slow 标记的测试 (pytest -m slow)          |\n+---------------------------------------------------------+\n",
     "pyprof": "pyprof 子命令\n+--------------------------------------------------------------+\n| 子命令 | 说明                                                |\n|--------+-----------------------------------------------------|\n| load   | 分析已有 .prof/.pstats 文件，生成 HTML 性能报告     |\n| module | 以 python -m 方式运行模块并分析，生成 HTML 性能报告 |\n| run    | 运行并分析 Python 脚本，生成 HTML 性能报告          |\n+--------------------------------------------------------------+\n",
@@ -533,11 +533,11 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "38d5b9084d69b2dec3dacc9e5c4f1daa"
+DIGEST = "8a25772babbac7c07a9d87140e183c61"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
-SUBCOMMAND_TOTAL = 405
+SUBCOMMAND_TOTAL = 407
 
 
 if __name__ == "__main__":  # pragma: no cover

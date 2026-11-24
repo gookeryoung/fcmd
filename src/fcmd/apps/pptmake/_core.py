@@ -35,6 +35,10 @@ __all__ = [
     "DECOR_MINIMAL",
     "DECOR_ORBS",
     "DECOR_TEXT",
+    "IMAGE_FITS",
+    "IMAGE_FIT_CONTAIN",
+    "IMAGE_FIT_COVER",
+    "IMAGE_FIT_TEXT",
     "LAYOUTS",
     "LAYOUT_AGENDA",
     "LAYOUT_BULLETS",
@@ -78,6 +82,7 @@ __all__ = [
     "normalize_aspect",
     "normalize_decor",
     "normalize_hex",
+    "normalize_image_fit",
     "normalize_layout",
     "normalize_style",
     "palette_for_style",
@@ -89,7 +94,7 @@ __all__ = [
     "template_to_mapping",
 ]
 
-TEMPLATE_VERSION: Final[int] = 2
+TEMPLATE_VERSION: Final[int] = 3
 TEMPLATE_SUFFIX: Final[str] = ".pptmtpl.json"
 
 # ---------------------------------------------------------------------- #
@@ -192,6 +197,14 @@ STYLE_TEXT: Final[dict[str, str]] = {
     STYLE_CUSTOM: "自定义",
 }
 
+IMAGE_FIT_COVER: Final[str] = "cover"
+IMAGE_FIT_CONTAIN: Final[str] = "contain"
+IMAGE_FITS: Final[tuple[str, ...]] = (IMAGE_FIT_COVER, IMAGE_FIT_CONTAIN)
+IMAGE_FIT_TEXT: Final[dict[str, str]] = {
+    IMAGE_FIT_COVER: "裁剪填满",
+    IMAGE_FIT_CONTAIN: "完整显示",
+}
+
 PALETTE_FIELDS: Final[tuple[tuple[str, str], ...]] = (
     ("background", "背景"),
     ("surface", "卡片"),
@@ -269,6 +282,8 @@ class Theme:
     body_font: str = DEFAULT_BODY_FONT
     decor: str = DECOR_ORBS
     tokens: DesignTokens = field(default_factory=DesignTokens)
+    footer: str = ""
+    show_page_number: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +296,8 @@ class SlideSpec:
     bullets: tuple[str, ...] = ()
     note: str = ""
     accent: str = ""
+    image: str = ""
+    image_fit: str = IMAGE_FIT_COVER
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +376,16 @@ def normalize_decor(value: object) -> str:
     """校验装饰样式；未知值回落到 ``orbs``。"""
     text = str(value).strip()
     return text if text in DECORS else DECOR_ORBS
+
+
+def normalize_image_fit(value: object) -> str:
+    """校验图片填充方式（cover / contain），缺省返回裁剪填满。"""
+    if value is None or value == "":
+        return IMAGE_FIT_COVER
+    text = str(value).strip().lower()
+    if text not in IMAGE_FITS:
+        raise ValueError(f"image_fit 需为 {IMAGE_FIT_COVER} / {IMAGE_FIT_CONTAIN}：{value!r}")
+    return text
 
 
 def normalize_style(value: object) -> str:
@@ -536,6 +563,8 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
             "decor": template.theme.decor,
             "palette": {name: getattr(palette, name) for name, _label in PALETTE_FIELDS},
             "tokens": tokens_to_mapping(template.theme.tokens),
+            "footer": template.theme.footer,
+            "show_page_number": template.theme.show_page_number,
         },
         "layouts": list(template.layouts),
         "slides": [
@@ -546,6 +575,8 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
                 "bullets": list(slide.bullets),
                 "note": slide.note,
                 "accent": slide.accent,
+                "image": slide.image,
+                "image_fit": slide.image_fit,
             }
             for slide in template.slides
         ],
@@ -581,6 +612,14 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         raise TemplateError(f"slides[{index}].bullets 需为字符串数组")
     accent_raw = raw.get("accent", "")
     accent = "" if accent_raw in (None, "") else normalize_hex(accent_raw, field_name=f"slides[{index}].accent")
+    image_raw = raw.get("image", "")
+    image = image_raw.strip() if isinstance(image_raw, str) else ""
+    if image_raw not in (None, "") and not isinstance(image_raw, str):
+        raise TemplateError(f"slides[{index}].image 需为路径字符串")
+    try:
+        image_fit = normalize_image_fit(raw.get("image_fit", IMAGE_FIT_COVER))
+    except ValueError as exc:
+        raise TemplateError(str(exc)) from exc
     return SlideSpec(
         layout=layout,
         title=str(raw.get("title", "")),
@@ -588,6 +627,8 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         bullets=bullets,
         note=str(raw.get("note", "")),
         accent=accent,
+        image=image,
+        image_fit=image_fit,
     )
 
 
@@ -638,6 +679,8 @@ def template_from_mapping(raw: object) -> TemplateSpec:
         body_font=body_font or DEFAULT_BODY_FONT,
         decor=normalize_decor(theme_raw.get("decor", DECOR_ORBS)),
         tokens=tokens,
+        footer=str(theme_raw.get("footer") or ""),
+        show_page_number=bool(theme_raw.get("show_page_number", True)),
     )
 
     layouts_raw = raw.get("layouts", LAYOUTS)

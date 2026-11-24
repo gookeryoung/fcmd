@@ -28,7 +28,7 @@ from fcmd.apps.pptmake._core import (
     normalize_hex,
     relative_luminance,
 )
-from fcmd.apps.pptmake._design import Line, Oval, Primitive, Rect, Text, build_draw_list
+from fcmd.apps.pptmake._design import Line, Oval, Picture, Primitive, Rect, Text, build_draw_list
 
 __all__ = ["export_pptx", "import_pptx", "pptx_slide_count"]
 
@@ -147,6 +147,7 @@ def _draw_text(slide: Any, primitive: Text, api: _Api) -> None:
         paragraph.line_spacing = primitive.line_spacing
         if primitive.space_after > 0:
             paragraph.space_after = api.Pt(primitive.space_after * _POINTS_PER_UNIT)
+        paragraph.level = max(0, min(int(primitive.level), 8))
         run = paragraph.add_run()
         run.text = paragraph_text
         font = run.font
@@ -158,7 +159,57 @@ def _draw_text(slide: Any, primitive: Text, api: _Api) -> None:
         _set_east_asian_font(run, primitive.font or DEFAULT_BODY_FONT)
 
 
-def _draw_primitive(slide: Any, primitive: Primitive, api: _Api) -> None:
+def _draw_picture(slide: Any, primitive: Picture, api: _Api) -> None:
+    """把本地图片写入幻灯片；cover 通过裁剪填满，contain 按比例居中。"""
+    if primitive.w <= 0 or primitive.h <= 0 or not primitive.path:
+        return
+    path = Path(primitive.path)
+    if not path.is_file():
+        raise TemplateError(f"图片不存在：{path}")
+    try:
+        from PIL import Image
+    except ImportError:  # pragma: no cover - python-pptx 通常自带 Pillow
+        shape = slide.shapes.add_picture(
+            str(path),
+            _emu(primitive.x, api),
+            _emu(primitive.y, api),
+            _emu(primitive.w, api),
+            _emu(primitive.h, api),
+        )
+        del shape
+        return
+    with Image.open(path) as image:
+        image_width, image_height = image.size
+    if image_width <= 0 or image_height <= 0:
+        return
+    box_ratio = primitive.w / primitive.h
+    image_ratio = image_width / image_height
+    if primitive.fit == "contain":
+        scale = min(primitive.w / image_width, primitive.h / image_height)
+        width = image_width * scale
+        height = image_height * scale
+        left = primitive.x + (primitive.w - width) / 2
+        top = primitive.y + (primitive.h - height) / 2
+        slide.shapes.add_picture(str(path), _emu(left, api), _emu(top, api), _emu(width, api), _emu(height, api))
+        return
+    picture = slide.shapes.add_picture(
+        str(path),
+        _emu(primitive.x, api),
+        _emu(primitive.y, api),
+        _emu(primitive.w, api),
+        _emu(primitive.h, api),
+    )
+    if image_ratio > box_ratio:
+        excess = 1 - box_ratio / image_ratio
+        picture.crop_left = excess / 2
+        picture.crop_right = excess / 2
+    elif image_ratio < box_ratio:
+        excess = 1 - image_ratio / box_ratio
+        picture.crop_top = excess / 2
+        picture.crop_bottom = excess / 2
+
+
+def _draw_primitive(slide: Any, primitive: Primitive, api: _Api) -> None:  # noqa: PLR0911 - 图元分派
     """把一个绘制图元写入幻灯片。"""
     if isinstance(primitive, Rect):
         if primitive.w <= 0 or primitive.h <= 0:
@@ -187,6 +238,9 @@ def _draw_primitive(slide: Any, primitive: Primitive, api: _Api) -> None:
         )
         _set_fill_and_line(shape, primitive.fill, primitive.line, primitive.line_width, api)
         return
+    if isinstance(primitive, Picture):
+        _draw_picture(slide, primitive, api)
+        return
     if isinstance(primitive, Line):
         if primitive.x1 == primitive.x2 and primitive.y1 == primitive.y2:
             return
@@ -214,9 +268,10 @@ def export_pptx(template: TemplateSpec, path: Path) -> int:
     presentation.slide_width = api.Inches(width_inches)
     presentation.slide_height = api.Inches(height_inches)
     blank_layout = presentation.slide_layouts[6]
-    for slide_spec in template.slides:
+    total = len(template.slides)
+    for index, slide_spec in enumerate(template.slides, start=1):
         slide = presentation.slides.add_slide(blank_layout)
-        for primitive in build_draw_list(slide_spec, template):
+        for primitive in build_draw_list(slide_spec, template, page_number=index, page_total=total):
             _draw_primitive(slide, primitive, api)
         if slide_spec.note.strip():
             slide.notes_slide.notes_text_frame.text = slide_spec.note
