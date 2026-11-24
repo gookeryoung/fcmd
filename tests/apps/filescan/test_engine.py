@@ -1260,3 +1260,15 @@ def test_filename_only_rules_skip_reading_file_content(tmp_path: Path, monkeypat
     assert result.stats.bytes_read == 0
     assert result.stats.hit_files == 1
     assert result.hits[0].matches[0].rule_id == "name_hit"
+
+
+def test_adaptive_process_workers_shrinks_small_batches_only() -> None:
+    """小批次收缩进程数减少 spawn 固定成本；大文件 / 大文件量仍用满 workers。"""
+    from fcmd.apps.filescan._engine import _adaptive_process_workers
+
+    paths = [Path(f"/tmp/{index}.txt") for index in range(600)]
+    assert _adaptive_process_workers(paths[:512], [4096] * 512, 4) == 2
+    assert _adaptive_process_workers(paths, [4096] * 600, 4) == 2
+    assert _adaptive_process_workers([Path(f"/tmp/{i}.bin") for i in range(5000)], [4096] * 5000, 8) == 8
+    assert _adaptive_process_workers([Path(f"/tmp/{i}.bin") for i in range(20)], [2 * 1024 * 1024] * 20, 8) == 8
+    assert _adaptive_process_workers(paths, [4096] * 600, 1) == 1

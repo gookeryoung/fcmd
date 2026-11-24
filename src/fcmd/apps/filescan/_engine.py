@@ -110,6 +110,12 @@ PROCESS_MIN_FILES = 512
 """进程池调度阈值：待扫描文件数达到该值（或总字节数达标）时改用进程池。"""
 
 PROCESS_MIN_BYTES = 2 * 1024 * 1024
+
+PROCESS_FILES_PER_WORKER = 256
+"""自适应进程数：每个进程至少分担这么多文件，避免小批次 spawn 过多进程。"""
+
+PROCESS_BYTES_PER_WORKER = 1024 * 1024
+"""自适应进程数：每个进程至少分担这么多字节，大文件场景仍按核数展开。"""
 """进程池调度阈值：待扫描文件总字节数达到该值时改用进程池。"""
 
 _PROCESS_MAX_CHUNK = 64
@@ -1703,6 +1709,20 @@ def _worker_scan_batch(items: list[tuple[str, int]]) -> list[_Outcome]:
     return [scan_file(Path(path), context, size) for path, size in items]
 
 
+def _adaptive_process_workers(files: Sequence[Path], sizes: Sequence[int], workers: int) -> int:
+    """按文件数 / 总字节收缩进程数；跨过阈值时至少 2 个进程。
+
+    4 进程 spawn 约 0.1 s 固定成本。512 个 4 KiB 文件只需约 2 个进程就能覆盖
+    读盘与正则，再往上加只会增加固定开销；5000 小文件与 20×2 MiB 大文件仍会
+    用满请求的 ``workers``。
+    """
+    if workers <= 1:
+        return 1
+    by_files = len(files) // PROCESS_FILES_PER_WORKER
+    by_bytes = sum(sizes) // PROCESS_BYTES_PER_WORKER
+    return max(1, min(workers, max(2, by_files, by_bytes)))
+
+
 def _process_worthwhile(files: Sequence[Path], sizes: Sequence[int], workers: int) -> bool:
     """是否值得走进程池：文件数或总字节数达到阈值，且并发数 > 1。
 
@@ -1881,6 +1901,7 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
         # 进程数不超过 CPU 核数：多出来的进程只会增加 spawn 与内存开销。
         process_workers = min(workers, os.cpu_count() or workers)
         if opts.use_processes and _process_worthwhile(files, sizes, process_workers):
+            process_workers = _adaptive_process_workers(files, sizes, process_workers)
             outcomes, cancelled = _scan_in_processes(
                 files,
                 sizes,
