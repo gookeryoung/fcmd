@@ -42,7 +42,7 @@ def test_bullets_use_type_scale_body() -> None:
         core.SlideSpec(layout=core.LAYOUT_BULLETS, title="字号", bullets=("短要点",)),
         _with_tokens(),
     )
-    assert any(isinstance(item, design.Text) and item.size == 20 for item in primitives)
+    assert any(isinstance(item, design.Text) and item.size == 24 for item in primitives)
 
     larger = _with_tokens(replace(core.DesignTokens(), type_scale=replace(core.DesignTokens().type_scale, body=26)))
     primitives = design.build_draw_list(
@@ -228,12 +228,12 @@ def test_quote_and_closing_long_text() -> None:
         ),
         template,
     )
-    assert any(isinstance(item, design.Text) and item.size == 27 for item in quote)
+    assert any(isinstance(item, design.Text) and item.size == 35 for item in quote)
     closing = design.build_draw_list(
         core.SlideSpec(layout=core.LAYOUT_CLOSING, title="A VERY LONG CLOSING TITLE"),
         template,
     )
-    assert any(isinstance(item, design.Text) and item.size == 46 for item in closing)
+    assert any(isinstance(item, design.Text) and item.size == 51 for item in closing)
 
 
 def test_custom_design_size_and_aspect() -> None:
@@ -281,7 +281,11 @@ def test_image_layout_has_placeholder_panel() -> None:
     text = "\n".join(line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs)
     assert "主视觉" in text
     assert "要点一" in text
-    assert "图片占位 · 导出后在 PowerPoint 中替换" in text
+    assert "图片占位" not in text
+
+    hinted = design.build_draw_list(slide, template, hints=True)
+    hinted_text = "\n".join(line for item in hinted if isinstance(item, design.Text) for line in item.paragraphs)
+    assert "图片占位 · 导出后在 PowerPoint 中替换" in hinted_text
     panels = [
         item for item in primitives if isinstance(item, design.Rect) and item.fill == template.theme.palette.surface
     ]
@@ -325,6 +329,19 @@ def test_footer_and_page_number_only_when_requested() -> None:
     assert "02 / 08" in text
 
 
+def test_cover_and_section_hide_page_number() -> None:
+    template = _template()
+    for layout in (core.LAYOUT_COVER, core.LAYOUT_SECTION, core.LAYOUT_CLOSING):
+        primitives = design.build_draw_list(
+            core.SlideSpec(layout=layout, title="章节 01"),
+            template,
+            page_number=1,
+            page_total=9,
+        )
+        content = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
+        assert "01 / 09" not in content
+
+
 def test_bullet_levels_indent_and_keep_text() -> None:
     template = _template()
     slide = core.SlideSpec(layout=core.LAYOUT_BULLETS, title="层级", bullets=("顶层", "  - 子项"))
@@ -332,8 +349,11 @@ def test_bullet_levels_indent_and_keep_text() -> None:
     texts = [item for item in primitives if isinstance(item, design.Text) and item.paragraphs]
     top = next(item for item in texts if item.paragraphs[0] == "顶层")
     child = next(item for item in texts if item.paragraphs[0] == "子项")
-    assert child.x > top.x
     assert child.level == 1
+    assert top.level == 0
+    # 缩进由 draw list 的 indent 令牌与层级共同决定，预览与导出同源。
+    assert child.indent == template.theme.tokens.bullet.indent
+    assert child.w < top.w
     margin = round(template.theme.tokens.spacing.margin_x * 1280)
     assert top.x == margin + round(template.theme.tokens.type_scale.body * 1.5)
 
@@ -394,7 +414,10 @@ def test_chart_bar_heights_follow_values() -> None:
     labels = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
     assert "50" in labels
     assert "100" in labels
-    assert "图表占位 · 导出后可在 PowerPoint 中替换为真实图表" in labels
+    assert "图表占位" not in "\n".join(labels)
+    hinted = design.build_draw_list(slide, template, hints=True)
+    hinted_labels = [line for item in hinted if isinstance(item, design.Text) for line in item.paragraphs]
+    assert "图表占位 · 导出后可在 PowerPoint 中替换为真实图表" in hinted_labels
 
 
 def test_chart_handles_non_numeric_values() -> None:
@@ -417,8 +440,12 @@ def test_contact_defaults_and_qr_placeholder() -> None:
     assert "让我们保持联系" in content
     assert "邮箱" in content
     assert "hello@example.com" in content
-    assert "二维码占位" in content
-    assert "PPTMAKE · 联系方式" in content
+    assert "二维码占位" not in content
+    assert not any("PPTMAKE" in line for line in content)
+
+    hinted = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_CONTACT), template, hints=True)
+    hinted_content = [line for item in hinted if isinstance(item, design.Text) for line in item.paragraphs]
+    assert "二维码占位" in hinted_content
 
 
 def test_contact_uses_provided_rows() -> None:

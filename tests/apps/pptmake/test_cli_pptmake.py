@@ -141,6 +141,27 @@ def test_validate_reports_overflow_and_missing_image(tmp_path: Path, capsys: pyt
     assert "图片不存在" in output
 
 
+def test_export_refuses_quality_issues_without_force(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    template = core.new_template(
+        slides=(
+            core.SlideSpec(
+                layout=core.LAYOUT_BULLETS,
+                title="溢出",
+                bullets=tuple("这是一行非常长的要点文字" * 8 for _ in range(12)),
+            ),
+        )
+    )
+    path = tmp_path / "bad.pptmtpl.json"
+    core.save_template(template, path)
+    target = tmp_path / "bad.pptx"
+    pptmake.export_command(path, target)
+    output = capsys.readouterr().out
+    assert "导出已取消" in output
+    assert not target.exists()
+    pptmake.export_command(path, target, force=True)
+    assert target.is_file()
+
+
 def test_doctor_prints_environment(capsys: pytest.CaptureFixture[str]) -> None:
     pptmake.doctor_command()
     output = capsys.readouterr().out

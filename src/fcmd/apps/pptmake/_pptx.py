@@ -147,7 +147,13 @@ def _draw_text(slide: Any, primitive: Text, api: _Api) -> None:
         paragraph.line_spacing = primitive.line_spacing
         if primitive.space_after > 0:
             paragraph.space_after = api.Pt(primitive.space_after * _POINTS_PER_UNIT)
-        paragraph.level = max(0, min(int(primitive.level), 8))
+        level = max(0, min(int(primitive.level), 8))
+        paragraph.level = level
+        if primitive.indent > 0 and level > 0:
+            offset = round(primitive.indent * level * _POINTS_PER_UNIT * 12700)
+            props = paragraph._p.get_or_add_pPr()
+            props.set("marL", str(offset))
+            props.set("indent", str(-offset))
         run = paragraph.add_run()
         run.text = paragraph_text
         font = run.font

@@ -229,6 +229,7 @@ def _paint_text(painter: QPainter, primitive: Text, view: preview.Viewport) -> N
     """逐段绘制文本：先按设计宽度断行，再按段落高度手工堆叠。"""
     scale = view.scale
     x, y = view.to_canvas(primitive.x, primitive.y)
+    x += round(primitive.indent * primitive.level * scale)
     width = primitive.w * scale
     height = primitive.h * scale
     pixel_size = max(round(primitive.size * scale), 1)
@@ -291,7 +292,7 @@ def _paint_slide(  # noqa: PLR0913 - 画布、缩略图与错误提示共用入�
         )
     x0, y0, x1, y1 = view.page_rect()
     page = QRectF(x0, y0, x1 - x0, y1 - y0)
-    primitives = build_draw_list(slide, template, page_number=page_number, page_total=page_total)
+    primitives = build_draw_list(slide, template, page_number=page_number, page_total=page_total, hints=True)
     painter.save()
     painter.setClipRect(page)
     painter.fillRect(page, QColor(template.theme.palette.background))
@@ -1447,6 +1448,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 self._template,
                 page_number=index + 1,
                 page_total=len(self._template.slides),
+                hints=True,
             )
         except core.TemplateError:
             return 0

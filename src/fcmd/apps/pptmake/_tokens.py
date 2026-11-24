@@ -12,16 +12,20 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Final
 
 __all__ = [
+    "ASPECT_TYPE_SCALE",
     "DEFAULT_FONT_FALLBACK",
     "DENSITIES",
     "DENSITY_COMFORTABLE",
     "DENSITY_COMPACT",
     "DENSITY_SPACIOUS",
     "DENSITY_TEXT",
+    "DISPLAY_TYPE_FIELDS",
+    "BulletScale",
     "DesignTokens",
     "RadiusScale",
     "SemanticColors",
     "SpacingScale",
+    "StrokeScale",
     "TokenError",
     "TypeScale",
     "normalize_density",
@@ -77,6 +81,9 @@ _TYPE_LABELS: Final[dict[str, str]] = {
     "quote": "引用文字",
     "section_number": "章节编号",
 }
+# 展示级字号随画幅微调；正文与注释保持固定 pt，优先保证可读性。
+DISPLAY_TYPE_FIELDS: Final[tuple[str, ...]] = ("display", "title", "quote", "stat", "section_number")
+ASPECT_TYPE_SCALE: Final[dict[str, float]] = {"16:9": 1.0, "4:3": 0.92}
 _SPACING_BOUNDS: Final[dict[str, tuple[float, float]]] = {
     "margin_x": (0.0, 0.4),
     "margin_y": (0.0, 0.4),
@@ -84,6 +91,13 @@ _SPACING_BOUNDS: Final[dict[str, tuple[float, float]]] = {
     "block": (0.0, 300.0),
     "section": (0.0, 400.0),
     "line": (0.8, 2.5),
+    "line_display": (0.8, 2.5),
+    "line_heading": (0.8, 2.5),
+    "line_body": (0.8, 2.5),
+    "line_caption": (0.8, 2.5),
+    "space_after_body": (0.0, 3.0),
+    "space_after_item": (0.0, 3.0),
+    "space_before_heading": (0.0, 3.0),
 }
 _SPACING_LABELS: Final[dict[str, str]] = {
     "margin_x": "左右边距比例",
@@ -92,6 +106,13 @@ _SPACING_LABELS: Final[dict[str, str]] = {
     "block": "块间距",
     "section": "区块间距",
     "line": "行距倍数",
+    "line_display": "展示级行距",
+    "line_heading": "标题行距",
+    "line_body": "正文行距",
+    "line_caption": "注释行距",
+    "space_after_body": "正文段后距（×正文）",
+    "space_after_item": "条目段后距（×正文）",
+    "space_before_heading": "标题段前距（×正文）",
 }
 _RADIUS_LABELS: Final[dict[str, str]] = {
     "card": "卡片圆角",
@@ -112,33 +133,52 @@ class TokenError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class TypeScale:
-    """字号层级（设计坐标单位，96 单位 / 英寸；20 单位 = 15pt）。"""
+    """字号层级（设计坐标单位，96 单位 / 英寸；24 单位 = 18pt）。
 
-    display: float = 58.0
-    title: float = 40.0
-    subtitle: float = 18.0
-    heading: float = 22.0
-    body: float = 20.0
-    small: float = 16.0
-    caption: float = 13.0
-    stat: float = 44.0
-    quote: float = 34.0
-    section_number: float = 124.0
+    正文 24（18pt）与注释 16（12pt）是专业演示的常见下限；展示级字号
+    通过 :func:`TypeScale.for_aspect` 按画幅微调，正文保持 pt 不变。
+    """
+
+    display: float = 64.0
+    title: float = 48.0
+    subtitle: float = 28.0
+    heading: float = 32.0
+    body: float = 24.0
+    small: float = 20.0
+    caption: float = 16.0
+    stat: float = 56.0
+    quote: float = 44.0
+    section_number: float = 168.0
+
+    def for_aspect(self, aspect: str) -> TypeScale:
+        """按画幅缩放展示级字号；未知画幅保持原值。"""
+        factor = ASPECT_TYPE_SCALE.get(aspect, 1.0)
+        if factor == 1.0:
+            return self
+        values = {name: round(getattr(self, name) * factor, 1) for name in DISPLAY_TYPE_FIELDS}
+        return replace(self, **values)
 
 
 @dataclass(frozen=True, slots=True)
 class SpacingScale:
-    """间距体系：边距按画幅比例，其余按设计单位。"""
+    """间距体系：边距按画幅比例，其余按设计单位；行距与段距按角色区分。"""
 
     margin_x: float = 0.075
     margin_y: float = 0.10
     gap: float = 24.0
     block: float = 32.0
     section: float = 48.0
-    line: float = 1.25
+    line: float = 1.45
+    line_display: float = 1.1
+    line_heading: float = 1.25
+    line_body: float = 1.45
+    line_caption: float = 1.35
+    space_after_body: float = 0.6
+    space_after_item: float = 0.4
+    space_before_heading: float = 1.0
 
     def scaled(self, factor: float) -> SpacingScale:
-        """按密度系数缩放间距；边距比例与行距保持不变。"""
+        """按密度系数缩放间距；边距比例、行距与段距系数保持不变。"""
         return replace(
             self,
             gap=round(self.gap * factor, 1),
@@ -153,6 +193,24 @@ class RadiusScale:
 
     card: float = 18.0
     small: float = 6.0
+
+
+@dataclass(frozen=True, slots=True)
+class StrokeScale:
+    """描边与分隔线：颜色留空时按背景与次要色自动混合，宽度统一取本令牌。"""
+
+    border: str = ""
+    divider: str = ""
+    width: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class BulletScale:
+    """项目符号：缩进按设计单位逐级递增，``size`` 为方标边长，``char`` 供导出使用。"""
+
+    indent: float = 24.0
+    size: float = 12.0
+    char: str = "•"
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +230,8 @@ class DesignTokens:
     type_scale: TypeScale = field(default_factory=TypeScale)
     spacing: SpacingScale = field(default_factory=SpacingScale)
     radius: RadiusScale = field(default_factory=RadiusScale)
+    stroke: StrokeScale = field(default_factory=StrokeScale)
+    bullet: BulletScale = field(default_factory=BulletScale)
     density: str = DENSITY_COMFORTABLE
     decor_intensity: float = 1.0
     font_fallback: tuple[str, ...] = DEFAULT_FONT_FALLBACK
@@ -277,6 +337,58 @@ def _radius(raw: object, *, base: RadiusScale) -> RadiusScale:
     return RadiusScale(**values)
 
 
+def _optional_hex(raw: object, *, path: str, default: str) -> str:
+    """解析可留空的颜色；``None`` / 空串表示自动混合。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return default
+    return _hex_color(raw, path=path)
+
+
+def _stroke(raw: object, *, base: StrokeScale) -> StrokeScale:
+    """解析描边与分隔线令牌。"""
+    section = _section(raw, path="theme.tokens.stroke")
+    return StrokeScale(
+        border=_optional_hex(section.get("border"), path="theme.tokens.stroke.border", default=base.border),
+        divider=_optional_hex(section.get("divider"), path="theme.tokens.stroke.divider", default=base.divider),
+        width=_number(
+            section.get("width"),
+            path="theme.tokens.stroke.width",
+            minimum=0.0,
+            maximum=20.0,
+            default=base.width,
+        ),
+    )
+
+
+def _bullet(raw: object, *, base: BulletScale) -> BulletScale:
+    """解析项目符号令牌；``char`` 只接受 1–2 个字符。"""
+    section = _section(raw, path="theme.tokens.bullet")
+    char_raw = section.get("char")
+    if char_raw is None:
+        char = base.char
+    elif isinstance(char_raw, str) and 0 < len(char_raw.strip()) <= 2:
+        char = char_raw.strip()
+    else:
+        raise TokenError(f"theme.tokens.bullet.项目符号需为 1–2 个字符：{char_raw!r}")
+    return BulletScale(
+        indent=_number(
+            section.get("indent"),
+            path="theme.tokens.bullet.indent",
+            minimum=0.0,
+            maximum=200.0,
+            default=base.indent,
+        ),
+        size=_number(
+            section.get("size"),
+            path="theme.tokens.bullet.size",
+            minimum=0.0,
+            maximum=100.0,
+            default=base.size,
+        ),
+        char=char,
+    )
+
+
 def _font_fallback(raw: object, *, base: tuple[str, ...]) -> tuple[str, ...]:
     """解析字体回退链：非空字符串数组，去重并保持顺序。"""
     if raw is None:
@@ -319,6 +431,8 @@ def tokens_from_mapping(raw: object, *, base: DesignTokens | None = None) -> Des
         type_scale=_type_scale(raw.get("type_scale"), base=fallback.type_scale),
         spacing=_spacing(raw.get("spacing"), base=fallback.spacing),
         radius=_radius(raw.get("radius"), base=fallback.radius),
+        stroke=_stroke(raw.get("stroke"), base=fallback.stroke),
+        bullet=_bullet(raw.get("bullet"), base=fallback.bullet),
         density=fallback.density if density_raw is None else normalize_density(density_raw),
         decor_intensity=_number(
             raw.get("decor_intensity"),
@@ -340,6 +454,16 @@ def tokens_to_mapping(tokens: DesignTokens) -> dict[str, Any]:
         "type_scale": {name: getattr(tokens.type_scale, name) for name in _TYPE_FIELDS},
         "spacing": {name: getattr(tokens.spacing, name) for name in _SPACING_BOUNDS},
         "radius": {name: getattr(tokens.radius, name) for name in _RADIUS_LABELS},
+        "stroke": {
+            "border": tokens.stroke.border,
+            "divider": tokens.stroke.divider,
+            "width": tokens.stroke.width,
+        },
+        "bullet": {
+            "indent": tokens.bullet.indent,
+            "size": tokens.bullet.size,
+            "char": tokens.bullet.char,
+        },
         "font_fallback": list(tokens.font_fallback),
         "semantic": {name: getattr(tokens.semantic, name) for name in _SEMANTIC_FIELDS},
     }

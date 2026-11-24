@@ -286,11 +286,15 @@ def test_summary_lines_without_author_or_description() -> None:
 
 def test_tokens_defaults_in_mapping() -> None:
     template = core.default_template()
-    assert core.TEMPLATE_VERSION == 3
+    assert core.TEMPLATE_VERSION == 4
     assert template.theme.tokens == core.DesignTokens()
     raw = core.template_to_mapping(template)["theme"]["tokens"]
     assert raw["density"] == "comfortable"
-    assert raw["type_scale"]["body"] == 20.0
+    assert raw["type_scale"]["body"] == 24.0
+    assert raw["type_scale"]["caption"] == 16.0
+    assert raw["spacing"]["line_body"] == 1.45
+    assert raw["stroke"]["border"] == ""
+    assert raw["bullet"]["indent"] == 24.0
     assert raw["semantic"]["danger"] == "#F85149"
     assert core.template_from_mapping(core.template_to_mapping(template)) == template
 
@@ -352,6 +356,8 @@ def test_v2_tokens_partial_override_and_roundtrip() -> None:
         ({"version": 2, "theme": {"tokens": {"font_fallback": []}}}, "font_fallback"),
         ({"version": 2, "theme": {"tokens": {"font_fallback": ["", "x"]}}}, "非法字体名"),
         ({"version": 2, "theme": {"tokens": {"semantic": {"danger": "red"}}}}, "危险"),
+        ({"version": 2, "theme": {"tokens": {"stroke": {"border": "blue"}}}}, "border"),
+        ({"version": 2, "theme": {"tokens": {"bullet": {"char": "•••"}}}}, "项目符号"),
     ],
 )
 def test_tokens_reject_invalid_values(raw: object, message: str) -> None:

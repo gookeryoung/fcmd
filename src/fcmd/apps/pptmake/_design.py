@@ -129,6 +129,7 @@ class Text:
     line_spacing: float = 1.2
     space_after: float = 0.0
     level: int = 0
+    indent: float = 0.0
 
 
 Primitive = Rect | Oval | Line | Picture | Text
@@ -143,6 +144,8 @@ class _Ctx:
     palette: Palette
     theme: Theme
     accent: str
+    aspect: str = "16:9"
+    hints: bool = False
 
     @property
     def tokens(self) -> DesignTokens:
@@ -151,8 +154,8 @@ class _Ctx:
 
     @property
     def type_scale(self) -> TypeScale:
-        """字号层级。"""
-        return self.tokens.type_scale
+        """字号层级（展示级按画幅微调）。"""
+        return self.tokens.type_scale.for_aspect(self.aspect)
 
     @property
     def spacing(self) -> SpacingScale:
@@ -163,6 +166,27 @@ class _Ctx:
     def radius(self) -> RadiusScale:
         """圆角体系。"""
         return self.tokens.radius
+
+    @property
+    def border(self) -> str:
+        """统一描边色；令牌留空时按背景与次要色混合。"""
+        stroke = self.tokens.stroke
+        if stroke.border:
+            return normalize_hex(stroke.border)
+        return mix_hex(self.palette.background, self.palette.muted, 0.28)
+
+    @property
+    def divider(self) -> str:
+        """统一分隔线色；令牌留空时与描边同口径。"""
+        stroke = self.tokens.stroke
+        if stroke.divider:
+            return normalize_hex(stroke.divider)
+        return mix_hex(self.palette.background, self.palette.muted, 0.28)
+
+    @property
+    def stroke_width(self) -> float:
+        """描边与分隔线的统一线宽。"""
+        return self.tokens.stroke.width
 
     @property
     def margin(self) -> float:
@@ -195,7 +219,9 @@ def _text(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与 Text 字段一�
     align: str = ALIGN_LEFT,
     anchor: str = ANCHOR_TOP,
     line_spacing: float = 1.2,
+    space_after: float = 0.0,
     level: int = 0,
+    indent: float = 0.0,
 ) -> Text:
     """创建文本框；``content`` 中的换行拆成多段。"""
     paragraphs = tuple(content.split("\n")) if content else ("",)
@@ -213,7 +239,9 @@ def _text(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与 Text 字段一�
         align=align,
         anchor=anchor,
         line_spacing=line_spacing,
+        space_after=space_after,
         level=level,
+        indent=indent,
     )
 
 
@@ -336,6 +364,7 @@ def _paint_heading(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> float:
             palette.text,
             ctx.theme.heading_font,
             bold=True,
+            line_spacing=ctx.spacing.line_heading,
         )
     )
     out.append(
@@ -358,6 +387,7 @@ def _paint_heading(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> float:
             scale.subtitle,
             palette.muted,
             ctx.theme.body_font,
+            line_spacing=ctx.spacing.line_heading,
         )
     )
     return ctx.top + round(scale.title * 3.25)
@@ -367,25 +397,29 @@ def _paint_heading(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> float:
 # 版式
 # ---------------------------------------------------------------------- #
 def _render_cover(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """封面：品牌标签、主标题、副标题与页脚。"""
+    """封面：眉标、主标题、副标题与可选页脚；品牌文案全部来自主题字段。"""
     palette = ctx.palette
     scale = ctx.type_scale
+    spacing = ctx.spacing
     margin = ctx.margin
     title = slide.title.strip() or "在此输入演示标题"
     subtitle = slide.subtitle.strip() or "副标题 / 团队 / 日期"
-    out.append(
-        _text(
-            margin,
-            ctx.height * 0.20,
-            ctx.width * 0.6,
-            round(scale.small * 2.5),
-            "PPT TEMPLATE",
-            scale.small,
-            ctx.accent,
-            ctx.theme.heading_font,
-            bold=True,
+    eyebrow = ctx.theme.eyebrow.strip()
+    if eyebrow:
+        out.append(
+            _text(
+                margin,
+                ctx.height * 0.20,
+                ctx.width * 0.6,
+                round(scale.small * 1.8),
+                eyebrow,
+                scale.small,
+                ctx.accent,
+                ctx.theme.heading_font,
+                bold=True,
+                line_spacing=spacing.line_caption,
+            )
         )
-    )
     out.append(Rect(margin, ctx.height * 0.29, 76, 8, fill=ctx.accent, radius=round(ctx.radius.small / 1.5)))
     size = scale.display if len(title) <= 22 else round(scale.display * 0.79)
     out.append(
@@ -399,7 +433,7 @@ def _render_cover(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             palette.text,
             ctx.theme.heading_font,
             bold=True,
-            line_spacing=1.1,
+            line_spacing=spacing.line_display,
         )
     )
     out.append(
@@ -412,35 +446,40 @@ def _render_cover(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             scale.heading,
             palette.muted,
             ctx.theme.body_font,
+            line_spacing=spacing.line_body,
         )
     )
-    line_color = mix_hex(palette.background, palette.muted, 0.32)
-    out.append(Rect(margin, ctx.height - 96, ctx.width - margin * 2, 1, fill=line_color))
-    out.append(
-        _text(
-            margin,
-            ctx.height - 76,
-            ctx.width * 0.5,
-            24,
-            slide.note.strip() or "PPTMAKE · 模板",
-            scale.caption,
-            palette.muted,
-            ctx.theme.body_font,
-        )
-    )
-    out.append(
-        _text(
-            ctx.width - margin - 220,
-            ctx.height - 76,
-            220,
-            24,
-            "DESIGNED WITH PPTMAKE",
-            scale.caption,
-            palette.muted,
-            ctx.theme.body_font,
-            align=ALIGN_RIGHT,
-        )
-    )
+    footer = ctx.theme.footer.strip()
+    credit = ctx.theme.credit.strip()
+    if footer or credit:
+        out.append(Rect(margin, ctx.height - 96, ctx.width - margin * 2, ctx.stroke_width, fill=ctx.divider))
+        if footer:
+            out.append(
+                _text(
+                    margin,
+                    ctx.height - 76,
+                    ctx.width * 0.5,
+                    24,
+                    footer,
+                    scale.caption,
+                    palette.muted,
+                    ctx.theme.body_font,
+                )
+            )
+        if credit:
+            out.append(
+                _text(
+                    ctx.width - margin - 220,
+                    ctx.height - 76,
+                    220,
+                    24,
+                    credit,
+                    scale.caption,
+                    palette.muted,
+                    ctx.theme.body_font,
+                    align=ALIGN_RIGHT,
+                )
+            )
 
 
 def _render_agenda(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
@@ -502,7 +541,7 @@ def _render_section(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             ctx.margin,
             ctx.height * 0.14,
             ctx.width * 0.5,
-            180,
+            round(scale.section_number * 1.25),
             number,
             scale.section_number,
             mix_hex(palette.background, ctx.accent, 0.45),
@@ -544,32 +583,39 @@ def _render_section(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             scale.body,
             palette.muted,
             ctx.theme.body_font,
-            line_spacing=ctx.spacing.line,
+            line_spacing=ctx.spacing.line_body,
         )
     )
 
 
 def _render_bullets(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """要点：方标 + 单列文本。"""
+    """要点：方标 + 单列文本；行距与段距走令牌，条目间距不随条数漂移。"""
     palette = ctx.palette
     scale = ctx.type_scale
+    spacing = ctx.spacing
+    bullet = ctx.tokens.bullet
     top = _paint_heading(out, ctx, slide)
     items = slide.bullets or ("要点一：在此补充内容", "要点二：保持一行一个观点", "要点三：用数据或案例支撑")
-    max_line_height = round(scale.body * 3.5)
-    available = ctx.height - top - max_line_height
-    line_height = min(max_line_height, available / max(len(items), 1))
-    marker = round(scale.body * 0.6)
+    count = max(len(items), 1)
+    line_height = round(scale.body * spacing.line_body)
+    item_height = line_height * 2
+    gap = round(scale.body * spacing.space_after_item)
+    available = ctx.height - top - round(scale.body * 2)
+    step = item_height + gap
+    if step * count > available:
+        step = max(available / count, line_height)
+    if step < item_height:
+        item_height = round(step)
+    base_x = ctx.margin + round(scale.body * 1.5)
     for index, item in enumerate(items):
         level, label = split_bullet(item)
-        indent = round(scale.body * 1.0 * level)
-        marker_size = marker if level == 0 else round(marker * 0.72)
-        y = top + 8 + index * line_height
-        text_x = ctx.margin + indent + round(scale.body * 1.5)
-        text_width = ctx.width - ctx.margin * 2 - (text_x - ctx.margin)
+        indent = round(bullet.indent * level)
+        marker_size = bullet.size if level == 0 else round(bullet.size * 0.72)
+        y = top + round(scale.body * 0.4) + index * step
         out.append(
             Rect(
                 ctx.margin + indent,
-                y + line_height / 2 - marker_size / 2,
+                y + item_height / 2 - marker_size / 2,
                 marker_size,
                 marker_size,
                 fill=ctx.accent if level == 0 else palette.secondary,
@@ -578,17 +624,18 @@ def _render_bullets(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
         )
         out.append(
             _text(
-                text_x,
+                base_x,
                 y,
-                text_width,
-                line_height,
+                ctx.width - ctx.margin * 2 - round(scale.body * 1.5) - indent,
+                item_height,
                 label or item,
                 scale.body if len(label) <= 40 else scale.small,
                 palette.text if level == 0 else palette.muted,
                 ctx.theme.body_font,
                 anchor=ANCHOR_MIDDLE,
-                line_spacing=ctx.spacing.line,
+                line_spacing=spacing.line_body,
                 level=level,
+                indent=bullet.indent,
             )
         )
 
@@ -620,8 +667,8 @@ def _render_two_column(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> Non
                 card_width,
                 card_height,
                 fill=palette.surface,
-                line=mix_hex(palette.background, palette.muted, 0.28),
-                line_width=1,
+                line=ctx.border,
+                line_width=ctx.stroke_width,
                 radius=round(ctx.radius.card),
             )
         )
@@ -649,14 +696,15 @@ def _render_two_column(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> Non
             )
         )
         row_height = min(round(scale.body * 2.9), (card_height - round(scale.title * 2.95)) / max(len(group), 1))
+        bullet = ctx.tokens.bullet
         for row, item in enumerate(group):
             level, label = split_bullet(item)
-            indent = round(scale.body * 0.8 * level)
+            indent = round(bullet.indent * level)
             y = card_top + round(scale.title * 2.5) + row * row_height
             out.append(Oval(x + pad + indent + 2, y + row_height / 2 - 4, 8, 8, fill=accent))
             out.append(
                 _text(
-                    x + pad + indent + round(scale.body * 1.1),
+                    x + pad + round(scale.body * 1.1),
                     y,
                     card_width - pad * 2 - round(scale.body * 1.1) - indent,
                     row_height,
@@ -665,8 +713,9 @@ def _render_two_column(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> Non
                     palette.text if level == 0 else palette.muted,
                     ctx.theme.body_font,
                     anchor=ANCHOR_MIDDLE,
-                    line_spacing=spacing.line,
+                    line_spacing=spacing.line_body,
                     level=level,
+                    indent=bullet.indent,
                 )
             )
 
@@ -688,6 +737,7 @@ def _render_quote(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             mix_hex(palette.background, ctx.accent, 0.55),
             ctx.theme.heading_font,
             bold=True,
+            line_spacing=1.0,
         )
     )
     out.append(
@@ -700,7 +750,7 @@ def _render_quote(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             scale.quote if len(quote) <= 36 else round(scale.quote * 0.8),
             palette.text,
             ctx.theme.heading_font,
-            line_spacing=round(ctx.spacing.line + 0.1, 2),
+            line_spacing=ctx.spacing.line_body,
         )
     )
     out.append(Rect(ctx.margin + 30, ctx.height * 0.68, 80, 4, fill=ctx.accent, radius=2))
@@ -741,8 +791,8 @@ def _render_metrics(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 card_width,
                 card_height,
                 fill=palette.surface,
-                line=mix_hex(palette.background, palette.muted, 0.24),
-                line_width=1,
+                line=ctx.border,
+                line_width=ctx.stroke_width,
                 radius=round(ctx.radius.card),
             )
         )
@@ -785,7 +835,7 @@ def _render_timeline(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
     start = ctx.margin + 50
     end = ctx.width - ctx.margin - 50
     line_y = ctx.height * 0.55
-    out.append(Line(start, line_y, end, line_y, mix_hex(palette.background, palette.muted, 0.42), 3))
+    out.append(Line(start, line_y, end, line_y, ctx.divider, 3))
     step = (end - start) / (count - 1) if count > 1 else 0
     for index, (phase, detail) in enumerate(items):
         x = start + index * step
@@ -963,8 +1013,8 @@ def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             panel_width,
             panel_height,
             fill=palette.surface,
-            line=mix_hex(palette.background, palette.muted, 0.24),
-            line_width=1,
+            line=ctx.border,
+            line_width=ctx.stroke_width,
             radius=round(ctx.radius.card),
         )
     )
@@ -1010,19 +1060,20 @@ def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 fill=horizon,
             )
         )
-        out.append(
-            _text(
-                panel_x,
-                panel_y + panel_height - round(scale.small * 2.4),
-                panel_width,
-                round(scale.small * 1.6),
-                "图片占位 · 导出后在 PowerPoint 中替换",
-                scale.caption,
-                palette.muted,
-                ctx.theme.body_font,
-                align=ALIGN_CENTER,
+        if ctx.hints:
+            out.append(
+                _text(
+                    panel_x,
+                    panel_y + panel_height - round(scale.small * 2.4),
+                    panel_width,
+                    round(scale.small * 1.6),
+                    "图片占位 · 导出后在 PowerPoint 中替换",
+                    scale.caption,
+                    palette.muted,
+                    ctx.theme.body_font,
+                    align=ALIGN_CENTER,
+                )
             )
-        )
 
 
 def _render_comparison(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
@@ -1117,7 +1168,7 @@ def _render_comparison(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> Non
             )
         )
         if index:
-            out.append(Line(margin, y, ctx.width - margin, y, mix_hex(palette.background, palette.muted, 0.24), 1))
+            out.append(Line(margin, y, ctx.width - margin, y, ctx.divider, ctx.stroke_width))
         out.append(
             _text(
                 margin + spacing.gap,
@@ -1186,8 +1237,8 @@ def _render_chart(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             card_width,
             card_height,
             fill=palette.surface,
-            line=mix_hex(palette.background, palette.muted, 0.24),
-            line_width=1,
+            line=ctx.border,
+            line_width=ctx.stroke_width,
             radius=round(ctx.radius.card),
         )
     )
@@ -1204,7 +1255,7 @@ def _render_chart(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             plot_y,
             plot_x,
             plot_y + plot_height,
-            mix_hex(palette.background, palette.muted, 0.4),
+            ctx.divider,
             2,
         )
     )
@@ -1243,23 +1294,24 @@ def _render_chart(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 align=ALIGN_CENTER,
             )
         )
-    out.append(
-        _text(
-            margin,
-            card_top + card_height - round(scale.body * 1.9),
-            card_width,
-            round(scale.small * 1.6),
-            "图表占位 · 导出后可在 PowerPoint 中替换为真实图表",
-            scale.caption,
-            palette.muted,
-            ctx.theme.body_font,
-            align=ALIGN_CENTER,
+    if ctx.hints:
+        out.append(
+            _text(
+                margin,
+                card_top + card_height - round(scale.body * 1.9),
+                card_width,
+                round(scale.small * 1.6),
+                "图表占位 · 导出后可在 PowerPoint 中替换为真实图表",
+                scale.caption,
+                palette.muted,
+                ctx.theme.body_font,
+                align=ALIGN_CENTER,
+            )
         )
-    )
 
 
 def _render_contact(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """联系方式：左侧联系信息，右侧二维码占位与页脚。"""
+    """联系方式：左侧联系信息，右侧二维码占位（仅编辑器画布提示）。"""
     palette = ctx.palette
     scale = ctx.type_scale
     spacing = ctx.spacing
@@ -1299,7 +1351,7 @@ def _render_contact(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             scale.body,
             palette.muted,
             ctx.theme.body_font,
-            line_spacing=spacing.line,
+            line_spacing=spacing.line_body,
         )
     )
     rows = slide.bullets[:4] or ("邮箱|hello@example.com", "电话|+86 138 0000 0000", "地址|上海市 · 徐汇区")
@@ -1334,60 +1386,45 @@ def _render_contact(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 bold=True,
             )
         )
-    qr_side = round(min(ctx.height * 0.3, ctx.width * 0.18))
-    qr_x = ctx.width - margin - qr_side
-    qr_y = ctx.height * 0.3
-    out.append(
-        Rect(
-            qr_x,
-            qr_y,
-            qr_side,
-            qr_side,
-            fill=palette.surface,
-            line=mix_hex(palette.background, palette.muted, 0.32),
-            line_width=1,
-            radius=round(ctx.radius.small),
-        )
-    )
-    for ratio_x, ratio_y in ((0.14, 0.14), (0.62, 0.14), (0.14, 0.62)):
+    if ctx.hints:
+        qr_side = round(min(ctx.height * 0.3, ctx.width * 0.18))
+        qr_x = ctx.width - margin - qr_side
+        qr_y = ctx.height * 0.3
         out.append(
             Rect(
-                qr_x + qr_side * ratio_x,
-                qr_y + qr_side * ratio_y,
-                qr_side * 0.24,
-                qr_side * 0.24,
-                fill=palette.text,
+                qr_x,
+                qr_y,
+                qr_side,
+                qr_side,
+                fill=palette.surface,
+                line=ctx.border,
+                line_width=ctx.stroke_width,
+                radius=round(ctx.radius.small),
             )
         )
-    out.append(
-        _text(
-            qr_x,
-            qr_y + qr_side + 6,
-            qr_side,
-            round(scale.caption * 1.6),
-            "二维码占位",
-            scale.caption,
-            palette.muted,
-            ctx.theme.body_font,
-            align=ALIGN_CENTER,
+        for ratio_x, ratio_y in ((0.14, 0.14), (0.62, 0.14), (0.14, 0.62)):
+            out.append(
+                Rect(
+                    qr_x + qr_side * ratio_x,
+                    qr_y + qr_side * ratio_y,
+                    qr_side * 0.24,
+                    qr_side * 0.24,
+                    fill=palette.text,
+                )
+            )
+        out.append(
+            _text(
+                qr_x,
+                qr_y + qr_side + 6,
+                qr_side,
+                round(scale.caption * 1.6),
+                "二维码占位",
+                scale.caption,
+                palette.muted,
+                ctx.theme.body_font,
+                align=ALIGN_CENTER,
+            )
         )
-    )
-    footer_y = ctx.height - round(scale.body * 2.8)
-    out.append(
-        Line(margin, footer_y, ctx.width - margin, footer_y, mix_hex(palette.background, palette.muted, 0.32), 1)
-    )
-    out.append(
-        _text(
-            margin,
-            footer_y + 8,
-            ctx.width - margin * 2,
-            round(scale.caption * 1.8),
-            "PPTMAKE · 联系方式",
-            scale.caption,
-            palette.muted,
-            ctx.theme.body_font,
-        )
-    )
 
 
 _RENDERERS = {
@@ -1428,13 +1465,15 @@ def _paint_logo(out: list[Primitive], ctx: _Ctx) -> None:
 def _paint_footer(
     out: list[Primitive],
     ctx: _Ctx,
+    slide: SlideSpec,
     *,
     page_number: int | None,
     page_total: int | None,
 ) -> None:
-    """页脚与页码：模板配置了页脚或调用方传入页码时才追加。"""
+    """页脚与页码：页码按版式抑制，页脚只在模板配置时追加。"""
     theme = ctx.theme
-    show_number = theme.show_page_number and page_number is not None
+    body_layout_has_number = slide.layout not in theme.page_number_hidden_layouts
+    show_number = theme.show_page_number and page_number is not None and body_layout_has_number
     if not theme.footer and not show_number:
         return
     size = ctx.type_scale.caption
@@ -1480,8 +1519,13 @@ def build_draw_list(  # noqa: PLR0913 - 版式入口需要页码 / 画布尺寸�
     height: int | None = None,
     page_number: int | None = None,
     page_total: int | None = None,
+    hints: bool = False,
 ) -> tuple[Primitive, ...]:
-    """生成单页绘制指令；``page_number`` 非空时追加页码，未知布局回落到「要点」。"""
+    """生成单页绘制指令。
+
+    ``hints`` 只在编辑器画布开启，用于显示「图片 / 图表 / 二维码占位」
+    之类的编辑提示；导出成品始终使用默认的 ``False``。
+    """
     default_width, default_height = design_size(template.aspect)
     ctx = _Ctx(
         width=float(width or default_width),
@@ -1489,11 +1533,13 @@ def build_draw_list(  # noqa: PLR0913 - 版式入口需要页码 / 画布尺寸�
         palette=template.theme.palette,
         theme=template.theme,
         accent=_slide_accent(slide, template.theme.palette),
+        aspect=template.aspect,
+        hints=hints,
     )
     out: list[Primitive] = [Rect(0, 0, ctx.width, ctx.height, fill=ctx.palette.background)]
     _paint_decor(out, ctx)
     renderer = _RENDERERS.get(slide.layout, _render_bullets)
     renderer(out, ctx, slide)
     _paint_logo(out, ctx)
-    _paint_footer(out, ctx, page_number=page_number, page_total=page_total)
+    _paint_footer(out, ctx, slide, page_number=page_number, page_total=page_total)
     return tuple(out)

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 import fcmd
 from fcmd.apps.pptmake import _office
@@ -36,6 +36,7 @@ from fcmd.apps.pptmake._core import (
     STYLES,
     TEMPLATE_SUFFIX,
     TemplateError,
+    TemplateSpec,
     default_pptx_path,
     default_template_path,
     load_template,
@@ -46,7 +47,7 @@ from fcmd.apps.pptmake._core import (
     template_from_mapping,
     template_to_mapping,
 )
-from fcmd.apps.pptmake._design import build_draw_list
+from fcmd.apps.pptmake._design import Text, build_draw_list
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.apps.pptmake._preview import overflow_issues
 from fcmd.console import print_error
@@ -167,7 +168,7 @@ def inspect_command(template: Path) -> None:
 
 @fcmd.tool("pptmake", subcommand="validate", help="检查模板结构与文本溢出", description=_DESCRIPTION)
 def validate_command(template: Path) -> None:
-    """校验模板：布局 / 颜色 / 图片路径与逐页文本溢出。
+    """校验模板：布局 / 颜色 / 图片路径、文本溢出与最小字号。
 
     Parameters
     ----------
@@ -179,23 +180,47 @@ def validate_command(template: Path) -> None:
     except TemplateError as exc:
         _print_error(str(exc))
         return
-    total = 0
-    missing_images = 0
+    overflow, missing, small = _quality_issues(spec, verbose=True)
+    if overflow or missing or small:
+        print(
+            f"共有 {overflow} 处文本溢出、{missing} 个缺失图片、{small} 处小于 {_MIN_FONT_PT:g}pt 的文字；"
+            "建议在 pptmakew 中精简文字 / 修正路径。"
+        )
+        return
+    print(f"校验通过：{len(spec.slides)} 页，未发现文本溢出、缺失图片或过小字号。")
+
+
+_MIN_FONT_PT: Final[float] = 12.0
+# 设计坐标 96 单位 / 英寸，1 单位 = 0.75pt。
+_MIN_FONT_UNITS: Final[float] = _MIN_FONT_PT * 96 / 72
+
+
+def _quality_issues(spec: TemplateSpec, *, verbose: bool) -> tuple[int, int, int]:
+    """统计（溢出, 缺失图片, 过小字号）；``verbose`` 为真时逐页打印细节。"""
+    overflow = 0
+    missing = 0
+    small = 0
     for index, slide in enumerate(spec.slides, start=1):
         if slide.image and not Path(slide.image).is_file():
-            missing_images += 1
-            _print_error(f"第 {index} 页图片不存在：{slide.image}")
+            missing += 1
+            if verbose:
+                _print_error(f"第 {index} 页图片不存在：{slide.image}")
         primitives = build_draw_list(slide, spec, page_number=index, page_total=len(spec.slides))
         issues = overflow_issues(primitives)
         if issues:
-            total += len(issues)
-            print(f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{len(issues)} 处可能溢出")
-            for issue in issues[:3]:
-                print(f"  - {issue.message}")
-    if total or missing_images:
-        print(f"共有 {total} 处文本溢出、{missing_images} 个缺失图片；建议在 pptmakew 中精简文字 / 修正路径。")
-        return
-    print(f"校验通过：{len(spec.slides)} 页，未发现文本溢出或缺失图片。")
+            overflow += len(issues)
+            if verbose:
+                print(f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{len(issues)} 处可能溢出")
+                for issue in issues[:3]:
+                    print(f"  - {issue.message}")
+        tiny = sum(1 for primitive in primitives if isinstance(primitive, Text) and primitive.size < _MIN_FONT_UNITS)
+        if tiny:
+            small += tiny
+            if verbose:
+                print(
+                    f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{tiny} 处字号小于 {_MIN_FONT_PT:g}pt"
+                )
+    return overflow, missing, small
 
 
 @fcmd.tool("pptmake", subcommand="doctor", help="检查 PPTX / PDF 依赖与运行环境", description=_DESCRIPTION)
@@ -219,8 +244,12 @@ def export_command(
     output: Path | None = None,
     overwrite: bool = False,
     pdf: bool = False,
+    force: bool = False,
 ) -> None:
     """把模板渲染成 ``.pptx``，可选再转一份 PDF。
+
+    导出前会执行与 ``validate`` 相同的检查；存在溢出、缺失图片或过小
+    字号时默认拒绝导出，需显式 ``--force``。
 
     Parameters
     ----------
@@ -232,6 +261,8 @@ def export_command(
         允许覆盖已存在的 PPTX
     pdf:
         同时用 LibreOffice 转出同目录 PDF（未安装时给出提示）
+    force:
+        忽略校验问题，强制导出
     """
     target = output or default_pptx_path(template)
     if target.exists() and not overwrite:
@@ -239,6 +270,17 @@ def export_command(
         return
     try:
         spec = load_template(template)
+    except TemplateError as exc:
+        _print_error(str(exc))
+        return
+    overflow, missing, small = _quality_issues(spec, verbose=not force)
+    if (overflow or missing or small) and not force:
+        print(
+            f"导出已取消：{overflow} 处文本溢出、{missing} 个缺失图片、{small} 处过小字号；"
+            "修正后重试，或使用 --force 强制导出。"
+        )
+        return
+    try:
         count = export_pptx(spec, target)
     except TemplateError as exc:
         _print_error(str(exc))
@@ -257,11 +299,12 @@ def export_command(
 
 
 @fcmd.tool("pptmake", subcommand="build", help="用数据文件批量生成 PPTX", description=_DESCRIPTION)
-def build_command(
+def build_command(  # noqa: PLR0911 - 每个失败分支给出具体原因并直接返回
     data: Path,
     template: Path | None = None,
     output: Path | None = None,
     overwrite: bool = False,
+    force: bool = False,
 ) -> None:
     """按 JSON 数据文件生成 PPTX；每项字段与模板 ``slides`` 一致。
 
@@ -275,6 +318,8 @@ def build_command(
         输出 PPTX 路径；缺省与数据文件同名
     overwrite:
         允许覆盖已存在的输出
+    force:
+        忽略校验问题，强制导出
     """
     if not data.is_file():
         _print_error(f"数据文件不存在：{data}")
@@ -297,6 +342,17 @@ def build_command(
         mapping = template_to_mapping(base)
         mapping["slides"] = list(slides)
         spec = template_from_mapping(mapping)
+    except TemplateError as exc:
+        _print_error(str(exc))
+        return
+    overflow, missing, small = _quality_issues(spec, verbose=not force)
+    if (overflow or missing or small) and not force:
+        print(
+            f"导出已取消：{overflow} 处文本溢出、{missing} 个缺失图片、{small} 处过小字号；"
+            "修正后重试，或使用 --force 强制导出。"
+        )
+        return
+    try:
         count = export_pptx(spec, target)
     except TemplateError as exc:
         _print_error(str(exc))

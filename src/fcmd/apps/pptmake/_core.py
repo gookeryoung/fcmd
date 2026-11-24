@@ -20,6 +20,24 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 
+from fcmd.apps.pptmake._palette import (
+    DEFAULT_BODY_FONT,
+    DEFAULT_HEADING_FONT,
+    IMAGE_FIT_CONTAIN,
+    IMAGE_FIT_COVER,
+    IMAGE_FIT_TEXT,
+    IMAGE_FITS,
+    PALETTE_FIELDS,
+    PALETTES,
+    STYLE_AURORA,
+    STYLE_CORAL,
+    STYLE_CUSTOM,
+    STYLE_GRAPHITE,
+    STYLE_PORCELAIN,
+    STYLE_TEXT,
+    STYLES,
+    Palette,
+)
 from fcmd.apps.pptmake._tokens import DesignTokens, TokenError, tokens_from_mapping, tokens_to_mapping
 
 __all__ = [
@@ -35,6 +53,7 @@ __all__ = [
     "DECOR_MINIMAL",
     "DECOR_ORBS",
     "DECOR_TEXT",
+    "DEFAULT_PAGE_NUMBER_HIDDEN",
     "IMAGE_FITS",
     "IMAGE_FIT_CONTAIN",
     "IMAGE_FIT_COVER",
@@ -94,7 +113,7 @@ __all__ = [
     "template_to_mapping",
 ]
 
-TEMPLATE_VERSION: Final[int] = 3
+TEMPLATE_VERSION: Final[int] = 4
 TEMPLATE_SUFFIX: Final[str] = ".pptmtpl.json"
 
 # ---------------------------------------------------------------------- #
@@ -164,6 +183,13 @@ LAYOUT_TEXT: Final[dict[str, str]] = {
     LAYOUT_CHART: "图表",
     LAYOUT_CONTACT: "联系方式",
 }
+# 封面、章节、结尾与联系页默认不编页码；可在模板里覆盖。
+DEFAULT_PAGE_NUMBER_HIDDEN: Final[tuple[str, ...]] = (
+    LAYOUT_COVER,
+    LAYOUT_SECTION,
+    LAYOUT_CLOSING,
+    LAYOUT_CONTACT,
+)
 
 # ---------------------------------------------------------------------- #
 # 装饰样式
@@ -183,40 +209,6 @@ DECOR_TEXT: Final[dict[str, str]] = {
 # ---------------------------------------------------------------------- #
 # 风格预设
 # ---------------------------------------------------------------------- #
-STYLE_AURORA: Final[str] = "aurora"
-STYLE_PORCELAIN: Final[str] = "porcelain"
-STYLE_GRAPHITE: Final[str] = "graphite"
-STYLE_CORAL: Final[str] = "coral"
-STYLE_CUSTOM: Final[str] = "custom"
-STYLES: Final[tuple[str, ...]] = (STYLE_AURORA, STYLE_PORCELAIN, STYLE_GRAPHITE, STYLE_CORAL)
-STYLE_TEXT: Final[dict[str, str]] = {
-    STYLE_AURORA: "极光蓝",
-    STYLE_PORCELAIN: "素瓷青",
-    STYLE_GRAPHITE: "石墨金",
-    STYLE_CORAL: "珊瑚暖",
-    STYLE_CUSTOM: "自定义",
-}
-
-IMAGE_FIT_COVER: Final[str] = "cover"
-IMAGE_FIT_CONTAIN: Final[str] = "contain"
-IMAGE_FITS: Final[tuple[str, ...]] = (IMAGE_FIT_COVER, IMAGE_FIT_CONTAIN)
-IMAGE_FIT_TEXT: Final[dict[str, str]] = {
-    IMAGE_FIT_COVER: "裁剪填满",
-    IMAGE_FIT_CONTAIN: "完整显示",
-}
-
-PALETTE_FIELDS: Final[tuple[tuple[str, str], ...]] = (
-    ("background", "背景"),
-    ("surface", "卡片"),
-    ("accent", "强调"),
-    ("secondary", "辅助"),
-    ("text", "正文"),
-    ("muted", "次要"),
-)
-
-DEFAULT_HEADING_FONT: Final[str] = "Microsoft YaHei UI"
-DEFAULT_BODY_FONT: Final[str] = "Microsoft YaHei UI"
-
 _HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
 
 
@@ -225,59 +217,11 @@ class TemplateError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class Palette:
-    """模板调色板：背景 / 卡片 / 强调 / 辅助 / 正文 / 次要。"""
-
-    background: str = "#0B1020"
-    surface: str = "#151C33"
-    accent: str = "#5B8CFF"
-    secondary: str = "#8B5CF6"
-    text: str = "#F4F6FB"
-    muted: str = "#9AA4BF"
-
-
-_PRESETS: Final[dict[str, Palette]] = {
-    STYLE_AURORA: Palette(
-        background="#0B1020",
-        surface="#151C33",
-        accent="#5B8CFF",
-        secondary="#8B5CF6",
-        text="#F4F6FB",
-        muted="#9AA4BF",
-    ),
-    STYLE_PORCELAIN: Palette(
-        background="#F7F4EE",
-        surface="#FFFFFF",
-        accent="#1F8A7A",
-        secondary="#D97757",
-        text="#1D2A2A",
-        muted="#6B7A78",
-    ),
-    STYLE_GRAPHITE: Palette(
-        background="#17181C",
-        surface="#22242B",
-        accent="#E9B44C",
-        secondary="#6C8EBF",
-        text="#F2F2F0",
-        muted="#9A9CA5",
-    ),
-    STYLE_CORAL: Palette(
-        background="#FFF7F2",
-        surface="#FFFFFF",
-        accent="#E4572E",
-        secondary="#2A6F97",
-        text="#2B211D",
-        muted="#8A746B",
-    ),
-}
-
-
-@dataclass(frozen=True, slots=True)
 class Theme:
     """风格：预设名、调色板、字体、装饰样式与设计令牌。"""
 
     style: str = STYLE_AURORA
-    palette: Palette = field(default_factory=lambda: _PRESETS[STYLE_AURORA])
+    palette: Palette = field(default_factory=lambda: PALETTES[STYLE_AURORA])
     heading_font: str = DEFAULT_HEADING_FONT
     body_font: str = DEFAULT_BODY_FONT
     decor: str = DECOR_ORBS
@@ -285,6 +229,9 @@ class Theme:
     footer: str = ""
     show_page_number: bool = True
     logo: str = ""
+    eyebrow: str = ""
+    credit: str = ""
+    page_number_hidden_layouts: tuple[str, ...] = DEFAULT_PAGE_NUMBER_HIDDEN
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,7 +346,7 @@ def normalize_style(value: object) -> str:
 
 def palette_for_style(style: str) -> Palette:
     """返回预设风格的调色板；``custom`` 或无匹配时返回极光蓝。"""
-    return _PRESETS.get(style, _PRESETS[STYLE_AURORA])
+    return PALETTES.get(style, PALETTES[STYLE_AURORA])
 
 
 def style_label(style: str) -> str:
@@ -422,7 +369,7 @@ def new_slide(layout: str) -> SlideSpec:
         LAYOUT_COVER: SlideSpec(
             kind,
             title="让想法拥有舞台",
-            subtitle="PPTMAKE 模板设计器 · 2026",
+            subtitle="品牌演示模板 · 2026",
             note="封面：标题 + 副标题，适合品牌发布会与方案汇报。",
         ),
         LAYOUT_AGENDA: SlideSpec(
@@ -475,7 +422,7 @@ def new_slide(layout: str) -> SlideSpec:
             kind,
             title="让主视觉先说话",
             subtitle="右侧留出大图区域，文字保持克制，适合品牌与产品发布。",
-            bullets=("主视觉占据右侧约一半版面", "标题与正文左对齐，层级清晰", "导出后可将占位区域替换为真实图片"),
+            bullets=("主视觉占据右侧约一半版面", "标题与正文左对齐，层级清晰", "图文比例适合品牌与产品发布"),
         ),
         LAYOUT_COMPARISON: SlideSpec(
             kind,
@@ -567,6 +514,9 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
             "footer": template.theme.footer,
             "show_page_number": template.theme.show_page_number,
             "logo": template.theme.logo,
+            "eyebrow": template.theme.eyebrow,
+            "credit": template.theme.credit,
+            "page_number_hidden_layouts": list(template.theme.page_number_hidden_layouts),
         },
         "layouts": list(template.layouts),
         "slides": [
@@ -653,6 +603,15 @@ def _theme_tokens(raw: object) -> DesignTokens:
         raise TemplateError(str(exc)) from exc
 
 
+def _hidden_layouts(raw: object) -> tuple[str, ...]:
+    """解析页码抑制版式；缺省沿用默认集合，非法布局名报错。"""
+    if raw is None:
+        return DEFAULT_PAGE_NUMBER_HIDDEN
+    if not isinstance(raw, (list, tuple)):
+        raise TemplateError("theme.page_number_hidden_layouts 需为布局名数组")
+    return tuple(dict.fromkeys(normalize_layout(item) for item in raw))
+
+
 def template_from_mapping(raw: object) -> TemplateSpec:
     """把 JSON 字典解析成模板；字段缺失用默认值，非法值抛 :class:`TemplateError`。"""
     if not isinstance(raw, dict):
@@ -684,6 +643,9 @@ def template_from_mapping(raw: object) -> TemplateSpec:
         footer=str(theme_raw.get("footer") or ""),
         show_page_number=bool(theme_raw.get("show_page_number", True)),
         logo=str(theme_raw.get("logo") or ""),
+        eyebrow=str(theme_raw.get("eyebrow") or ""),
+        credit=str(theme_raw.get("credit") or ""),
+        page_number_hidden_layouts=_hidden_layouts(theme_raw.get("page_number_hidden_layouts")),
     )
 
     layouts_raw = raw.get("layouts", LAYOUTS)
