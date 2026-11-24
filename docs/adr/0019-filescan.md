@@ -526,10 +526,11 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 
 **有效期与容量（防止无限增长）：**
 
-- `stored_at` 记录写入时间（epoch 秒）；查询只认 `stored_at >= now - CACHE_TTL_SECONDS`
-  （默认 7 天）的条目，过期视同未命中，下次扫描重扫并刷新；
-- 写入时顺带删除过期行；条目总数超过 `CACHE_MAX_ENTRIES`（默认 10 万）时按
-  `stored_at` 最旧优先裁剪，单文件体积随之有界；
+- 条目长期有效，不按写入时间过期：只有 `size` / `mtime_ns` 或 `cache_key`
+  变化才失效，缓存跨天、跨周复用同一结果；
+- `stored_at` 记录写入时间（epoch 秒），仅用于容量淘汰：条目总数超过
+  `CACHE_MAX_ENTRIES`（默认 10 万）时按 `stored_at` 最旧优先裁剪，单文件体积
+  随之有界；需要立即释放时用 CLI / GUI 的清理缓存；
 - 表结构版本升到 2：打开时按 `meta.schema` 判定，版本不符则删表按当前结构重建
   （旧条目一次性失效，不尝试逐列迁移）。
 

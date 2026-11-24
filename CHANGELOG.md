@@ -7,6 +7,8 @@
 
 ### 变更
 
+- `filescan` 结果缓存改为长期有效：去掉 7 天 TTL，条目只在文件大小 / 修改时间或
+  规则与命中相关选项变化时失效；保留 10 万条容量上限（最旧优先淘汰）与手动清理。
 - `filescan` 新增 SARIF 2.1.0 报告格式（`--format sarif` / GUI 导出 `.sarif`）：每条命中
   一条 `result`，带规则元数据、行列区域、打码片段与 invocation 统计；严重级映射
   `info/low → note`、`medium → warning`、`high/critical → error`，可直接被 GitHub 等

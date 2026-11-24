@@ -13,7 +13,6 @@ from fcmd.apps.filescan import _cache as cache_module
 from fcmd.apps.filescan import _engine
 from fcmd.apps.filescan._cache import (
     CACHE_SCHEMA_VERSION,
-    CACHE_TTL_SECONDS,
     ScanCache,
     cache_fingerprint,
     default_cache_path,
@@ -271,25 +270,13 @@ def test_schema_version_mismatch_rebuilds_entries(cache: ScanCache, tmp_path: Pa
     reopened.close()
 
 
-def test_expired_entry_is_not_reused(cache: ScanCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """超过 TTL 的条目视同未命中；重新写入后恢复可用。"""
+def test_entry_stays_valid_without_ttl(cache: ScanCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """条目不按写入时间过期：时间推进很久后仍可复用。"""
     target = tmp_path / "a.txt"
     cache.store_many("k", [(target, 3, 4, None)])
-    later = cache_module._now() + CACHE_TTL_SECONDS + 1
+    later = cache_module._now() + 3650 * 86400
     monkeypatch.setattr(cache_module, "_now", lambda: later)
-    assert cache.lookup_many("k", [(target, 3, 4)]) == {}
-
-    cache.store_many("k", [(target, 3, 4, None)])
     assert cache.lookup_many("k", [(target, 3, 4)]) == {target: None}
-
-
-def test_store_prunes_expired_entries(cache: ScanCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """写入新结果时顺带删除已过期条目，缓存不会留下永远用不到的行。"""
-    cache.store_many("old", [(tmp_path / "a.txt", 3, 4, None)])
-    later = cache_module._now() + CACHE_TTL_SECONDS + 1
-    monkeypatch.setattr(cache_module, "_now", lambda: later)
-    cache.store_many("new", [(tmp_path / "b.txt", 5, 6, None)])
-    assert cache.clear() == 1
 
 
 def test_store_trims_oldest_entries_to_capacity(

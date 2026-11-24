@@ -8,9 +8,10 @@
 - **复用条件**：同一路径的 ``size`` 与 ``mtime_ns`` 都与缓存一致，且 ``cache_key``
   一致才复用；文件内容变化若同时改变大小或修改时间即失效（缓存不做全量内容
   哈希，避免把复用变成又一次读盘）。
-- **有效期与容量**：条目写入后 :data:`CACHE_TTL_SECONDS`（默认 7 天）内有效，
-  过期视同未命中；写入时顺带删除过期条目，并在总数超过 :data:`CACHE_MAX_ENTRIES`
-  （默认 10 万条）时按 ``stored_at`` 最旧优先裁剪，避免缓存无限增长。
+- **有效期与容量**：条目长期有效，不按写入时间过期；文件大小 / 修改时间或
+  缓存指纹（规则与命中相关选项）变化时才失效。条目总数超过
+  :data:`CACHE_MAX_ENTRIES`（默认 10 万条）时按 ``stored_at`` 最旧优先裁剪，
+  避免缓存无限增长；必要时由 CLI / GUI 手动清理。
 - **并发安全**：只有扫描的主进程打开连接并读写，进程池 / 线程池的 worker 只
   返回结果、不接触数据库；WAL + ``busy_timeout`` 允许多个扫描进程同时存在，
   写冲突超时即降级为「本次不写缓存」，不影响扫描。
@@ -46,7 +47,6 @@ if TYPE_CHECKING:
 __all__ = [
     "CACHE_MAX_ENTRIES",
     "CACHE_SCHEMA_VERSION",
-    "CACHE_TTL_SECONDS",
     "ScanCache",
     "cache_fingerprint",
     "default_cache_path",
@@ -54,9 +54,6 @@ __all__ = [
 
 CACHE_SCHEMA_VERSION = 2
 """缓存表结构版本；与文件内记录不一致时重建。"""
-
-CACHE_TTL_SECONDS = 7 * 24 * 3600
-"""条目有效期（秒）：写入超过该时长的条目不参与复用，由下一次扫描重扫并刷新。"""
 
 CACHE_MAX_ENTRIES = 100_000
 """条目总数上限；写入后超出时按 ``stored_at`` 最旧优先删除。"""
@@ -268,15 +265,14 @@ class ScanCache:
 
         def action(conn: sqlite3.Connection) -> dict[Path, FileHit | None]:
             found: dict[Path, FileHit | None] = {}
-            cutoff = _now() - CACHE_TTL_SECONDS
             for start in range(0, len(items), _LOOKUP_BATCH):
                 batch = items[start : start + _LOOKUP_BATCH]
                 keys = [_path_key(path) for path, _size, _mtime in batch]
                 placeholders = ",".join("?" * len(keys))
                 rows = conn.execute(
                     "SELECT path, size, mtime_ns, encoding, has_hit, matches FROM entries "
-                    f"WHERE cache_key = ? AND stored_at >= ? AND path IN ({placeholders})",
-                    [cache_key, cutoff, *keys],
+                    f"WHERE cache_key = ? AND path IN ({placeholders})",
+                    [cache_key, *keys],
                 ).fetchall()
                 stored = {row[0]: row for row in rows}
                 for path, size, mtime_ns in batch:
@@ -299,8 +295,8 @@ class ScanCache:
     def store_many(self, cache_key: str, items: Sequence[tuple[Path, int, int, FileHit | None]]) -> None:
         """批量写入扫描结果；``hit=None`` 表示「实扫过且无命中」，同样缓存。
 
-        写入后顺带删除过期条目，并在总数超过 :data:`CACHE_MAX_ENTRIES` 时按
-        ``stored_at`` 最旧优先裁剪。
+        条目长期有效；总数超过 :data:`CACHE_MAX_ENTRIES` 时按 ``stored_at``
+        最旧优先裁剪。
         """
         if not self._conn or not cache_key or not items:
             return
@@ -318,7 +314,6 @@ class ScanCache:
             )
             for path, size, mtime_ns, hit in items
         ]
-        cutoff = now - CACHE_TTL_SECONDS
 
         def action(conn: sqlite3.Connection) -> None:
             conn.executemany(
@@ -326,7 +321,6 @@ class ScanCache:
                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
-            conn.execute("DELETE FROM entries WHERE stored_at < ?", (cutoff,))
             excess = int(conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]) - CACHE_MAX_ENTRIES
             if excess > 0:
                 conn.execute(
