@@ -85,6 +85,13 @@ def test_scan_json_format(sample_dir: Path, capsys: pytest.CaptureFixture[str]) 
     assert payload["hits"][0]["matches"][0]["excerpt"] == "13*******78"
 
 
+def test_scan_sarif_to_stdout(sample_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    scan_command(paths=[sample_dir], format="sarif")
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["version"] == "2.1.0"
+    assert payload["runs"][0]["results"]
+
+
 def test_scan_csv_to_file(sample_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = tmp_path / "out" / "report.csv"
     scan_command(paths=[sample_dir], format="csv", output=target)

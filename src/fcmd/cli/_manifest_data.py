@@ -189,7 +189,7 @@ DESCRIPTIONS: dict[str, str] = {
     "filedate": "添加/更新文件日期前缀",
     "filelevel": "设置文件等级",
     "filerename": "正则替换文件名主干",
-    "filescan": "目录敏感内容扫描：关键词/正则与 and·or·not 表达式组合判定，按文件聚合命中行，默认打码，可导出文本/JSON/CSV",
+    "filescan": "目录敏感内容扫描：关键词/正则与 and·or·not 表达式组合判定，按文件聚合命中行，默认打码，可导出文本/JSON/CSV/SARIF",
     "filescanw": "目录敏感内容扫描：规则表达式、并行扫描、按文件聚合、打码与多格式报告（Qt）",
     "filesearch": "按文件名 glob 搜索",
     "filesync": "文件夹比较与同步（参考 FreeFileSync）：compare 按时间/大小/内容比较两侧，sync 支持双向/镜像/更新三种模式，可用 --preview 预览，冲突项自动跳过",
@@ -534,7 +534,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "732a7eb63a1717579f3b28e207dc59ff"
+DIGEST = "ea66cadefb2c9052eef3d081a67c8bcd"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

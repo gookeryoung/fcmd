@@ -1,4 +1,4 @@
-"""filescan 报告：打码、过滤与文本 / JSON / CSV 导出（纯逻辑）。
+"""filescan 报告：打码、过滤与文本 / JSON / CSV / SARIF 导出（纯逻辑）。
 
 默认打码：命中文本长度 ≥ 6 时保留首尾各 2 个字符，中间以 ``*`` 替换；更短的
 整体替换为 ``***``。``include_raw=True`` 时才输出原文，供调用方显式开启。
@@ -34,11 +34,37 @@ __all__ = [
     "result_to_csv",
     "result_to_json",
     "result_to_mapping",
+    "result_to_sarif",
     "scan_summary",
     "write_report",
 ]
 
-REPORT_FORMATS: tuple[str, ...] = ("text", "json", "csv")
+REPORT_FORMATS: tuple[str, ...] = ("text", "json", "csv", "sarif")
+
+SARIF_VERSION = "2.1.0"
+"""导出 SARIF 的规范版本。"""
+
+SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
+"""SARIF 2.1.0 JSON Schema 地址。"""
+
+_SARIF_LEVELS = {"info": "note", "low": "note", "medium": "warning", "high": "error", "critical": "error"}
+"""严重级到 SARIF ``level`` 的映射：低风险给 note，中风险 warning，高风险 error。"""
+
+_LEVEL_RANK = {"note": 1, "warning": 2, "error": 3}
+"""SARIF 级别高低，用于同一规则多次命中时取最严级别。"""
+
+_EXPRESSION_RULE_ID = "expression"
+"""表达式命中（无正向规则明细）在 SARIF 中使用的伪规则 id。"""
+
+
+def _sarif_level(severity: str) -> str:
+    """严重级转 SARIF 级别；缺省（``""``）按 ``warning``。"""
+    return _SARIF_LEVELS.get(severity, "warning")
+
+
+def _artifact_uri(path: Path) -> str:
+    """文件路径转 SARIF ``artifactLocation.uri``：绝对路径用 ``file://``，相对路径原样。"""
+    return path.as_uri() if path.is_absolute() else path.as_posix()
 
 
 _RISK_WEIGHTS = {"info": 1, "low": 2, "medium": 4, "high": 8, "critical": 12}
@@ -174,6 +200,120 @@ def result_to_csv(result: ScanResult, include_raw: bool = False) -> str:
                 ]
             )
     return "\ufeff" + buffer.getvalue()
+
+
+def result_to_sarif(result: ScanResult, include_raw: bool = False) -> str:
+    """序列化为 SARIF 2.1.0（静态分析结果交换格式），可直接被 GitHub 等平台消费。
+
+    每条 ``RuleMatch`` 一条 ``result``；表达式命中（无正向规则明细）用伪规则
+    ``expression`` 占位。严重级映射 ``info/low → note``、``medium → warning``、
+    ``high/critical → error``；缺省严重级按 ``warning``。文件路径用 ``file://``
+    绝对 URI（相对路径原样输出），区域按行号与列号给出，默认打码。
+    """
+    rules: dict[str, dict[str, Any]] = {}
+    results: list[dict[str, Any]] = []
+
+    def _rule_entry(rule_id: str, name: str, severity: str) -> dict[str, Any]:
+        entry = rules.get(rule_id)
+        level = _sarif_level(severity)
+        if entry is None:
+            entry = {
+                "id": rule_id,
+                "name": name,
+                "shortDescription": {"text": name},
+                "defaultConfiguration": {"level": level},
+                "properties": {"severity": severity or "medium", "tags": ["security"]},
+            }
+            rules[rule_id] = entry
+        elif _LEVEL_RANK.get(level, 0) > _LEVEL_RANK.get(entry["defaultConfiguration"]["level"], 0):
+            entry["defaultConfiguration"]["level"] = level
+        return entry
+
+    def _result(
+        rule_id: str,
+        message: str,
+        hit: FileHit,
+        match: RuleMatch | None,
+    ) -> dict[str, Any]:
+        line = match.line_no if match is not None and match.line_no > 0 else 1
+        column = match.start + 1 if match is not None else 1
+        region: dict[str, Any] = {
+            "startLine": line,
+            "startColumn": column,
+            "endLine": line,
+            "endColumn": column + (len(match.excerpt) if match is not None else 1),
+        }
+        if match is not None:
+            region["snippet"] = {
+                "text": match.excerpt if include_raw or not match.sensitive else mask_text(match.excerpt)
+            }
+        return {
+            "ruleId": rule_id,
+            "ruleIndex": list(rules).index(rule_id),
+            "level": _sarif_level(match.severity if match is not None else ""),
+            "message": {"text": message},
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": _artifact_uri(hit.path)},
+                        "region": region,
+                    }
+                }
+            ],
+            "properties": {"size": hit.size},
+        }
+
+    for hit in result.hits:
+        if not hit.matches:
+            _rule_entry(_EXPRESSION_RULE_ID, "组合表达式", "")
+            results.append(_result(_EXPRESSION_RULE_ID, "表达式命中（无正向规则明细）", hit, None))
+            continue
+        for match in hit.matches:
+            _rule_entry(match.rule_id, match.rule_name, match.severity)
+            where = f"{match.location} " if match.location else ""
+            position = f"{where}第 {match.line_no} 行" if match.line_no > 0 else (match.location or "文件名")
+            message = f"{match.rule_name} @ {position}：{render_context(match, include_raw)}"
+            results.append(_result(match.rule_id, message, hit, match))
+
+    stats = result.stats
+    notifications = [
+        {"level": "warning", "message": {"text": f"{item.path}：{item.message}"}} for item in result.errors
+    ]
+    run: dict[str, Any] = {
+        "tool": {
+            "driver": {
+                "name": "filescan",
+                "rules": list(rules.values()),
+            }
+        },
+        "invocations": [
+            {
+                "executionSuccessful": not stats.cancelled and not result.errors,
+                "toolExecutionNotifications": notifications,
+                "properties": {
+                    "files_seen": stats.files_seen,
+                    "files_scanned": stats.files_scanned,
+                    "files_reused": stats.files_reused,
+                    "files_skipped": stats.files_skipped,
+                    "files_failed": stats.files_failed,
+                    "elapsed": round(stats.elapsed, 4),
+                    "cancelled": stats.cancelled,
+                },
+            }
+        ],
+        "properties": {
+            "hitFiles": stats.hit_files,
+            "hitCount": stats.hit_count,
+            "roots": [str(root) for root in result.roots],
+        },
+        "results": results,
+    }
+    payload = {
+        "$schema": SARIF_SCHEMA,
+        "version": SARIF_VERSION,
+        "runs": [run],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
 def _summary_line(result: ScanResult) -> str:
@@ -326,7 +466,7 @@ def write_report(
     fmt: str = "text",
     include_raw: bool = False,
 ) -> Path:
-    """按格式写报告文件；``fmt`` 非 ``text`` / ``json`` / ``csv`` 时抛 ``ValueError``。"""
+    """按格式写报告文件；``fmt`` 非 ``text`` / ``json`` / ``csv`` / ``sarif`` 时抛 ``ValueError``。"""
     if fmt == "text":
         content = format_text_report(result, include_raw)
         encoding = "utf-8"
@@ -335,6 +475,9 @@ def write_report(
         encoding = "utf-8"
     elif fmt == "csv":
         content = result_to_csv(result, include_raw)
+        encoding = "utf-8"
+    elif fmt == "sarif":
+        content = result_to_sarif(result, include_raw)
         encoding = "utf-8"
     else:
         raise ValueError(f"未知报告格式: {fmt!r}，只支持 {'/'.join(REPORT_FORMATS)}")

@@ -2695,12 +2695,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             self,
             "导出扫描报告",
             f"{stem}.csv",
-            "CSV (*.csv);;JSON (*.json);;文本 (*.txt)",
+            "CSV (*.csv);;JSON (*.json);;SARIF (*.sarif);;文本 (*.txt)",
         )
         if not chosen:
             return
         suffix = Path(chosen).suffix.lower()
-        fmt = {".json": "json", ".txt": "text", ".log": "text"}.get(suffix, "csv")
+        fmt = {".json": "json", ".txt": "text", ".log": "text", ".sarif": "sarif"}.get(suffix, "csv")
         include_raw = self._export_raw.isChecked()
         try:
             write_report(self.result, Path(chosen), fmt, include_raw=include_raw)

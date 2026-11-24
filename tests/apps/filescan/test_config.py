@@ -441,6 +441,8 @@ def test_gui_settings_tolerate_invalid_extra_fields() -> None:
     payload = settings_to_mapping(FilescanSettings())
     payload["report_format"] = "xml"
     assert settings_from_mapping(payload).report_format == "text"
+    payload["report_format"] = "sarif"
+    assert settings_from_mapping(payload).report_format == "sarif"
     payload["encodings"] = "utf-8"
     assert settings_from_mapping(payload).encodings == DEFAULT_ENCODINGS
     payload["max_hits_per_file"] = 0

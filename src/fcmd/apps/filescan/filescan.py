@@ -55,6 +55,7 @@ from fcmd.apps.filescan._report import (
     format_text_report,
     result_to_csv,
     result_to_json,
+    result_to_sarif,
     write_report,
 )
 from fcmd.apps.filescan._rules import (
@@ -72,7 +73,7 @@ from fcmd.console import print_error
 __all__ = ["rules_command", "run_command", "scan_command"]
 
 _DESCRIPTION = (
-    "目录敏感内容扫描：关键词/正则与 and·or·not 表达式组合判定，按文件聚合命中行，默认打码，可导出文本/JSON/CSV"
+    "目录敏感内容扫描：关键词/正则与 and·or·not 表达式组合判定，按文件聚合命中行，默认打码，可导出文本/JSON/CSV/SARIF"
 )
 
 
@@ -205,7 +206,7 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
     workers: int = 4,
     context_chars: int = 40,
-    format: Literal["text", "json", "csv"] = "text",
+    format: Literal["text", "json", "csv", "sarif"] = "text",
     output: Path | None = None,
     raw: bool = False,
     rule_id: list[str] | None = None,
@@ -264,7 +265,7 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     context_chars:
         命中片段左右各保留的上下文字符数
     fmt:
-        输出格式：text=文本（默认）、json=结构化、csv=表格
+        输出格式：text=文本（默认）、json=结构化、csv=表格、sarif=SARIF 2.1.0（静态分析交换格式）
     output:
         报告写入文件；留空输出到标准输出
     raw:
@@ -360,6 +361,8 @@ def _emit_result(result: ScanResult, format: str, output: Path | None, include_r
         print(result_to_json(result, include_raw), end="")
     elif format == "csv":
         print(result_to_csv(result, include_raw).lstrip("\ufeff"), end="")
+    elif format == "sarif":
+        print(result_to_sarif(result, include_raw), end="")
     else:
         print(format_text_report(result, include_raw))
 
@@ -367,7 +370,7 @@ def _emit_result(result: ScanResult, format: str, output: Path | None, include_r
 @fcmd.tool("filescan", subcommand="run", help="按配置文件执行扫描", description=_DESCRIPTION)
 def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保持扁平签名
     config: Path | None = None,
-    format: Literal["text", "json", "csv"] | None = None,
+    format: Literal["text", "json", "csv", "sarif"] | None = None,
     output: Path | None = None,
     raw: bool = False,
     rule_id: list[str] | None = None,

@@ -9,7 +9,7 @@
 没有「按规则集判定敏感内容并聚合报告」的工具。实际需求是：给一批目录，
 用关键词与正则组成可组合、可分组、可启停的规则集，批量判定身份证号、
 手机号、邮箱、银行卡号、API Key、私钥头等敏感内容，输出可按文件查看、
-可打码、可导出 CSV / JSON / 文本的文件级报告。
+可打码、可导出 CSV / JSON / 文本 / SARIF 的文件级报告。
 
 约束：
 
@@ -30,7 +30,7 @@
 |---|---|
 | `_rules.py` | 规则/规则集模型、内置敏感规则、表达式语法解析与求值、JSON 读写 |
 | `_engine.py` | 目录遍历、文件类型/大小过滤、编码探测、逐行匹配、聚合与统计、并行与取消 |
-| `_report.py` | 文本 / JSON / CSV 报告、按规则与路径过滤、打码 |
+| `_report.py` | 文本 / JSON / CSV / SARIF 报告、按规则与路径过滤、打码 |
 | `_config.py` | 扫描配置的导入 / 导出、逐字段容错与版本兼容 |
 | `filescan.py` | CLI：`scan` / `run` / `rules`（list·export·validate） |
 | `filescanw.py` + `_filescanw_qt.py` | Qt 窗口、设置持久化（`~/.fcmd/ui/filescanw.json`） |
@@ -191,7 +191,12 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
 - 文本：文件路径 + 每条「【严重级】规则 / 行号 / 上下文」，末尾汇总统计与跳过原因；
 - JSON：结构化结果（含统计与错误、每条命中的 `severity` 英文枚举），默认打码；
 - CSV：每行一条命中（文件、规则、严重级、行号、片段、上下文），严重级用中文标签，
-  UTF-8 BOM 便于 Excel。
+  UTF-8 BOM 便于 Excel；
+- SARIF 2.1.0：每条命中一条 `result`（`ruleId` / `level` / 行列区域 / 打码片段），
+  `tool.driver.rules` 由实际命中的规则去重生成，`invocations` 带统计与错误通知；
+  严重级映射 `info|low → note`、`medium → warning`、`high|critical → error`，
+  缺省按 `warning`；表达式命中（无正向明细）用伪规则 `expression` 占位；
+  绝对路径输出 `file://` URI，相对路径原样输出。
 
 `filter_result` 支持按规则 id 集合、严重级集合与路径子串过滤（规则与严重级取交集），
 过滤后重算命中计数。
@@ -204,7 +209,7 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
   （留空用内置，`*` 为全部后缀）、`--include-ext`（白名单内收窄）、
   `--force-ext`（强制扫描名单外后缀）、`--exclude-ext`、`--min-size` / `--max-size`、
   `--modified-after` / `--modified-before`（ISO-8601 或 epoch 秒）、
-  `--no-skip-binary`、`--max-file-bytes`、`--workers`、`--format text|json|csv`、
+  `--no-skip-binary`、`--max-file-bytes`、`--workers`、`--format text|json|csv|sarif`、
   `--output FILE`、`--raw`、`--rule-id ID`（可重复）、`--path-filter SUBSTR`、
   `--save-config FILE`（把本次生效参数与规则集存成配置）；
 - `filescan run --config FILE`：按配置执行扫描，扫描选项 / 根目录 / 规则 / 报告
@@ -443,7 +448,7 @@ CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个�
 | | `rules` | 内嵌规则集（与 `filescan rules --action export` 同构） |
 | | `rules_path` | 外部规则集引用（相对配置文件目录，`rules` 优先） |
 | | `report.mask` | 真=报告打码，假=输出原文（CLI `--raw` / GUI「导出 / 复制原文」的反面） |
-| | `report.format` | `text` / `json` / `csv` |
+| | `report.format` | `text` / `json` / `csv` / `sarif` |
 | `options` | `recursive` / `max_depth` / `follow_symlinks` | 遍历范围 |
 | | `skip_dirs` / `skip_hidden` | 跳过目录名列表（空数组表示不跳过，缺失用内置）/ 是否跳过隐藏文件与目录 |
 | | `ext_whitelist` / `include_exts` / `force_exts` / `exclude_exts` | 后缀白名单与收窄 / 强制 / 排除（接受数组，也接受分号串） |
@@ -750,8 +755,8 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   单文件上限均生效；统计区分「范围外（后缀白名单 / 大小或时间 / 隐藏）」与「读取后跳过
   （二进制 / 文档无文本层等）」，并单列目录剪枝数，0 命中时给出可操作诊断（见 D12）；
 - 取消后返回已完成部分且不写任何文件；
-- CSV / JSON / 文本三种报告可导出，`--raw` 才含原文；严重级在文本 / CSV 用中文标签、
-  JSON 用英文枚举，旧规则集缺省按 `medium` 处理；
+- CSV / JSON / 文本 / SARIF 四种报告可导出，`--raw` 才含原文；严重级在文本 / CSV 用中文标签、
+  JSON 用英文枚举、SARIF 用 `note|warning|error`，旧规则集缺省按 `medium` 处理；
 - GUI 可添加多目录、编辑白名单、载入内置规则、编辑/启停规则、查看聚合结果、
   按规则 / 严重级 / 路径筛选与导出；结果行按严重级着色，可定位文件并复制命中内容 /
   上下文（默认打码）；

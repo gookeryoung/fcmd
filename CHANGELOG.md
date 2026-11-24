@@ -7,6 +7,10 @@
 
 ### 变更
 
+- `filescan` 新增 SARIF 2.1.0 报告格式（`--format sarif` / GUI 导出 `.sarif`）：每条命中
+  一条 `result`，带规则元数据、行列区域、打码片段与 invocation 统计；严重级映射
+  `info/low → note`、`medium → warning`、`high/critical → error`，可直接被 GitHub 等
+  代码扫描平台消费。
 - `filescan` 规则再扩展（规则集 `version: 6`）：文档元数据（作者 / 公司 / 标题等）、
   自定义词典、SHA-256 文件哈希、高熵串检测；新增 `file_risk_score` 风险分（报告与
   结果树文件行展示）。

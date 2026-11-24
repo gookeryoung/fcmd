@@ -20,6 +20,7 @@ from fcmd.apps.filescan._report import (
     result_to_csv,
     result_to_json,
     result_to_mapping,
+    result_to_sarif,
     scan_summary,
     write_report,
 )
@@ -237,6 +238,69 @@ def test_text_report_filename_match_and_missing_encoding() -> None:
     assert "第 0 行" not in text
 
 
+# ---------------------------------------------------------------------- #
+# SARIF 2.1.0
+# ---------------------------------------------------------------------- #
+def test_sarif_structure_and_region() -> None:
+    match = _match(severity="high")
+    result = _result(hits=[FileHit(Path("scan") / "a.txt", 100, "utf-8", [match])])
+    payload = json.loads(result_to_sarif(result))
+
+    assert payload["version"] == "2.1.0"
+    assert payload["$schema"].endswith("sarif-2.1.0.json")
+    run = payload["runs"][0]
+    assert run["tool"]["driver"]["name"] == "filescan"
+    assert [rule["id"] for rule in run["tool"]["driver"]["rules"]] == ["cn_phone"]
+    assert run["tool"]["driver"]["rules"][0]["defaultConfiguration"]["level"] == "error"
+    assert run["invocations"][0]["executionSuccessful"] is True
+
+    entry = run["results"][0]
+    assert entry["ruleId"] == "cn_phone"
+    assert entry["ruleIndex"] == 0
+    assert entry["level"] == "error"
+    region = entry["locations"][0]["physicalLocation"]["region"]
+    assert region["startLine"] == 3
+    assert region["startColumn"] == 5
+    assert region["endColumn"] == 5 + len("13812345678")
+    assert region["snippet"]["text"] == "13*******78"
+    assert entry["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "scan/a.txt"
+
+
+def test_sarif_level_mapping_and_raw_snippet() -> None:
+    levels = {}
+    for severity in ("info", "low", "medium", "high", "critical", ""):
+        match = _match(severity=severity)
+        result = _result(hits=[FileHit(Path("scan") / "a.txt", 1, "", [match])])
+        payload = json.loads(result_to_sarif(result, include_raw=True))
+        levels[severity] = payload["runs"][0]["results"][0]["level"]
+        assert payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]["snippet"]["text"] == (
+            "13812345678"
+        )
+    assert levels == {
+        "info": "note",
+        "low": "note",
+        "medium": "warning",
+        "high": "error",
+        "critical": "error",
+        "": "warning",
+    }
+
+
+def test_sarif_expression_hit_and_errors() -> None:
+    result = _result(
+        hits=[FileHit(Path("scan") / "b.txt", 20, "", [])],
+        errors=[ScanError(Path("scan") / "c.txt", "权限不足")],
+        cancelled=True,
+    )
+    payload = json.loads(result_to_sarif(result))
+    run = payload["runs"][0]
+    assert [rule["id"] for rule in run["tool"]["driver"]["rules"]] == ["expression"]
+    assert run["results"][0]["ruleId"] == "expression"
+    assert run["invocations"][0]["executionSuccessful"] is False
+    assert "权限不足" in run["invocations"][0]["toolExecutionNotifications"][0]["message"]["text"]
+    assert run["results"][0]["locations"][0]["physicalLocation"]["region"]["startLine"] == 1
+
+
 def test_write_report_all_formats(tmp_path: Path) -> None:
     result = _result()
     text_path = write_report(result, tmp_path / "out" / "report.txt", "text")
@@ -248,6 +312,9 @@ def test_write_report_all_formats(tmp_path: Path) -> None:
     csv_path = write_report(result, tmp_path / "report.csv", "csv", include_raw=True)
     assert csv_path.read_text(encoding="utf-8").startswith("\ufeff")
     assert "13812345678" in csv_path.read_text(encoding="utf-8")
+
+    sarif_path = write_report(result, tmp_path / "report.sarif", "sarif")
+    assert json.loads(sarif_path.read_text(encoding="utf-8"))["version"] == "2.1.0"
 
     with pytest.raises(ValueError, match="未知报告格式"):
         write_report(result, tmp_path / "report.bin", "binary")

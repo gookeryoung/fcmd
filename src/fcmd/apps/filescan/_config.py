@@ -55,6 +55,7 @@ from fcmd.apps.filescan._engine import (
     normalize_skip_dirs,
     parse_ext_text,
 )
+from fcmd.apps.filescan._report import REPORT_FORMATS
 from fcmd.apps.filescan._rules import (
     RuleSet,
     load_ruleset,
@@ -77,9 +78,6 @@ __all__ = [
 
 CONFIG_VERSION = 2
 """当前配置文件版本号。"""
-
-REPORT_FORMATS: tuple[str, ...] = ("text", "json", "csv")
-"""``report.format`` 的合法取值。"""
 
 _MAX_SHOWN = 40
 """提示信息中展示非法值时的最大字符数。"""
