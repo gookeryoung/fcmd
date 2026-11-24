@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -718,7 +719,13 @@ def test_locate_file_opens_file_manager(home: Path, tmp_path: Path, monkeypatch:
         child.setSelected(True)
         window._locate_selected_file()
         assert len(calls) == 1
-        assert str(target) in " ".join(calls[0])
+        if sys.platform.startswith("win"):
+            assert calls[0] == ["explorer", f"/select,{target}"]
+        elif sys.platform == "darwin":
+            assert calls[0] == ["open", "-R", str(target)]
+        else:
+            # xdg-open 只能打开目录：定位文件时按设计退到父目录。
+            assert calls[0] == ["xdg-open", str(target.parent)]
         assert "已在文件管理器中定位" in window.page_status("results")
 
         revealed: list[Path] = []
@@ -735,8 +742,6 @@ def test_locate_file_opens_file_manager(home: Path, tmp_path: Path, monkeypatch:
 
 
 def test_reveal_command_per_platform(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-
     from fcmd.apps.filescan._filescanw_qt import reveal_command
 
     path = Path("C:/data/notes.txt")
