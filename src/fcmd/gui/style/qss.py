@@ -17,6 +17,22 @@ QMenu { background: $surface; color: $text; border: 1px solid $border; padding: 
 QMenu::item { padding: 5px 22px 5px 18px; border-radius: 4px; }
 QMenu::item:selected { background: $surface_active; }
 QMenu::separator { height: 1px; background: $border; margin: 4px 6px; }
+/* 行内「更多动作」菜单：与行内 Ghost 按钮同一套圆角 / 底色 / hover，不使用
+   默认菜单的宽左侧沟槽与系统高亮色。 */
+QMenu#RowActionMenu {
+    background: $surface;
+    border: 1px solid $border_strong;
+    border-radius: 6px;
+    padding: 4px;
+}
+QMenu#RowActionMenu::item {
+    padding: 6px 12px 6px 6px;
+    border-radius: 4px;
+    color: $text;
+}
+QMenu#RowActionMenu::item:selected { background: $surface_hover; color: $text; }
+QMenu#RowActionMenu::item:disabled { color: $disabled_fg; }
+QMenu#RowActionMenu::icon { padding-left: 4px; }
 QStatusBar { background: $surface; color: $muted; border-top: 1px solid $border; }
 QStatusBar QLabel { color: $muted; }
 

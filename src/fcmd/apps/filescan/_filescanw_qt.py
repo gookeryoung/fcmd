@@ -161,6 +161,7 @@ from fcmd.apps.filescan._rules import (
 )
 from fcmd.apps.filescan._scenarios import load_scenario, scenario_templates
 from fcmd.gui import style as _qt_theme
+from fcmd.gui.icons import icon
 from fcmd.gui.page import AppPage, PageSpec
 from fcmd.gui.widgets import (
     ButtonStateMixin,
@@ -291,10 +292,12 @@ class _ScanTaskRow(ItemRow):  # pragma: no cover - Qt 控件
         self.scan_mode_button.set_icon_name("chevron-down", tone="muted")
         self.scan_mode_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         scan_menu = QMenu(self.scan_mode_button)
-        incremental = scan_menu.addAction("增量扫描")
+        scan_menu.setObjectName("RowActionMenu")
+        muted = _qt_theme.active_theme().palette.muted
+        incremental = scan_menu.addAction(icon("refresh", size=16, color=muted), "增量扫描")
         incremental.setToolTip("只重扫新增或改动过的文件，其余复用缓存")
         incremental.triggered.connect(lambda: self.incrementalRequested.emit(self.task.id))
-        full = scan_menu.addAction("全量重扫")
+        full = scan_menu.addAction(icon("rotate-ccw", size=16, color=muted), "全量重扫")
         full.setToolTip("忽略缓存重新读取所有文件（目录 / 文件大改后校正结果）")
         full.triggered.connect(lambda: self.fullRequested.emit(self.task.id))
         self.scan_mode_button.setMenu(scan_menu)
@@ -1329,6 +1332,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._scanning_task_id = ""
         self._stopping_task_id = ""
         self._viewing_task_id = ""
+        self._rendered_result: ScanResult | None = None
         self._whitelist_notice = ""
         super().__init__(
             title=TITLE,
@@ -1663,6 +1667,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._compact_mode.setChecked(self.settings.compact_mode)
         self._compact_mode.toggled.connect(self._set_compact_mode)
         export_bar.addWidget(self._compact_mode)
+        self._show_skipped = QCheckBox("显示跳过项", self)
+        self._show_skipped.setToolTip("默认隐藏跳过 / 范围外条目；勾选后在结果树中列出跳过的文件与原因")
+        self._show_skipped.setChecked(self.settings.show_skipped)
+        self._show_skipped.toggled.connect(self._set_show_skipped)
+        export_bar.addWidget(self._show_skipped)
         self._export_raw = QCheckBox("导出 / 复制原文", self)
         self._export_raw.setToolTip("勾选后导出报告与复制命中内容使用原文；默认打码")
         export_bar.addWidget(self._export_raw)
@@ -2503,12 +2512,14 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
     def _clear_result_view(self, message: str) -> None:
         """清掉结果页与任务的关联（目录改变 / 移除 / 重新扫描时）。"""
         self.result = None
+        self._rendered_result = None
         self._viewing_task_id = ""
         self._tree.clear()
         self._sync_result_switcher()
         self.set_page_status("results", message)
 
     def _render_result(self, result: ScanResult) -> None:
+        self._rendered_result = result
         self._tree.clear()
         self._context_delegate.reset()
         for index, hit in enumerate(result.hits):
@@ -2559,6 +2570,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             if index >= 5000:  # 极端结果集下不再逐项展开，避免长时间占用 GUI 线程
                 break
         for item in result.skipped:
+            if not self._show_skipped.isChecked():
+                break
             entry = QTreeWidgetItem([str(item.path), "", "", f"跳过：{item.reason}"])
             entry.setToolTip(0, str(item.path))
             entry.setData(0, _PATH_ROLE, str(item.path))
@@ -2965,6 +2978,13 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._apply_compact_mode(compact)
         self._persist_settings(self.geometry_text())
 
+    def _set_show_skipped(self, show: bool) -> None:
+        """默认隐藏跳过 / 范围外条目；勾选后就地重渲染当前结果（保留筛选后的集合）。"""
+        self.settings = replace(self.settings, show_skipped=show)
+        if self._rendered_result is not None:
+            self._render_result(self._rendered_result)
+        self._persist_settings(self.geometry_text())
+
     def _apply_compact_mode(
         self,
         compact: bool,
@@ -3024,6 +3044,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             filter_rule="" if self._filter_rule.currentText() == "全部" else self._filter_rule.currentText(),
             filter_path=self._filter_path.text(),
             compact_mode=self.settings.compact_mode,
+            show_skipped=self.settings.show_skipped,
         )
 
     def _persist_settings(self, geometry: str) -> None:

@@ -1030,6 +1030,36 @@ def test_compact_mode_controls_rows_context_and_tables(home: Path, sample: Path)
         window.deleteLater()
 
 
+def test_skipped_rows_hidden_by_default_and_can_be_shown(home: Path, tmp_path: Path) -> None:
+    """跳过 / 范围外条目默认不刷进结果树；勾选「显示跳过项」后列出文件与原因。"""
+    from fcmd.apps.filescan._engine import ScanResult, ScanStats, SkipRecord
+
+    skipped = SkipRecord(path=tmp_path / "binary.bin", reason="二进制")
+    result = ScanResult(
+        roots=(tmp_path,),
+        stats=ScanStats(files_seen=1, files_skipped=1),
+        hits=[],
+        skipped=[skipped],
+    )
+    window = _window()
+    try:
+        window._render_result(result)
+        assert window._tree.topLevelItemCount() == 0
+        assert window._current_settings().show_skipped is False
+
+        window._show_skipped.setChecked(True)
+        assert window._tree.topLevelItemCount() == 1
+        entry = window._tree.topLevelItem(0)
+        assert entry.text(0) == str(skipped.path)
+        assert entry.text(3) == f"跳过：{skipped.reason}"
+        assert window._current_settings().show_skipped is True
+
+        window._show_skipped.setChecked(False)
+        assert window._tree.topLevelItemCount() == 0
+    finally:
+        window.deleteLater()
+
+
 def test_result_rows_bind_file_and_match_without_duplicate_rule_column(home: Path, tmp_path: Path) -> None:
     """第二列改为命中片段（不再重复规则名），行绑定路径与命中对象供定位 / 复制使用。"""
     from PySide6.QtCore import Qt
