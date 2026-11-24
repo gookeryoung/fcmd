@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from ...shared.helpdoc import HelpSection
 from ..exit_codes import ExitCode
 from ..task import RetryPolicy
 
@@ -109,6 +110,9 @@ class ToolSpec:
     examples:
         示例调用列表（完整 ``fcmd ...`` 命令）；同时进入 ``--help`` 末尾与
         ``fcmd info --json`` 的 schema，供人直接照抄、供模型减少参数猜测
+    help_sections:
+        结构化帮助分段（用法 / 环境变量 / 退出码 / 相关…）；与 ``examples``
+        一起渲染为 ``--help`` 的 epilog，并由 ``fcmd info`` 与 GUI 帮助窗口共用
     requires_confirmation:
         子命令是否必须显式确认（``--confirm``）才能执行；``True`` 时 parser
         才暴露 ``--confirm``，``--dry-run`` 视为仅预览、不要求确认
@@ -134,6 +138,7 @@ class ToolSpec:
     timeout: float | None = None
     param_help: Mapping[str, str] | None = None
     examples: tuple[str, ...] = ()
+    help_sections: tuple[HelpSection, ...] = ()
     requires_confirmation: bool = False
 
     def __post_init__(self) -> None:
@@ -143,6 +148,11 @@ class ToolSpec:
             raise ValueError(f"工具 {self.name!r} 子命令 {self.subcommand!r}: steps 已是聚合任务，不能 aggregate=False")
         if self.cmd is not None and self.aggregate is True:
             raise ValueError(f"工具 {self.name!r} 子命令 {self.subcommand!r}: cmd 任务不能 aggregate=True")
+        sections = tuple(self.help_sections)
+        for section in sections:
+            if not isinstance(section, HelpSection):
+                raise TypeError(f"工具 {self.name!r} 子命令 {self.subcommand!r}: help_sections 元素必须是 HelpSection")
+        object.__setattr__(self, "help_sections", sections)
 
 
 def _task_name(spec: ToolSpec) -> str:

@@ -7,6 +7,10 @@
 
 ### 变更
 
+- 帮助文档通用组件：新增 `shared/helpdoc.py`（分段 / Markdown 解析 / CLI epilog）与
+  `gui/help.py`（Markdown 帮助窗口 + `F1` 菜单混入）；`ToolSpec.help_sections` 同时
+  驱动 `--help` 与 `fcmd info`，renamerw / regexvalidatew 改用公共帮助窗口，完整说明
+  统一放 `src/fcmd/help/`（见 ADR 0052）。
 - `alarmclock` 视觉改造：时钟改为大号数字面板（50pt 等宽字体 + 主题渐变底 +
   动态强调边框），新增日期行与按状态着色的提醒文字；输入框、设置 / 延时按钮同步放大，
   窗口默认尺寸提升到 680×700。

@@ -40,6 +40,7 @@
 from __future__ import annotations
 
 __all__ = [
+    "HelpSection",
     "ToolExitCode",
     "ToolSpec",
     "ToolStep",
@@ -60,6 +61,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from ...shared.helpdoc import HelpSection
 from ..dag import Graph, GraphDefaults
 from ..errors import FcmdError
 from ..exit_codes import ExitCode
@@ -128,6 +130,7 @@ def tool(  # noqa: PLR0913
     timeout: float | None = None,
     param_help: Mapping[str, str] | None = None,
     examples: Sequence[str] | None = None,
+    help_sections: Sequence[HelpSection] | None = None,
     requires_confirmation: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：将函数注册为 ``@fx.tool`` 工具。
@@ -170,6 +173,9 @@ def tool(  # noqa: PLR0913
     examples:
         示例调用列表（完整 ``fcmd ...`` 命令）；同时进入 ``--help`` 末尾与
         ``fcmd info --json`` 的 schema，供人照抄、供模型减少参数猜测
+    help_sections:
+        结构化帮助分段（用法 / 环境变量 / 退出码 / 相关…）；与 ``examples``
+        一起渲染为 ``--help`` 的 epilog，并由 ``fcmd info`` 与 GUI 帮助窗口共用
     requires_confirmation:
         该子命令是否必须显式确认才能执行；``True`` 时 CLI 暴露 ``--confirm``，
         未确认且非 ``--dry-run`` 时按 ``CONFIRM_REQUIRED``（退出 2）拒绝
@@ -201,6 +207,7 @@ def tool(  # noqa: PLR0913
             timeout=timeout,
             param_help=dict(param_help) if param_help else None,
             examples=tuple(examples) if examples else (),
+            help_sections=tuple(help_sections) if help_sections else (),
             requires_confirmation=requires_confirmation,
         )
         _register_tool(spec)

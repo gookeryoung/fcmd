@@ -2,7 +2,7 @@
 
 renamerw 用「规则流水线」批量生成新文件名：先添加文件，再按顺序堆叠规则，文件表自动显示「名称 / 新名 / 状态」，确认后执行。规则可导出为 JSON 复用；执行采用两阶段改名，并支持本次运行内撤销。
 
-本文对应 `fcmd renamer` 与 GUI 中的批量重命名窗口，需求与设计见 [ADR 0014](../../../../../docs/adr/0014-batch-renamer.md)。
+本文对应 `fcmd renamer` 与 GUI 中的批量重命名窗口，需求与设计见 [ADR 0014](../../../docs/adr/0014-batch-renamer.md)。
 
 ## 界面分区
 
@@ -37,7 +37,7 @@ renamerw 用「规则流水线」批量生成新文件名：先添加文件，�
 
 ## 典型示例
 
-以下示例同时以 JSON 文件放在 [examples/](examples/) 下，可直接通过「帮助 → 载入规则…」导入；也可以打开「帮助 → 使用帮助」，双击示例一键写入规则表。
+以下示例同时以 JSON 文件放在 [examples/](../apps/renamer/help/examples/) 下，可直接通过「帮助 → 载入规则…」导入；也可以打开「帮助 → 使用帮助」，双击示例一键写入规则表。
 
 ### 1. 照片 / 扫描件补零编号
 
@@ -51,7 +51,7 @@ renamerw 用「规则流水线」批量生成新文件名：先添加文件，�
 ]
 ```
 
-完整文件：[01-photo-sequence.json](examples/01-photo-sequence.json)。计数器位数默认 3；源文件若含多位编号（如 `IMG_10`），按名称排序会排在 `IMG_2` 之前，建议改用补零后的源名或按修改时间排序。
+完整文件：[01-photo-sequence.json](../apps/renamer/help/examples/01-photo-sequence.json)。计数器位数默认 3；源文件若含多位编号（如 `IMG_10`），按名称排序会排在 `IMG_2` 之前，建议改用补零后的源名或按修改时间排序。
 
 ### 2. 剧集规范化（SxxExx）
 
@@ -67,7 +67,7 @@ renamerw 用「规则流水线」批量生成新文件名：先添加文件，�
 ]
 ```
 
-完整文件：[02-tv-episode.json](examples/02-tv-episode.json)。reorder 只搬运捕获内容、不做数值补零，因此示例要求源文件名使用两位季号；遇到 `1x02` 这类写法，可先统一成两位再执行。
+完整文件：[02-tv-episode.json](../apps/renamer/help/examples/02-tv-episode.json)。reorder 只搬运捕获内容、不做数值补零，因此示例要求源文件名使用两位季号；遇到 `1x02` 这类写法，可先统一成两位再执行。
 
 ### 3. 日期片段搬到前面
 
@@ -83,7 +83,7 @@ renamerw 用「规则流水线」批量生成新文件名：先添加文件，�
 ]
 ```
 
-完整文件：[03-date-prefix.json](examples/03-date-prefix.json)。需要统一分隔符时，可在其后追加一条 `replace`（如 `[_-]` → `_`）。
+完整文件：[03-date-prefix.json](../apps/renamer/help/examples/03-date-prefix.json)。需要统一分隔符时，可在其后追加一条 `replace`（如 `[_-]` → `_`）。
 
 ### 4. 清理噪声 + 大小写统一
 
@@ -98,7 +98,7 @@ renamerw 用「规则流水线」批量生成新文件名：先添加文件，�
 ]
 ```
 
-完整文件：[04-cleanup-case.json](examples/04-cleanup-case.json)。`case` 的默认模式即小写，所以最后一条只需指明作用域为扩展名。
+完整文件：[04-cleanup-case.json](../apps/renamer/help/examples/04-cleanup-case.json)。`case` 的默认模式即小写，所以最后一条只需指明作用域为扩展名。
 
 ### 5. 导出文件时间戳前置
 
@@ -117,7 +117,7 @@ renamerw 用「规则流水线」批量生成新文件名：先添加文件，�
 ]
 ```
 
-完整文件：[05-timestamp-prefix.json](examples/05-timestamp-prefix.json)。`title` 用非贪婪匹配并配合末尾锚定，保证命中最后一个「下划线 + 14 位数字 + 下划线 + 32 位十六进制」；标题本身含下划线也不受影响。哈希若非固定 32 位，把 `{32}` 改为 `+`；若含非十六进制字符，可放宽为 `[0-9A-Za-z]+`。
+完整文件：[05-timestamp-prefix.json](../apps/renamer/help/examples/05-timestamp-prefix.json)。`title` 用非贪婪匹配并配合末尾锚定，保证命中最后一个「下划线 + 14 位数字 + 下划线 + 32 位十六进制」；标题本身含下划线也不受影响。哈希若非固定 32 位，把 `{32}` 改为 `+`；若含非十六进制字符，可放宽为 `[0-9A-Za-z]+`。
 
 时间戳在这里只被原样搬运（字符串捕获），不需要额外的日期识别；只有需要格式化（如 `20261026135414` → `2026-10-26 13:54:14`）或校验日期合法性时，才需要新增格式化占位符。
 
@@ -142,4 +142,4 @@ renamerw 用「规则流水线」批量生成新文件名：先添加文件，�
 - **提示锚点文本未找到**：`move` / `insert` 使用 `before`、`after` 锚点时必须填写在名称中确实存在的 `anchor_text`。
 - **扩展名没变**：检查作用域是否选中「扩展名」；目录的扩展名规则不生效。
 - **全部冲突**：确认目标文件不在同一目录下重名；批量加后缀或计数器通常可以避免。
-- **想复用规则**：用「帮助 → 保存规则…」导出 JSON，下次「帮助 → 载入规则…」导入；内置示例见 [examples/](examples/)。
+- **想复用规则**：用「帮助 → 保存规则…」导出 JSON，下次「帮助 → 载入规则…」导入；内置示例见 [examples/](../apps/renamer/help/examples/)。

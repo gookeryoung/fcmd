@@ -21,16 +21,13 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QDialog,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QPlainTextEdit,
     QSpinBox,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -59,7 +56,7 @@ from fcmd.apps.renamer._core import (
     unique_paths,
     validate_rules,
 )
-from fcmd.apps.renamer._examples import EXAMPLES, HELP_TEXT, Example
+from fcmd.apps.renamer._examples import EXAMPLES, Example
 from fcmd.apps.renamer.renamerw import (
     ANCHOR_TEXT,
     CASE_TEXT,
@@ -80,6 +77,7 @@ from fcmd.apps.renamer.renamerw import (
 )
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.app import run_window
+from fcmd.gui.help import HelpExample, HelpMenuMixin
 from fcmd.gui.toolwindow import QtToolWindow
 from fcmd.gui.uistate import dialog_remember, dialog_start
 from fcmd.gui.widgets import (
@@ -91,6 +89,7 @@ from fcmd.gui.widgets import (
     make_table,
     make_table_item,
 )
+from fcmd.shared.helpdoc import HelpDoc, load_help_doc
 
 __all__ = ["RenamerWindow", "run_qt"]
 
@@ -103,7 +102,7 @@ _RULE_WIDTHS = (70, 70, 380, 420)
 _STATUS_COLORS = {STATUS_CONFLICT: "danger", STATUS_INVALID: "warning", STATUS_UNCHANGED: "muted"}
 
 
-class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
+class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     """文件预览表 + 规则流水线表单 + 规则表。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
@@ -118,7 +117,7 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._row_targets: list[int] = []
         self._form_rows: dict[str, tuple[QLabel, QWidget]] = {}
         self._syncing_form = False
-        self._help_dialog: QDialog | None = None
+        self._help_table: Any = None
         super().__init__(
             title=f"renamer - 批量重命名 v{__version__}",
             config_name="renamerw",
@@ -324,31 +323,29 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         return row
 
     def _build_extra_menu(self) -> None:
-        """在帮助菜单「关于」之前插入使用帮助与规则导入 / 导出。"""
-        help_menu = None
-        for action in self.menuBar().actions():
-            if action.text() == "帮助":
-                help_menu = action.menu()
-                break
+        """帮助菜单：使用帮助（公共组件）+ 规则导入 / 导出。"""
+        doc = load_help_doc("renamerw", title="renamer 批量重命名") or HelpDoc(
+            tool="renamerw",
+            title="renamer 批量重命名",
+            summary="规则流水线批量生成新文件名，支持预览、两阶段执行与本次撤销。",
+        )
+        self.install_help_menu(
+            doc,
+            examples=tuple(HelpExample(example.name, example.summary) for example in EXAMPLES),
+            on_example=self._apply_example_row,
+        )
+        help_menu = self.help_menu
         if help_menu is None:
             return
-        actions = help_menu.actions()
-        about = actions[-1] if actions else None
-        # 公共「任务日志…」已由骨架插在「关于」之前；应用帮助项排在它前面。
-        about = self.log_action or about
-        for text, slot in (
-            ("使用帮助", self._show_help),
-            ("载入规则…", self._load_rules_file),
-            ("保存规则…", self._save_rules_file),
-        ):
+        # 规则导入 / 导出排在「使用帮助」之后、公共任务日志之前。
+        anchor = self._help_separator or self.log_action
+        for text, slot in (("载入规则…", self._load_rules_file), ("保存规则…", self._save_rules_file)):
             action = QAction(text, self)
             action.triggered.connect(slot)
-            if about is not None:
-                help_menu.insertAction(about, action)
+            if anchor is not None:
+                help_menu.insertAction(anchor, action)
             else:
                 help_menu.addAction(action)
-        if about is not None:
-            help_menu.insertSeparator(about)
 
     # ------------------------------------------------------------------ #
     # 规则表单
@@ -749,47 +746,15 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._refresh_preview()
 
     def _show_help(self) -> None:
-        """打开非模态帮助窗口：左侧典型示例，正文为规则说明。"""
-        if self._help_dialog is not None and self._help_dialog.isVisible():
-            self._help_dialog.raise_()
-            self._help_dialog.activateWindow()
-            return
-        dialog = QDialog(self)
-        dialog.setWindowTitle("renamer 使用帮助")
-        dialog.setMinimumSize(700, 460)
-        dialog.resize(880, 600)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-        layout.addWidget(hint_label("典型规则示例（双击或点「载入选中示例」写入规则表）", wrap=False))
+        """打开公共帮助窗口：Markdown 正文 + 典型示例表。"""
+        self.show_help()
+        dialog = self._help_dialog
+        self._help_table = dialog.example_table if dialog is not None else None
 
-        table = make_table(("示例", "说明"), widths=(220, 620), stretch_columns=(1,), parent=dialog)
-        table.setRowCount(len(EXAMPLES))
-        for row, example in enumerate(EXAMPLES):
-            table.setItem(row, 0, make_table_item(example.name))
-            table.setItem(row, 1, make_table_item(example.summary))
-        table.setMinimumHeight(120)
-        table.cellDoubleClicked.connect(lambda _row, _column: self._load_example_row(table))
-        layout.addWidget(table)
-
-        text = QPlainTextEdit(dialog)
-        text.setReadOnly(True)
-        text.setPlainText(HELP_TEXT)
-        layout.addWidget(text, 1)
-
-        bar = QHBoxLayout()
-        load = button("载入选中示例")
-        load.clicked.connect(lambda: self._load_example_row(table))
-        close = button("关闭")
-        close.clicked.connect(dialog.close)
-        bar.addWidget(load)
-        bar.addWidget(close)
-        bar.addStretch(1)
-        layout.addLayout(bar)
-
-        self._help_dialog = dialog
-        self._help_table = table
-        dialog.show()
+    def _apply_example_row(self, row: int) -> None:
+        """帮助窗口双击示例行：载入对应规则集。"""
+        if 0 <= row < len(EXAMPLES):
+            self._apply_example(EXAMPLES[row])
 
     def _load_example_row(self, table: Any) -> None:
         row = table.currentRow()

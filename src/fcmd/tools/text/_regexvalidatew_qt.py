@@ -12,23 +12,20 @@ Success / Danger 色区分匹配与不匹配，深浅主题一致。
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
     QPlainTextEdit,
-    QVBoxLayout,
-    QWidget,
 )
 
 from fcmd import __version__
 from fcmd.gui.app import run_window
 from fcmd.gui.geometry import size_from_geometry
+from fcmd.gui.help import HelpMenuMixin
 from fcmd.gui.toolwindow import QtToolWindow
 from fcmd.gui.widgets import (
     Card,
@@ -40,6 +37,7 @@ from fcmd.gui.widgets import (
     mono_font,
     splitter_sizes,
 )
+from fcmd.shared.helpdoc import HelpDoc, load_help_doc
 from fcmd.tools.text.regexvalidate import PatternValidationError, RegexValidator, build_flags, format_validator_report
 from fcmd.tools.text.regexvalidatew import (
     DEFAULT_GEOMETRY,
@@ -47,7 +45,6 @@ from fcmd.tools.text.regexvalidatew import (
     MIN_HEIGHT,
     MIN_WIDTH,
     REGEX_EXAMPLES,
-    REGEX_HELP_TEXT,
     RegexHistoryEntry,
     RegexValidateSettings,
     example_label,
@@ -62,30 +59,7 @@ __all__ = ["RegexValidateWindow", "run_qt"]
 DEFAULT_SPLIT = (200, 260)
 
 
-class _HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
-    """正则语法帮助对话框（只读、可滚动）。"""
-
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("正则语法帮助")
-        self.resize(640, 560)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-        view = QPlainTextEdit(REGEX_HELP_TEXT, self)
-        view.setReadOnly(True)
-        view.setFont(mono_font())
-        layout.addWidget(view, 1)
-        close = button("关闭")
-        close.clicked.connect(self.accept)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addStretch(1)
-        row.addWidget(close)
-        layout.addLayout(row)
-
-
-class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
+class RegexValidateWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     """正则校验器主窗口。"""
 
     def __init__(self) -> None:
@@ -203,19 +177,13 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         return row
 
     def _install_menu_actions(self) -> None:
-        """把「语法帮助」插入帮助菜单的「关于」之前。"""
-        help_menu = self._menu("帮助")
-        actions = help_menu.actions()
-        about = actions[-1] if actions else None
-        # 公共「任务日志…」已由骨架插在「关于」之前；语法帮助排在它前面。
-        about = self.log_action or about
-        action = QAction("语法帮助", self)
-        action.triggered.connect(self._show_help)
-        if about is not None:
-            help_menu.insertAction(about, action)
-            help_menu.insertSeparator(about)
-        else:
-            help_menu.addAction(action)
+        """把「语法帮助」（公共帮助组件）插到「任务日志 / 关于」之前。"""
+        doc = load_help_doc("regexvalidatew", title="正则语法帮助") or HelpDoc(
+            tool="regexvalidatew",
+            title="正则语法帮助",
+            summary="常用元字符、分组、标志与结果区读数说明。",
+        )
+        self.install_help_menu(doc, label="语法帮助")
 
     def _menu(self, title: str) -> QMenu:
         """按标题取出骨架菜单。"""
@@ -325,8 +293,8 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         self._apply_inputs(entry.pattern, entry.test_string, entry.ignorecase, entry.multiline, entry.dotall)
 
     def _show_help(self) -> None:
-        """打开语法帮助对话框。"""
-        _HelpDialog(self).exec()
+        """打开语法帮助窗口（非模态，可对照输入）。"""
+        self.show_help()
 
     # ------------------------------------------------------------------ #
     # 保存与关闭

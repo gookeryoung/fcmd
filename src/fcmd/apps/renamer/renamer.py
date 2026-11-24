@@ -50,6 +50,7 @@ from fcmd.apps.renamer._core import (
 )
 from fcmd.console import print_error
 from fcmd.core.result import emit_result, report_error
+from fcmd.shared.helpdoc import HelpSection
 
 __all__ = ["apply_command", "load_rules", "preview_command"]
 
@@ -147,6 +148,15 @@ def _prepare(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，
         "fcmd renamer preview ./photos --rules @rename.json",
         "fcmd renamer preview ./photos --rules @rename.json --recursive",
         "fcmd renamer preview ./photos --rules @rename.json --json",
+    ],
+    help_sections=[
+        HelpSection(
+            "see_also",
+            lines=[
+                "GUI：fcmd renamerw（同一套规则口径，带预览表与本次撤销）",
+                "完整说明：src/fcmd/help/renamerw.md",
+            ],
+        ),
     ],
 )
 def preview_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保持扁平签名

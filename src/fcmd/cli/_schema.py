@@ -79,6 +79,7 @@ def subcommand_schema(spec: ToolSpec) -> dict[str, Any]:
         "strategy": spec.strategy,
         "params": param_schema(spec),
         "examples": list(spec.examples),
+        "help_sections": [section.to_mapping() for section in spec.help_sections],
     }
 
 

@@ -19,6 +19,7 @@ from typing import Any
 
 import fcmd
 from fcmd.core.result import emit_result, report_error
+from fcmd.shared.helpdoc import HelpSection
 
 __all__ = [
     "FLAG_CHOICES",
@@ -206,7 +207,20 @@ def build_report_data(validator: RegexValidator, text: str) -> dict[str, Any]:
     }
 
 
-@fcmd.tool("regexvalidate", help="校验文本与正则是否匹配", description=_DESCRIPTION)
+@fcmd.tool(
+    "regexvalidate",
+    help="校验文本与正则是否匹配",
+    description=_DESCRIPTION,
+    help_sections=[
+        HelpSection(
+            "see_also",
+            lines=[
+                "GUI：fcmd regexvalidatew（实时校验、示例与历史记录）",
+                "完整说明：src/fcmd/help/regexvalidatew.md",
+            ],
+        ),
+    ],
+)
 def check_cmd(  # noqa: PLR0913 - CLI 参数逐个映射，保持扁平签名
     pattern: str,
     text: str,

@@ -21,6 +21,7 @@ from fcmd.console import get_console, print_error
 from fcmd.core.exit_codes import ExitCode
 from fcmd.core.result import SCHEMA_SCHEMA, emit_error, emit_json
 from fcmd.core.toolkit import param_schema
+from fcmd.shared.helpdoc import HelpDoc
 
 __all__ = ["run"]
 
@@ -220,6 +221,7 @@ def _info_subcommand(tool_name: str, spec: Any) -> None:
 
     _print_params(spec)
     _print_examples(spec)
+    _print_help_sections(spec)
 
 
 def _print_params(spec: Any) -> None:
@@ -255,6 +257,23 @@ def _print_params(spec: Any) -> None:
             help_text = f"{help_text}（可选: {', '.join(str(choice) for choice in choices)}）"
         table.add_row(flag, str(item["type"]), "yes" if item["required"] else "no", default_str, help_text)
     console.print(table)
+
+
+def _print_help_sections(spec: Any) -> None:
+    """打印 ``ToolSpec.help_sections``（示例由 :func:`_print_examples` 负责）。"""
+    from rich.markup import escape
+
+    doc = HelpDoc(tool=spec.name, sections=spec.help_sections)
+    sections = [section for section in doc.ordered_sections() if section.kind != "examples"]
+    if not any(section.lines for section in sections):
+        return
+    console = get_console()
+    for section in sections:
+        if not section.lines:
+            continue
+        console.print(f"\n[bold]{escape(section.title)}:[/bold]")
+        for line in section.lines:
+            console.print(f"  {escape(line)}")
 
 
 def _print_examples(spec: Any) -> None:

@@ -215,7 +215,7 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 | `randtool` | - | 随机生成（password/number/string/bytes） |
 | `regextool` | - | 正则表达式（match/find/replace/split） |
 | `regexvalidate` | - | 正则校验（匹配/全匹配/findall/分组与正则特征分析，支持 ignorecase/multiline/dotall） |
-| `regexvalidatew` | - | 正则校验器窗口版（Qt：实时校验、20 个典型示例、历史记录与语法帮助，设置持久化到 `~/.fcmd/ui/regexvalidate.json`） |
+| `regexvalidatew` | - | 正则校验器窗口版（Qt：实时校验、20 个典型示例、历史记录与语法帮助（`F1`，公共帮助窗口，完整说明见 [src/fcmd/help/regexvalidatew.md](src/fcmd/help/regexvalidatew.md)），设置持久化到 `~/.fcmd/ui/regexvalidate.json`） |
 | `stattool` | - | 统计工具（mean/median/percentile/stddev/variance/summarize） |
 | `textdiff` | - | 文本比较（行级 diff，统一格式输出） |
 | `timetool` | - | 时间工具（now/parse/unix/fromunix/convert） |
@@ -288,7 +288,7 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 | `filescan` | - | 目录敏感内容扫描：关键词/正则/文件名/路径/时间/大小/文件类型/元数据/词典/哈希/高熵规则（可带校验器与命中阈值）与 and·or·not·near 表达式组合，后缀白名单（默认常见文本后缀，`--force-ext` 可强制扫描名单外后缀）、并行扫描与取消、按文件聚合命中并默认打码，支持文本/JSON/CSV 报告、规则集 JSON 导入导出、扫描配置复用（`scan --save-config` / `run --config`）与重复扫描缓存（`--no-cache` 关闭、`--clear-cache` 清理，报告区分实扫/复用）；统计区分「范围外」与「读取后跳过」，0 命中时给出白名单/规则诊断 |
 | `filescanw` | - | 敏感内容扫描窗口版（Qt：侧边栏「扫描 / 结果 / 规则 / 设置」分页（可折叠、按页隔离的状态栏）、扫描页改为任务列表（首项虚线添加任务，每行固定目录、扫描按钮居首加宽、单独开始/停止扫描，扫描按钮旁「更多扫描方式」菜单提供增量扫描（只重扫变更文件）与全量重扫（忽略缓存重读）、查看该任务结果、展开详情，扫描时间与命中摘要标签紧跟目录（折叠即可见），移除 / 清空固定在右上角且不确认，同名任务自动区分，旧 `paths` 自动迁移）、结果页任务下拉菜单标明 / 切换任务归属并可切回，状态栏进度与速度/剩余，设置页扫描范围表单与可编辑后缀白名单、扫描配置导入/导出、扫描缓存开关与清理，扫描结果按任务持久化，规则表（关键词 / 正则 / 文件名 / 路径 / 修改·创建·访问时间 / 大小，校验器与命中阈值，名称前显示 id）与组合式列表（可嵌套引用、单独启停，未启用组合式仍可作构件），命中树四列（文件 / 规则、严重级、行号、上下文；引擎 / 耗时并入文件行摘要）、首批 1000 行 + 子命中展开懒加载 + 加载更多、上下文换行完整显示且命中段带底色、紧凑模式（任务行 / 表格 / 结果上下文单行，可关）、跳过项默认隐藏且可开关显示、选中行定位文件与复制命中 / 扫描说明（默认打码，勾选导出/复制原文取原文）、规则/路径筛选、打码导出，添加任务 / 导入导出的文件对话框记住上次目录、设置持久化到 `~/.fcmd/ui/filescanw.json`） |
 | `renamer` | - | 批量重命名（规则流水线）：`replace` 正则替换、`reorder` 用 `{0}/{1}/{name}` 重排捕获片段、`move` 把匹配文本搬到开头/结尾/锚点/指定位置，另有 `insert`/`case`/`sequence`；规则用 JSON 或 `@文件` 传入，`preview` 预览、`apply` 两阶段执行（支持互换与仅大小写改名），预览标记未变化/非法/冲突 |
-| `renamerw` | - | 批量重命名窗口版（Qt：目标文件/目录列表、规则表增删改与上下移、正则/重排/搬移/插入/大小写/计数器表单、旧名→新名预览与冲突着色、两阶段执行与本次撤销、规则 JSON 导入导出；「帮助 → 使用帮助」内置规则说明与五组典型示例，可一键载入，详见 [src/fcmd/apps/renamer/help/renamerw.md](src/fcmd/apps/renamer/help/renamerw.md)，设置持久化到 `~/.fcmd/ui/renamerw.json`） |
+| `renamerw` | - | 批量重命名窗口版（Qt：目标文件/目录列表、规则表增删改与上下移、正则/重排/搬移/插入/大小写/计数器表单、旧名→新名预览与冲突着色、两阶段执行与本次撤销、规则 JSON 导入导出；「帮助 → 使用帮助」（`F1`，公共帮助窗口）内含规则说明与五组典型示例，可一键载入，详见 [src/fcmd/help/renamerw.md](src/fcmd/help/renamerw.md)，设置持久化到 `~/.fcmd/ui/renamerw.json`） |
 | `dynacalc` | - | 装药密度/尺寸/工艺缺陷 → 爆轰传递的参数化算例（不做物理求解）：YAML 参数矩阵（主矩阵 48 组 + 五项补充组 + 典型工况 01/02/03）与 `dynacalc-model/1` 模型映射（几何/拉拔/密度场/间隙/脱粘），按 LS-DYNA 关键字模板生成可复现 deck，调度求解（`--plan-only`、假求解器、并发/超时/重试/续跑），回收 glstat/matsum/history 输出 CSV/JSON/文本汇总与两工况对比，四项工程门控（阈值可配，属工程建议值）；一键演示 `fcmd dynacalc demo`（示例参数 → 生成 → 假求解 → 汇总 → 对比 → 门控，可接 paramcad 模型与 paramesh 网格，最短命令见 [docs/cli.md](docs/cli.md)）；不含任何真实配方或材料参数，未填项一律 TBD，详见 [docs/adr/0020-dynacalc.md](docs/adr/0020-dynacalc.md) 与 [docs/dynacalc-model-contract.md](docs/dynacalc-model-contract.md) |
 | `dynacalcw` | - | 参数化算例窗口版（Qt：参数/模型/输出/模板/求解器选择，工况清单预览，生成 deck、dry-run、执行、作业状态、汇总与门控，设置持久化到 `~/.fcmd/ui/dynacalcw.json`） |
 | `iptool` | - | IP 地址工具（parse/subnet/validate） |
@@ -565,8 +565,15 @@ src/fcmd/
   apps/          # 独立桌面应用（自动发现；如 cmder、filesync、llm）
   tools/         # 业务实现（自动发现）
     archive/ calc/ crypto/ data/ dev/ media/ net/ office/ pdf/ system/ text/
+  help/          # 包内帮助文档（完整说明唯一来源，GUI「使用帮助」直接渲染）
+  shared/        # 跨层纯标准库基础件（helpdoc / paths / formatting）
   console.py     # rich 控制台薄封装
 ```
+
+帮助文档：`--help` / `fcmd info` 的分段由 `ToolSpec.help_sections` 声明；完整说明放
+`src/fcmd/help/<tool>.md`，GUI 调用 `load_help_doc` + `HelpMenuMixin.install_help_menu`
+复用公共帮助窗口（见 [docs/help/README.md](docs/help/README.md) 与
+[docs/adr/0052-help-doc-components.md](docs/adr/0052-help-doc-components.md)）。
 
 新增 Python 工具：在 `src/fcmd/tools/<领域>/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。目录按功能域划分；图形界面版命名为 `<工具名>w.py` 并放在其核心逻辑所在域（如 `media/img2icow.py`）。相互依赖、共享模型与运行时的本地 LLM 工具族统一放 `src/fcmd/apps/llm/`（如 `llm/llmconvert.py`）。独立桌面应用（如 `cmder`，命令 `cmderw`）放 `src/fcmd/apps/<应用>/`（一包一应用，入口 `app.py`），与 `tools` 共用工具发现与静态清单。
 

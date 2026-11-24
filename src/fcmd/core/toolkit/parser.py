@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from ...shared.helpdoc import HelpDoc
 from .spec import ToolSpec
 
 
@@ -183,10 +184,10 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
     param_help = _extract_param_help(spec.func)
     if spec.param_help:
         param_help.update(spec.param_help)
-    epilog = None
-    if spec.examples:
-        # 示例按行原样展示，不参与 argparse 的换行折叠
-        epilog = "示例:\n" + "\n".join(f"  {example}" for example in spec.examples)
+    # 示例 / 环境变量 / 退出码等分段统一由 HelpDoc 渲染：段落按行原样展示，
+    # 不参与 argparse 的换行折叠；未声明分段时输出与旧版「示例:」逐字一致。
+    doc = HelpDoc(tool=spec.name, sections=spec.help_sections).with_examples(spec.examples)
+    epilog = doc.epilog() or None
     parser = argparse.ArgumentParser(
         prog=prog,
         description=description,
