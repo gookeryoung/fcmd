@@ -393,6 +393,31 @@ def test_scan_file_respects_hit_limit(tmp_path: Path) -> None:
     assert len(outcome.hit.matches) == 2
 
 
+def test_scan_file_normalizes_fullwidth_text(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.txt", "密码：ｐａｓｓｗｏｒｄ＝abc\n")
+    ruleset = RuleSet(rules=(Rule(id="kw", name="关键词", matcher=Matcher(kind=MATCH_KEYWORD, text="password")),))
+    outcome = scan_file(path, _context(ruleset))
+    assert outcome.hit is not None
+    match = outcome.hit.matches[0]
+    assert match.excerpt == "ｐａｓｓｗｏｒｄ"
+    assert match.context == "密码：ｐａｓｓｗｏｒｄ＝abc"
+    assert match.start == 3
+
+
+def test_scan_file_normalization_can_be_disabled(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.txt", "ｐａｓｓｗｏｒｄ\n")
+    ruleset = RuleSet(rules=(Rule(id="kw", name="关键词", matcher=Matcher(kind=MATCH_KEYWORD, text="password")),))
+    assert scan_file(path, _context(ruleset, options=ScanOptions(normalize_text=False))).hit is None
+
+
+def test_scan_file_normalizes_compatibility_characters(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.txt", "编号①\n")
+    ruleset = RuleSet(rules=(Rule(id="num", name="编号", matcher=Matcher(kind=MATCH_KEYWORD, text="1")),))
+    outcome = scan_file(path, _context(ruleset))
+    assert outcome.hit is not None
+    assert outcome.hit.matches[0].excerpt == "①"
+
+
 def test_scan_file_matches_filename_target(tmp_path: Path) -> None:
     path = _write(tmp_path, "secret_alpha.txt", "nothing here\n")
     ruleset = RuleSet(

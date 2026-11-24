@@ -19,6 +19,7 @@ import os
 import stat
 import threading
 import time
+import unicodedata
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -42,6 +43,7 @@ from fcmd.apps.filescan._rules import (
     compile_rule,
     evaluate_expression,
     positive_rule_ids,
+    referenced_rule_ids,
     resolve_expression,
 )
 from fcmd.infras.system import format_bytes
@@ -309,7 +311,9 @@ class ScanOptions:
     ``skip_dirs`` 是跳过目录名列表（默认 :data:`DEFAULT_SKIP_DIRS`，按任意层级
     匹配，含斜杠的条目匹配相对根目录的路径后缀）；``skip_hidden`` 为真时跳过
     隐藏文件与隐藏目录（名称以 ``.`` 开头，Windows 另含隐藏属性），默认关闭，
-    避免漏扫 ``.env`` 这类常见敏感配置。
+    避免漏扫 ``.env`` 这类常见敏感配置。``normalize_text`` 为真（默认）时，匹配
+    前对每行做 NFKC 归一化（全角字母 / 数字、①、㈱ 等按兼容形式匹配），命中
+    位置与片段仍映射回原文；纯 ASCII 行走快速路径，不产生额外开销。
     """
 
     recursive: bool = True
@@ -317,6 +321,7 @@ class ScanOptions:
     follow_symlinks: bool = False
     skip_dirs: tuple[str, ...] = DEFAULT_SKIP_DIRS
     skip_hidden: bool = False
+    normalize_text: bool = True
     ext_whitelist: tuple[str, ...] = DEFAULT_SCAN_EXTENSIONS
     include_exts: tuple[str, ...] = ()
     force_exts: tuple[str, ...] = ()
@@ -804,6 +809,56 @@ def _is_cancelled(token: Any) -> bool:
     return bool(token is not None and token.is_set())
 
 
+def _normalize_line(line: str) -> tuple[str, list[int] | None]:
+    """对一行做 NFKC 归一化并给出「归一化边界 → 原文偏移」映射。
+
+    返回 ``(归一化文本, 边界表)``；原文未发生变化（含纯 ASCII）时边界表为
+    ``None``，调用方直接按原偏移切片。边界表长度是 ``len(归一化文本) + 1``，
+    ``boundaries[i]`` 是归一化文本第 ``i`` 个字符边界对应的原文偏移。
+
+    实现按「基字符 + 组合记号」切簇逐簇归一化：既能处理兼容字符（①、㈱、全角
+    字母），也能处理 ``e`` + 组合重音这类需要合成的序列。极少数跨簇组合（如
+    韩文初声 / 中声分离）与服务端整行归一化不一致时，退化为按长度截断的近似
+    映射，只影响极短片段，不影响命中判定。
+    """
+    if line.isascii():
+        return line, None
+    normalized = unicodedata.normalize("NFKC", line)
+    if normalized == line:
+        return line, None
+    boundaries: list[int] = [0]
+    pieces: list[str] = []
+    index = 0
+    length = len(line)
+    while index < length:
+        end = index + 1
+        while end < length and unicodedata.combining(line[end]):
+            end += 1
+        segment = unicodedata.normalize("NFKC", line[index:end])
+        pieces.append(segment)
+        boundaries.extend([end] * len(segment))
+        index = end
+    joined = "".join(pieces)
+    if joined != normalized:
+        # 跨簇组合：按长度比例近似映射，保证索引不越界、片段非空。
+        cap = len(line)
+        boundaries = [min(i, cap) for i in range(len(normalized) + 1)]
+        return normalized, boundaries
+    return joined, boundaries
+
+
+def _original_span(match: Any, line: str, boundaries: Sequence[int] | None) -> tuple[int, int]:
+    """把匹配区间映射回原文偏移；边界重合时保证至少覆盖一个原文字符。"""
+    if boundaries is None:
+        return match.start(), match.end()
+    last = len(boundaries) - 1
+    start = boundaries[min(match.start(), last)]
+    end = boundaries[min(match.end(), last)]
+    if end <= start < len(line):
+        end = start + 1
+    return start, end
+
+
 # ---------------------------------------------------------------------- #
 # 单文件匹配
 # ---------------------------------------------------------------------- #
@@ -815,20 +870,26 @@ def _build_match(  # noqa: PLR0913 - 命中五要素 + 可选位置，拆开反�
     context_chars: int,
     *,
     location: str = "",
+    boundaries: Sequence[int] | None = None,
 ) -> RuleMatch:
-    """构造一条命中，截取左右上下文并记录命中在上下文中的起点。"""
-    start = max(0, match.start() - context_chars)
-    end = min(len(line), match.end() + context_chars)
+    """构造一条命中，截取左右上下文并记录命中在上下文中的起点。
+
+    ``match`` 是在（可能归一化后的）文本上得到的匹配；``boundaries`` 非空时把
+    起点 / 终点映射回原文 ``line``，保证 ``excerpt`` / ``context`` 都是原文。
+    """
+    hit_start, hit_end = _original_span(match, line, boundaries)
+    start = max(0, hit_start - context_chars)
+    end = min(len(line), hit_end + context_chars)
     return RuleMatch(
         rule_id=compiled.id,
         rule_name=compiled.name,
         severity=compiled.severity,
         line_no=line_no,
-        start=match.start(),
-        end=match.end(),
-        excerpt=match.group(0),
+        start=hit_start,
+        end=hit_end,
+        excerpt=line[hit_start:hit_end],
         context=line[start:end],
-        context_start=match.start() - start,
+        context_start=hit_start - start,
         location=location,
     )
 
@@ -888,13 +949,17 @@ def _collect_matches(
     for line_no, line in enumerate(text.splitlines(), start=1):
         if _is_cancelled(token):
             return None
+        target = line
+        boundaries: list[int] | None = None
+        if options.normalize_text:
+            target, boundaries = _normalize_line(line)
         for compiled in compiled_rules:
             regex = compiled.regex
             # 先用 search 判有无：绝大多数行不命中，可省掉 finditer 的迭代器分配；
             # 命中后才 finditer，匹配集合与顺序与直接 finditer 完全一致。
-            if regex.search(line) is None:
+            if regex.search(target) is None:
                 continue
-            for match in regex.finditer(line):
+            for match in regex.finditer(target):
                 matched_ids.add(compiled.id)
                 if len(matches) < limit:
                     matches.append(
@@ -905,6 +970,7 @@ def _collect_matches(
                             match,
                             options.context_chars,
                             location=location,
+                            boundaries=boundaries,
                         )
                     )
     return matched_ids, matches
@@ -1241,8 +1307,11 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
     """
     opts = options or ScanOptions()
     started = time.perf_counter()
-    compiled = tuple(compile_rule(rule) for rule in ruleset.enabled_rules())
     expression = resolve_expression(ruleset)
+    # 表达式引用的规则都参与匹配（含未启用规则作为构件）；表达式为空时引用集合
+    # 就是全部启用规则，与默认 OR 的行为一致。
+    referenced = frozenset(referenced_rule_ids(expression))
+    compiled = tuple(compile_rule(rule) for rule in ruleset.rules if rule.id in referenced)
     positive = frozenset(positive_rule_ids(expression)) & {item.id for item in compiled}
     context = ScanContext(
         compiled_rules=compiled,

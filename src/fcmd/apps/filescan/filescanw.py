@@ -231,6 +231,7 @@ class FilescanSettings:
     modified_before: str = ""
     skip_binary: bool = True
     scan_documents: bool = True
+    normalize_text: bool = True
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
     workers: int = 4
     context_chars: int = 40
@@ -276,6 +277,7 @@ def settings_to_mapping(settings: FilescanSettings) -> dict[str, Any]:
         "modified_before": settings.modified_before,
         "skip_binary": settings.skip_binary,
         "scan_documents": settings.scan_documents,
+        "normalize_text": settings.normalize_text,
         "max_file_bytes": settings.max_file_bytes,
         "workers": settings.workers,
         "context_chars": settings.context_chars,
@@ -384,6 +386,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
         modified_before=_str_value(raw, "modified_before"),
         skip_binary=_bool_value(raw, "skip_binary", True),
         scan_documents=_bool_value(raw, "scan_documents", True),
+        normalize_text=_bool_value(raw, "normalize_text", True),
         max_file_bytes=_int_value(raw, "max_file_bytes", DEFAULT_MAX_FILE_BYTES, minimum=1),
         workers=_int_value(raw, "workers", 4, minimum=1),
         context_chars=_int_value(raw, "context_chars", 40),

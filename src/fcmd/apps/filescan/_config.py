@@ -12,7 +12,8 @@
         "ext_whitelist": [".txt", ".log"], "include_exts": [], "force_exts": [],
         "exclude_exts": [], "min_size": 0, "max_size": null,
         "modified_after": "2026-01-01T00:00:00", "modified_before": null,
-        "skip_binary": true, "scan_documents": true, "max_file_bytes": 8388608,
+        "skip_binary": true, "scan_documents": true, "normalize_text": true,
+        "max_file_bytes": 8388608,
         "encodings": ["utf-8", "gb18030", "latin-1"],
         "workers": 4, "context_chars": 40, "max_hits_per_file": 200,
         "use_processes": true
@@ -175,6 +176,7 @@ def config_to_mapping(config: ScanConfig) -> dict[str, Any]:
             "modified_before": format_timestamp(options.modified_before),
             "skip_binary": options.skip_binary,
             "scan_documents": options.scan_documents,
+            "normalize_text": options.normalize_text,
             "max_file_bytes": options.max_file_bytes,
             "encodings": list(options.encodings),
             "workers": options.workers,
@@ -485,6 +487,7 @@ def _options_value(raw: Any, warnings: list[str]) -> ScanOptions:
         modified_before=modified_before,
         skip_binary=_bool_field(raw, "skip_binary", defaults.skip_binary, prefix, warnings),
         scan_documents=_bool_field(raw, "scan_documents", defaults.scan_documents, prefix, warnings),
+        normalize_text=_bool_field(raw, "normalize_text", defaults.normalize_text, prefix, warnings),
         max_file_bytes=(
             _int_field(raw, "max_file_bytes", DEFAULT_MAX_FILE_BYTES, prefix, warnings, minimum=1)
             or DEFAULT_MAX_FILE_BYTES

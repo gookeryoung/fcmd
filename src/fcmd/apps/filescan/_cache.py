@@ -107,6 +107,7 @@ def _fingerprint_payload(ruleset: RuleSet, options: ScanOptions, mask: bool) -> 
         "options": {
             "skip_binary": options.skip_binary,
             "scan_documents": options.scan_documents,
+            "normalize_text": options.normalize_text,
             "max_file_bytes": options.max_file_bytes,
             "encodings": list(options.encodings),
             "context_chars": options.context_chars,
@@ -120,9 +121,9 @@ def cache_fingerprint(ruleset: RuleSet, options: ScanOptions, *, mask: bool = Tr
     """计算缓存指纹。
 
     参与计算的字段：完整规则集（含表达式）、``skip_binary`` / ``scan_documents`` /
-    ``max_file_bytes`` / ``encodings`` / ``context_chars`` / ``max_hits_per_file``
-    与 ``mask``。递归深度、后缀与大小/时间过滤、并发数、报告格式等只影响
-    「扫哪些文件」或「怎么输出」，不改变单文件命中，故不参与指纹。
+    ``normalize_text`` / ``max_file_bytes`` / ``encodings`` / ``context_chars`` /
+    ``max_hits_per_file`` 与 ``mask``。递归深度、后缀与大小/时间过滤、并发数、
+    报告格式等只影响「扫哪些文件」或「怎么输出」，不改变单文件命中，故不参与指纹。
     """
     payload = json.dumps(_fingerprint_payload(ruleset, options, mask), ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

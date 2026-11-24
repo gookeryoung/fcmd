@@ -121,6 +121,7 @@ from fcmd.apps.filescan._rules import (
     builtin_ruleset,
     default_expression,
     load_ruleset,
+    referenced_rule_ids,
     resolve_expression,
     save_ruleset,
     severity_label,
@@ -927,7 +928,19 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._skip_hidden = QCheckBox("跳过隐藏文件/目录", options)
         self._skip_hidden.setChecked(self.settings.skip_hidden)
         self._skip_hidden.setToolTip("默认不跳过，避免漏扫 .env 等隐藏配置；勾选后按名称前缀 . 与 Windows 隐藏属性过滤")
-        for widget in (self._recursive, self._follow, self._skip_binary, self._scan_documents, self._skip_hidden):
+        self._normalize_text = QCheckBox("文本归一化", options)
+        self._normalize_text.setChecked(self.settings.normalize_text)
+        self._normalize_text.setToolTip(
+            "匹配前做 NFKC 归一化，全角字母数字、①、㈱ 等按兼容形式匹配；命中片段仍取自原文"
+        )
+        for widget in (
+            self._recursive,
+            self._follow,
+            self._skip_binary,
+            self._scan_documents,
+            self._skip_hidden,
+            self._normalize_text,
+        ):
             checks.addWidget(widget)
         checks.addStretch(1)
         options.body.addLayout(checks)
@@ -1149,6 +1162,10 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._expression = QLineEdit(expression)
         self._expression.setPlaceholderText("例如：pii and not email")
         row.addWidget(self._expression, 1)
+        insert_button = button("插入选中规则")
+        insert_button.setToolTip("把规则表选中行的 id 插入到光标位置，便于拼组合表达式")
+        insert_button.clicked.connect(self._insert_rule_id)
+        row.addWidget(insert_button)
         apply_button = button("应用")
         apply_button.clicked.connect(self._apply_expression)
         row.addWidget(apply_button)
@@ -1156,6 +1173,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         validate_button.clicked.connect(self._validate_expression)
         row.addWidget(validate_button)
         expression.body.addLayout(row)
+        expression.body.addWidget(
+            hint_label("启用的规则进入默认 OR；表达式里显式引用的规则即使未启用也会参与匹配，可只作为组合构件。")
+        )
         self._rule_hint = hint_label("")
         expression.body.addWidget(self._rule_hint)
         layout.addWidget(expression)
@@ -1606,6 +1626,26 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             return
         self._sync_ruleset(updated, message="表达式已应用")
 
+    def _insert_rule_id(self) -> None:
+        """把规则表选中行的 id 插入表达式光标处（按需补空格，不覆盖已有文本）。"""
+        row = self._rules_table.currentRow()
+        if row < 0:
+            self.set_page_status("rules", "请先在规则表选择一条规则")
+            return
+        item = self._rules_table.item(row, 3)
+        rule_id = item.text() if item is not None else ""
+        if not rule_id:
+            return
+        text = self._expression.text()
+        cursor = max(0, min(self._expression.cursorPosition(), len(text)))
+        before = "" if cursor == 0 or text[cursor - 1].isspace() or text[cursor - 1] == "(" else " "
+        after = "" if cursor >= len(text) or text[cursor].isspace() or text[cursor] == ")" else " "
+        inserted = f"{before}{rule_id}{after}"
+        self._expression.setText(f"{text[:cursor]}{inserted}{text[cursor:]}")
+        self._expression.setCursorPosition(cursor + len(inserted))
+        self._expression.setFocus()
+        self.set_page_status("rules", f"已插入规则 id：{rule_id}")
+
     def _validate_expression(self) -> None:
         try:
             expression = self._expression.text().strip()
@@ -1640,6 +1680,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             modified_before=before,
             skip_binary=self._skip_binary.isChecked(),
             scan_documents=self._scan_documents.isChecked(),
+            normalize_text=self._normalize_text.isChecked(),
             max_file_bytes=max(1, self._max_file_bytes.value()),
             workers=max(1, self._workers.value()),
             context_chars=max(0, self._context_chars.value()),
@@ -1656,12 +1697,13 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             QMessageBox.warning(self, "缺少目录", "请先给该任务指定扫描目录")
             return
         try:
-            resolve_expression(self.ruleset)
+            expression = resolve_expression(self.ruleset)
         except ValueError as exc:
             QMessageBox.critical(self, "规则表达式无效", str(exc))
             return
-        if not self.ruleset.enabled_rules():
-            QMessageBox.warning(self, "没有启用规则", "请先启用至少一条规则")
+        # 启用只决定默认 OR；显式表达式里引用的未启用规则同样会参与匹配。
+        if not referenced_rule_ids(expression):
+            QMessageBox.warning(self, "没有可用规则", "请先启用规则，或在表达式里引用规则 id")
             return
         try:
             options = self._scan_options()
@@ -2195,6 +2237,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._follow.setChecked(options.follow_symlinks)
         self._skip_binary.setChecked(options.skip_binary)
         self._scan_documents.setChecked(options.scan_documents)
+        self._normalize_text.setChecked(options.normalize_text)
         self._max_depth.setValue(options.max_depth)
         self._min_size.setValue(options.min_size)
         self._max_size.setValue(options.max_size or 0)
@@ -2271,6 +2314,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             modified_before=self._modified_before.text().strip(),
             skip_binary=self._skip_binary.isChecked(),
             scan_documents=self._scan_documents.isChecked(),
+            normalize_text=self._normalize_text.isChecked(),
             max_file_bytes=max(1, self._max_file_bytes.value()),
             workers=max(1, self._workers.value()),
             context_chars=max(0, self._context_chars.value()),

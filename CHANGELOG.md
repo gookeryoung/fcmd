@@ -7,6 +7,14 @@
 
 ### 变更
 
+- `filescan` 组合表达式支持「构件规则」：`enabled` 只决定表达式为空时是否进入默认
+  OR，显式表达式引用到的规则（含未启用规则）都会参与匹配，因此可以新增规则后保持
+  不启用、只在组合式里使用；引擎改为按表达式引用集合编译规则。GUI 表达式旁新增
+  「插入选中规则」按钮，并提示启用与显式引用的区别。
+- `filescan` 新增文本归一化（默认开启）：匹配前对每行做 NFKC 归一化，全角
+  字母数字、`①`、`㈱` 等兼容字符按等价形式命中，`excerpt` / 上下文仍取自原文；
+  CLI `--no-normalize-text`、配置 `options.normalize_text` 与 GUI「文本归一化」
+  可关闭，该选项参与缓存指纹。
 - `filescanw` 规则表在名称前新增 ID 列：直接显示规则 id（如 `cn_phone`），方便
   在组合表达式里引用，悬停提示给出示例（`pii and not email`）。
 - `filescan` 规则新增匹配对象 `target`（`content` / `filename`，默认 `content`）：

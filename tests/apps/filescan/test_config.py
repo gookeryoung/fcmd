@@ -107,6 +107,7 @@ def test_dump_config_has_version_and_core_sections(tmp_path: Path) -> None:
         "modified_before",
         "skip_binary",
         "scan_documents",
+        "normalize_text",
         "max_file_bytes",
         "encodings",
         "workers",

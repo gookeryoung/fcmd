@@ -149,6 +149,7 @@ def _build_options(  # noqa: PLR0913, PLR0917 - 直接映射 CLI 选项，保持
     max_file_bytes: int,
     workers: int,
     context_chars: int,
+    normalize_text: bool,
 ) -> ScanOptions:
     """把 CLI 参数转换成扫描选项；``max_size<=0`` 表示不限。"""
     try:
@@ -173,6 +174,7 @@ def _build_options(  # noqa: PLR0913, PLR0917 - 直接映射 CLI 选项，保持
         modified_after=after,
         modified_before=before,
         skip_binary=skip_binary,
+        normalize_text=normalize_text,
         max_file_bytes=max(1, max_file_bytes),
         workers=max(1, workers),
         context_chars=max(0, context_chars),
@@ -198,6 +200,7 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     modified_after: str = "",
     modified_before: str = "",
     skip_binary: bool = True,
+    normalize_text: bool = True,
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
     workers: int = 4,
     context_chars: int = 40,
@@ -250,6 +253,9 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         只扫描修改时间不晚于该时刻的文件；格式同 ``modified_after``
     skip_binary:
         跳过二进制文件，默认开启（``--no-skip-binary`` 关闭）
+    normalize_text:
+        匹配前对文本做 NFKC 归一化（全角字母数字、①、㈱ 等按兼容形式匹配），
+        默认开启（``--no-normalize-text`` 关闭）；命中片段仍取自原文
     max_file_bytes:
         单文件读取上限（字节），超出记入跳过
     workers:
@@ -300,6 +306,7 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         max_file_bytes,
         workers,
         context_chars,
+        normalize_text,
     )
     if save_config is not None:
         config = ScanConfig(
