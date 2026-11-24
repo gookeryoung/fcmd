@@ -95,7 +95,14 @@ from fcmd.apps.filescan._engine import (
     parse_ext_text,
     scan_paths,
 )
-from fcmd.apps.filescan._report import context_segments, filter_result, mask_text, render_context, write_report
+from fcmd.apps.filescan._report import (
+    context_segments,
+    filter_result,
+    mask_text,
+    match_note,
+    render_context,
+    write_report,
+)
 from fcmd.apps.filescan._rules import (
     MATCH_KEYWORD,
     MATCH_REGEX,
@@ -974,6 +981,10 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._copy_context_button = button("复制上下文", kind="ghost")
         self._copy_context_button.clicked.connect(lambda: self._copy_selected_matches(context=True))
         action_bar.addWidget(self._copy_context_button)
+        self._copy_note_button = button("复制扫描说明", kind="ghost")
+        self._copy_note_button.setToolTip("按「【规则：…，匹配项：…】」逐条生成扫描说明并复制")
+        self._copy_note_button.clicked.connect(self._copy_selected_notes)
+        action_bar.addWidget(self._copy_note_button)
         action_bar.addWidget(hint_label("双击行定位文件，右键行可打开 / 复制更多", wrap=False), 1)
         card.body.addLayout(action_bar)
 
@@ -1829,7 +1840,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
     def _update_result_actions(self) -> None:
         """结果动作按钮跟随选择启用：没有选中行时置灰。"""
         selected = bool(self._tree.selectedItems())
-        for widget in (self._locate_button, self._copy_match_button, self._copy_context_button):
+        for widget in (
+            self._locate_button,
+            self._copy_match_button,
+            self._copy_context_button,
+            self._copy_note_button,
+        ):
             widget.setEnabled(selected)
 
     def _copy_to_clipboard(self, text: str, message: str) -> None:
@@ -1854,6 +1870,19 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._copy_to_clipboard(
             "\n".join(lines),
             f"已复制 {len(matches)} 条{label}（{'原文' if raw else '已打码'}）",
+        )
+
+    def _copy_selected_notes(self) -> None:
+        """复制扫描说明：每条命中生成「【规则：…，匹配项：…】」，默认打码。"""
+        matches = self._selected_matches()
+        if not matches:
+            self.set_page_status("results", "请先在结果树选择命中行（父节点会包含该文件的全部命中）")
+            return
+        raw = self._export_raw.isChecked()
+        lines = [match_note(match, include_raw=raw) for match in matches]
+        self._copy_to_clipboard(
+            "\n".join(lines),
+            f"已复制 {len(matches)} 条扫描说明（{'原文' if raw else '已打码'}）",
         )
 
     def _copy_selected_paths(self) -> None:
@@ -1914,6 +1943,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         copy_context = menu.addAction("复制上下文")
         copy_context.setEnabled(bool(self._item_matches(item)))
         copy_context.triggered.connect(lambda: self._copy_selected_matches(context=True))
+        copy_note = menu.addAction("复制扫描说明")
+        copy_note.setEnabled(bool(self._item_matches(item)))
+        copy_note.triggered.connect(self._copy_selected_notes)
         copy_path = menu.addAction("复制文件路径")
         copy_path.setEnabled(path is not None)
         copy_path.triggered.connect(self._copy_selected_paths)

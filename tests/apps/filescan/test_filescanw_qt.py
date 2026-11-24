@@ -684,6 +684,14 @@ def test_result_rows_bind_file_and_match_without_duplicate_rule_column(home: Pat
         window._copy_selected_paths()
         assert QApplication.clipboard().text() == str(target)
 
+        # 扫描说明按「【规则：…，匹配项：…】」逐条生成，同样跟随原文开关。
+        window._copy_selected_notes()
+        assert QApplication.clipboard().text() == "【规则：手机号，匹配项：13800138000】"
+        window._export_raw.setChecked(False)
+        window._copy_selected_notes()
+        assert QApplication.clipboard().text() == f"【规则：手机号，匹配项：{mask_text(match.excerpt)}】"
+        assert "扫描说明" in window.page_status("results")
+
         child.setSelected(False)
         assert window._locate_button.isEnabled() is False
     finally:

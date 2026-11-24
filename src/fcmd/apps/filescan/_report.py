@@ -26,6 +26,7 @@ __all__ = [
     "filter_result",
     "format_text_report",
     "mask_text",
+    "match_note",
     "no_hit_hint",
     "render_context",
     "result_to_csv",
@@ -64,6 +65,16 @@ def render_context(match: RuleMatch, include_raw: bool = False) -> str:
     """返回上下文字符串；默认把上下文中的命中区间替换为打码文本。"""
     before, excerpt, after = context_segments(match, include_raw)
     return f"{before}{excerpt}{after}"
+
+
+def match_note(match: RuleMatch, include_raw: bool = False) -> str:
+    """单条命中的扫描说明：``【规则：名称，匹配项：片段】``。
+
+    给「复制扫描说明」用：只包含规则名与命中片段，默认打码，``include_raw=True``
+    时才用原文（与报告 / 复制的开关同一口径）。
+    """
+    excerpt = match.excerpt if include_raw else mask_text(match.excerpt)
+    return f"【规则：{match.rule_name}，匹配项：{excerpt}】"
 
 
 def _match_to_mapping(match: RuleMatch, include_raw: bool) -> dict[str, Any]:

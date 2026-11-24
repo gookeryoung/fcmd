@@ -14,6 +14,7 @@ from fcmd.apps.filescan._report import (
     filter_result,
     format_text_report,
     mask_text,
+    match_note,
     no_hit_hint,
     render_context,
     result_to_csv,
@@ -111,6 +112,12 @@ def test_context_segments_split_match_and_keep_mask() -> None:
 def test_context_segments_handle_short_match() -> None:
     match = _match(excerpt="ab", context="xx ab yy", context_start=3)
     assert context_segments(match) == ("xx ", "***", " yy")
+
+
+def test_match_note_uses_rule_name_and_masked_excerpt() -> None:
+    match = _match()
+    assert match_note(match) == "【规则：规则cn_phone，匹配项：13*******78】"
+    assert match_note(match, include_raw=True) == "【规则：规则cn_phone，匹配项：13812345678】"
 
 
 # ---------------------------------------------------------------------- #
