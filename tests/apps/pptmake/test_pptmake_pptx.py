@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -17,16 +18,21 @@ def test_draw_edge_primitives_and_save(tmp_path: Path) -> None:
     api = _pptx._api()
     presentation = api.Presentation()
     slide = presentation.slides.add_slide(presentation.slide_layouts[6])
-    _pptx._draw_primitive(slide, design.Rect(0, 0, 0, 0), api)
-    _pptx._draw_primitive(slide, design.Oval(0, 0, 0, 0), api)
-    _pptx._draw_primitive(slide, design.Line(1, 1, 1, 1, "#000000"), api)
-    _pptx._draw_primitive(slide, design.Text(0, 0, 0, 0, ("x",), 12, "#000000"), api)
-    _pptx._draw_primitive(slide, design.Rect(10, 10, 100, 50, fill=""), api)
-    _pptx._draw_primitive(slide, design.Rect(10, 10, 100, 50, line="#FF0000", line_width=0), api)
-    _pptx._draw_primitive(slide, design.Rect(10, 10, 100, 50, fill="#00FF00", radius=8), api)
-    _pptx._draw_primitive(slide, design.Rect(10, 10, 100, 50, line="#00FF00", line_width=2, radius=100), api)
-    _pptx._draw_primitive(
-        slide,
+    theme = core.Theme()
+    scheme = _pptx._scheme_map(theme)
+
+    def draw(primitive: design.Primitive) -> None:
+        _pptx._draw_primitive(slide, primitive, api, theme=theme, scheme=scheme, native=True)
+
+    draw(design.Rect(0, 0, 0, 0))
+    draw(design.Oval(0, 0, 0, 0))
+    draw(design.Line(1, 1, 1, 1, "#000000"))
+    draw(design.Text(0, 0, 0, 0, ("x",), 12, "#000000"))
+    draw(design.Rect(10, 10, 100, 50, fill=""))
+    draw(design.Rect(10, 10, 100, 50, line="#FF0000", line_width=0))
+    draw(design.Rect(10, 10, 100, 50, fill="#00FF00", radius=8))
+    draw(design.Rect(10, 10, 100, 50, line="#00FF00", line_width=2, radius=100))
+    draw(
         design.Text(
             10,
             10,
@@ -41,17 +47,84 @@ def test_draw_edge_primitives_and_save(tmp_path: Path) -> None:
             align="center",
             anchor="middle",
             space_after=4,
-        ),
-        api,
+        )
     )
+    draw(design.Text(10, 10, 180, 90, ("bottom",), 12, "#000000", align="right", anchor="bottom"))
+    draw(design.Text(10, 10, 180, 90, ("01",), 12, "#000000", field="slidenum", field_suffix=" / 3"))
     _pptx._draw_primitive(
-        slide,
-        design.Text(10, 10, 180, 90, ("bottom",), 12, "#000000", align="right", anchor="bottom"),
-        api,
+        slide, design.Text(10, 10, 180, 90, ("flat",), 12, "#000000"), api, theme=theme, scheme={}, native=False
     )
     output = tmp_path / "edge.pptx"
     presentation.save(str(output))
     assert _pptx.pptx_slide_count(output) == 1
+
+
+def test_native_export_writes_theme_and_fields(tmp_path: Path) -> None:
+    template = core.default_template()
+    template = replace(template, theme=replace(template.theme, body_font="Arial"))
+    target = tmp_path / "native.pptx"
+    _pptx.export_pptx(template, target)
+    with zipfile.ZipFile(target) as archive:
+        theme = archive.read("ppt/theme/theme1.xml").decode("utf-8")
+        slides = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+    palette = template.theme.palette
+    for color in (
+        palette.background,
+        palette.surface,
+        palette.accent,
+        palette.secondary,
+        palette.text,
+        palette.muted,
+    ):
+        assert color[1:] in theme
+    assert template.theme.heading_font in theme
+    assert "Arial" in theme
+    assert 'type="slidenum"' in slides
+    assert '<a:schemeClr val="bg1"/>' in slides
+    assert '<a:srgbClr val="0B1020"/>' not in slides
+    assert "+mj-lt" in slides and "+mn-lt" in slides
+
+
+def test_flat_export_keeps_srgb_and_static_numbers(tmp_path: Path) -> None:
+    template = core.default_template()
+    target = tmp_path / "flat.pptx"
+    _pptx.export_pptx(template, target, native=False)
+    with zipfile.ZipFile(target) as archive:
+        theme = archive.read("ppt/theme/theme1.xml").decode("utf-8")
+        slides = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+    assert template.theme.palette.accent[1:] not in theme
+    assert '<a:schemeClr val="bg1"/>' not in slides
+    assert '<a:srgbClr val="0B1020"/>' in slides
+    assert 'type="slidenum"' not in slides
+    assert "02 / 13" in slides
+
+
+def test_cover_fit_crops_image_both_ratios(tmp_path: Path) -> None:
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    wide = tmp_path / "wide.png"
+    tall = tmp_path / "tall.png"
+    Image.new("RGB", (300, 100), "#3366FF").save(wide)
+    Image.new("RGB", (100, 300), "#FF6633").save(tall)
+    template = core.new_template(
+        slides=(
+            core.SlideSpec(layout=core.LAYOUT_IMAGE, title="宽图", image=str(wide)),
+            core.SlideSpec(layout=core.LAYOUT_IMAGE, title="高图", image=str(tall)),
+        )
+    )
+    target = tmp_path / "cover.pptx"
+    assert _pptx.export_pptx(template, target) == 2
+    with zipfile.ZipFile(target) as archive:
+        assert any(name.startswith("ppt/media/") for name in archive.namelist())
 
 
 def test_export_embeds_picture_and_paragraph_levels(tmp_path: Path) -> None:

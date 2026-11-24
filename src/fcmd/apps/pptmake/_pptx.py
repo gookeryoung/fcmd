@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,7 @@ class _Api:
     MSO_CONNECTOR: Any
     MSO_ANCHOR: Any
     MSO_AUTO_SIZE: Any
+    MSO_THEME_COLOR: Any
     PP_ALIGN: Any
     Inches: Any
     Pt: Any
@@ -57,6 +59,7 @@ def _api() -> _Api:
     try:
         from pptx import Presentation
         from pptx.dml.color import RGBColor
+        from pptx.enum.dml import MSO_THEME_COLOR
         from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
         from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
         from pptx.util import Inches, Pt
@@ -69,6 +72,7 @@ def _api() -> _Api:
         MSO_CONNECTOR=MSO_CONNECTOR,
         MSO_ANCHOR=MSO_ANCHOR,
         MSO_AUTO_SIZE=MSO_AUTO_SIZE,
+        MSO_THEME_COLOR=MSO_THEME_COLOR,
         PP_ALIGN=PP_ALIGN,
         Inches=Inches,
         Pt=Pt,
@@ -85,16 +89,57 @@ def _color(value: str, api: _Api) -> Any:
     return api.RGBColor.from_string(normalize_hex(value)[1:])
 
 
-def _set_fill_and_line(shape: Any, fill: str, line: str, line_width: float, api: _Api) -> None:
+# 调色板槽位 → python-pptx 主题色枚举名；改主题色时整稿联动。
+_THEME_TOKENS: dict[str, str] = {
+    "tx1": "TEXT_1",
+    "bg1": "BACKGROUND_1",
+    "tx2": "TEXT_2",
+    "bg2": "BACKGROUND_2",
+    "accent1": "ACCENT_1",
+    "accent2": "ACCENT_2",
+}
+
+
+def _scheme_map(theme: Theme) -> dict[str, str]:
+    """调色板 hex → 主题槽位；不在调色板内的颜色仍写 ``srgbClr``。"""
+    palette = theme.palette
+    pairs = (
+        (palette.text, "tx1"),
+        (palette.background, "bg1"),
+        (palette.muted, "tx2"),
+        (palette.surface, "bg2"),
+        (palette.accent, "accent1"),
+        (palette.secondary, "accent2"),
+    )
+    return {normalize_hex(color): token for color, token in pairs}
+
+
+def _apply_color(color: Any, value: str, scheme: dict[str, str], api: _Api) -> None:
+    """优先写主题色，保证 PowerPoint 里换主题后整稿联动。"""
+    token = scheme.get(normalize_hex(value))
+    if token is None:
+        color.rgb = _color(value, api)
+        return
+    color.theme_color = getattr(api.MSO_THEME_COLOR, _THEME_TOKENS[token])
+
+
+def _set_fill_and_line(  # noqa: PLR0913, PLR0917 - 形状样式工厂
+    shape: Any,
+    fill: str,
+    line: str,
+    line_width: float,
+    api: _Api,
+    scheme: dict[str, str],
+) -> None:
     """设置形状填充与描边；``line`` 为空时去掉描边。"""
     shape.shadow.inherit = False
     if fill:
         shape.fill.solid()
-        shape.fill.fore_color.rgb = _color(fill, api)
+        _apply_color(shape.fill.fore_color, fill, scheme, api)
     else:
         shape.fill.background()
     if line:
-        shape.line.color.rgb = _color(line, api)
+        _apply_color(shape.line.color, line, scheme, api)
         shape.line.width = api.Pt(max(line_width * _POINTS_PER_UNIT, 0.75))
     else:
         shape.line.fill.background()
@@ -114,7 +159,51 @@ def _set_east_asian_font(run: Any, font_name: str) -> None:
     element.set("typeface", font_name)
 
 
-def _draw_text(slide: Any, primitive: Text, api: _Api) -> None:
+def _style_run(run: Any, primitive: Text, api: _Api, scheme: dict[str, str]) -> None:
+    """写入字号、字重、字体与颜色；主题色优先用 schemeClr。"""
+    font = run.font
+    font.size = api.Pt(max(primitive.size * _POINTS_PER_UNIT, 1.0))
+    font.bold = primitive.bold
+    font.italic = primitive.italic
+    font.name = primitive.font or DEFAULT_BODY_FONT
+    _apply_color(font.color, primitive.color, scheme, api)
+    _set_east_asian_font(run, primitive.font or DEFAULT_BODY_FONT)
+
+
+def _write_slide_field(paragraph: Any, primitive: Text, scheme: dict[str, str]) -> None:
+    """把首段写成 PowerPoint 字段（如 slidenum），增删页后自动更新。"""
+    try:
+        from lxml import etree
+        from pptx.oxml.ns import qn
+    except ImportError:  # pragma: no cover - lxml 随 python-pptx 安装
+        return
+    field = etree.SubElement(paragraph._p, qn("a:fld"))
+    field.set("id", "{A1B2C3D4-0001-4E5F-9A00-6A1B2C3D4E5F}")
+    field.set("type", primitive.field)
+    props = etree.SubElement(field, qn("a:rPr"))
+    props.set("lang", "zh-CN")
+    props.set("sz", str(round(primitive.size * _POINTS_PER_UNIT * 100)))
+    if primitive.bold:
+        props.set("b", "1")
+    fill = etree.SubElement(props, qn("a:solidFill"))
+    token = scheme.get(normalize_hex(primitive.color))
+    if token:
+        etree.SubElement(fill, qn("a:schemeClr")).set("val", token)
+    else:
+        etree.SubElement(fill, qn("a:srgbClr")).set("val", normalize_hex(primitive.color)[1:])
+    element = etree.SubElement(field, qn("a:t"))
+    element.text = primitive.paragraphs[0]
+
+
+def _draw_text(  # noqa: PLR0913 - 需要主题/方案/native 三个导出开关
+    slide: Any,
+    primitive: Text,
+    api: _Api,
+    *,
+    theme: Theme,
+    scheme: dict[str, str],
+    native: bool,
+) -> None:
     """绘制文本框，并把段落、对齐与字体写入。"""
     if primitive.w <= 0 or primitive.h <= 0:
         return
@@ -141,6 +230,9 @@ def _draw_text(slide: Any, primitive: Text, api: _Api) -> None:
         "center": api.PP_ALIGN.CENTER,
         "right": api.PP_ALIGN.RIGHT,
     }
+    heading_font = primitive.font or DEFAULT_BODY_FONT
+    latin = f"+{'mj' if heading_font == theme.heading_font else 'mn'}-lt" if native else heading_font
+    east_asian = f"+{'mj' if heading_font == theme.heading_font else 'mn'}-ea" if native else heading_font
     for index, paragraph_text in enumerate(primitive.paragraphs):
         paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
         paragraph.alignment = alignments[primitive.align]
@@ -154,15 +246,20 @@ def _draw_text(slide: Any, primitive: Text, api: _Api) -> None:
             props = paragraph._p.get_or_add_pPr()
             props.set("marL", str(offset))
             props.set("indent", str(-offset))
+        if index == 0 and primitive.field and native:
+            _write_slide_field(paragraph, primitive, scheme)
+            if primitive.field_suffix:
+                suffix = paragraph.add_run()
+                suffix.text = primitive.field_suffix
+                _style_run(suffix, primitive, api, scheme)
+                suffix.font.name = latin
+                _set_east_asian_font(suffix, east_asian)
+            continue
         run = paragraph.add_run()
         run.text = paragraph_text
-        font = run.font
-        font.size = api.Pt(max(primitive.size * _POINTS_PER_UNIT, 1.0))
-        font.bold = primitive.bold
-        font.italic = primitive.italic
-        font.name = primitive.font or DEFAULT_BODY_FONT
-        font.color.rgb = _color(primitive.color, api)
-        _set_east_asian_font(run, primitive.font or DEFAULT_BODY_FONT)
+        _style_run(run, primitive, api, scheme)
+        run.font.name = latin
+        _set_east_asian_font(run, east_asian)
 
 
 def _draw_picture(slide: Any, primitive: Picture, api: _Api) -> None:
@@ -215,7 +312,15 @@ def _draw_picture(slide: Any, primitive: Picture, api: _Api) -> None:
         picture.crop_bottom = excess / 2
 
 
-def _draw_primitive(slide: Any, primitive: Primitive, api: _Api) -> None:  # noqa: PLR0911 - 图元分派
+def _draw_primitive(  # noqa: PLR0911, PLR0913 - 图元分派
+    slide: Any,
+    primitive: Primitive,
+    api: _Api,
+    *,
+    theme: Theme,
+    scheme: dict[str, str],
+    native: bool,
+) -> None:
     """把一个绘制图元写入幻灯片。"""
     if isinstance(primitive, Rect):
         if primitive.w <= 0 or primitive.h <= 0:
@@ -230,7 +335,7 @@ def _draw_primitive(slide: Any, primitive: Primitive, api: _Api) -> None:  # noq
         )
         if primitive.radius > 0:
             shape.adjustments[0] = min(0.5, primitive.radius / max(min(primitive.w, primitive.h), 1))
-        _set_fill_and_line(shape, primitive.fill, primitive.line, primitive.line_width, api)
+        _set_fill_and_line(shape, primitive.fill, primitive.line, primitive.line_width, api, scheme)
         return
     if isinstance(primitive, Oval):
         if primitive.w <= 0 or primitive.h <= 0:
@@ -242,7 +347,7 @@ def _draw_primitive(slide: Any, primitive: Primitive, api: _Api) -> None:  # noq
             _emu(primitive.w, api),
             _emu(primitive.h, api),
         )
-        _set_fill_and_line(shape, primitive.fill, primitive.line, primitive.line_width, api)
+        _set_fill_and_line(shape, primitive.fill, primitive.line, primitive.line_width, api, scheme)
         return
     if isinstance(primitive, Picture):
         _draw_picture(slide, primitive, api)
@@ -257,14 +362,87 @@ def _draw_primitive(slide: Any, primitive: Primitive, api: _Api) -> None:  # noq
             _emu(primitive.x2, api),
             _emu(primitive.y2, api),
         )
-        connector.line.color.rgb = _color(primitive.color, api)
+        _apply_color(connector.line.color, primitive.color, scheme, api)
         connector.line.width = api.Pt(max(primitive.width * _POINTS_PER_UNIT, 0.75))
         return
-    _draw_text(slide, primitive, api)
+    _draw_text(slide, primitive, api, theme=theme, scheme=scheme, native=native)
 
 
-def export_pptx(template: TemplateSpec, path: Path) -> int:
-    """按模板渲染 ``.pptx``，返回写入的页数。"""
+def _rewrite_theme_xml(data: bytes, template: TemplateSpec) -> bytes:
+    """把模板配色与字体写进 ``theme1.xml`` 的 clrScheme / fontScheme。"""
+    palette = template.theme.palette
+    colors = {
+        "dk1": palette.text,
+        "lt1": palette.background,
+        "dk2": palette.muted,
+        "lt2": palette.surface,
+        "accent1": palette.accent,
+        "accent2": palette.secondary,
+        "accent3": palette.accent,
+        "accent4": palette.secondary,
+        "accent5": palette.muted,
+        "accent6": palette.text,
+        "hlink": palette.accent,
+        "folHlink": palette.secondary,
+    }
+    namespace = _NAMESPACE["a"]
+    ElementTree.register_namespace("a", namespace)
+    root = ElementTree.fromstring(data)
+    scheme = root.find(f".//{{{namespace}}}clrScheme")
+    if scheme is not None:
+        for name, value in colors.items():
+            node = scheme.find(f"{{{namespace}}}{name}")
+            if node is None:
+                continue
+            for child in list(node):
+                node.remove(child)
+            srgb = ElementTree.SubElement(node, f"{{{namespace}}}srgbClr")
+            srgb.set("val", normalize_hex(value)[1:])
+    fonts = root.find(f".//{{{namespace}}}fontScheme")
+    if fonts is not None:
+        pairs = (("majorFont", template.theme.heading_font), ("minorFont", template.theme.body_font))
+        for tag, typeface in pairs:
+            node = fonts.find(f"{{{namespace}}}{tag}")
+            if node is None:
+                continue
+            latin = node.find(f"{{{namespace}}}latin")
+            if latin is None:
+                latin = ElementTree.Element(f"{{{namespace}}}latin")
+                node.insert(0, latin)
+            latin.set("typeface", typeface)
+            east_asian = node.find(f"{{{namespace}}}ea")
+            if east_asian is None:
+                east_asian = ElementTree.Element(f"{{{namespace}}}ea")
+                node.insert(1, east_asian)
+            east_asian.set("typeface", typeface)
+    return ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _apply_theme_package(path: Path, template: TemplateSpec) -> None:
+    """导出后原地重写主题部件；失败时保留原包，不影响成品可用性。"""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    except (OSError, zipfile.BadZipFile):
+        return
+    try:
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for info, data in entries:
+                payload = data
+                if info.filename == "ppt/theme/theme1.xml":
+                    with contextlib.suppress(ElementTree.ParseError):
+                        payload = _rewrite_theme_xml(data, template)
+                archive.writestr(info, payload)
+    except OSError:
+        return
+
+
+def export_pptx(template: TemplateSpec, path: Path, *, native: bool = True) -> int:
+    """按模板渲染 ``.pptx``，返回写入的页数。
+
+    ``native`` 为真（默认）时写入主题色/主题字体与 ``slidenum`` 字段；
+    ``--flat`` 会关闭这些后处理，保留纯 ``srgbClr`` + 静态页码的旧行为。
+    """
     api = _api()
     try:
         presentation = api.Presentation()
@@ -273,12 +451,14 @@ def export_pptx(template: TemplateSpec, path: Path) -> int:
     width_inches, height_inches = ASPECT_INCHES.get(template.aspect, ASPECT_INCHES[ASPECT_16_9])
     presentation.slide_width = api.Inches(width_inches)
     presentation.slide_height = api.Inches(height_inches)
+    scheme = _scheme_map(template.theme) if native else {}
     blank_layout = presentation.slide_layouts[6]
     total = len(template.slides)
     for index, slide_spec in enumerate(template.slides, start=1):
         slide = presentation.slides.add_slide(blank_layout)
-        for primitive in build_draw_list(slide_spec, template, page_number=index, page_total=total):
-            _draw_primitive(slide, primitive, api)
+        primitives = build_draw_list(slide_spec, template, page_number=index, page_total=total)
+        for primitive in primitives:
+            _draw_primitive(slide, primitive, api, theme=template.theme, scheme=scheme, native=native)
         if slide_spec.note.strip():
             slide.notes_slide.notes_text_frame.text = slide_spec.note
     properties = presentation.core_properties
@@ -291,6 +471,8 @@ def export_pptx(template: TemplateSpec, path: Path) -> int:
         presentation.save(str(path))
     except OSError as exc:
         raise TemplateError(f"保存 PPTX 失败：{path}：{exc}") from exc
+    if native:
+        _apply_theme_package(path, template)
     return len(template.slides)
 
 

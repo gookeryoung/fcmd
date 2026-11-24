@@ -130,6 +130,8 @@ class Text:
     space_after: float = 0.0
     level: int = 0
     indent: float = 0.0
+    field: str = ""
+    field_suffix: str = ""
 
 
 Primitive = Rect | Oval | Line | Picture | Text
@@ -222,6 +224,8 @@ def _text(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与 Text 字段一�
     space_after: float = 0.0,
     level: int = 0,
     indent: float = 0.0,
+    field: str = "",
+    field_suffix: str = "",
 ) -> Text:
     """创建文本框；``content`` 中的换行拆成多段。"""
     paragraphs = tuple(content.split("\n")) if content else ("",)
@@ -242,6 +246,8 @@ def _text(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与 Text 字段一�
         space_after=space_after,
         level=level,
         indent=indent,
+        field=field,
+        field_suffix=field_suffix,
     )
 
 
@@ -1494,19 +1500,22 @@ def _paint_footer(
             )
         )
     if show_number:
-        label = f"{page_number:02d}" if page_total is None else f"{page_number:02d} / {page_total:02d}"
+        label = f"{page_number:02d}"
+        suffix = f" / {page_total:02d}" if page_total is not None else ""
         out.append(
             _text(
                 ctx.width - ctx.margin - 120,
                 y,
                 120,
                 height,
-                label,
+                label + suffix,
                 size,
                 ctx.palette.muted,
                 theme.body_font,
                 align=ALIGN_RIGHT,
                 anchor=ANCHOR_MIDDLE,
+                field="slidenum",
+                field_suffix=suffix,
             )
         )
 

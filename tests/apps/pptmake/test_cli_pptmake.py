@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import zipfile
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -112,6 +114,41 @@ def test_build_rejects_bad_json(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert "读取数据失败" in capsys.readouterr().out
 
 
+def test_build_refuses_overflow_without_force(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    data = tmp_path / "bad.json"
+    data.write_text(
+        json.dumps(
+            {
+                "slides": [
+                    {
+                        "layout": "bullets",
+                        "title": "溢出",
+                        "bullets": ["这是一行非常长的要点文字" * 8 for _ in range(12)],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    target = tmp_path / "bad.pptx"
+    pptmake.build_command(data, output=target)
+    assert "导出已取消" in capsys.readouterr().out
+    assert not target.exists()
+    pptmake.build_command(data, output=target, force=True)
+    assert target.is_file()
+
+
+def test_validate_reports_tiny_font(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    template = core.new_template(slides=(core.new_slide(core.LAYOUT_BULLETS),))
+    tokens = core.tokens_from_mapping({"type_scale": {"body": 10.0}})
+    template = replace(template, theme=replace(template.theme, tokens=tokens))
+    target = tmp_path / "tiny.pptmtpl.json"
+    core.save_template(template, target)
+    capsys.readouterr()
+    pptmake.validate_command(target)
+    assert "小于 12pt" in capsys.readouterr().out
+
+
 def test_validate_passes_clean_template(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = tmp_path / "clean.pptmtpl.json"
     core.save_template(core.new_template(slides=(core.new_slide(core.LAYOUT_COVER),)), target)
@@ -160,6 +197,22 @@ def test_export_refuses_quality_issues_without_force(tmp_path: Path, capsys: pyt
     assert not target.exists()
     pptmake.export_command(path, target, force=True)
     assert target.is_file()
+
+
+def test_export_flat_writes_static_page_number(tmp_path: Path) -> None:
+    template = core.new_template()
+    path = tmp_path / "flat.pptmtpl.json"
+    core.save_template(template, path)
+    target = tmp_path / "flat.pptx"
+    pptmake.export_command(path, target, flat=True)
+    with zipfile.ZipFile(target) as archive:
+        slides = "".join(
+            archive.read(name).decode("utf-8")
+            for name in archive.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+    assert '<a:schemeClr val="bg1"/>' not in slides
+    assert "02 / 13" in slides
 
 
 def test_doctor_prints_environment(capsys: pytest.CaptureFixture[str]) -> None:

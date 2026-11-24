@@ -239,12 +239,13 @@ def doctor_command() -> None:
 
 
 @fcmd.tool("pptmake", subcommand="export", help="把模板渲染为 PPTX", description=_DESCRIPTION)
-def export_command(
+def export_command(  # noqa: PLR0913, PLR0917 - CLI 参数即命令开关
     template: Path,
     output: Path | None = None,
     overwrite: bool = False,
     pdf: bool = False,
     force: bool = False,
+    flat: bool = False,
 ) -> None:
     """把模板渲染成 ``.pptx``，可选再转一份 PDF。
 
@@ -263,6 +264,8 @@ def export_command(
         同时用 LibreOffice 转出同目录 PDF（未安装时给出提示）
     force:
         忽略校验问题，强制导出
+    flat:
+        使用纯 ``srgbClr`` 与静态页码的兼容导出（旧行为，供对照回滚）
     """
     target = output or default_pptx_path(template)
     if target.exists() and not overwrite:
@@ -281,7 +284,7 @@ def export_command(
         )
         return
     try:
-        count = export_pptx(spec, target)
+        count = export_pptx(spec, target, native=not flat)
     except TemplateError as exc:
         _print_error(str(exc))
         return
