@@ -66,7 +66,7 @@ def _result(
             files_seen=3,
             files_scanned=2,
             files_skipped=1,
-            files_failed=0,
+            files_failed=len(errors or []),
             bytes_read=2048,
             hit_files=1,
             hit_count=1,
@@ -215,8 +215,11 @@ def test_format_text_report_sections() -> None:
         errors=[ScanError(Path("scan") / "y", "读取失败")],
     )
     text = format_text_report(result)
-    assert text.startswith("扫描完成：文件 3")
+    # 有读取错误时整体状态是「部分成功」，而不是笼统的「完成」。
+    assert text.startswith("扫描部分成功（有错误）：文件 3")
+    assert "通过 " in text
     assert f"[命中] {Path('scan') / 'a.txt'}（utf-8，100 B，风险 " in text
+    assert "引擎 —，耗时 0.0 ms" in text
     assert "第 3 行：tel 13*******78 end" in text
     assert "跳过：" in text and "二进制文件" in text
     assert "错误：" in text and "读取失败" in text
@@ -227,6 +230,20 @@ def test_format_text_report_raw_and_cancelled() -> None:
     text = format_text_report(_result(cancelled=True), include_raw=True)
     assert text.startswith("扫描已取消")
     assert "13812345678" in text
+
+
+def test_scan_summary_reports_passed_and_engine() -> None:
+    stats = ScanStats(files_seen=9, files_scanned=4, files_reused=2, hit_files=1, hit_count=2, elapsed=0.5)
+    summary = scan_summary(stats, compact=True)
+    assert "通过 5" in summary
+    assert "命中 1 个文件 / 2 条" in summary
+
+    hit = FileHit(Path("scan") / "a.txt", 10, "utf-8", [_match()], engine="cache", elapsed=0.0)
+    text = format_text_report(_result(hits=[hit]))
+    assert "引擎 缓存" in text
+
+    stats.files_failed = 2
+    assert scan_summary(stats, compact=True).startswith("扫描部分成功（有错误）")
 
 
 def test_text_report_filename_match_and_missing_encoding() -> None:

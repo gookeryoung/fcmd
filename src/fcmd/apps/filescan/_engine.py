@@ -407,12 +407,18 @@ class RuleMatch:
 
 @dataclass
 class FileHit:
-    """按文件聚合的命中；``matches`` 为空表示表达式命中但没有正向规则明细。"""
+    """按文件聚合的命中；``matches`` 为空表示表达式命中但没有正向规则明细。
+
+    ``engine`` / ``elapsed`` 记录该文件由哪条路径产出（「线程」「进程」「缓存」）
+    以及实际耗时，供结果树与文本报告解释「为什么快 / 慢」；缓存命中时耗时记 0。
+    """
 
     path: Path
     size: int
     encoding: str
     matches: list[RuleMatch] = field(default_factory=list)
+    engine: str = ""
+    elapsed: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -463,6 +469,11 @@ class ScanStats:
     def files_out_of_scope(self) -> int:
         """从未读取的文件数：后缀白名单外 + 大小 / 时间过滤 + 隐藏文件。"""
         return self.files_skipped_extension + self.files_skipped_size_time + self.files_skipped_hidden
+
+    @property
+    def files_passed(self) -> int:
+        """完整检查且无命中的文件数（实扫 + 缓存复用 - 命中文件）。"""
+        return max(0, self.files_scanned + self.files_reused - self.hit_files)
 
     @property
     def files_skipped_after_read(self) -> int:
@@ -531,6 +542,8 @@ class _Outcome:
     rule_counts: dict[str, int] = field(default_factory=dict)
     size: int = 0
     encoding: str = ""
+    engine: str = ""
+    elapsed: float = 0.0
 
 
 # ---------------------------------------------------------------------- #
@@ -1504,6 +1517,14 @@ def _scan_text(path: Path, context: ScanContext, size: int | None) -> _Outcome:
 
 
 def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Outcome:
+    """扫描单个文件并记录耗时（结果页「耗时」列与报告用）。"""
+    started = time.perf_counter()
+    outcome = _scan_file(path, context, size)
+    outcome.elapsed = time.perf_counter() - started
+    return outcome
+
+
+def _scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Outcome:
     """扫描单个文件：文件名规则 + 文档抽取或文本读取，再做逐行匹配与文件级求值。
 
     ``size`` 由遍历阶段传入以免重复 ``stat``；省略时按需自行获取。文件名规则
@@ -1678,7 +1699,9 @@ def _scan_in_threads(
             (path, executor.submit(scan_file, path, context, size)) for path, size in zip(files, sizes, strict=True)
         ]
         for path, future in futures:
-            outcomes.append(future.result())
+            outcome = future.result()
+            outcome.engine = "thread"
+            outcomes.append(outcome)
             done += 1
             if progress is not None:
                 progress(done, total, path)
@@ -1727,7 +1750,10 @@ def _scan_in_processes(  # noqa: PLR0913 - 调度参数与线程路径对齐，�
                 for pending in futures[index:]:
                     pending.cancel()
                 break
-            outcomes.extend(future.result())
+            batch_outcomes = future.result()
+            for outcome in batch_outcomes:
+                outcome.engine = "process"
+            outcomes.extend(batch_outcomes)
             for path, _size in batch:
                 done += 1
                 if progress is not None:
@@ -1841,6 +1867,7 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
         result.stats.files_scanned += 1
         result.stats.bytes_read += outcome.bytes_read
         if outcome.hit is not None:
+            outcome.hit.elapsed = outcome.elapsed
             hits.append(outcome.hit)
         size, mtime = meta[outcome.path]
         fresh.append((outcome.path, size, mtime, outcome.hit))
@@ -1873,7 +1900,12 @@ def _take_cached(
     if not cached:
         return list(files), [meta[path][0] for path in files], 0
     remaining = [path for path in files if path not in cached]
-    hits.extend(hit for hit in cached.values() if hit is not None)
+    for hit in cached.values():
+        if hit is None:
+            continue
+        hit.engine = "cache"
+        hit.elapsed = 0.0
+        hits.append(hit)
     return remaining, [meta[path][0] for path in remaining], len(cached)
 
 

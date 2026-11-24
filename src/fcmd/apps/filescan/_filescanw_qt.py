@@ -103,6 +103,7 @@ from fcmd.apps.filescan._engine import (
 from fcmd.apps.filescan._metadata import METADATA_KEYS, METADATA_LABELS
 from fcmd.apps.filescan._report import (
     context_segments,
+    engine_label,
     filter_result,
     mask_text,
     match_note,
@@ -1526,11 +1527,13 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         card.body.addLayout(action_bar)
 
         self._tree = QTreeWidget(card)
-        self._tree.setHeaderLabels(["文件 / 规则", "严重级", "行号", "上下文（打码）"])
+        self._tree.setHeaderLabels(["文件 / 规则", "严重级", "行号", "引擎", "耗时", "上下文（打码）"])
         self._tree.setAlternatingRowColors(True)
         self._tree.setColumnWidth(0, 400)
         self._tree.setColumnWidth(1, 64)
         self._tree.setColumnWidth(2, 64)
+        self._tree.setColumnWidth(3, 56)
+        self._tree.setColumnWidth(4, 72)
         self._tree.header().setStretchLastSection(True)
         self._tree.setMinimumHeight(240)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1539,7 +1542,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._tree.itemSelectionChanged.connect(self._update_result_actions)
         # 上下文列换行完整显示 + 命中底色；其余列继续用默认 delegate 单行绘制。
         self._context_delegate = _ContextDelegate(self._tree)
-        self._tree.setItemDelegateForColumn(3, self._context_delegate)
+        self._tree.setItemDelegateForColumn(5, self._context_delegate)
         # 列宽变化后旧排版的换行位置失效：清缓存并重算行高，避免行高停在首帧宽度上。
         self._tree.header().sectionResized.connect(self._context_layout_changed)
         card.body.addWidget(self._tree, 1)
@@ -2378,10 +2381,14 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                     str(hit.path),
                     severity_label(highest) if highest else "",
                     "",
+                    engine_label(hit.engine),
+                    f"{hit.elapsed * 1000:.1f} ms",
                     _hit_summary(hit),
                 ]
             )
             parent.setToolTip(0, str(hit.path))
+            parent.setToolTip(3, f"调度引擎：{engine_label(hit.engine)}")
+            parent.setToolTip(4, f"该文件扫描耗时：{hit.elapsed * 1000:.2f} ms")
             if highest:
                 parent.setToolTip(1, f"该文件最高严重级：{severity_label(highest)}")
             parent.setData(0, _PATH_ROLE, str(hit.path))
@@ -2394,6 +2401,8 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                         match.rule_name,
                         severity_label(match.severity) if match.severity else "",
                         str(match.location or match.line_no),
+                        "",
+                        "",
                         rendered,
                     ]
                 )
@@ -2401,11 +2410,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                 child.setData(0, _MATCH_ROLE, match)
                 # 单元格文本仍是完整打码上下文（复制 / 悬停 / 测试可读）；
                 # 富文本绘制由 delegate 按三段重新排版，命中段另外上底色。
-                child.setData(3, _CONTEXT_ROLE, context_segments(match, False))
+                child.setData(5, _CONTEXT_ROLE, context_segments(match, False))
                 child.setToolTip(0, str(hit.path))
                 if match.severity:
                     child.setToolTip(1, f"严重级：{severity_label(match.severity)}")
-                child.setToolTip(3, rendered)
+                child.setToolTip(5, rendered)
                 color = _severity_color(match.severity)
                 if color is not None:
                     brush = QBrush(color)
@@ -2416,12 +2425,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             if index >= 5000:  # 极端结果集下不再逐项展开，避免长时间占用 GUI 线程
                 break
         for item in result.skipped:
-            entry = QTreeWidgetItem([str(item.path), "", "", f"跳过：{item.reason}"])
+            entry = QTreeWidgetItem([str(item.path), "", "", "", "", f"跳过：{item.reason}"])
             entry.setToolTip(0, str(item.path))
             entry.setData(0, _PATH_ROLE, str(item.path))
             self._tree.addTopLevelItem(entry)
         for item in result.errors:
-            entry = QTreeWidgetItem([str(item.path), "", "", f"错误：{item.message}"])
+            entry = QTreeWidgetItem([str(item.path), "", "", "", "", f"错误：{item.message}"])
             entry.setToolTip(0, str(item.path))
             entry.setData(0, _PATH_ROLE, str(item.path))
             self._tree.addTopLevelItem(entry)

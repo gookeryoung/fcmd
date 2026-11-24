@@ -253,7 +253,9 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
    展示的结果，未产生结果时置灰显示「暂无任务结果」；菜单选取后自动关闭，不会残留展开态。移除 / 清空会同时删掉对应结果条目，
    不删除磁盘目录。
 2. **结果**：结果树按文件聚合（父节点路径 + 最高严重级 + 命中数，子节点规则 /
-   严重级 / 行号 / 上下文四列；命中内容已在上下文列里用底色标出，不再单占一列），
+   严重级 / 行号 / 上下文；命中内容已在上下文列里用底色标出，不再单占一列），
+   文件行另带「引擎」（线程 / 进程 / 缓存）与「耗时」两列，解释调度路径与单文件
+   耗时；
    严重级按主题色着色（严重 `danger`、高 `warning`、中 `accent`、低 / 提示 `muted`），
    上下文列按列宽换行完整显示
    （行高随内容增长，不再省略成「…」），命中片段用主题 warning 底色 + `on_accent`
@@ -639,6 +641,10 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   （隐藏文件与目录剪枝只在非零时出现，默认概要不被拉长）；
 - 0 命中且未取消时追加可操作提示：已检查文件数、范围外数量、读取后跳过与无文本层
   数量，并提示检查后缀白名单与规则启用状态；
+- 可解释性：概要前缀按 `scan_status` 给出「扫描完成 / 扫描部分成功（有错误）/
+  扫描已取消（部分结果）」，并显示 `通过 N`（实扫 + 复用 - 命中文件）；每条命中
+  行带「引擎 线程|进程|缓存，耗时 X ms」，JSON `stats` 增加 `files_passed` 与
+  `status`，命中项增加 `engine` / `elapsed`；
 - JSON `stats` 增加 `files_skipped_size_time`、`files_skipped_hidden`、`dirs_skipped`、
   `files_out_of_scope`、`files_skipped_after_read`，既有字段语义保持不变
   （`files_skipped` 仍为文件总数，不含目录剪枝）。

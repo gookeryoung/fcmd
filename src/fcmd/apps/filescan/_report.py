@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 __all__ = [
     "REPORT_FORMATS",
     "context_segments",
+    "engine_label",
     "file_risk_score",
     "filter_result",
     "format_text_report",
@@ -35,6 +36,7 @@ __all__ = [
     "result_to_json",
     "result_to_mapping",
     "result_to_sarif",
+    "scan_status",
     "scan_summary",
     "write_report",
 ]
@@ -137,6 +139,7 @@ def result_to_mapping(result: ScanResult, include_raw: bool = False) -> dict[str
         "stats": {
             "files_seen": stats.files_seen,
             "files_scanned": stats.files_scanned,
+            "files_passed": stats.files_passed,
             "files_reused": stats.files_reused,
             "files_skipped": stats.files_skipped,
             "files_skipped_extension": stats.files_skipped_extension,
@@ -159,12 +162,15 @@ def result_to_mapping(result: ScanResult, include_raw: bool = False) -> dict[str
             "bytes_per_second": round(stats.bytes_per_second, 1),
             "files_per_second": round(stats.files_per_second, 2),
             "cancelled": stats.cancelled,
+            "status": scan_status(stats),
         },
         "hits": [
             {
                 "path": str(hit.path),
                 "size": hit.size,
                 "encoding": hit.encoding,
+                "engine": hit.engine,
+                "elapsed": round(hit.elapsed, 6),
                 "matches": [_match_to_mapping(match, include_raw) for match in hit.matches],
             }
             for hit in result.hits
@@ -260,7 +266,7 @@ def result_to_sarif(result: ScanResult, include_raw: bool = False) -> str:
                     }
                 }
             ],
-            "properties": {"size": hit.size},
+            "properties": {"size": hit.size, "engine": hit.engine, "elapsed": round(hit.elapsed, 6)},
         }
 
     for hit in result.hits:
@@ -345,6 +351,24 @@ def _dirs_part(stats: ScanStats) -> str:
     return f"；跳过目录 {stats.dirs_skipped} 个" if stats.dirs_skipped else ""
 
 
+_ENGINE_LABELS = {"thread": "线程", "process": "进程", "cache": "缓存"}
+"""调度引擎标识到中文标签。"""
+
+
+def engine_label(engine: str) -> str:
+    """引擎标识转中文；空值或未知标识返回 ``—``。"""
+    return _ENGINE_LABELS.get(engine, "—")
+
+
+def scan_status(stats: ScanStats) -> str:
+    """整次扫描的状态：完成 / 部分成功（有错误）/ 已取消（部分结果）。"""
+    if stats.cancelled:
+        return "扫描已取消（部分结果）"
+    if stats.files_failed:
+        return "扫描部分成功（有错误）"
+    return "扫描完成"
+
+
 def scan_summary(stats: ScanStats, *, compact: bool = False) -> str:
     """扫描概要：区分「范围外（从未读取）」与「读取后跳过」。
 
@@ -352,10 +376,11 @@ def scan_summary(stats: ScanStats, *, compact: bool = False) -> str:
     避免把后缀白名单排除的几十万文件与真正读盘后跳过的少量文件混成一个
     「跳过」数字，让人误以为扫描失败。
     """
-    prefix = "扫描已取消（部分结果）" if stats.cancelled else "扫描完成"
+    prefix = scan_status(stats)
     head = (
         f"{prefix}：文件 {stats.files_seen}"
         f"（实扫 {stats.files_scanned} / 缓存复用 {stats.files_reused}），"
+        f"通过 {stats.files_passed}，"
         f"命中 {stats.hit_files} 个文件 / {stats.hit_count} 条"
     )
     scope = (
@@ -407,7 +432,10 @@ def format_text_report(result: ScanResult, include_raw: bool = False) -> str:
         lines.append(hint)
     for hit in result.hits:
         encoding = f"{hit.encoding}，" if hit.encoding else ""
-        lines.append(f"[命中] {hit.path}（{encoding}{format_size(hit.size)}，风险 {file_risk_score(hit)}）")
+        lines.append(
+            f"[命中] {hit.path}（{encoding}{format_size(hit.size)}，风险 {file_risk_score(hit)}，"
+            f"引擎 {engine_label(hit.engine)}，耗时 {hit.elapsed * 1000:.1f} ms）"
+        )
         if not hit.matches:
             lines.append("  - 表达式命中（无正向规则明细）")
             continue

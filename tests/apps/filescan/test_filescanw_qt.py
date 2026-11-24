@@ -812,24 +812,24 @@ def test_result_context_is_fully_shown_and_match_is_highlighted(home: Path) -> N
     try:
         window._render_result(result)
         child = window._tree.topLevelItem(0).child(0)
-        assert child.text(3) == render_context(match, False)
+        assert child.text(5) == render_context(match, False)
         masked = "13" + "*" * 7 + "00"
-        assert child.text(3) == long_context.replace("13800138000", masked)
-        assert child.data(3, _CONTEXT_ROLE) == ("客户联系电话 ", masked, " 请勿外传，仅限内部核对使用")
+        assert child.text(5) == long_context.replace("13800138000", masked)
+        assert child.data(5, _CONTEXT_ROLE) == ("客户联系电话 ", masked, " 请勿外传，仅限内部核对使用")
 
         option = QStyleOptionViewItem()
         option.widget = window._tree
         option.font = window._tree.font()
-        index = window._tree.indexFromItem(child, 3)
-        window._tree.setColumnWidth(3, 120)
+        index = window._tree.indexFromItem(child, 5)
+        window._tree.setColumnWidth(5, 120)
         narrow = window._context_delegate.sizeHint(option, index)
-        window._tree.setColumnWidth(3, 900)
+        window._tree.setColumnWidth(5, 900)
         wide = window._context_delegate.sizeHint(option, index)
         # 换行后行高随内容增长，不再按固定单行截断。
         assert narrow.height() > wide.height()
         assert wide.height() > window._tree.fontMetrics().height()
 
-        window._tree.setColumnWidth(3, 300)
+        window._tree.setColumnWidth(5, 300)
         document = window._context_delegate._document(index, 292, selected=False, font=window._tree.font())
         assert document is not None
         cursor = QTextCursor(document)
@@ -885,9 +885,11 @@ def test_result_rows_bind_file_and_match_without_duplicate_rule_column(home: Pat
         window._render_result(result)
         parent = window._tree.topLevelItem(0)
         child = parent.child(0)
-        # 命中内容已在上下文列（带底色）展示，不再单占一列：规则 / 严重级 / 行号 / 上下文 四列。
-        assert window._tree.columnCount() == 4
+        # 命中内容已在上下文列（带底色）展示，不再单占一列：规则 / 严重级 / 行号 / 引擎 / 耗时 / 上下文 六列。
+        assert window._tree.columnCount() == 6
         assert window._tree.headerItem().text(1) == "严重级"
+        assert window._tree.headerItem().text(3) == "引擎"
+        assert window._tree.headerItem().text(4) == "耗时"
         assert child.text(0) == "手机号"
         assert child.text(1) == "中"
         assert child.text(2) == "3"

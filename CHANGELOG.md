@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `filescan` 结果可解释性：文本报告给出「扫描完成 / 部分成功（有错误）/ 已取消」状态与
+  `通过 N` 计数，命中行和结果树新增「引擎」「耗时」（线程 / 进程 / 缓存），JSON 统计
+  同步补 `files_passed` / `status` 与命中的 `engine` / `elapsed`。
 - `filescan` 文档解析补齐旧版 Office：`.doc` / `.xls` / `.ppt`（OLE 复合文档）纳入
   内置白名单与 `DOCUMENT_EXTENSIONS`，用标准库解析片段表 / SST / 记录树；加密、
   损坏、无文本分别归入既有跳过原因。
