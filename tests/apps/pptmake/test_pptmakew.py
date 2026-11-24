@@ -59,6 +59,8 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
         "decor": "unknown",
         "last_dir": 123,
         "geometry": "not-a-geometry",
+        "sidebar_collapsed": "yes",
+        "active_page": "missing",
     }
     settings = pptmakew.settings_from_mapping(raw)
     assert settings.style == core.STYLE_AURORA
@@ -66,6 +68,14 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
     assert settings.decor == core.DECOR_ORBS
     assert settings.last_dir == ""
     assert settings.geometry is None
+    assert settings.sidebar_collapsed is False
+    assert settings.active_page == pptmakew.PAGE_KEYS[0]
+
+
+def test_settings_parse_sidebar_page() -> None:
+    settings = pptmakew.settings_from_mapping({"sidebar_collapsed": True, "active_page": "style"})
+    assert settings.sidebar_collapsed is True
+    assert settings.active_page == "style"
 
 
 def test_settings_from_mapping_keeps_base() -> None:
@@ -82,10 +92,17 @@ def test_settings_from_mapping_keeps_base() -> None:
 
 
 def test_settings_mapping_roundtrip() -> None:
-    settings = pptmakew.PptmakeSettings(style=core.STYLE_CORAL, last_dir="D:/slides")
+    settings = pptmakew.PptmakeSettings(
+        style=core.STYLE_CORAL,
+        last_dir="D:/slides",
+        sidebar_collapsed=True,
+        active_page="style",
+    )
     mapping = pptmakew.settings_to_mapping(settings)
     assert mapping["style"] == core.STYLE_CORAL
     assert mapping["last_dir"] == "D:/slides"
+    assert mapping["sidebar_collapsed"] is True
+    assert mapping["active_page"] == "style"
     assert pptmakew.settings_from_mapping(mapping) == settings
 
 

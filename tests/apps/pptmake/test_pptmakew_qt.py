@@ -1,8 +1,8 @@
 """pptmakew Qt 窗口的离屏冒烟测试。
 
-覆盖初始三栏布局、页面增删改序、表单回写、全部版式渲染、设置落盘与缩到很小时的
-布局完整性；版式几何与导出由 ``test_pptmake`` / ``test_pptmake_export`` 覆盖，
-这里只验证界面编排与绘制入口。
+覆盖侧边栏分页（设计 / 样式）、设计页三栏布局、页面增删改序、表单回写、全部版式
+渲染、设置落盘与缩到很小时的布局完整性；版式几何与导出由 ``test_pptmake`` /
+``test_pptmake_export`` 覆盖，这里只验证界面编排与绘制入口。
 """
 
 from __future__ import annotations
@@ -63,7 +63,11 @@ def _overflowing_children(root: QWidget) -> list[str]:
     return problems
 
 
-def test_initial_three_pane_layout(window: Any) -> None:
+def test_initial_sidebar_layout(window: Any) -> None:
+    assert window.current_page() == "design"
+    assert [spec.key for spec in _pptmakew_qt.PAGES] == list(_pptmakew_qt.PAGE_KEYS)
+    assert window.nav.label("design") == "设计"
+    assert window.nav.label("style") == "样式"
     assert window._slides_list.count() == len(window._template.slides)
     assert window._slides_list.count() == len(core.LAYOUTS)
     assert window._layout_list.count() == len(LAYOUT_OPTIONS)
@@ -71,6 +75,16 @@ def test_initial_three_pane_layout(window: Any) -> None:
     assert window._splitter.count() == 3
     assert window._title_edit.text()
     assert window.status_text() == "就绪"
+
+
+def test_style_page_has_live_preview_and_controls(window: Any) -> None:
+    window.show_page("style")
+    assert window.current_page() == "style"
+    assert window._name_edit.text() == window._template.name
+    assert window._intensity_value.text().endswith("%")
+    assert window._style_canvas in window._canvases
+    window.show_page("design")
+    assert window.current_page() == "design"
 
 
 def test_slide_add_duplicate_move_delete(window: Any) -> None:
@@ -164,8 +178,13 @@ def test_layout_survives_tiny_window(window: Any) -> None:
     window.setMinimumSize(960, 420)
     window.resize(960, 420)
     create_application("pptmakew-test").processEvents()
-    page = window.scroll.widget()
+    page = window._design_page.scroll.widget()
     assert page is not None
     assert _overflowing_children(page) == []
     assert window._canvas.height() >= window._canvas.minimumHeight()
+    window.show_page("style")
+    create_application("pptmakew-test").processEvents()
+    style_page = window._style_page.scroll.widget()
+    assert style_page is not None
+    assert _overflowing_children(style_page) == []
     window.close()

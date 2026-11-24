@@ -251,7 +251,7 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 | `docdiff` | - | 对比两个 doc/docx 文档（调用本机 Word 生成带修订标记的对比文档，标题、original/revised 模式与是否显示修订可设），依赖 Windows + Word + `fcmd[win32]` |
 | `docdiffw` | - | 文档对比窗口版（Qt，旧/新文档与输出选择、标题/模式/显示修订设置、后台对比与日志，设置持久化），依赖 Windows + Word + `fcmd[win32]` |
 | `pptmake` | - | PPT 模板生成（`presets`/`init`/`inspect`/`export`/`import`；十三种版式 + 四套风格 + 四种装饰，模板 JSON 导入导出，可渲染为 `.pptx` 或从 `.pptx` 反向导入主题与文字），导出依赖 `fcmd[ppt]` |
-| `pptmakew` | - | PPT 模板设计器窗口版（Qt，页面列表与布局库、QPainter 实时预览与缩略图、六个语义色自定义、模板 JSON / PPTX 双向导入导出，设置持久化到 `~/.fcmd/ui/pptmakew.json`），导出依赖 `fcmd[ppt]` |
+| `pptmakew` | - | PPT 模板设计器窗口版（Qt 侧边栏分页：`设计` 页页面列表 / 布局库 + QPainter 实时预览与缩略图 + 页面设置，`样式` 页风格 / 画幅 / 装饰 / 密度 / 六色配色 + 实时预览，模板 JSON / PPTX 双向导入导出，设置持久化到 `~/.fcmd/ui/pptmakew.json`），导出依赖 `fcmd[ppt]` |
 
 ### 多媒体（可选依赖）
 

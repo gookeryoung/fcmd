@@ -1,9 +1,10 @@
 """pptmakew —— PPT 模板设计器（Qt 窗口）。
 
-左侧选页与布局，中间实时预览，右侧编辑当前页内容与六个语义色；顶部可切换
-风格 / 画幅 / 装饰，菜单支持模板 JSON 导入导出与直接导出 ``.pptx``。窗口
-设置（风格、画幅、装饰、最近目录、窗口位置）保存在
-``${FCMD_HOME:-~/.fcmd}/ui/pptmakew.json``；界面实现在
+沿用 llmw / wslmanw / filescanw 的侧边栏分页：``设计`` 页为「页面列表与布局库 |
+实时预览与缩略图 | 页面设置」三栏工作区，``样式`` 页集中模板名称、风格 / 画幅 /
+装饰 / 密度 / 装饰强度、六个语义色与实时预览。菜单支持模板 JSON 导入导出与直接
+导出 ``.pptx``。窗口设置（风格、画幅、装饰、最近目录、当前页、侧边栏折叠、窗口
+位置）保存在 ``${FCMD_HOME:-~/.fcmd}/ui/pptmakew.json``；界面实现在
 :mod:`fcmd.apps.pptmake._pptmakew_qt`，本模块保留纯逻辑、设置与几何计算。
 
 示例
@@ -35,6 +36,7 @@ __all__ = [
     "HELP_TEXT",
     "MIN_HEIGHT",
     "MIN_WIDTH",
+    "PAGE_KEYS",
     "PptmakeSettings",
     "config_path",
     "load_settings",
@@ -64,22 +66,27 @@ DECOR_OPTIONS: tuple[tuple[str, str], ...] = tuple((core.DECOR_TEXT[item], item)
 DENSITY_OPTIONS: tuple[tuple[str, str], ...] = tuple((tokens.DENSITY_TEXT[item], item) for item in tokens.DENSITIES)
 LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = tuple((core.LAYOUT_TEXT[item], item) for item in core.LAYOUTS)
 
+PAGE_KEYS: tuple[str, ...] = ("design", "style")
+"""侧边栏页面 key（顺序与 :data:`fcmd.apps.pptmake._pptmakew_qt.PAGES` 一致）。"""
+
 _FILENAME_RE = re.compile(r'[\\/:*?"<>|]+')
 
-HELP_TEXT = """1. 左侧「页面」选择要编辑的页；「布局库」双击即可新增一页。
-2. 右侧修改标题、副标题、要点与备注；要点按行拆分。
+HELP_TEXT = """1. 侧边栏「设计」页：左侧「页面」选择要编辑的页，「布局库」双击即可新增一页。
+2. 设计页右侧修改标题、副标题、要点与备注；要点按行拆分。
    - 数据页写成「98%|交付准时率」；
    - 时间线写成「01|调研」；
    - 双栏页副标题写成「左栏标题|右栏标题」；
    - 对比矩阵写成「维度|方案A|方案B」，图表写成「Q1|42」；
    - 联系页写成「邮箱|hello@example.com」。
-3. 顶部切换风格 / 画幅 / 装饰；右侧六个色块可逐项改色（自动转为自定义风格）。
-   「密度」调整间距松紧，「装饰强度」滑杆调节装饰显隐（0 为完全关闭）。
-4. 「文件 → 导出模板」保存 .pptmtpl.json，「文件 → 导出 PPTX」生成演示文稿。
-5. 「文件 → 导入」既支持模板 JSON，也支持从现有 .pptx 提取配色与文字。
-6. 预览工具栏可「适应窗口」或按比例缩放；下方缩略图点击即可跳页。
+3. 侧边栏「样式」页切换风格 / 画幅 / 装饰 / 密度与装饰强度；六个色块可逐项
+   改色（自动转为自定义风格），右侧实时预览随设置刷新。
+4. 设计页中间画布实时预览；缩略图点击即可跳页，工具栏可「适应窗口」或缩放。
+5. 「文件 → 导出模板」保存 .pptmtpl.json，「文件 → 导出 PPTX」生成演示文稿。
+6. 「文件 → 导入」既支持模板 JSON，也支持从现有 .pptx 提取配色与文字。
 7. 预览底部出现「文本框可能溢出」提示时，可精简文字或调整版式。
-8. 「文件 → 精确预览」需本机安装 LibreOffice，未安装时保持画布预览。"""
+8. 「文件 → 精确预览」需本机安装 LibreOffice，未安装时保持画布预览。
+9. 标题行的「新建 / 导入 / 导出模板 / 导出 PPTX」与菜单动作等价；
+   ``Alt+1`` / ``Alt+2`` 在设计页与样式页之间切换。"""
 
 
 @dataclass(slots=True)
@@ -91,6 +98,8 @@ class PptmakeSettings:
     decor: str = core.DECOR_ORBS
     last_dir: str = ""
     geometry: str | None = None
+    sidebar_collapsed: bool = False
+    active_page: str = PAGE_KEYS[0]
 
 
 def config_path() -> Path:
@@ -106,6 +115,8 @@ def settings_to_mapping(settings: PptmakeSettings) -> dict[str, Any]:
         "decor": settings.decor,
         "last_dir": settings.last_dir,
         "geometry": settings.geometry,
+        "sidebar_collapsed": settings.sidebar_collapsed,
+        "active_page": settings.active_page,
     }
 
 
@@ -128,6 +139,12 @@ def settings_from_mapping(raw: Mapping[str, Any], base: PptmakeSettings | None =
         settings.last_dir = last_dir
     geometry = raw.get("geometry")
     settings.geometry = geometry if isinstance(geometry, str) and _guiconfig.valid_geometry(geometry) else None
+    collapsed = raw.get("sidebar_collapsed")
+    if isinstance(collapsed, bool):
+        settings.sidebar_collapsed = collapsed
+    page = raw.get("active_page")
+    if isinstance(page, str) and page in PAGE_KEYS:
+        settings.active_page = page
     return settings
 
 
