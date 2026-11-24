@@ -1296,3 +1296,23 @@ def test_result_tree_children_are_built_lazily_and_load_more(home: Path, tmp_pat
         assert window._load_more_button.isHidden() is True
     finally:
         window.deleteLater()
+
+
+def test_help_menu_opens_shared_help_dialog(home: Path) -> None:
+    """「帮助 → 使用帮助」复用公共帮助窗口，正文来自包内 filescan 文档。"""
+    window = _window()
+    try:
+        texts = [action.text() for action in window.help_menu.actions()]
+        assert "使用帮助" in texts
+        assert texts.index("使用帮助") < texts.index("关于")
+        window.show_help()
+        QApplication.processEvents()
+        dialog = window._help_dialog
+        assert dialog is not None
+        assert dialog.isVisible()
+        assert "filescan" in dialog.windowTitle()
+        assert "filescan scan" in dialog.browser.toPlainText()
+    finally:
+        if window._help_dialog is not None:
+            window._help_dialog.close()
+        window.close()

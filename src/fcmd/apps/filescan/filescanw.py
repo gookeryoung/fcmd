@@ -64,6 +64,7 @@ from fcmd.apps.filescan._rules import (
 )
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.settings import SettingsStore
+from fcmd.shared.helpdoc import HelpSection
 
 __all__ = [
     "SETTINGS_NAME",
@@ -650,7 +651,20 @@ def run_gui(settings_path: Path | None = None) -> None:
     run_qt(settings_path)
 
 
-@fcmd.tool("filescanw", help="打开敏感内容扫描窗口（Qt）", description=_DESCRIPTION)
+@fcmd.tool(
+    "filescanw",
+    help="打开敏感内容扫描窗口（Qt）",
+    description=_DESCRIPTION,
+    help_sections=[
+        HelpSection(
+            "see_also",
+            lines=[
+                "CLI：filescan（scan / run / rules；参数与本窗口同口径）",
+                "完整说明与示例：src/fcmd/help/filescan.md",
+            ],
+        ),
+    ],
+)
 def launch_cmd() -> None:
     """打开敏感内容扫描窗口。"""
     run_gui()

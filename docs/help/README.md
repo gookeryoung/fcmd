@@ -17,6 +17,7 @@ GUI 的「帮助 → 使用帮助」（`F1`）与本文索引都指向同一份�
 | 工具 | 文档 | 说明 |
 |---|---|---|
 | `renamer` / `renamerw` | [renamerw.md](../../src/fcmd/help/renamerw.md) | 批量重命名：规则流水线、预览状态、执行与撤销、典型示例 |
+| `filescan` / `filescanw` | [filescan.md](../../src/fcmd/help/filescan.md) | 敏感内容扫描：子命令、场景模板、规则表达式、报告 / 缓存、常见示例 |
 | `regexvalidate` / `regexvalidatew` | [regexvalidatew.md](../../src/fcmd/help/regexvalidatew.md) | 正则校验：元字符、分组、标志、结果区读数与常见问题 |
 
 ## 命令行帮助格式

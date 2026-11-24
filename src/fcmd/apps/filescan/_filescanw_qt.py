@@ -161,6 +161,7 @@ from fcmd.apps.filescan._rules import (
 )
 from fcmd.apps.filescan._scenarios import load_scenario, scenario_templates
 from fcmd.gui import style as _qt_theme
+from fcmd.gui.help import HelpMenuMixin
 from fcmd.gui.icons import icon
 from fcmd.gui.page import AppPage, PageSpec
 from fcmd.gui.uistate import PathHistory, WindowState
@@ -183,6 +184,7 @@ from fcmd.gui.widgets import (
 from fcmd.gui.window import QtMainWindow
 from fcmd.gui.workers import submit
 from fcmd.infras.download import SpeedMeter
+from fcmd.shared.helpdoc import HelpDoc, load_help_doc
 
 __all__ = ["FilescanQtWindow", "run_qt"]
 
@@ -1349,7 +1351,7 @@ class _ExpressionDialog(QDialog):  # pragma: no cover - 模态对话框
         return self._result
 
 
-class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+class FilescanQtWindow(RowDetailMixin, HelpMenuMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """敏感内容扫描窗口：侧边栏分页（扫描 / 结果 / 规则 / 设置）+ 状态栏 + 任务日志。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
@@ -1404,6 +1406,14 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             persist=self._persist_settings,
             sidebar_collapsed=self.settings.sidebar_collapsed,
             settings_path=settings_path,
+        )
+        self.install_help_menu(
+            load_help_doc("filescan", title="filescan 敏感内容扫描")
+            or HelpDoc(
+                tool="filescanw",
+                title="filescan 敏感内容扫描",
+                summary="按任务扫描目录中的敏感内容，结果按文件聚合，默认打码。",
+            )
         )
         # 四页都先建好再登记：扫描页要立即填目录 / 白名单，结果与规则页虽然首屏
         # 不可见，也必须在读设置时就能回填（切页只是把已建好的页挂上去）。

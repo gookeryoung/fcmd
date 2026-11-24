@@ -70,6 +70,7 @@ from fcmd.apps.filescan._rules import (
 )
 from fcmd.apps.filescan._scenarios import load_scenario, scenario_templates
 from fcmd.console import print_error
+from fcmd.shared.helpdoc import HelpSection
 
 __all__ = ["rules_command", "run_command", "scan_command"]
 
@@ -191,7 +192,28 @@ def _build_options(  # noqa: PLR0913, PLR0917 - 直接映射 CLI 选项，保持
     )
 
 
-@fcmd.tool("filescan", subcommand="scan", help="扫描目录中的敏感内容", description=_DESCRIPTION)
+@fcmd.tool(
+    "filescan",
+    subcommand="scan",
+    help="扫描目录中的敏感内容",
+    description=_DESCRIPTION,
+    examples=[
+        "filescan scan .",
+        'filescan scan D:/data --include-ext ".txt;.log" --format json --output report.json',
+        'filescan scan D:/data --rules my-rules.json --expr "cn_id and not allow_list"',
+        "filescan scan D:/data --scenario privacy-contact --format text",
+        "filescan scan D:/data --save-config team.json",
+    ],
+    help_sections=[
+        HelpSection(
+            "see_also",
+            lines=[
+                "GUI：filescanw（同一套引擎 / 规则 / 配置，带任务列表与结果页）",
+                "完整说明与更多示例：src/fcmd/help/filescan.md",
+            ],
+        ),
+    ],
+)
 def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保持扁平签名
     paths: list[Path],
     rules: Path | None = None,
@@ -379,7 +401,22 @@ def _emit_result(result: ScanResult, format: str, output: Path | None, include_r
         print(format_text_report(result, include_raw))
 
 
-@fcmd.tool("filescan", subcommand="run", help="按配置文件执行扫描", description=_DESCRIPTION)
+@fcmd.tool(
+    "filescan",
+    subcommand="run",
+    help="按配置文件执行扫描",
+    description=_DESCRIPTION,
+    examples=[
+        "filescan run --config team.json",
+        "filescan run --config team.json --format csv --output hits.csv",
+    ],
+    help_sections=[
+        HelpSection(
+            "see_also",
+            lines=["配置由 filescan scan --save-config 生成；完整说明：src/fcmd/help/filescan.md"],
+        ),
+    ],
+)
 def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保持扁平签名
     config: Path | None = None,
     format: Literal["text", "json", "csv", "sarif"] | None = None,
@@ -453,7 +490,24 @@ def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成
     _emit_result(result, fmt, output, include_raw)
 
 
-@fcmd.tool("filescan", subcommand="rules", help="查看、校验或导出规则集", description=_DESCRIPTION)
+@fcmd.tool(
+    "filescan",
+    subcommand="rules",
+    help="查看、校验或导出规则集",
+    description=_DESCRIPTION,
+    examples=[
+        "filescan rules",
+        "filescan rules --action scenarios",
+        "filescan rules --action validate --rules my-rules.json",
+        "filescan rules --action export --output filescan-rules.json",
+    ],
+    help_sections=[
+        HelpSection(
+            "see_also",
+            lines=["场景模板：filescan rules --action scenarios；完整说明：src/fcmd/help/filescan.md"],
+        ),
+    ],
+)
 def rules_command(
     action: Literal["list", "export", "validate", "scenarios"] = "list",
     rules: Path | None = None,

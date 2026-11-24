@@ -310,7 +310,7 @@ HELP: dict[str, str] = {
     "filelevel": "filelevel 子命令\n+-----------------------+\n| 子命令 | 说明         |\n|--------+--------------|\n| set    | 设置文件等级 |\n+-----------------------+\n",
     "filerename": "filerename 子命令\n+------------------------------------+\n| 子命令  | 说明                     |\n|---------+--------------------------|\n| case    | 转换文件名大小写         |\n| insert  | 在文件名指定位置插入文本 |\n| replace | 正则替换文件名主干       |\n+------------------------------------+\n",
     "filescan": "filescan 子命令\n+---------------------------------+\n| 子命令 | 说明                   |\n|--------+------------------------|\n| rules  | 查看、校验或导出规则集 |\n| run    | 按配置文件执行扫描     |\n| scan   | 扫描目录中的敏感内容   |\n+---------------------------------+\n",
-    "filescanw": "usage: filescanw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开敏感内容扫描窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
+    "filescanw": "usage: filescanw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开敏感内容扫描窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n\n相关:\n  CLI：filescan（scan / run / rules；参数与本窗口同口径）\n  完整说明与示例：src/fcmd/help/filescan.md\n",
     "filesearch": "filesearch 子命令\n+------------------------------+\n| 子命令  | 说明               |\n|---------+--------------------|\n| content | 按内容正则搜索     |\n| name    | 按文件名 glob 搜索 |\n+------------------------------+\n",
     "filesync": "filesync 子命令\n+------------------------------------+\n| 子命令  | 说明                     |\n|---------+--------------------------|\n| compare | 比较两个文件夹并列出差异 |\n| sync    | 按同步模式执行文件夹同步 |\n+------------------------------------+\n",
     "filesyncw": "usage: filesyncw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开文件夹比较与同步窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
@@ -533,7 +533,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "d2c4e8fd93701315c4064137a3d785fe"
+DIGEST = "5d4d84831c23c0ce886c16d545a3234b"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
