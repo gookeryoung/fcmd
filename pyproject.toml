@@ -14,8 +14,10 @@ classifiers = [
     "Topic :: Utilities"
 ]
 dependencies = [
+    "markdown-it-py>=4",
     "pillow>=10",
     "psutil>=6.0",
+    "pygments>=2",
     "pyyaml>=6.0.1",
     "rich>=13.9",
     "PySide6-Essentials>=6.9; python_version >= '3.11'",

@@ -18,7 +18,7 @@
 pip install fcmd          # 或 uv add fcmd
 ```
 
-主包常驻依赖：Pillow、psutil、PyYAML、rich（以及按 Python 版本选择的 PySide6 / PySide2），
+主包常驻依赖：Pillow、psutil、PyYAML、rich、markdown-it-py、Pygments（以及按 Python 版本选择的 PySide6 / PySide2），
 装 `fcmd` 即具备图像处理与 GUI 能力，不需要再装额外分组。
 
 可选依赖（按需安装）：

@@ -14,13 +14,11 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QPoint, Qt, QUrl
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence, QTextCharFormat, QTextCursor
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -29,17 +27,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QTableWidget,
-    QTextBrowser,
-    QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from fcmd.gui.docview import HelpView, render_markdown
 from fcmd.gui.icons import icon, set_icon
 from fcmd.gui.style import active_theme
-from fcmd.gui.theme import Theme
 from fcmd.gui.widgets import (
     Card,
     button,
@@ -49,16 +45,12 @@ from fcmd.gui.widgets import (
     make_table_item,
     mono_font,
 )
-from fcmd.shared.helpdoc import HelpDoc
+from fcmd.shared.helpdoc import HelpDoc, help_headings, help_outline
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 __all__ = ["HelpDialog", "HelpExample", "HelpMenuMixin"]
-
-_HEADING_RE = re.compile(r"^(#{2,3})\s+(.+?)\s*$")
-_HIGHLIGHT_LIMIT = 200
-"""正文命中高亮上限：长文档里避免为极短关键字生成上千个 ExtraSelection。"""
 
 
 @dataclass(frozen=True)
@@ -67,96 +59,6 @@ class HelpExample:
 
     name: str
     summary: str = ""
-
-
-def _outline(markdown: str) -> list[tuple[int, str]]:
-    """提取二级 / 三级标题（跳过代码块），返回 ``(level, title)`` 供目录建树。"""
-    headings: list[tuple[int, str]] = []
-    in_fence = False
-    for line in markdown.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
-        match = _HEADING_RE.match(line)
-        if match is not None:
-            headings.append((len(match.group(1)), match.group(2).strip()))
-    return headings
-
-
-def _headings(markdown: str) -> list[str]:
-    """提取二级 / 三级标题文本，用于正文定位。"""
-    return [title for _level, title in _outline(markdown)]
-
-
-def _document_stylesheet(theme: Theme, mono_family: str) -> str:
-    """按主题生成 QTextDocument 默认样式表（标题 / 代码 / 表格 / 链接）。"""
-    palette = theme.palette
-    fonts = theme.fonts
-    mono = mono_family or "monospace"
-    return f"""
-    body {{ color: {palette.text}; font-size: {fonts.body}pt; }}
-    h1 {{
-        color: {palette.text};
-        font-size: {fonts.title + 4}pt;
-        font-weight: 700;
-        margin: 2px 0 10px 0;
-    }}
-    h2 {{
-        color: {palette.text};
-        font-size: {fonts.title}pt;
-        font-weight: 700;
-        margin: 18px 0 8px 0;
-        padding-bottom: 3px;
-        border-bottom: 1px solid {palette.border};
-    }}
-    h3 {{
-        color: {palette.accent};
-        font-size: {fonts.heading}pt;
-        font-weight: 600;
-        margin: 14px 0 6px 0;
-    }}
-    p {{ margin: 0 0 8px 0; }}
-    ul, ol {{ margin: 4px 0 10px 0; }}
-    li {{ margin: 2px 0; }}
-    a {{ color: {palette.accent}; text-decoration: none; }}
-    code {{
-        font-family: "{mono}";
-        font-size: {fonts.small}pt;
-        color: {palette.accent};
-        background: {palette.log_bg};
-    }}
-    pre {{
-        font-family: "{mono}";
-        font-size: {fonts.small}pt;
-        color: {palette.log_fg};
-        background: {palette.log_bg};
-        border: 1px solid {palette.border};
-        padding: 8px 10px;
-        margin: 8px 0;
-    }}
-    blockquote {{
-        color: {palette.muted};
-        border-left: 3px solid {palette.accent};
-        margin: 8px 0;
-        padding-left: 10px;
-    }}
-    table {{ border-collapse: collapse; margin: 8px 0; }}
-    th {{
-        color: {palette.text};
-        background: {palette.surface_hover};
-        border: 1px solid {palette.border};
-        padding: 4px 8px;
-    }}
-    td {{
-        color: {palette.text};
-        border: 1px solid {palette.border};
-        padding: 4px 8px;
-    }}
-    hr {{ border: none; border-top: 1px solid {palette.border}; margin: 12px 0; }}
-    """
 
 
 class HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
@@ -189,8 +91,8 @@ class HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
         self.setObjectName("HelpDialog")
         self.doc = doc
         self._markdown = markdown if markdown is not None else doc.read_markdown()
-        self._outline = _outline(self._markdown)
-        self._headings = [title for _level, title in self._outline]
+        self._outline = help_outline(self._markdown)
+        self._headings = list(help_headings(self._markdown))
         self._heading_items: list[QTreeWidgetItem] = []
         self._on_example = on_example
         self._syncing_toc = False
@@ -334,16 +236,19 @@ class HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
             layout.addWidget(self._build_examples_card(panel, examples))
         return panel
 
-    def _build_body(self, parent: QWidget) -> QTextBrowser:
-        """正文：不套卡片，直接吃满右侧内容区，Markdown 样式按主题注入。"""
-        self.browser = QTextBrowser(parent)
+    def _build_body(self, parent: QWidget) -> HelpView:
+        """正文：不套卡片，直接吃满右侧内容区；Markdown 交给 docview 渲染。"""
+        self.browser = HelpView(parent)
         self.browser.setObjectName("HelpBody")
-        self.browser.setOpenLinks(False)
-        self.browser.anchorClicked.connect(self._open_link)
-        if self.doc.doc_path is not None:
-            self.browser.setSearchPaths([str(self.doc.doc_path.parent)])
-        self.browser.document().setDefaultStyleSheet(_document_stylesheet(active_theme(), self._mono_family))
-        self.browser.setMarkdown(self._markdown)
+        theme = active_theme()
+        base_dir = self.doc.doc_path.parent if self.doc.doc_path is not None else None
+        self._rendered = render_markdown(
+            self._markdown,
+            theme=theme,
+            mono_family=self._mono_family,
+            base_dir=base_dir,
+        )
+        self.browser.set_rendered(self._rendered, theme=theme, mono_family=self._mono_family)
         return self.browser
 
     def _build_examples_card(self, parent: QWidget, examples: Sequence[HelpExample]) -> Card:
@@ -428,35 +333,8 @@ class HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
             self._scroll_to(query)
 
     def _apply_highlight(self, query: str) -> None:
-        """在正文中高亮所有命中（上限 :data:`_HIGHLIGHT_LIMIT`）。"""
-        needle = query.strip()
-        if not needle:
-            self.browser.setExtraSelections([])
-            return
-        theme = active_theme()
-        background = QColor(theme.palette.accent)
-        background.setAlpha(70)
-        fmt = QTextCharFormat()
-        fmt.setBackground(background)
-        fmt.setForeground(QColor(theme.palette.text))
-        selections: list[QTextEdit.ExtraSelection] = []
-        cursor = self._document_start()
-        while len(selections) < _HIGHLIGHT_LIMIT:
-            found = self.browser.document().find(needle, cursor)
-            if found.isNull():
-                break
-            selection = QTextEdit.ExtraSelection()
-            selection.cursor = found
-            selection.format = fmt
-            selections.append(selection)
-            cursor = found
-        self.browser.setExtraSelections(selections)
-
-    def _document_start(self) -> QTextCursor:
-        """正文文档起点的光标（每次查找都从头开始，避免状态互相影响）。"""
-        cursor = QTextCursor(self.browser.document())
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        return cursor
+        """在正文中高亮所有命中（具体上限由 :class:`HelpView` 维护）。"""
+        self.browser.highlight(query, theme=active_theme())
 
     def _on_toc_item_changed(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
         """目录选中变化：滚动正文到对应标题。"""
@@ -468,10 +346,7 @@ class HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
         """在正文中查找标题（或搜索词）并选中，保证长文档也能定位。"""
         self._syncing_toc = True
         try:
-            found = self.browser.document().find(text, self._document_start())
-            if not found.isNull():
-                self.browser.setTextCursor(found)
-                self.browser.ensureCursorVisible()
+            self.browser.scroll_to(text)
         finally:
             self._syncing_toc = False
 
@@ -479,11 +354,11 @@ class HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
         """正文滚动时把目录高亮同步到当前章节。"""
         if self._syncing_toc or not self._headings:
             return
-        anchor = self.browser.cursorForPosition(QPoint(8, 8)).position()
+        anchor = self.browser.viewport_anchor_position()
         current = 0
         for index, heading in enumerate(self._headings):
-            found = self.browser.document().find(heading, self._document_start())
-            if not found.isNull() and found.position() <= anchor:
+            position = self.browser.find_position(heading)
+            if position >= 0 and position <= anchor:
                 current = index
         item = self._heading_items[current] if current < len(self._heading_items) else None
         if item is not None and self.toc.currentItem() is not item:
@@ -507,22 +382,6 @@ class HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
             return
         row = self.example_table.currentRow()
         self._activate_example(row if row >= 0 else 0, 0)
-
-    def _open_link(self, url: QUrl) -> None:
-        """处理正文链接：外链交给系统浏览器，相对路径按文档目录解析。"""
-        scheme = url.scheme().lower()
-        if scheme in ("http", "https", "mailto", "file"):
-            QDesktopServices.openUrl(url)
-            return
-        target = url.toString()
-        if target.startswith("#"):
-            self.browser.scrollToAnchor(target[1:])
-            return
-        path = Path(target)
-        if not path.is_absolute() and self.doc.doc_path is not None:
-            path = self.doc.doc_path.parent / path
-        if path.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
 
 class HelpMenuMixin:  # pragma: no cover - 需要 Qt 事件循环

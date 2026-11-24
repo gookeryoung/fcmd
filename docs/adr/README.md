@@ -60,3 +60,4 @@
 | [0053](0053-help-dialog-visual-polish.md) | 帮助窗口视觉美化：顶部导航 + 无面板目录树 / 正文 + 1px 分隔线，Markdown 正文主题化，`Ctrl+F` 与目录滚动联动 | 已落地（P0 / P1） |
 | [0054](0054-quiet-splitter.md) | 公共分栏手柄 `QuietSplitter`：透明 4px handle + hover 强调色，`make_splitter` 默认使用，llmw 与应用分栏统一 | 已落地 |
 | [0055](0055-pptmake-editing-experience.md) | pptmake 布局设计与编辑体验升级：缩略图排序器 / 撤销 / 内容模型 v3 / 导出生态（S0–S3） | S0 已落地，S1–S3 待办 |
+| [0056](0056-help-doc-rendering.md) | 帮助文档渲染层 `gui/docview`：markdown-it-py + Pygments 代码高亮 / 复制、HelpView 搜索与定位，`help.py` 只留窗口编排 | 已落地（P0 / P1） |

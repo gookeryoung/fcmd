@@ -586,9 +586,11 @@ name = "fcmd"
 version = "0.3.16"
 source = { editable = "." }
 dependencies = [
+    { name = "markdown-it-py" },
     { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pillow", version = "13.0.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "psutil" },
+    { name = "pygments" },
     { name = "pyside2", marker = "python_full_version < '3.11'" },
     { name = "pyside6-essentials", marker = "python_full_version >= '3.11'" },
     { name = "pyyaml" },
@@ -707,12 +709,14 @@ requires-dist = [
     { name = "fcmd", extras = ["lint", "test", "full"], marker = "extra == 'dev'" },
     { name = "fcmd", extras = ["pdf", "ocr", "svg", "crypto", "archive", "filecheck", "color", "pe", "ppt", "win32"], marker = "extra == 'full'" },
     { name = "fcmd", extras = ["pdf", "ocr", "svg", "ppt"], marker = "extra == 'office'" },
+    { name = "markdown-it-py", specifier = ">=4" },
     { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.0,<3" },
     { name = "pefile", marker = "extra == 'pe'", specifier = ">=2024.8.26" },
     { name = "pillow", specifier = ">=10" },
     { name = "prek", marker = "extra == 'dev'", specifier = ">=0.4.5" },
     { name = "psutil", specifier = ">=6.0" },
     { name = "puremagic", marker = "extra == 'filecheck'", specifier = ">=1.28" },
+    { name = "pygments", specifier = ">=2" },
     { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.23,<2" },
     { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=5.9.0" },
     { name = "pyrefly", marker = "extra == 'lint'", specifier = ">=1.1.1" },

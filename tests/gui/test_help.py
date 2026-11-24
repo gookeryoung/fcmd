@@ -229,11 +229,11 @@ def test_example_primary_action_loads_selected_row(home: Path) -> None:
 
 def test_document_stylesheet_uses_theme_tokens(home: Path) -> None:
     """Markdown 默认样式表取当前主题的强调色与等宽字体。"""
-    from fcmd.gui.help import _document_stylesheet
+    from fcmd.gui.docview.theme import document_stylesheet
     from fcmd.gui.style import active_theme
 
     theme = active_theme()
-    css = _document_stylesheet(theme, "TestMono")
+    css = document_stylesheet(theme, "TestMono")
     assert "TestMono" in css
     assert theme.palette.accent in css
     assert "h2" in css and "pre" in css and "table" in css

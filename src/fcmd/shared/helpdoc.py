@@ -23,9 +23,13 @@ __all__ = [
     "SECTION_ORDER",
     "HelpDoc",
     "HelpSection",
+    "help_headings",
+    "help_outline",
     "load_help_doc",
     "parse_markdown",
 ]
+
+_HEADING_RE = re.compile(r"^(#{2,3})\s+(.+?)\s*$")
 
 #: 包内帮助文档目录（``src/fcmd/help/``）；随 wheel 一起安装。
 HELP_DIR = Path(__file__).resolve().parents[1] / "help"
@@ -186,6 +190,31 @@ class HelpDoc:
         text = resolved.read_text(encoding="utf-8")
         doc = parse_markdown(text, tool=tool or resolved.stem, title=title)
         return replace(doc, doc_path=resolved)
+
+
+def help_outline(markdown: str) -> tuple[tuple[int, str], ...]:
+    """提取二级 / 三级标题（跳过代码块），返回 ``(level, title)``。
+
+    纯标准库实现，CLI 与 GUI 共用；目录树、正文定位都不必再各自解析一遍。
+    """
+    headings: list[tuple[int, str]] = []
+    in_fence = False
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        match = _HEADING_RE.match(line)
+        if match is not None:
+            headings.append((len(match.group(1)), match.group(2).strip()))
+    return tuple(headings)
+
+
+def help_headings(markdown: str) -> tuple[str, ...]:
+    """提取二级 / 三级标题文本，用于正文定位。"""
+    return tuple(title for _level, title in help_outline(markdown))
 
 
 def _kind_for(title: str) -> str:
