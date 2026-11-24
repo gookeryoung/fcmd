@@ -108,6 +108,9 @@ REASON_DOC_NO_TEXT = "文档无文本层"
 REASON_DOC_UNSUPPORTED = "文档格式不支持（缺少解析依赖）"
 REASON_DOC_TOO_LARGE = "超出文档解析上限"
 
+LOCATION_FILENAME = "文件名"
+"""文件名命中的位置标签；此类命中 ``line_no`` 固定为 0。"""
+
 DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
     ".txt",
     ".text",
@@ -474,7 +477,12 @@ class WalkResult:
 
 @dataclass
 class _Outcome:
-    """单文件处理结果（内部使用）。"""
+    """单文件处理结果（内部使用）。
+
+    ``matched_ids`` / ``matches`` / ``size`` / ``encoding`` 是内容侧命中明细，
+    表达式求值统一在 :func:`scan_file` 里做，便于合并文件名规则的结果。
+    文件名命中即使内容被跳过（二进制 / 文档加密等）也照常成立。
+    """
 
     path: Path
     hit: FileHit | None = None
@@ -482,6 +490,10 @@ class _Outcome:
     error: ScanError | None = None
     bytes_read: int = 0
     cancelled: bool = False
+    matched_ids: frozenset[str] = frozenset()
+    matches: tuple[RuleMatch, ...] = ()
+    size: int = 0
+    encoding: str = ""
 
 
 # ---------------------------------------------------------------------- #
@@ -935,8 +947,43 @@ def _collect_units(
     return matched_ids, matches
 
 
+def _match_filename(
+    path: Path,
+    compiled_rules: Sequence[CompiledRule],
+    options: ScanOptions,
+) -> tuple[set[str], list[RuleMatch]]:
+    """对文件名求值文件名规则；位置记为 :data:`LOCATION_FILENAME`、行号 0。"""
+    name = path.name
+    limit = max(1, options.max_hits_per_file)
+    matched_ids: set[str] = set()
+    matches: list[RuleMatch] = []
+    for compiled in compiled_rules:
+        if not compiled.matches_filename:
+            continue
+        regex = compiled.regex
+        if regex.search(name) is None:
+            continue
+        for match in regex.finditer(name):
+            matched_ids.add(compiled.id)
+            if len(matches) < limit:
+                matches.append(
+                    _build_match(
+                        compiled,
+                        name,
+                        0,
+                        match,
+                        options.context_chars,
+                        location=LOCATION_FILENAME,
+                    )
+                )
+    return matched_ids, matches
+
+
 def _scan_document(path: Path, context: ScanContext, suffix: str, size: int | None) -> _Outcome:
-    """文档类文件：先抽取带位置的文本单元，再复用逐行匹配与文件级求值。"""
+    """文档类文件：先抽取带位置的文本单元，再复用逐行匹配。
+
+    表达式求值与命中明细筛选统一由 :func:`scan_file` 处理（需合并文件名规则）。
+    """
     try:
         units = extract_document(path, size)
     except ExtractError as exc:
@@ -955,15 +1002,21 @@ def _scan_document(path: Path, context: ScanContext, suffix: str, size: int | No
     if collected is None:
         return _Outcome(path=path, cancelled=True)
     matched_ids, matches = collected
-    if not evaluate_expression(context.expression, matched_ids):
-        return _Outcome(path=path, bytes_read=byte_count)
-    detail = [item for item in matches if item.rule_id in context.positive_ids]
-    hit = FileHit(path=path, size=byte_count, encoding=suffix.lstrip("."), matches=detail)
-    return _Outcome(path=path, hit=hit, bytes_read=byte_count)
+    return _Outcome(
+        path=path,
+        bytes_read=byte_count,
+        matched_ids=frozenset(matched_ids),
+        matches=tuple(matches),
+        size=byte_count,
+        encoding=suffix.lstrip("."),
+    )
 
 
 def _scan_text(path: Path, context: ScanContext, size: int | None) -> _Outcome:
-    """文本类文件：读取上限、二进制判定、编码回退、逐行匹配与文件级求值。"""
+    """文本类文件：读取上限、二进制判定、编码回退、逐行匹配。
+
+    表达式求值与命中明细筛选统一由 :func:`scan_file` 处理（需合并文件名规则）。
+    """
     try:
         encoding, text, byte_count = _read_text(path, context.options, size)
     except _SkipFile as skip:
@@ -975,24 +1028,71 @@ def _scan_text(path: Path, context: ScanContext, size: int | None) -> _Outcome:
     if collected is None:
         return _Outcome(path=path, cancelled=True)
     matched_ids, matches = collected
-    if not evaluate_expression(context.expression, matched_ids):
-        return _Outcome(path=path, bytes_read=byte_count)
-    detail = [item for item in matches if item.rule_id in context.positive_ids]
-    hit = FileHit(path=path, size=byte_count, encoding=encoding, matches=detail)
-    return _Outcome(path=path, hit=hit, bytes_read=byte_count)
+    return _Outcome(
+        path=path,
+        bytes_read=byte_count,
+        matched_ids=frozenset(matched_ids),
+        matches=tuple(matches),
+        size=byte_count,
+        encoding=encoding,
+    )
 
 
 def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Outcome:
-    """扫描单个文件：文档抽取或文本读取，再做逐行匹配与文件级求值。
+    """扫描单个文件：文件名规则 + 文档抽取或文本读取，再做逐行匹配与文件级求值。
 
-    ``size`` 由遍历阶段传入以免重复 ``stat``；省略时按需自行获取。
+    ``size`` 由遍历阶段传入以免重复 ``stat``；省略时按需自行获取。文件名规则
+    先对 ``path.name`` 求值，即使内容因二进制 / 文档加密等原因被跳过也照常生效。
     """
     if _is_cancelled(context.token):
         return _Outcome(path=path, cancelled=True)
+    name_ids, name_matches = _match_filename(path, context.compiled_rules, context.options)
     suffix = path.suffix.lower()
     if context.options.scan_documents and suffix in DOCUMENT_EXTENSIONS:
-        return _scan_document(path, context, suffix, size)
-    return _scan_text(path, context, size)
+        outcome = _scan_document(path, context, suffix, size)
+    else:
+        outcome = _scan_text(path, context, size)
+    if outcome.cancelled or outcome.error is not None:
+        return outcome
+    ids = set(outcome.matched_ids) | name_ids
+    if outcome.skipped is not None:
+        if not evaluate_expression(context.expression, ids):
+            return outcome
+        return _filename_only_outcome(path, context, name_matches, size)
+    if not evaluate_expression(context.expression, ids):
+        return _Outcome(path=path, bytes_read=outcome.bytes_read, matched_ids=frozenset(ids))
+    limit = max(1, context.options.max_hits_per_file)
+    combined = [*name_matches, *outcome.matches]
+    detail = [item for item in combined if item.rule_id in context.positive_ids][:limit]
+    hit = FileHit(path=path, size=outcome.size, encoding=outcome.encoding, matches=detail)
+    return _Outcome(
+        path=path,
+        hit=hit,
+        bytes_read=outcome.bytes_read,
+        matched_ids=frozenset(ids),
+        matches=tuple(combined),
+        size=outcome.size,
+        encoding=outcome.encoding,
+    )
+
+
+def _filename_only_outcome(
+    path: Path,
+    context: ScanContext,
+    name_matches: list[RuleMatch],
+    size: int | None,
+) -> _Outcome:
+    """内容被跳过、但文件名规则命中时的结果：只报文件名命中明细。"""
+    limit = max(1, context.options.max_hits_per_file)
+    detail = [item for item in name_matches if item.rule_id in context.positive_ids][:limit]
+    actual = size
+    if actual is None:
+        try:
+            actual = path.stat().st_size
+        except OSError:
+            actual = 0
+    hit = FileHit(path=path, size=actual, encoding="", matches=detail)
+    return _Outcome(path=path, hit=hit, size=actual, matches=tuple(name_matches))
 
 
 # ---------------------------------------------------------------------- #

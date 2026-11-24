@@ -255,16 +255,16 @@ def format_text_report(result: ScanResult, include_raw: bool = False) -> str:
     if hint is not None:
         lines.append(hint)
     for hit in result.hits:
-        lines.append(f"[命中] {hit.path}（{hit.encoding}，{format_size(hit.size)}）")
+        encoding = f"{hit.encoding}，" if hit.encoding else ""
+        lines.append(f"[命中] {hit.path}（{encoding}{format_size(hit.size)}）")
         if not hit.matches:
             lines.append("  - 表达式命中（无正向规则明细）")
             continue
         for match in hit.matches:
             where = f"{match.location} " if match.location else ""
             level = f"【{severity_label(match.severity)}】" if match.severity else ""
-            lines.append(
-                f"  - {level}{match.rule_name} @ {where}第 {match.line_no} 行：{render_context(match, include_raw)}"
-            )
+            position = f"{where}第 {match.line_no} 行" if match.line_no > 0 else (match.location or "文件名")
+            lines.append(f"  - {level}{match.rule_name} @ {position}：{render_context(match, include_raw)}")
     if result.skipped:
         lines.append("跳过：")
         lines.extend(f"  - {item.path}：{item.reason}" for item in result.skipped)

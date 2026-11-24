@@ -50,6 +50,7 @@
   - `keyword`：`text` + `case_sensitive` + `whole_word`（整词按 `\b` 边界，
     仅对首尾为词字符的关键词生效，避免中文关键词被误判）；
   - `regex`：`pattern` + `ignore_case`（不支持跨行匹配，逐行求值）。
+- `target`：`content`（默认，匹配正文）或 `filename`（匹配文件名，见 D13）。
 
 表达式采用可嵌套的文本 DSL：`rule_id`、`and` / `or` / `not`、圆括号，
 `and` 优先级高于 `or`，`not` 只能作用于单个规则或括号组。例：
@@ -593,6 +594,23 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 **口径约定：** 大小 / 修改时间过滤属于「范围外」（从未读取），不再计入「其他」；
 `files_skipped_other` 只统计读盘（或解析）之后才发生的其它跳过。
 
+### D13 文件名规则（2026-11-24）
+
+规则匹配器增加 `target` 字段（`content` / `filename`，默认 `content`，JSON 中与默认
+一致时省略）。`filename` 规则由引擎在读取内容前对 `path.name` 求值：命中行号固定
+`0`、位置记为「文件名」，上下文是被截取的完整文件名（左右各取 `context_chars`）。
+
+- 文件名规则与正文规则共用表达式与文件级求值：两者的命中 id 合并后统一判定
+  `and` / `or` / `not`，`(body and not marker)` 这类跨对象组合天然成立；
+- 只对进入扫描范围（通过遍历与后缀 / 大小 / 时间过滤）的文件求值，范围外文件
+  不参与；
+- 内容因二进制、单文件超限、文档加密 / 损坏 / 无文本层而跳过时，只要表达式由
+  文件名命中成立，仍记为命中（`encoding` 为空、大小取遍历阶段的值），不再计入
+  跳过；这使「按文件名找敏感资料」不受内容可读性影响；
+- 文本报告对 `line_no == 0` 的命中显示 `@ 文件名：…` 而不是「第 0 行」；CSV / JSON
+  沿用 `line=0`、`location=文件名`；GUI 结果树的位置列显示「文件名」；
+- GUI 规则对话框新增「匹配对象」下拉，规则表摘要以「文件名 · …」区分。
+
 ## 验收
 
 - 对含身份证号/手机号/邮箱/API Key 的样例目录扫描，命中文件、规则、行号与
@@ -614,6 +632,8 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 - 重复扫描同一批文件时未变化文件直接复用（文件大小 / 修改时间 / 规则与命中相关
   选项任一变化即重扫）；CLI 与 GUI 都能开关与清理缓存，报告区分「实扫 / 缓存复用」；
   缓存损坏时自动重建且不中断扫描（见 D11）；
+- 文件名规则（`target=filename`）与正文规则可在同一表达式中组合，文件名命中即使
+  内容不可读（二进制 / 加密文档）也照常报告（见 D13）；
 - 数千文件目录有进度且可取消，给出本机实测文件数、体积、耗时与吞吐（见 D9）。
 
 ## 落地状态
@@ -647,3 +667,5 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 - 结果聚合口径：已落地（`ScanStats.files_out_of_scope` / `files_skipped_after_read`
   + `_report.scan_summary` / `no_hit_hint` + GUI `scan_status_text` 共用，
   0 命中诊断与真实复现见 D12）。
+- 文件名规则：已落地（`Matcher.target` / `CompiledRule.matches_filename` +
+  引擎 `_match_filename`，报告与 GUI 规则对话框同步，见 D13）。

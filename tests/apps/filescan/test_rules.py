@@ -17,6 +17,7 @@ from fcmd.apps.filescan._rules import (
     SEVERITY_HIGH,
     SEVERITY_LEVELS,
     SEVERITY_LOW,
+    TARGET_FILENAME,
     AndExpr,
     Matcher,
     NotExpr,
@@ -241,6 +242,23 @@ def test_matcher_mapping_defaults_and_overrides() -> None:
     assert payload["whole_word"] is True
     assert payload["case_sensitive"] is True
     assert matcher_from_mapping(payload) == Matcher(kind=MATCH_KEYWORD, text="x", whole_word=True, case_sensitive=True)
+
+
+def test_matcher_target_roundtrip_and_describe() -> None:
+    matcher = Matcher(kind=MATCH_KEYWORD, text="secret", target=TARGET_FILENAME)
+    payload = matcher_to_mapping(matcher)
+    assert payload["target"] == TARGET_FILENAME
+    assert matcher_from_mapping(payload).target == TARGET_FILENAME
+    assert matcher.matches_filename() is True
+    assert matcher.describe().startswith("文件名 · ")
+    assert "target" not in matcher_to_mapping(Matcher(kind=MATCH_KEYWORD, text="x"))
+
+
+def test_matcher_target_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError, match="未知匹配对象"):
+        matcher_from_mapping({"type": MATCH_KEYWORD, "text": "x", "target": "path"})
+    with pytest.raises(ValueError, match="未知匹配对象"):
+        Matcher(kind=MATCH_KEYWORD, text="x", target="path").validate()
 
 
 @pytest.mark.parametrize(

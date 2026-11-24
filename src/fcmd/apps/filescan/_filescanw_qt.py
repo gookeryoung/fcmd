@@ -89,6 +89,7 @@ from fcmd.apps.filescan._config import (
 from fcmd.apps.filescan._engine import (
     DEFAULT_SCAN_EXTENSIONS,
     CancelToken,
+    FileHit,
     RuleMatch,
     ScanOptions,
     ScanResult,
@@ -112,6 +113,8 @@ from fcmd.apps.filescan._rules import (
     MATCH_REGEX,
     SEVERITY_LABELS,
     SEVERITY_LEVELS,
+    TARGET_CONTENT,
+    TARGET_FILENAME,
     Matcher,
     Rule,
     RuleSet,
@@ -547,6 +550,13 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._severity.addItems([SEVERITY_LABELS[level] for level in SEVERITY_LEVELS])
         self._severity.setCurrentIndex(SEVERITY_LEVELS.index(rule.severity if rule else DEFAULT_SEVERITY))
         grid.addWidget(self._severity, 6, 1)
+        grid.addWidget(QLabel("匹配对象"), 7, 0, Qt.AlignmentFlag.AlignRight)
+        self._target = QComboBox(self)
+        self._target.addItem("文件内容", TARGET_CONTENT)
+        self._target.addItem("文件名", TARGET_FILENAME)
+        current_target = rule.matcher.target if rule else TARGET_CONTENT
+        self._target.setCurrentIndex(max(self._target.findData(current_target), 0))
+        grid.addWidget(self._target, 7, 1)
         outer.addLayout(grid)
 
         flags = QHBoxLayout()
@@ -582,6 +592,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             pattern=self._pattern.text().strip() if kind == MATCH_REGEX else "",
             case_sensitive=self._case.isChecked(),
             whole_word=self._whole.isChecked(),
+            target=self._target.currentData() or TARGET_CONTENT,
         )
         self._result = Rule(
             id=self._id.text().strip(),
@@ -655,6 +666,15 @@ def _highest_severity(matches: Sequence[RuleMatch]) -> str:
         if ranks.get(match.severity, -1) > ranks.get(best, -1):
             best = match.severity
     return best
+
+
+def _hit_summary(hit: FileHit) -> str:
+    """文件行的摘要：命中条数 · 编码（文件名命中可能没有编码）· 大小。"""
+    parts = [f"{len(hit.matches)} 条"]
+    if hit.encoding:
+        parts.append(hit.encoding)
+    parts.append(format_size(hit.size))
+    return " · ".join(parts)
 
 
 class _ContextDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
@@ -1808,7 +1828,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
                     str(hit.path),
                     severity_label(highest) if highest else "",
                     "",
-                    f"{len(hit.matches)} 条 · {hit.encoding} · {format_size(hit.size)}",
+                    _hit_summary(hit),
                 ]
             )
             parent.setToolTip(0, str(hit.path))

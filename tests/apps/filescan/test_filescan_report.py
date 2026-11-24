@@ -228,6 +228,15 @@ def test_format_text_report_raw_and_cancelled() -> None:
     assert "13812345678" in text
 
 
+def test_text_report_filename_match_and_missing_encoding() -> None:
+    match = _match(line=0, excerpt="secret", context="secret.txt", context_start=0, location="文件名")
+    hit = FileHit(Path("scan") / "secret.txt", 12, "", [match])
+    text = format_text_report(_result(hits=[hit]))
+    assert "（12 B）" in text
+    assert "@ 文件名：se**et.txt" in text
+    assert "第 0 行" not in text
+
+
 def test_write_report_all_formats(tmp_path: Path) -> None:
     result = _result()
     text_path = write_report(result, tmp_path / "out" / "report.txt", "text")

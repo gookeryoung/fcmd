@@ -15,6 +15,7 @@ from fcmd.apps.filescan import _engine
 from fcmd.apps.filescan._engine import (
     DEFAULT_MAX_FILE_BYTES,
     DEFAULT_SKIP_DIRS,
+    LOCATION_FILENAME,
     REASON_BINARY,
     REASON_DOC_CORRUPT,
     REASON_DOC_ENCRYPTED,
@@ -38,7 +39,16 @@ from fcmd.apps.filescan._engine import (
     scan_paths,
     walk_files,
 )
-from fcmd.apps.filescan._rules import MATCH_KEYWORD, MATCH_REGEX, Matcher, Rule, RuleSet, compile_rule, parse_expression
+from fcmd.apps.filescan._rules import (
+    MATCH_KEYWORD,
+    MATCH_REGEX,
+    TARGET_FILENAME,
+    Matcher,
+    Rule,
+    RuleSet,
+    compile_rule,
+    parse_expression,
+)
 
 
 def _write(root: Path, relative: str, data: str | bytes, encoding: str = "utf-8") -> Path:
@@ -381,6 +391,85 @@ def test_scan_file_respects_hit_limit(tmp_path: Path) -> None:
     )
     assert outcome.hit is not None
     assert len(outcome.hit.matches) == 2
+
+
+def test_scan_file_matches_filename_target(tmp_path: Path) -> None:
+    path = _write(tmp_path, "secret_alpha.txt", "nothing here\n")
+    ruleset = RuleSet(
+        rules=(
+            Rule(
+                id="fn",
+                name="文件名规则",
+                matcher=Matcher(kind=MATCH_KEYWORD, text="alpha", target=TARGET_FILENAME),
+            ),
+        )
+    )
+    outcome = scan_file(path, _context(ruleset))
+    assert outcome.hit is not None
+    match = outcome.hit.matches[0]
+    assert match.rule_id == "fn"
+    assert match.line_no == 0
+    assert match.location == LOCATION_FILENAME
+    assert match.excerpt == "alpha"
+    assert match.context == "secret_alpha.txt"
+
+
+def test_filename_target_does_not_read_excluded_content(tmp_path: Path) -> None:
+    path = _write(tmp_path, "alpha.txt", "正文没有关键词\n")
+    ruleset = RuleSet(rules=(Rule(id="fn", name="文件名规则", matcher=Matcher(kind=MATCH_KEYWORD, text="alpha")),))
+    assert scan_file(path, _context(ruleset)).hit is None
+
+
+def test_filename_rule_hits_binary_file(tmp_path: Path) -> None:
+    path = _write(tmp_path, "secret_alpha.bin", b"abc\x00def")
+    ruleset = RuleSet(
+        rules=(
+            Rule(
+                id="fn",
+                name="文件名规则",
+                matcher=Matcher(kind=MATCH_KEYWORD, text="alpha", target=TARGET_FILENAME),
+            ),
+        )
+    )
+    outcome = scan_file(path, _context(ruleset))
+    assert outcome.skipped is None
+    assert outcome.hit is not None
+    assert outcome.hit.encoding == ""
+    assert outcome.hit.size == path.stat().st_size
+    assert outcome.hit.matches[0].location == LOCATION_FILENAME
+
+
+def test_filename_and_content_rules_combine_in_expression(tmp_path: Path) -> None:
+    path = _write(tmp_path, "alpha.txt", "beta\n")
+    ruleset = RuleSet(
+        rules=(
+            Rule(id="body", name="正文规则", matcher=Matcher(kind=MATCH_KEYWORD, text="beta")),
+            Rule(
+                id="name",
+                name="文件名规则",
+                matcher=Matcher(kind=MATCH_KEYWORD, text="alpha", target=TARGET_FILENAME),
+            ),
+        ),
+        expression="body and name",
+    )
+    outcome = scan_file(path, _context(ruleset, expression="body and name"))
+    assert outcome.hit is not None
+    assert [item.rule_id for item in outcome.hit.matches] == ["name", "body"]
+
+
+def test_filename_rule_alone_does_not_satisfy_content_expression(tmp_path: Path) -> None:
+    path = _write(tmp_path, "alpha.txt", "无关内容\n")
+    ruleset = RuleSet(
+        rules=(
+            Rule(id="body", name="正文规则", matcher=Matcher(kind=MATCH_KEYWORD, text="beta")),
+            Rule(
+                id="name",
+                name="文件名规则",
+                matcher=Matcher(kind=MATCH_KEYWORD, text="alpha", target=TARGET_FILENAME),
+            ),
+        ),
+    )
+    assert scan_file(path, _context(ruleset, expression="body and name")).hit is None
 
 
 def test_scan_file_skips_binary_and_oversize(tmp_path: Path) -> None:

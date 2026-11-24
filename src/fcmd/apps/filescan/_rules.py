@@ -29,6 +29,7 @@ __all__ = [
     "MATCH_KEYWORD",
     "MATCH_KINDS",
     "MATCH_REGEX",
+    "MATCH_TARGETS",
     "SEVERITY_CRITICAL",
     "SEVERITY_HIGH",
     "SEVERITY_INFO",
@@ -36,6 +37,8 @@ __all__ = [
     "SEVERITY_LEVELS",
     "SEVERITY_LOW",
     "SEVERITY_MEDIUM",
+    "TARGET_CONTENT",
+    "TARGET_FILENAME",
     "AndExpr",
     "CompiledRule",
     "Expr",
@@ -70,6 +73,11 @@ DEFAULT_RULESET_NAME = "内置敏感规则"
 MATCH_KEYWORD = "keyword"
 MATCH_REGEX = "regex"
 MATCH_KINDS: tuple[str, ...] = (MATCH_KEYWORD, MATCH_REGEX)
+
+TARGET_CONTENT = "content"
+TARGET_FILENAME = "filename"
+MATCH_TARGETS: tuple[str, ...] = (TARGET_CONTENT, TARGET_FILENAME)
+"""匹配对象：``content`` 为文件正文（默认），``filename`` 为文件名（含后缀）。"""
 
 SEVERITY_INFO = "info"
 SEVERITY_LOW = "low"
@@ -115,7 +123,8 @@ class Matcher:
 
     ``kind`` 为 ``keyword`` 时使用 ``text``（可配 ``whole_word``）；为 ``regex``
     时使用 ``pattern``。``case_sensitive`` 为 ``None`` 时按类型取默认值：
-    关键词默认不区分大小写，正则默认区分大小写。
+    关键词默认不区分大小写，正则默认区分大小写。``target`` 决定匹配文件名还是
+    文件正文，文件名规则由引擎在读取内容前对 ``path.name`` 求值。
     """
 
     kind: str
@@ -123,6 +132,7 @@ class Matcher:
     pattern: str = ""
     case_sensitive: bool | None = None
     whole_word: bool = False
+    target: str = TARGET_CONTENT
 
     def is_case_sensitive(self) -> bool:
         """返回实际生效的大小写口径。"""
@@ -140,12 +150,20 @@ class Matcher:
             text = f"正则: {self.pattern}"
         if not self.is_case_sensitive():
             text += "（忽略大小写）"
+        if self.target == TARGET_FILENAME:
+            text = f"文件名 · {text}"
         return text
+
+    def matches_filename(self) -> bool:
+        """是否针对文件名求值。"""
+        return self.target == TARGET_FILENAME
 
     def validate(self) -> None:
         """校验匹配器字段；非法时抛 ``ValueError``（中文说明）。"""
         if self.kind not in MATCH_KINDS:
             raise ValueError(f"未知匹配器类型: {self.kind!r}，只支持 {'/'.join(MATCH_KINDS)}")
+        if self.target not in MATCH_TARGETS:
+            raise ValueError(f"未知匹配对象: {self.target!r}，只支持 {'/'.join(MATCH_TARGETS)}")
         if self.kind == MATCH_KEYWORD:
             if not self.text:
                 raise ValueError("关键词不能为空")
@@ -213,6 +231,11 @@ class CompiledRule:
     @property
     def severity(self) -> str:
         return self.rule.severity
+
+    @property
+    def matches_filename(self) -> bool:
+        """该规则是否针对文件名求值。"""
+        return self.rule.matcher.matches_filename()
 
 
 def compile_rule(rule: Rule) -> CompiledRule:
@@ -487,6 +510,8 @@ def matcher_to_mapping(matcher: Matcher) -> dict[str, Any]:
         payload["pattern"] = matcher.pattern
     if matcher.case_sensitive is not None:
         payload["case_sensitive"] = matcher.case_sensitive
+    if matcher.target != TARGET_CONTENT:
+        payload["target"] = matcher.target
     return payload
 
 
@@ -503,6 +528,9 @@ def matcher_from_mapping(raw: Any) -> Matcher:
     whole_word = raw.get("whole_word", False)
     if not isinstance(whole_word, bool):
         raise ValueError("whole_word 必须是布尔值")
+    target = raw.get("target", TARGET_CONTENT)
+    if target not in MATCH_TARGETS:
+        raise ValueError(f"未知匹配对象 target: {target!r}，只支持 {'/'.join(MATCH_TARGETS)}")
     if kind == MATCH_KEYWORD:
         text = raw.get("text", "")
         if not isinstance(text, str):
@@ -512,12 +540,13 @@ def matcher_from_mapping(raw: Any) -> Matcher:
             text=text,
             case_sensitive=case_sensitive,
             whole_word=whole_word,
+            target=target,
         )
     else:
         pattern = raw.get("pattern", "")
         if not isinstance(pattern, str):
             raise ValueError("正则 pattern 必须是字符串")
-        matcher = Matcher(kind=kind, pattern=pattern, case_sensitive=case_sensitive)
+        matcher = Matcher(kind=kind, pattern=pattern, case_sensitive=case_sensitive, target=target)
     matcher.validate()
     return matcher
 
@@ -633,157 +662,11 @@ def save_ruleset(ruleset: RuleSet, path: Path) -> None:
 # ---------------------------------------------------------------------- #
 # 内置敏感规则
 # ---------------------------------------------------------------------- #
-def _builtin_rules() -> tuple[Rule, ...]:
-    """内置示例规则：覆盖常见个人信息、联系方式、财务与凭证。"""
-    return (
-        Rule(
-            id="cn_id",
-            name="身份证号",
-            group="个人信息",
-            severity=SEVERITY_HIGH,
-            matcher=Matcher(
-                kind=MATCH_REGEX,
-                pattern=r"(?<![0-9A-Za-z])[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![0-9A-Za-z])",
-            ),
-        ),
-        Rule(
-            id="cn_phone",
-            name="手机号",
-            group="联系方式",
-            severity=SEVERITY_MEDIUM,
-            matcher=Matcher(kind=MATCH_REGEX, pattern=r"(?<!\d)1[3-9]\d{9}(?!\d)"),
-        ),
-        Rule(
-            id="email",
-            name="邮箱地址",
-            group="联系方式",
-            severity=SEVERITY_LOW,
-            matcher=Matcher(kind=MATCH_REGEX, pattern=r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
-        ),
-        Rule(
-            id="bank_card",
-            name="银行卡号",
-            group="财务信息",
-            severity=SEVERITY_HIGH,
-            matcher=Matcher(kind=MATCH_REGEX, pattern=r"(?<!\d)(?:62|4\d|5[1-5])\d{13,17}(?!\d)"),
-        ),
-        Rule(
-            id="api_key",
-            name="API Key / 访问令牌",
-            group="凭证",
-            severity=SEVERITY_HIGH,
-            matcher=Matcher(
-                kind=MATCH_REGEX,
-                pattern=r"\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*[\"']?[A-Za-z0-9_\-.]{12,}",
-                case_sensitive=False,
-            ),
-        ),
-        Rule(
-            id="aws_key",
-            name="AWS 访问密钥",
-            group="凭证",
-            severity=SEVERITY_CRITICAL,
-            matcher=Matcher(kind=MATCH_REGEX, pattern=r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
-        ),
-        Rule(
-            id="private_key",
-            name="私钥头",
-            group="凭证",
-            severity=SEVERITY_CRITICAL,
-            matcher=Matcher(
-                kind=MATCH_REGEX,
-                pattern=r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----",
-                case_sensitive=False,
-            ),
-        ),
-        Rule(
-            id="db_conn",
-            name="数据库连接串",
-            group="凭证",
-            severity=SEVERITY_HIGH,
-            matcher=Matcher(
-                kind=MATCH_REGEX,
-                pattern=r"\b(?:mysql|mariadb|postgres(?:ql)?|mongodb(?:\+srv)?|redis|rediss|mssql|oracle|amqp|clickhouse)://[^\s\"'<>]+",
-                case_sensitive=False,
-            ),
-        ),
-        Rule(
-            id="password_assign",
-            name="密码赋值",
-            group="凭证",
-            severity=SEVERITY_MEDIUM,
-            matcher=Matcher(
-                kind=MATCH_REGEX,
-                pattern=r"\b(?:password|passwd|pwd)\b\s*[:=]\s*[\"']?[^\s\"',;]{6,}",
-                case_sensitive=False,
-            ),
-        ),
-        Rule(
-            id="jwt_token",
-            name="JWT 令牌",
-            group="凭证",
-            severity=SEVERITY_HIGH,
-            matcher=Matcher(
-                kind=MATCH_REGEX, pattern=r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
-            ),
-        ),
-        Rule(
-            id="password_hash",
-            name="密码哈希（bcrypt / argon2）",
-            group="凭证",
-            severity=SEVERITY_MEDIUM,
-            matcher=Matcher(
-                kind=MATCH_REGEX,
-                pattern=r"(?:\$2[abxy]\$\d{2}\$[./A-Za-z0-9]{40,}|\$argon2(?:id|i|d)\$v=\d+\$[^\s\"']{20,})",
-            ),
-        ),
-        Rule(
-            id="github_token",
-            name="GitHub 访问令牌",
-            group="凭证",
-            severity=SEVERITY_CRITICAL,
-            matcher=Matcher(
-                kind=MATCH_REGEX, pattern=r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})\b"
-            ),
-        ),
-        Rule(
-            id="slack_token",
-            name="Slack 访问令牌",
-            group="凭证",
-            severity=SEVERITY_HIGH,
-            matcher=Matcher(kind=MATCH_REGEX, pattern=r"\bxox[abposr]-[A-Za-z0-9-]{10,}\b"),
-        ),
-        Rule(
-            id="aliyun_ak",
-            name="阿里云 AccessKey ID",
-            group="凭证",
-            severity=SEVERITY_CRITICAL,
-            matcher=Matcher(kind=MATCH_REGEX, pattern=r"\bLTAI[A-Za-z0-9]{12,20}\b"),
-        ),
-        Rule(
-            id="credit_code",
-            name="统一社会信用代码",
-            group="企业信息",
-            severity=SEVERITY_MEDIUM,
-            matcher=Matcher(
-                kind=MATCH_REGEX,
-                pattern=r"(?<![0-9A-Za-z])[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQRTUWXY]{10}(?![0-9A-Za-z])",
-            ),
-        ),
-        Rule(
-            id="wechat_id",
-            name="微信号",
-            group="社交账号",
-            severity=SEVERITY_LOW,
-            matcher=Matcher(
-                kind=MATCH_REGEX,
-                pattern=r"(?:微信号|wxid|wechat(?:\s*id)?)\s*[:：]\s*[A-Za-z][-_A-Za-z0-9]{5,19}",
-                case_sensitive=False,
-            ),
-        ),
-    )
-
-
 def builtin_ruleset() -> RuleSet:
-    """返回内置敏感规则集（表达式为空，即 OR 全部启用规则）。"""
-    return RuleSet(name=DEFAULT_RULESET_NAME, rules=_builtin_rules(), expression="")
+    """返回内置敏感规则集（表达式为空，即 OR 全部启用规则）。
+
+    规则数据在 :mod:`fcmd.apps.filescan._builtin`，此处延迟导入以避免循环依赖。
+    """
+    from fcmd.apps.filescan._builtin import builtin_rules
+
+    return RuleSet(name=DEFAULT_RULESET_NAME, rules=builtin_rules(), expression="")
