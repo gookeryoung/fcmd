@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.infras.fs import normalize_path, path_diff, path_parts, relative_to
+from fcmd.infras.fs import join_path, normalize_path, path_diff, path_parts, relative_to
 from tests.helpers import strip_framework_lines
 
 
@@ -31,8 +31,8 @@ class TestRegistration:
         assert "pathtool" in list_tools()
 
     def test_subcommands(self) -> None:
-        """pathtool 有 show/rel/norm/diff 四个子命令。"""
-        assert set(list_subcommands("pathtool")) == {"show", "rel", "norm", "diff"}
+        """pathtool 有 show/rel/norm/diff/join/kind 六个子命令。"""
+        assert set(list_subcommands("pathtool")) == {"show", "rel", "norm", "diff", "join", "kind"}
 
 
 # ============================================================================ #
@@ -290,3 +290,49 @@ class TestCLISubcommands:
         assert run_tool("pathtool", ["diff", p1, p2]) == 0
         out = capsys.readouterr().out
         assert "公共前缀: (无)" in out or "公共前缀:" in out
+
+
+# ============================================================================ #
+# join_path / CLI join / kind
+# ============================================================================ #
+class TestJoinAndKind:
+    """join_path 与 join / kind 子命令测试。"""
+
+    def test_join_path_basic(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """多片段拼接后规范化为绝对路径。"""
+        monkeypatch.chdir(tmp_path)
+        assert join_path(["a", "b", "c.txt"]) == tmp_path / "a" / "b" / "c.txt"
+
+    def test_join_path_resolves_dotdot(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """拼接结果里的 .. 被消除。"""
+        monkeypatch.chdir(tmp_path)
+        assert join_path(["a", "..", "b"]) == tmp_path / "b"
+
+    def test_join_path_absolute_wins(self, tmp_path: Path) -> None:
+        """后续片段为绝对路径时替换前面的部分（Path 语义）。"""
+        assert join_path([tmp_path, tmp_path / "x"]) == tmp_path / "x"
+
+    def test_join_path_empty(self) -> None:
+        """空片段列表抛 ValueError。"""
+        with pytest.raises(ValueError, match="至少需要一个路径片段"):
+            join_path([])
+
+    def test_cli_join(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """join 子命令输出规范化路径。"""
+        monkeypatch.chdir(tmp_path)
+        assert run_tool("pathtool", ["join", "a", "b", "c.txt"]) == 0
+        out = strip_framework_lines(capsys.readouterr().out)
+        assert str(tmp_path) in out
+        assert "c.txt" in out
+
+    def test_cli_kind_absolute(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """kind 判定绝对路径。"""
+        assert run_tool("pathtool", ["kind", str(Path.cwd())]) == 0
+        assert "绝对路径" in capsys.readouterr().out
+
+    def test_cli_kind_relative(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """kind 判定相对路径。"""
+        assert run_tool("pathtool", ["kind", "a/b.txt"]) == 0
+        assert "相对路径" in capsys.readouterr().out

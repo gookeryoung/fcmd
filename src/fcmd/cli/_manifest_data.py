@@ -354,7 +354,7 @@ HELP: dict[str, str] = {
     "paramcadw": "usage: paramcadw [-h] [--model-file MODEL_FILE] [--dry-run] [-q]\n                 [--strategy STRATEGY]\n\n打开参数化建模预览窗口（Qt）\n\noptions:\n  -h, --help            show this help message and exit\n  --model-file MODEL_FILE\n                        启动时加载的 dynacalc-model/1 YAML；省略时恢复上次文件或打开空窗口\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
     "paramesh": "paramesh 子命令\n+-------------------------------------------------------------------------+\n| 子命令   | 说明                                                         |\n|----------+--------------------------------------------------------------|\n| check    | 检查模型与配置，输出三档尺度、壁厚层数与未标定项（不写文件） |\n| contract | 输出网格 → deck 交接契约草案（供 dynacalc 评审）             |\n| example  | 写入占位模型与配套网格配置（虚构，仅用于跑通链路）           |\n| generate | 生成三档网格包（LS-DYNA 片段 + 质量报告 + 清单）             |\n| report   | 读取网格包并输出清单与质量报告                               |\n+-------------------------------------------------------------------------+\n",
     "parameshw": "usage: parameshw [-h] [--model-file MODEL_FILE] [--config-file CONFIG_FILE]\n                 [--dry-run] [-q] [--strategy STRATEGY]\n\n打开二维轴对称网格预览窗口（Qt）\n\noptions:\n  -h, --help            show this help message and exit\n  --model-file MODEL_FILE\n                        启动时加载的 dynacalc-model/1 YAML；省略时恢复上次文件或打开空窗口\n  --config-file CONFIG_FILE\n                        paramesh/1 网格配置；省略时使用上次配置或默认值\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
-    "pathtool": "pathtool 子命令\n+-----------------------------+\n| 子命令 | 说明               |\n|--------+--------------------|\n| diff   | 比较两路径差异     |\n| norm   | 规范化路径         |\n| rel    | 计算相对路径       |\n| show   | 显示路径各部分信息 |\n+-----------------------------+\n",
+    "pathtool": "pathtool 子命令\n+-----------------------------------------+\n| 子命令 | 说明                           |\n|--------+--------------------------------|\n| diff   | 比较两路径差异                 |\n| join   | 拼接多个路径片段并规范化       |\n| kind   | 判断路径是绝对路径还是相对路径 |\n| norm   | 规范化路径                     |\n| rel    | 计算相对路径                   |\n| show   | 显示路径各部分信息             |\n+-----------------------------------------+\n",
     "pdfcrypt": "pdfcrypt 子命令\n+-------------------------------------+\n| 子命令  | 说明                      |\n|---------+---------------------------|\n| decrypt | 批量解密目录中的 PDF 文件 |\n| encrypt | 批量加密目录中的 PDF 文件 |\n+-------------------------------------+\n",
     "pdfcryptw": "usage: pdfcryptw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开 PDF 加密解密窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "pdfsplit": "usage: pdfsplit [-h] [--parts PARTS] [--size SIZE] [--pages PAGES]\n                [--output-path OUTPUT_PATH] [--output-dir OUTPUT_DIR]\n                [--dry-run] [-q] [--strategy STRATEGY]\n                input_path\n\n分割 PDF（按份数 / 每份页数 / 页码范围）\n\npositional arguments:\n  input_path            输入 PDF 文件。\n\noptions:\n  -h, --help            show this help message and exit\n  --parts PARTS         按份数平均分割（如 --parts 3）。\n  --size SIZE           按每份页数分割（如 --size 10）。\n  --pages PAGES         页码范围提取（如 --pages 1,3-5,7-）。\n  --output-path OUTPUT_PATH\n                        输出文件路径；按份数 / 每份页数模式下作为文件名前缀与输出目录，页码范围模式下为完整输出路径（默认\n                        <原名>_extracted.pdf）。\n  --output-dir OUTPUT_DIR\n                        输出目录（默认当前目录）。\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
@@ -534,11 +534,11 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "3a059d987b9e2a538662f4e72eb510f8"
+DIGEST = "cbb584edc5764de74a6b943622acb034"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
-SUBCOMMAND_TOTAL = 402
+SUBCOMMAND_TOTAL = 404
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -28,6 +28,7 @@ __all__ = [  # noqa: F405
     "file_timestamp",
     "format_epoch",
     "iter_files",
+    "join_path",
     "load_filelevel_config",
     "normalize_path",
     "parse_timestamp",

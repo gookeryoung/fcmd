@@ -1,13 +1,13 @@
-"""pathtool - 路径解析、规范化与差异计算。"""
+"""pathtool - 路径拼接、绝对/相对判定、解析、规范化与差异计算。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import fcmd as fx
-from fcmd.infras.fs import normalize_path, path_diff, path_parts, relative_to
+from fcmd.infras.fs import join_path, normalize_path, path_diff, path_parts, relative_to
 
-__all__ = ["diff", "norm", "rel", "show"]
+__all__ = ["diff", "join", "kind", "norm", "rel", "show"]
 
 
 @fx.tool(
@@ -48,6 +48,28 @@ def rel(path: Path, base: Path) -> None:
         print(f"错误: 无法计算相对路径: {exc}")
         return
     print(str(result))
+
+
+@fx.tool(
+    "pathtool",
+    subcommand="join",
+    help="拼接多个路径片段并规范化",
+    param_help={"parts": "按顺序拼接的路径片段"},
+)
+def join(parts: list[Path]) -> None:
+    """按顺序拼接路径片段，输出规范化后的绝对路径。"""
+    print(str(join_path(parts)))
+
+
+@fx.tool(
+    "pathtool",
+    subcommand="kind",
+    help="判断路径是绝对路径还是相对路径",
+    param_help={"path": "待判定的路径"},
+)
+def kind(path: Path) -> None:
+    """判断路径类型（``~`` 视为相对写法，需先展开）。"""
+    print("绝对路径" if path.is_absolute() else "相对路径")
 
 
 @fx.tool(

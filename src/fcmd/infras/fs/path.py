@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-__all__ = ["normalize_path", "path_diff", "path_parts", "relative_to"]
+__all__ = [
+    "join_path",
+    "normalize_path",
+    "path_diff",
+    "path_parts",
+    "relative_to",
+]
 
 
 def normalize_path(path: Path) -> Path:
@@ -18,6 +25,16 @@ def relative_to(path: Path, base: Path) -> Path:
     p1 = normalize_path(path)
     p2 = normalize_path(base)
     return p1.relative_to(p2)
+
+
+def join_path(parts: Sequence[str | Path]) -> Path:
+    """按顺序拼接路径片段并规范化（展开 ``~``、绝对化、消除 ``..``/``.``）。"""
+    if not parts:
+        raise ValueError("至少需要一个路径片段")
+    joined = Path(parts[0])
+    for part in parts[1:]:
+        joined = joined / part
+    return normalize_path(joined)
 
 
 def path_parts(path: Path) -> dict[str, Any]:
