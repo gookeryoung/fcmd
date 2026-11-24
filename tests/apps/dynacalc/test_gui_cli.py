@@ -144,13 +144,17 @@ class TestCli:
             dynacalc.matrix_command(tmp_path / "missing.yaml")
 
     def test_report_and_compare_errors(self, small_params: Path, tmp_path: Path) -> None:
+        from fcmd.core.result import reset_error_state, take_pending_exit_code
+
         out = tmp_path / "out"
         dynacalc.generate_command(small_params, out)
+        # 已生成工况但没跑求解：报告成功产出汇总，但因解析失败退出 2
         with pytest.raises(SystemExit) as excinfo:
             dynacalc.report_command(out)
         assert excinfo.value.code == 2
-        with pytest.raises(SystemExit):
-            dynacalc.compare_command(out, "M001", "NOPE")
+        reset_error_state()
+        assert dynacalc.compare_command(out, "M001", "NOPE") is None
+        assert take_pending_exit_code() == 3
 
     def test_example_and_template(self, tmp_path: Path) -> None:
         target = tmp_path / "params.yaml"
@@ -203,14 +207,18 @@ class TestCliFailurePaths:
         assert excinfo.value.code == 2
 
     def test_report_missing_manifest(self, tmp_path: Path) -> None:
-        with pytest.raises(SystemExit) as excinfo:
-            dynacalc.report_command(tmp_path / "missing")
-        assert excinfo.value.code == 2
+        from fcmd.core.result import reset_error_state, take_pending_exit_code
+
+        reset_error_state()
+        assert dynacalc.report_command(tmp_path / "missing") is None
+        assert take_pending_exit_code() == 4
 
     def test_gates_missing_manifest(self, tmp_path: Path) -> None:
-        with pytest.raises(SystemExit) as excinfo:
-            dynacalc.gates_command(tmp_path / "missing")
-        assert excinfo.value.code == 2
+        from fcmd.core.result import reset_error_state, take_pending_exit_code
+
+        reset_error_state()
+        assert dynacalc.gates_command(tmp_path / "missing") is None
+        assert take_pending_exit_code() == 4
 
     def test_demo_requires_existing_mesh_root(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(SystemExit) as excinfo:

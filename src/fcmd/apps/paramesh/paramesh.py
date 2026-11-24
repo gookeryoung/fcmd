@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import fcmd
 from fcmd.apps.paramesh._config import LEVELS, load_config
 from fcmd.apps.paramesh._errors import ParameshError
 from fcmd.apps.paramesh._mesh import build_mesh
 from fcmd.apps.paramesh._model import (
+    MeshModel,
     format_model_summary,
     load_models,
     select_model,
@@ -36,8 +37,8 @@ from fcmd.apps.paramesh._package import (
     write_package,
 )
 from fcmd.apps.paramesh._quality import quality_report
-from fcmd.apps.paramesh._scale import format_plan, plan_all
-from fcmd.console import print_error
+from fcmd.apps.paramesh._scale import ScalePlan, format_plan, plan_all
+from fcmd.core.result import emit_result, report_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -107,11 +108,100 @@ section_angle_deg: null      # null = 自动选择最薄壁 / 最薄药层截面
 """
 
 
-def _run(action: Callable[[], None]) -> None:
+def _error_code(exc: Exception) -> str:
+    """把网格错误归类为稳定错误码：文件缺失与内容非法分开。"""
+    if isinstance(exc.__cause__, FileNotFoundError) or "不存在" in str(exc):
+        return "FILE_NOT_FOUND"
+    return "INVALID_ARGUMENT"
+
+
+def _run(action: Callable[[], None], subcommand: str, json_output: bool = False) -> None:
+    """执行子命令；错误按 ``json_output`` 渲染为人读或机读形态。"""
     try:
         action()
     except ParameshError as exc:
-        print_error(str(exc))
+        report_error(
+            "paramesh",
+            subcommand,
+            code=_error_code(exc),
+            message=str(exc),
+            json_output=json_output,
+            hint="核对模型文件、网格配置与输出目录后重试",
+        )
+
+
+def _model_payload(model: MeshModel) -> dict[str, Any]:
+    """网格视角的模型摘要（与 ``format_model_summary`` 同源）。"""
+    return {
+        "id": model.model_id,
+        "digest": model.digest,
+        "source": model.source,
+        "outer_diameter": model.outer_diameter,
+        "inner_diameter": model.inner_diameter,
+        "length": model.length,
+        "wall_nominal": model.wall_nominal,
+        "wall_min": model.wall_min,
+        "wall_max": model.wall_max,
+        "eccentricity": {
+            "radial": model.eccentricity_radial,
+            "circumferential": model.eccentricity_circumferential,
+            "angle_deg": model.eccentricity_angle_deg,
+            "declared": model.eccentricity_declared,
+        },
+        "circumferential": {
+            "kind": model.circumferential_kind,
+            "value": model.circumferential_value,
+            "samples": [[angle, value] for angle, value in model.circumferential_samples],
+            "declared": model.circumferential_declared,
+        },
+        "gap_mm": model.gap_mm,
+        "end_loose": {
+            "declared": model.end_loose_declared,
+            "length_fraction": model.end_loose_length_fraction,
+            "density": model.end_loose_density,
+        },
+        "defects": [
+            {
+                "id": defect.defect_id,
+                "kind": defect.kind,
+                "axial": defect.axial,
+                "radial": defect.radial,
+                "angle_deg": defect.angle_deg,
+                "size_mm": defect.size_mm,
+            }
+            for defect in model.defects
+        ],
+        "warnings": list(model.warnings),
+    }
+
+
+def _plan_payload(plan: ScalePlan) -> dict[str, Any]:
+    """单档尺度决策（与 ``format_plan`` 同源）。"""
+    return {
+        "level": plan.level,
+        "divisor": plan.divisor,
+        "characteristic_mm": plan.characteristic_mm,
+        "driver": plan.driver,
+        "characteristic_source": plan.characteristic_source,
+        "global_h_mm": plan.global_h_mm,
+        "reaction_zone_mm": plan.reaction_zone_mm,
+        "min_wall_mm": plan.min_wall_mm,
+        "min_defect_mm": plan.min_defect_mm,
+        "section_angle_deg": plan.section_angle_deg,
+        "section_wall_mm": plan.section_wall_mm,
+        "section_source": plan.section_source,
+        "outer_radius_mm": plan.outer_radius_mm,
+        "inner_radius_mm": plan.inner_radius_mm,
+        "propellant_radius_mm": plan.propellant_radius_mm,
+        "gap_mm": plan.gap_mm,
+        "wall_layers": plan.wall_layers,
+        "raw_wall_layers": plan.raw_wall_layers,
+        "wall_layers_target_min": plan.wall_layers_target_min,
+        "wall_layers_target_max": plan.wall_layers_target_max,
+        "end_loose_band_mm": plan.end_loose_band_mm,
+        "tbd": list(plan.tbd),
+        "warnings": list(plan.warnings),
+    }
 
 
 def _write_new(path: Path, text: str, *, overwrite: bool) -> None:
@@ -165,11 +255,16 @@ def example(output: Path, overwrite: bool = False) -> None:
         print(f"已写入网格配置：{config_path}")
         print("提示：示例档位为 1/1、1/2、1/4，仅用于快速预览；正式使用请改为 8/16/32。")
 
-    _run(action)
+    _run(action, "example")
 
 
 @fcmd.tool("paramesh", subcommand="check", help="检查模型与配置，输出三档尺度、壁厚层数与未标定项（不写文件）")
-def check(model_file: Path, config: Path | None = None, model_id: str | None = None) -> None:
+def check(
+    model_file: Path,
+    config: Path | None = None,
+    model_id: str | None = None,
+    json_output: bool = False,
+) -> None:
     """只读检查：模型可解析、特征尺度可确定、三档层数可计算。
 
     Parameters
@@ -180,22 +275,37 @@ def check(model_file: Path, config: Path | None = None, model_id: str | None = N
         ``paramesh/1`` 网格配置；省略时使用默认值（仍必须由配置提供反应区尺度）
     model_id:
         多模型文件时选择指定 id；省略取第一个
+    json_output:
+        输出模型摘要、配置警告与三档尺度决策（不写文件）
     """
 
     def action() -> None:
         mesh_config, config_warnings = load_config(config)
         model = select_model(load_models(model_file), model_id)
+        plans = plan_all(model, mesh_config)
+        if json_output:
+            emit_result(
+                "paramesh",
+                "check",
+                {
+                    "model": _model_payload(model),
+                    "config_warnings": list(config_warnings),
+                    "plans": [_plan_payload(plan) for plan in plans],
+                    "levels": [plan.level for plan in plans],
+                },
+            )
+            return
         print(format_model_summary(model))
         print()
         for warning in config_warnings:
             print(f"配置警告：{warning}")
-        for plan in plan_all(model, mesh_config):
+        for plan in plans:
             print(f"--- {plan.level} ---")
             print(format_plan(plan))
             print()
         print("检查完成：未写入任何文件。")
 
-    _run(action)
+    _run(action, "check", json_output)
 
 
 @fcmd.tool("paramesh", subcommand="generate", help="生成三档网格包（LS-DYNA 片段 + 质量报告 + 清单）")
@@ -250,11 +360,11 @@ def generate(  # noqa: PLR0913, PLR0917 - CLI 参数由子命令接口固定
             for warning in mesh.warnings:
                 print(f"  警告：{warning}")
 
-    _run(action)
+    _run(action, "generate")
 
 
 @fcmd.tool("paramesh", subcommand="report", help="读取网格包并输出清单与质量报告")
-def report(mesh_dir: Path, as_json: bool = False) -> None:
+def report(mesh_dir: Path, as_json: bool = False, json_output: bool = False) -> None:
     """输出已生成网格包的摘要或原始 JSON。
 
     Parameters
@@ -262,7 +372,9 @@ def report(mesh_dir: Path, as_json: bool = False) -> None:
     mesh_dir:
         网格包目录（含 manifest.json）
     as_json:
-        输出合并后的清单与质量 JSON
+        输出合并后的清单与质量 JSON（裸 JSON，无信封）
+    json_output:
+        以 ``fcmd-result/1`` 信封输出清单与质量
     """
 
     def action() -> None:
@@ -270,6 +382,9 @@ def report(mesh_dir: Path, as_json: bool = False) -> None:
         quality = load_quality(mesh_dir)
         if as_json:
             print(json.dumps({"manifest": manifest, "quality": quality}, ensure_ascii=False, indent=2))
+            return
+        if json_output:
+            emit_result("paramesh", "report", {"manifest": manifest, "quality": quality})
             return
         model = manifest.get("model", {})
         counts = manifest.get("counts", {})
@@ -295,7 +410,7 @@ def report(mesh_dir: Path, as_json: bool = False) -> None:
             print()
             print(json.dumps(quality, ensure_ascii=False, indent=2))
 
-    _run(action)
+    _run(action, "report", json_output)
 
 
 @fcmd.tool("paramesh", subcommand="contract", help="输出网格 → deck 交接契约草案（供 dynacalc 评审）")
@@ -305,7 +420,7 @@ def contract() -> None:
     def action() -> None:
         print(CONTRACT_DRAFT.rstrip())
 
-    _run(action)
+    _run(action, "contract")
 
 
 @fcmd.main("paramesh")

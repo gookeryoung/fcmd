@@ -58,6 +58,7 @@ from fcmd.apps.dynacalc._results import (
     collect_results,
     compare_cases,
     format_text_report,
+    result_to_json,
     write_report,
 )
 from fcmd.apps.dynacalc._solver import (
@@ -74,6 +75,7 @@ from fcmd.apps.dynacalc._template import (
     template_for,
 )
 from fcmd.console import print_error
+from fcmd.core.result import emit_result, report_error
 
 __all__ = [
     "compare_command",
@@ -97,6 +99,13 @@ _DESCRIPTION = (
 )
 
 _ERRORS = (ParamError, DeckError, MeshError, ModelError, SolverError, ResultParseError, OSError)
+
+
+def _error_code(exc: Exception) -> str:
+    """把工况错误归类为稳定错误码：缺失文件与内容非法分开。"""
+    if isinstance(exc, FileNotFoundError) or isinstance(exc.__cause__, FileNotFoundError):
+        return "FILE_NOT_FOUND"
+    return "INVALID_ARGUMENT"
 
 
 def _fail(message: str, code: int = 2) -> None:
@@ -456,6 +465,7 @@ def report_command(
     out: Path,
     report_out: Path | None = None,
     output_format: Literal["text", "csv", "json"] = "text",
+    json_output: bool = False,
 ) -> None:
     """解析 glstat / matsum / history 并输出汇总；有解析失败时退出码 2。
 
@@ -467,23 +477,40 @@ def report_command(
         汇总文件路径；省略时只打印文本汇总
     output_format:
         汇总格式：text / csv / json
+    json_output:
+        以 ``fcmd-result/1`` 信封输出汇总（解析失败时信封 ``ok=false``）
     """
     try:
         manifest = load_manifest(out)
         result_set = collect_results(out, manifest)
         if report_out is not None:
             write_report(result_set, report_out, output_format)
-            print(f"已写入 {report_out}（格式 {output_format}）")
+            if not json_output:
+                print(f"已写入 {report_out}（格式 {output_format}）")
     except _ERRORS as exc:
-        _fail(str(exc))
+        report_error(
+            "dynacalc",
+            "report",
+            code=_error_code(exc),
+            message=str(exc),
+            json_output=json_output,
+            field="out",
+            expected="generate 生成的输出根目录",
+            hint="先运行 fcmd dynacalc generate 生成工况目录",
+        )
         return
-    print(format_text_report(result_set), end="")
+    if json_output:
+        payload = json.loads(result_to_json(result_set))
+        payload["report_path"] = str(report_out) if report_out is not None else None
+        emit_result("dynacalc", "report", payload, ok=not result_set.failed())
+    else:
+        print(format_text_report(result_set), end="")
     if result_set.failed():
         raise SystemExit(2)
 
 
 @fcmd.tool("dynacalc", subcommand="compare", help="对比两个工况的关键指标", description=_DESCRIPTION)
-def compare_command(out: Path, left: str, right: str) -> None:
+def compare_command(out: Path, left: str, right: str, json_output: bool = False) -> None:
     """打印两个工况的指标差异（含相对差）。
 
     Parameters
@@ -500,7 +527,37 @@ def compare_command(out: Path, left: str, right: str) -> None:
         result_set = collect_results(out, manifest)
         rows = compare_cases(result_set, left, right)
     except _ERRORS as exc:
-        _fail(str(exc))
+        report_error(
+            "dynacalc",
+            "compare",
+            code=_error_code(exc),
+            message=str(exc),
+            json_output=json_output,
+            field="left",
+            expected=f"已回收结果的工况编码（{left} / {right}）",
+            hint="先运行 fcmd dynacalc run 与 report，再用 fcmd dynacalc matrix 核对工况编码",
+        )
+        return
+    if json_output:
+        emit_result(
+            "dynacalc",
+            "compare",
+            {
+                "left": left,
+                "right": right,
+                "count": len(rows),
+                "rows": [
+                    {
+                        "label": row.label,
+                        "left": row.left,
+                        "right": row.right,
+                        "delta": row.delta,
+                        "relative": row.relative,
+                    }
+                    for row in rows
+                ],
+            },
+        )
         return
     _print_compare(rows, left, right)
 
@@ -519,7 +576,7 @@ def _print_compare(rows: list[CompareRow], left: str, right: str) -> None:
 
 
 @fcmd.tool("dynacalc", subcommand="gates", help="执行工程门控检查", description=_DESCRIPTION)
-def gates_command(out: Path) -> None:
+def gates_command(out: Path, json_output: bool = False) -> None:
     """按清单中的阈值执行四项门控；存在不通过项时退出码 1。
 
     Parameters
@@ -532,10 +589,45 @@ def gates_command(out: Path) -> None:
         result_set = collect_results(out, manifest)
         gate_report = evaluate(result_set, manifest.settings)
     except _ERRORS as exc:
-        _fail(str(exc))
+        report_error(
+            "dynacalc",
+            "gates",
+            code=_error_code(exc),
+            message=str(exc),
+            json_output=json_output,
+            field="out",
+            expected="generate 生成并已回收结果的输出根目录",
+            hint="先运行 fcmd dynacalc run 与 report，再执行门控",
+        )
         return
-    print(format_gate_report(gate_report), end="")
-    if gate_report.count(FAIL):
+    failed = gate_report.count(FAIL)
+    if json_output:
+        emit_result(
+            "dynacalc",
+            "gates",
+            {
+                "reference": gate_report.reference,
+                "groups": dict(gate_report.groups),
+                "count": len(gate_report.checks),
+                "failed": failed,
+                "checks": [
+                    {
+                        "gate": check.gate,
+                        "label": check.label,
+                        "pair": list(check.pair),
+                        "verdict": check.verdict,
+                        "detail": check.detail,
+                        "measured": check.measured,
+                        "threshold": check.threshold,
+                    }
+                    for check in gate_report.checks
+                ],
+            },
+            ok=failed == 0,
+        )
+    else:
+        print(format_gate_report(gate_report), end="")
+    if failed:
         raise SystemExit(1)
 
 

@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Literal
 
 import fcmd
+from fcmd.core.result import emit_result
 from fcmd.infras.command import run_command
 
 __all__ = [
@@ -325,8 +326,23 @@ def run_ls_dyna_mpi(  # noqa: PLR0913, PLR0917
     print(f"LS-DYNA MPI 计算完成: {input_file}")
 
 
+def _tasklist_processes(stdout: str) -> list[dict[str, object]]:
+    """从 ``tasklist`` 输出中解析 LS-DYNA 进程（映像名, PID）。"""
+    processes: list[dict[str, object]] = []
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].lower().startswith("ls-dyna") and parts[1].isdigit():
+            processes.append({"name": parts[0], "pid": int(parts[1])})
+    return processes
+
+
+def _pgrep_processes(stdout: str) -> list[dict[str, object]]:
+    """从 ``pgrep`` 输出中解析 LS-DYNA 进程 PID。"""
+    return [{"name": "ls-dyna", "pid": int(token)} for token in stdout.split() if token.isdigit()]
+
+
 @fcmd.tool("lscalc", subcommand="status", help="检查 LS-DYNA 进程状态")
-def check_ls_dyna_status() -> None:
+def check_ls_dyna_status(json_output: bool = False) -> None:
     """检查 LS-DYNA 进程状态。
 
     Windows 使用 ``tasklist`` 过滤 LS-DYNA 进程，
@@ -338,13 +354,39 @@ def check_ls_dyna_status() -> None:
             ["tasklist", "/fi", "imagename eq ls-dyna*"],
             capture=True,
         )
+        if json_output:
+            processes = _tasklist_processes(result.stdout) if result.succeeded else []
+            emit_result(
+                "lscalc",
+                "status",
+                {
+                    "platform": sys.platform,
+                    "running": bool(processes),
+                    "processes": processes,
+                    "pids": [process["pid"] for process in processes],
+                },
+            )
+            return
         if result.succeeded:
             print(result.stdout)
         return
 
     result = run_command(["pgrep", "-f", "ls-dyna"], capture=True)
     # pgrep 返回 0 表示找到进程，返回 1 表示无匹配
-    if result.returncode == 0 and result.stdout.strip():
+    processes = _pgrep_processes(result.stdout) if result.returncode == 0 else []
+    if json_output:
+        emit_result(
+            "lscalc",
+            "status",
+            {
+                "platform": sys.platform,
+                "running": bool(processes),
+                "processes": processes,
+                "pids": [process["pid"] for process in processes],
+            },
+        )
+        return
+    if processes:
         print(f"运行中的 LS-DYNA 进程 PID: {result.stdout.strip()}")
     else:
         print("没有运行中的 LS-DYNA 进程")

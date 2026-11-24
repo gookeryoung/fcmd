@@ -74,6 +74,15 @@ _JSON_READY: frozenset[tuple[str, str | None]] = frozenset(
         ("llmserve", "status"),
         ("llmbench", None),
         ("llmdoctor", None),
+        # 领域应用（只读）
+        ("dynacalc", "report"),
+        ("dynacalc", "compare"),
+        ("dynacalc", "gates"),
+        ("paramcad", "digest"),
+        ("paramcad", "inspect"),
+        ("paramesh", "check"),
+        ("paramesh", "report"),
+        ("lscalc", "status"),
         # PE 只读中已接入 --json 的部分
         ("peview", "info"),
         ("peview", "sections"),

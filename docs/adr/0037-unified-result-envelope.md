@@ -65,12 +65,13 @@ csvtool 非 JSON 子命令；`folderzip` 属写操作，单独评估。
   `csvtool`（select/merge）；
 - 网络探测：`urlcheck`（u/r）、`portcheck`（c/s）、`iptool`（parse/subnet/validate）；
 - 本地大模型（只读）：`llmenv`（show/list）、`llmmodel`（list/find/vram）、`llmserve status`、
-  `llmbench`、`llmdoctor`（失败项按 `CHECK_FAILED` 退出 5，与内建 doctor 一致）。
+  `llmbench`、`llmdoctor`（失败项按 `CHECK_FAILED` 退出 5，与内建 doctor 一致）；
+- 领域应用（只读）：`dynacalc`（report/compare/gates）、`paramcad`（digest/inspect）、
+  `paramesh`（check/report）、`lscalc status`。
 
 MCP 白名单 `_JSON_READY` 同步补齐上述条目。
 
-待办：`filescan scan`（`--json` 与 `--format` 关系）、领域应用工具
-（dynacalc / paramcad / paramesh / lscalc）。
+待办：`filescan scan`（`--json` 与 `--format` 关系，属 filescan 会话范围，暂不动）。
 
 ### P3 收口（待办）
 
