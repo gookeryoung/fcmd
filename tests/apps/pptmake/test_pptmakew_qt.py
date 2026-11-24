@@ -39,6 +39,9 @@ def window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     _qt_theme.apply_theme(app, theme)
     widget = PptmakeQtWindow(tmp_path / "ui" / "pptmakew.json")
     yield widget
+    widget._recover_timer.stop()
+    widget._autosave_timer.stop()
+    widget._apply_timer.stop()
     widget.deleteLater()
 
 
@@ -159,6 +162,85 @@ def test_style_and_decor_switch_refreshes_window(window: Any) -> None:
     window._intensity_slider.setValue(0)
     assert window._template.theme.tokens.decor_intensity == 0.0
     assert window._thumbs.count() == window._slides_list.count()
+
+
+def test_undo_redo_through_window(window: Any) -> None:
+    window._apply_style(core.STYLE_CORAL)
+    assert window._dirty is True
+    assert window.windowTitle().endswith(" *")
+    assert window._undo_action.isEnabled()
+    window._undo()
+    assert window._template.theme.style == core.STYLE_AURORA
+    assert window._redo_action.isEnabled()
+    window._redo()
+    assert window._template.theme.style == core.STYLE_CORAL
+
+
+def test_multi_select_duplicate_and_delete(window: Any) -> None:
+    initial = window._slides_list.count()
+    window._slides_list.clearSelection()
+    for row in (0, 1):
+        item = window._slides_list.item(row)
+        assert item is not None
+        item.setSelected(True)
+    window._duplicate_slide()
+    assert window._slides_list.count() == initial + 2
+    window._undo()
+    assert window._slides_list.count() == initial
+
+    window._slides_list.clearSelection()
+    for row in (0, 1):
+        item = window._slides_list.item(row)
+        assert item is not None
+        item.setSelected(True)
+    window._delete_slide()
+    assert window._slides_list.count() == initial - 2
+    window._undo()
+    assert window._slides_list.count() == initial
+
+
+def test_drag_reorder_updates_template(window: Any) -> None:
+    first = window._template.slides[0]
+    second = window._template.slides[1]
+    # 模拟 Qt 内部拖拽后的列表顺序：交换前两项，并保留原索引数据。
+    item = window._slides_list.takeItem(0)
+    window._slides_list.insertItem(1, item)
+    window._on_slides_reordered()
+    assert window._template.slides[0] == second
+    assert window._template.slides[1] == first
+    window._undo()
+    assert window._template.slides[0] == first
+
+
+def test_layout_gallery_has_thumbnails(window: Any) -> None:
+    assert window._layout_list.count() == len(LAYOUT_OPTIONS)
+    assert all(window._layout_list.item(row).icon().isNull() is False for row in range(window._layout_list.count()))
+
+
+def test_autosave_and_recover_draft(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    window._apply_style(core.STYLE_CORAL)
+    window._autosave()
+    assert window._draft_path.is_file()
+
+    window._set_template(core.new_template(name="临时"))
+    assert window._template.name == "临时"
+    monkeypatch.setattr(
+        _pptmakew_qt.QMessageBox,
+        "question",
+        lambda *args, **kwargs: _pptmakew_qt.QMessageBox.StandardButton.Yes,
+    )
+    window._maybe_recover_draft()
+    assert window._template.theme.style == core.STYLE_CORAL
+    assert window._dirty is True
+
+
+def test_recent_templates_persist(window: Any, tmp_path: Path) -> None:
+    path = tmp_path / "品牌模板.pptmtpl.json"
+    window._remember_recent(path)
+    assert window._settings.recent_templates[0] == str(path)
+    window._persist_settings("1200x760+10+20")
+    settings = _pptmakew_qt.load_settings(tmp_path / "ui" / "pptmakew.json")
+    assert settings.recent_templates[0] == str(path)
 
 
 def test_all_layouts_render_without_error(window: Any) -> None:

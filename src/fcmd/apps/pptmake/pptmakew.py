@@ -35,12 +35,14 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_GEOMETRY",
     "HELP_TEXT",
+    "MAX_RECENT",
     "MIN_HEIGHT",
     "MIN_WIDTH",
     "PAGE_KEYS",
     "PptmakeSettings",
     "config_path",
     "load_settings",
+    "remember_path",
     "resolve_geometry",
     "safe_filename",
     "save_settings",
@@ -57,6 +59,8 @@ _DESCRIPTION = (
 DEFAULT_GEOMETRY = "1320x840"
 MIN_WIDTH = 1100
 MIN_HEIGHT = 700
+MAX_RECENT = 8
+"""「最近模板」保留条数。"""
 
 STYLE_OPTIONS: tuple[tuple[str, str], ...] = (
     *((core.STYLE_TEXT[style], style) for style in core.STYLES),
@@ -88,7 +92,10 @@ HELP_TEXT = """1. 侧边栏「设计」页：左侧「页面」选择要编辑�
 8. 「文件 → 精确预览」需本机安装 LibreOffice，未安装时保持画布预览。
 9. 标题行、页面按钮与预览工具条只显示图标，悬停可见提示；标题行的
    「新建 / 导入 / 导出模板 / 导出 PPTX」与菜单动作等价。
-10. ``Alt+1`` / ``Alt+2`` 在设计页与样式页之间切换。"""
+10. 页面列表支持 Ctrl / Shift 多选、删除 / 复制与拖拽排序；「编辑 → 撤销 / 重做」
+    （Ctrl+Z / Ctrl+Y）可回退编辑。布局库为版式缩略图，双击即可添加。
+11. 有未保存改动时标题栏带 ``*``，每 60 秒自动写草稿；异常退出后下次启动可恢复。
+12. ``Alt+1`` / ``Alt+2`` 在设计页与样式页之间切换。"""
 
 
 @dataclass(slots=True)
@@ -104,6 +111,7 @@ class PptmakeSettings:
     active_page: str = PAGE_KEYS[0]
     design_splitter: tuple[int, ...] = ()
     style_splitter: tuple[int, ...] = ()
+    recent_templates: tuple[str, ...] = ()
 
 
 def config_path() -> Path:
@@ -123,6 +131,7 @@ def settings_to_mapping(settings: PptmakeSettings) -> dict[str, Any]:
         "active_page": settings.active_page,
         "design_splitter": list(settings.design_splitter),
         "style_splitter": list(settings.style_splitter),
+        "recent_templates": list(settings.recent_templates),
     }
 
 
@@ -155,7 +164,17 @@ def settings_from_mapping(raw: Mapping[str, Any], base: PptmakeSettings | None =
         sizes = parse_sizes(raw.get(field_name))
         if sizes is not None:
             setattr(settings, field_name, tuple(sizes))
+    recent = raw.get("recent_templates")
+    if isinstance(recent, (list, tuple)):
+        settings.recent_templates = tuple(item for item in recent if isinstance(item, str) and item)[:MAX_RECENT]
     return settings
+
+
+def remember_path(recent: tuple[str, ...], path: Path | str) -> tuple[str, ...]:
+    """把路径提到「最近模板」最前，去重并限制条数。"""
+    text = str(path)
+    kept = tuple(item for item in recent if item != text)
+    return (text, *kept)[:MAX_RECENT]
 
 
 def load_settings(path: Path | None = None) -> PptmakeSettings:

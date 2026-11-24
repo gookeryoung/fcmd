@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import tempfile
+import time
 import webbrowser
 from dataclasses import replace
 from pathlib import Path
@@ -26,6 +27,7 @@ from typing import Any
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QColorDialog,
     QComboBox,
@@ -51,6 +53,7 @@ from fcmd.apps.pptmake import _office
 from fcmd.apps.pptmake import _preview as preview
 from fcmd.apps.pptmake import _tokens as tokens
 from fcmd.apps.pptmake._design import Line, Oval, Rect, Text, build_draw_list
+from fcmd.apps.pptmake._history import TemplateHistory
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.apps.pptmake.pptmakew import (
     ASPECT_OPTIONS,
@@ -64,6 +67,7 @@ from fcmd.apps.pptmake.pptmakew import (
     STYLE_OPTIONS,
     PptmakeSettings,
     load_settings,
+    remember_path,
     safe_filename,
     save_settings,
     slide_label,
@@ -366,21 +370,30 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._loading = False
         self._syncing_thumb = False
         self._canvases: list[_PreviewCanvas] = []
+        self._history = TemplateHistory(self._template)
+        self._dirty = False
+        self._layout_icons: dict[str, QIcon] = {}
         super().__init__(
             title=f"pptmake - PPT 模板设计器 v{__version__}",
             config_name="pptmakew",
             nav_title=NAV_TITLE,
             default_size=DEFAULT_SIZE,
             min_size=(MIN_WIDTH, MIN_HEIGHT),
+            on_close=self._confirm_close,
             persist=self._persist_settings,
             sidebar_collapsed=self._settings.sidebar_collapsed,
             settings_path=settings_path,
             theme_app="pptmakew",
         )
+        self._base_title = self.windowTitle()
+        self._draft_path = self.settings_path.parent / "pptmakew-draft.pptmtpl.json"
         self._apply_timer = QTimer(self)
         self._apply_timer.setSingleShot(True)
         self._apply_timer.setInterval(150)
         self._apply_timer.timeout.connect(self._apply_form)
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(60_000)
+        self._autosave_timer.timeout.connect(self._autosave)
         self._build_menus()
         self._header_buttons = self._make_header_buttons()
         self._design_page = self._build_design_page()
@@ -394,10 +407,16 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         )
         self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
         self._refresh_all()
+        self._autosave_timer.start()
         # 恢复上次停留的页；首屏设计页已由 add_pages 自动打开，同页时不重复切换。
         saved_page = self._settings.active_page
         if saved_page in PAGE_KEYS and saved_page != self.current_page():
             self.show_page(saved_page)
+        # 草稿恢复放在窗口显示后：避免构造期弹框挡住主窗口（演示 / 测试也不阻塞）。
+        self._recover_timer = QTimer(self)
+        self._recover_timer.setSingleShot(True)
+        self._recover_timer.timeout.connect(self._maybe_recover_draft)
+        self._recover_timer.start(300)
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -413,6 +432,10 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             action.triggered.connect(handler)
             self.file_menu.insertAction(quit_action, action)
         self.file_menu.insertSeparator(quit_action)
+        self._recent_menu = QMenu("最近模板", self)
+        self.file_menu.insertMenu(quit_action, self._recent_menu)
+        self._rebuild_recent_menu()
+        self.file_menu.insertSeparator(quit_action)
         for text, handler in (
             ("导出模板…", self._export_template),
             ("导出 PPTX…", self._export_pptx),
@@ -424,6 +447,15 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self.file_menu.insertSeparator(quit_action)
 
         edit_menu = QMenu("编辑", self)
+        self._undo_action = QAction("撤销", self)
+        self._undo_action.setShortcut("Ctrl+Z")
+        self._undo_action.triggered.connect(self._undo)
+        self._redo_action = QAction("重做", self)
+        self._redo_action.setShortcuts(["Ctrl+Y", "Ctrl+Shift+Z"])
+        self._redo_action.triggered.connect(self._redo)
+        edit_menu.addAction(self._undo_action)
+        edit_menu.addAction(self._redo_action)
+        edit_menu.addSeparator()
         for text, handler in (
             ("添加页面", self._add_slide),
             ("复制页面", self._duplicate_slide),
@@ -469,7 +501,43 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         help_action.triggered.connect(self._show_help)
         self.help_menu.insertAction(anchor, help_action)
         self.help_menu.insertSeparator(anchor)
+        self._sync_history_actions()
         self.menuBar().update()
+
+    def _rebuild_recent_menu(self) -> None:
+        """按设置里的最近模板重建「文件 → 最近模板」子菜单。"""
+        self._recent_menu.clear()
+        if not self._settings.recent_templates:
+            empty = self._recent_menu.addAction("（暂无）")
+            empty.setEnabled(False)
+            return
+        for item in self._settings.recent_templates:
+            action = self._recent_menu.addAction(item)
+            action.triggered.connect(lambda _checked=False, path=item: self._open_recent(path))
+
+    def _remember_recent(self, path: Path) -> None:
+        """把路径写入最近模板并刷新菜单 / 设置。"""
+        self._settings = replace(self._settings, recent_templates=remember_path(self._settings.recent_templates, path))
+        self._rebuild_recent_menu()
+
+    def _open_recent(self, raw: str) -> None:
+        """打开最近模板；文件已不存在时从列表移除。"""
+        path = Path(raw)
+        if not path.is_file():
+            self._settings = replace(
+                self._settings,
+                recent_templates=tuple(item for item in self._settings.recent_templates if item != raw),
+            )
+            self._rebuild_recent_menu()
+            self.set_status(f"最近模板已不存在：{raw}")
+            return
+        try:
+            template = core.load_template(path)
+        except core.TemplateError as exc:
+            QMessageBox.critical(self, "打开失败", str(exc))
+            return
+        self._remember_recent(path)
+        self._set_template(template)
 
     def _make_header_buttons(self) -> tuple[QWidget, ...]:
         """设计页标题行的快捷动作（仅图标）：新建 / 导入 / 导出模板 / 导出 PPTX。"""
@@ -599,7 +667,12 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         pages = Card("页面", panel)
         self._slides_list = QListWidget(pages)
         self._slides_list.setMinimumHeight(100)
+        self._slides_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._slides_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self._slides_list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._slides_list.setDropIndicatorShown(True)
         self._slides_list.currentRowChanged.connect(self._on_slide_selected)
+        self._slides_list.model().rowsMoved.connect(self._on_slides_reordered)
         pages.body.addWidget(self._slides_list, 1)
         # 动作条用流式布局：窄面板下整块换行，不再把后面的按钮裁掉。
         page_buttons = FlowLayout(h_spacing=4, v_spacing=4)
@@ -618,11 +691,21 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
         layouts = Card("布局库（双击添加）", panel)
         self._layout_list = QListWidget(layouts)
-        self._layout_list.setMinimumHeight(90)
-        for text, _value in LAYOUT_OPTIONS:
-            self._layout_list.addItem(text)
+        self._layout_list.setMinimumHeight(110)
+        self._layout_list.setViewMode(QListView.ViewMode.IconMode)
+        self._layout_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self._layout_list.setMovement(QListView.Movement.Static)
+        self._layout_list.setWrapping(True)
+        self._layout_list.setSpacing(4)
+        self._layout_list.setIconSize(QSize(88, 50))
+        self._layout_list.setGridSize(QSize(110, 82))
+        for text, value in LAYOUT_OPTIONS:
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, value)
+            self._layout_list.addItem(item)
         self._layout_list.setCurrentRow(0)
         self._layout_list.itemDoubleClicked.connect(lambda _item: self._add_slide())
+        self._refresh_layout_icons()
         layouts.body.addWidget(self._layout_list, 1)
         layout.addWidget(layouts, 2)
         return panel
@@ -716,6 +799,126 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         return combo
 
     # ------------------------------------------------------------------ #
+    # 编辑历史 / 草稿
+    # ------------------------------------------------------------------ #
+    def _commit(self, template: core.TemplateSpec, label: str, *, coalesce_key: str = "") -> bool:
+        """记录一次模板变更（撤销快照 + dirty 标记）；模板未变时返回 ``False``。"""
+        if template == self._template:
+            return False
+        self._history.record(template, label, coalesce_key=coalesce_key)
+        self._template = template
+        self._mark_dirty()
+        self._sync_history_actions()
+        return True
+
+    def _mark_dirty(self, dirty: bool = True) -> None:
+        """更新 dirty 状态与标题栏星号。"""
+        self._dirty = dirty
+        self._sync_title()
+
+    def _sync_title(self) -> None:
+        base = getattr(self, "_base_title", self.windowTitle())
+        self.setWindowTitle(f"{base} *" if self._dirty else base)
+
+    def _sync_history_actions(self) -> None:
+        """按历史栈刷新撤销 / 重做菜单项的可用状态与提示。"""
+        undo = getattr(self, "_undo_action", None)
+        redo = getattr(self, "_redo_action", None)
+        if undo is not None:
+            label = self._history.undo_label()
+            undo.setEnabled(bool(label))
+            undo.setToolTip(f"撤销「{label}」" if label else "没有可撤销的操作")
+        if redo is not None:
+            label = self._history.redo_label()
+            redo.setEnabled(bool(label))
+            redo.setToolTip(f"重做「{label}」" if label else "没有可重做的操作")
+
+    def _undo(self) -> None:
+        label = self._history.undo_label()
+        template = self._history.undo()
+        if template is None:
+            return
+        self._restore_template(template, f"已撤销：{label}")
+
+    def _redo(self) -> None:
+        label = self._history.redo_label()
+        template = self._history.redo()
+        if template is None:
+            return
+        self._restore_template(template, f"已重做：{label}")
+
+    def _restore_template(self, template: core.TemplateSpec, message: str) -> None:
+        """把撤销 / 重做得到的历史快照套回窗口并全量刷新。"""
+        self._template = template
+        self.selected = min(self.selected, max(len(template.slides) - 1, 0))
+        self._mark_dirty()
+        self._sync_history_actions()
+        self._refresh_all()
+        self.set_status(message)
+
+    def _autosave(self) -> None:
+        """定时把未保存的模板写进草稿文件；无改动时不写盘。"""
+        if not self._dirty or not self._template.slides:
+            return
+        try:
+            core.save_template(self._template, self._draft_path)
+        except (OSError, core.TemplateError):
+            return
+        self.set_status_note(f"草稿已自动保存 {time.strftime('%H:%M')}")
+
+    def _discard_draft(self) -> None:
+        """删除本地草稿（关闭时选择不保存 / 恢复失败）。"""
+        with contextlib.suppress(OSError):
+            self._draft_path.unlink(missing_ok=True)
+
+    def _maybe_recover_draft(self) -> None:
+        """启动后检测上次自动保存的草稿，询问是否恢复。"""
+        if not self._draft_path.is_file():
+            return
+        stamp = time.strftime("%m-%d %H:%M", time.localtime(self._draft_path.stat().st_mtime))
+        answer = QMessageBox.question(
+            self,
+            "恢复草稿",
+            f"检测到未保存的草稿（{stamp}），是否恢复？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self._discard_draft()
+            return
+        try:
+            template = core.load_template(self._draft_path)
+        except (OSError, core.TemplateError):
+            self._discard_draft()
+            return
+        self._set_template(template)
+        self._mark_dirty()
+        self._discard_draft()
+        self.set_status(f"已恢复草稿（{stamp}）")
+
+    def _confirm_close(self) -> bool:
+        """关闭前确认未保存的改动：导出模板 / 丢弃 / 取消。"""
+        if not self._dirty:
+            self._discard_draft()
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("未保存的改动")
+        box.setText("当前模板有未保存的改动。")
+        box.setInformativeText("关闭前要把模板导出为 JSON 吗？")
+        save = box.addButton("保存模板", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("不保存", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(save)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel:
+            return False
+        if clicked is save:
+            return self._export_template()
+        self._discard_draft()
+        return True
+
+    # ------------------------------------------------------------------ #
     # 状态同步
     # ------------------------------------------------------------------ #
     @property
@@ -728,8 +931,10 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._refresh_slide_list()
         self._refresh_form()
         self._refresh_color_buttons()
+        self._refresh_layout_icons()
         self._refresh_thumbnails()
         self._refresh_canvases()
+        self._sync_history_actions()
 
     def _refresh_canvases(self) -> None:
         """重画所有预览画布（设计页实时预览 + 样式页实时预览）。"""
@@ -768,7 +973,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._slides_list.blockSignals(True)
         self._slides_list.clear()
         for index, slide in enumerate(self._template.slides, start=1):
-            self._slides_list.addItem(slide_label(index, slide))
+            item = QListWidgetItem(slide_label(index, slide))
+            item.setData(Qt.ItemDataRole.UserRole, index - 1)
+            self._slides_list.addItem(item)
         if self._template.slides:
             self.selected = min(self.selected, len(self._template.slides) - 1)
             self._slides_list.setCurrentRow(self.selected)
@@ -807,6 +1014,49 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 f"background-color: {value}; color: {foreground}; border: 1px solid rgba(0, 0, 0, 60);"
                 f"border-radius: 6px; padding: 4px 6px;"
             )
+
+    def _refresh_layout_icons(self) -> None:
+        """按当前风格 / 画幅 / 装饰重绘布局库的版式缩略图（样式页改动后同步）。"""
+        self._layout_icons.clear()
+        ui = self.theme().palette
+        design_width, design_height = core.ASPECT_DESIGN[self._template.aspect]
+        scale = 50.0 / design_height
+        page_width = round(design_width * scale)
+        dpr = self.devicePixelRatioF()
+        for row in range(self._layout_list.count()):
+            item = self._layout_list.item(row)
+            layout = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(layout, str):
+                continue
+            pixmap = QPixmap(round(page_width * dpr), round(50 * dpr))
+            pixmap.setDevicePixelRatio(dpr)
+            try:
+                template = core.new_template(
+                    style=self._template.theme.style,
+                    aspect=self._template.aspect,
+                    decor=self._template.theme.decor,
+                    slides=(core.new_slide(layout),),
+                )
+                pixmap.fill(QColor(template.theme.palette.background))
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                _paint_slide(
+                    painter,
+                    template,
+                    template.slides[0],
+                    float(page_width),
+                    50.0,
+                    zoom=scale,
+                    ui=ui,
+                    skip_text=True,
+                )
+                painter.end()
+            except core.TemplateError:
+                continue
+            icon = QIcon(pixmap)
+            self._layout_icons[layout] = icon
+            item.setIcon(icon)
+            item.setSizeHint(QSize(104, 76))
 
     def _refresh_thumbnails(self) -> None:
         self._syncing_thumb = True
@@ -874,7 +1124,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
     def _on_name_changed(self, text: str) -> None:
         if self._loading:
             return
-        self._template = replace(self._template, name=text)
+        self._commit(replace(self._template, name=text), "修改模板名称", coalesce_key="name")
         self.set_status("模板名称已更新")
 
     def _on_combo_changed(self, _index: int) -> None:
@@ -885,7 +1135,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._apply_style(str(self._style_combo.currentData()))
         elif sender is self._aspect_combo:
             aspect = str(self._aspect_combo.currentData())
-            self._template = replace(self._template, aspect=aspect)
+            self._commit(replace(self._template, aspect=aspect), "切换画幅")
+            self._refresh_layout_icons()
             self._refresh_thumbnails()
             self._refresh_canvases()
             self.set_status(f"已切换画幅：{core.ASPECT_TEXT[aspect]}")
@@ -894,8 +1145,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         elif sender is self._density_combo:
             density = str(self._density_combo.currentData())
             theme = self._template.theme
-            self._template = replace(
-                self._template, theme=replace(theme, tokens=replace(theme.tokens, density=density))
+            self._commit(
+                replace(self._template, theme=replace(theme, tokens=replace(theme.tokens, density=density))),
+                "切换密度",
             )
             self._refresh_style_controls()
             self._refresh_canvases()
@@ -905,7 +1157,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         if style == core.STYLE_CUSTOM:
             return
         theme = replace(self._template.theme, style=style, palette=core.palette_for_style(style))
-        self._template = replace(self._template, theme=theme)
+        self._commit(replace(self._template, theme=theme), "切换风格")
+        self._refresh_layout_icons()
         self._refresh_style_controls()
         self._refresh_color_buttons()
         self._refresh_thumbnails()
@@ -914,7 +1167,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _apply_decor(self, decor: str) -> None:
         theme = replace(self._template.theme, decor=core.normalize_decor(decor))
-        self._template = replace(self._template, theme=theme)
+        self._commit(replace(self._template, theme=theme), "切换装饰")
+        self._refresh_layout_icons()
         self._refresh_style_controls()
         self._refresh_thumbnails()
         self._refresh_canvases()
@@ -928,8 +1182,10 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         theme = self._template.theme
         if round(theme.tokens.decor_intensity, 3) == round(intensity, 3):
             return
-        self._template = replace(
-            self._template, theme=replace(theme, tokens=replace(theme.tokens, decor_intensity=intensity))
+        self._commit(
+            replace(self._template, theme=replace(theme, tokens=replace(theme.tokens, decor_intensity=intensity))),
+            "调整装饰强度",
+            coalesce_key="intensity",
         )
         self._refresh_thumbnails()
         self._refresh_canvases()
@@ -978,7 +1234,11 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             bullets=bullets,
             note=self._note_text.toPlainText(),
         )
-        self._template = core.replace_slide(self._template, self.selected, updated)
+        self._commit(
+            core.replace_slide(self._template, self.selected, updated),
+            "编辑页面内容",
+            coalesce_key="form",
+        )
         item = self._slides_list.item(self.selected)
         if item is not None:
             item.setText(slide_label(self.selected + 1, updated))
@@ -993,7 +1253,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         current = self._layout_list.currentRow()
         layout = core.LAYOUT_BULLETS if current < 0 else LAYOUT_OPTIONS[current][1]
         slide = core.new_slide(layout)
-        self._template = replace(self._template, slides=(*self._template.slides, slide))
+        self._commit(replace(self._template, slides=(*self._template.slides, slide)), "添加页面")
         self.selected = len(self._template.slides) - 1
         self._refresh_slide_list()
         self._refresh_form()
@@ -1001,34 +1261,41 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._refresh_canvases()
         self.set_status(f"已添加「{core.layout_label(layout)}」页面")
 
+    def _selected_rows(self) -> list[int]:
+        """页面列表当前选中的行（多选时按升序；无选中时退回当前页）。"""
+        rows = sorted(index.row() for index in self._slides_list.selectedIndexes())
+        if not rows:
+            rows = [self.selected]
+        return rows
+
     def _duplicate_slide(self) -> None:
         if not self._template.slides:
             return
-        slide = replace(
-            self._template.slides[self.selected], title=f"{self._template.slides[self.selected].title}（副本）"
-        )
+        rows = [row for row in self._selected_rows() if 0 <= row < len(self._template.slides)]
+        if not rows:
+            return
         slides = list(self._template.slides)
-        slides.insert(self.selected + 1, slide)
-        self._template = replace(self._template, slides=tuple(slides))
-        self.selected += 1
-        self._refresh_slide_list()
-        self._refresh_form()
-        self._refresh_thumbnails()
-        self._refresh_canvases()
-        self.set_status("已复制当前页面")
+        insert_at = rows[-1] + 1
+        copies = [replace(slides[row], title=f"{slides[row].title}（副本）") for row in rows]
+        slides[insert_at:insert_at] = copies
+        self._commit(replace(self._template, slides=tuple(slides)), "复制页面")
+        self.selected = insert_at
+        self._refresh_after_slide_change()
+        self.set_status("已复制选中页面" if len(rows) > 1 else "已复制当前页面")
 
     def _delete_slide(self) -> None:
         if not self._template.slides:
             return
+        rows = [row for row in self._selected_rows() if 0 <= row < len(self._template.slides)]
+        if not rows:
+            return
         slides = list(self._template.slides)
-        slides.pop(self.selected)
-        self._template = replace(self._template, slides=tuple(slides))
-        self.selected = min(self.selected, max(len(slides) - 1, 0))
-        self._refresh_slide_list()
-        self._refresh_form()
-        self._refresh_thumbnails()
-        self._refresh_canvases()
-        self.set_status("已删除当前页面")
+        for row in reversed(rows):
+            slides.pop(row)
+        self._commit(replace(self._template, slides=tuple(slides)), "删除页面")
+        self.selected = min(rows[0], max(len(slides) - 1, 0))
+        self._refresh_after_slide_change()
+        self.set_status("已删除选中页面" if len(rows) > 1 else "已删除当前页面")
 
     def _move_slide(self, delta: int) -> None:
         slides = list(self._template.slides)
@@ -1036,13 +1303,35 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         if not slides or target < 0 or target >= len(slides):
             return
         slides[self.selected], slides[target] = slides[target], slides[self.selected]
-        self._template = replace(self._template, slides=tuple(slides))
+        self._commit(replace(self._template, slides=tuple(slides)), "调整页面顺序")
         self.selected = target
+        self._refresh_after_slide_change()
+        self.set_status("页面顺序已调整")
+
+    def _on_slides_reordered(self, *_args: object) -> None:
+        """拖拽排序后按列表项保存的原索引重建页面顺序。"""
+        order: list[int] = []
+        for row in range(self._slides_list.count()):
+            item = self._slides_list.item(row)
+            value = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            if isinstance(value, int) and 0 <= value < len(self._template.slides):
+                order.append(value)
+        if len(order) != len(self._template.slides) or order == list(range(len(order))):
+            return
+        self._commit(
+            replace(self._template, slides=tuple(self._template.slides[index] for index in order)),
+            "拖拽调整页面顺序",
+        )
+        self.selected = max(self._slides_list.currentRow(), 0)
+        self._refresh_after_slide_change()
+        self.set_status("页面顺序已调整")
+
+    def _refresh_after_slide_change(self) -> None:
+        """页面增删 / 排序后的统一刷新。"""
         self._refresh_slide_list()
         self._refresh_form()
         self._refresh_thumbnails()
         self._refresh_canvases()
-        self.set_status("页面顺序已调整")
 
     def _pick_color(self, field: str) -> None:
         current = getattr(self._template.theme.palette, field)
@@ -1056,10 +1345,14 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             QMessageBox.critical(self, "颜色无效", str(exc))
             return
         palette = replace(self._template.theme.palette, **{field: normalized})
-        self._template = replace(
-            self._template,
-            theme=replace(self._template.theme, style=core.STYLE_CUSTOM, palette=palette),
+        self._commit(
+            replace(
+                self._template,
+                theme=replace(self._template.theme, style=core.STYLE_CUSTOM, palette=palette),
+            ),
+            "修改配色",
         )
+        self._refresh_layout_icons()
         self._refresh_style_controls()
         self._refresh_color_buttons()
         self._refresh_thumbnails()
@@ -1084,7 +1377,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             aspect=self._settings.aspect,
             decor=self._settings.decor,
         )
+        self._history.reset(self._template)
         self.selected = 0
+        self._mark_dirty(False)
         self._refresh_all()
         self.set_status("已新建模板")
 
@@ -1104,9 +1399,12 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             QMessageBox.critical(self, "导入失败", str(exc))
             return
         self._settings.last_dir = str(source.parent)
+        if source.suffix.lower() != ".pptx":
+            self._remember_recent(source)
         self._set_template(template)
 
-    def _export_template(self) -> None:
+    def _export_template(self) -> bool:
+        """导出模板 JSON；返回是否真正写入（关闭确认里据此决定能否关窗）。"""
         default_name = f"{safe_filename(self._template.name)}{core.TEMPLATE_SUFFIX}"
         path, _filter = QFileDialog.getSaveFileName(
             self,
@@ -1115,15 +1413,19 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             f"PPT 模板 (*{core.TEMPLATE_SUFFIX});;JSON (*.json);;所有文件 (*.*)",
         )
         if not path:
-            return
+            return False
         target = Path(path)
         try:
             core.save_template(self._template, target)
         except core.TemplateError as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
-            return
+            return False
         self._settings.last_dir = str(target.parent)
+        self._remember_recent(target)
+        self._mark_dirty(False)
+        self._discard_draft()
         self.set_status(f"模板已导出：{target}")
+        return True
 
     def _export_pptx(self) -> None:
         default_name = f"{safe_filename(self._template.name)}.pptx"
@@ -1166,8 +1468,11 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _set_template(self, template: core.TemplateSpec) -> None:
         self._template = template
+        self._history.reset(template)
         self.selected = 0
+        self._mark_dirty(False)
         self._refresh_all()
+        self._sync_history_actions()
         self.set_status(f"已载入：{template.name}（{len(template.slides)} 页）")
 
     def _show_help(self) -> None:
@@ -1192,8 +1497,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._set_zoom(current * factor)
 
     def set_theme(self, theme: Any) -> None:
-        """切换主题后重画画布与缩略图（其余控件由全局样式表处理）。"""
+        """切换主题后重画画布、缩略图与布局库（其余控件由全局样式表处理）。"""
         super().set_theme(theme)
+        self._refresh_layout_icons()
         self._refresh_thumbnails()
         self._refresh_canvases()
 
@@ -1209,6 +1515,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             active_page=self.current_page() or self._settings.active_page,
             design_splitter=tuple(splitter_sizes(self._splitter)),
             style_splitter=tuple(splitter_sizes(self._style_splitter)),
+            recent_templates=self._settings.recent_templates,
         )
         self._settings = settings
         save_settings(settings, self._own_settings_path)

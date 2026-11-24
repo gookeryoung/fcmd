@@ -117,6 +117,7 @@ def test_settings_mapping_roundtrip() -> None:
         active_page="style",
         design_splitter=(240, 600, 320),
         style_splitter=(360, 720),
+        recent_templates=("D:/a.pptmtpl.json",),
     )
     mapping = pptmakew.settings_to_mapping(settings)
     assert mapping["style"] == core.STYLE_CORAL
@@ -125,7 +126,30 @@ def test_settings_mapping_roundtrip() -> None:
     assert mapping["active_page"] == "style"
     assert mapping["design_splitter"] == [240, 600, 320]
     assert mapping["style_splitter"] == [360, 720]
+    assert mapping["recent_templates"] == ["D:/a.pptmtpl.json"]
     assert pptmakew.settings_from_mapping(mapping) == settings
+
+
+def test_remember_path_dedupes_and_limits(tmp_path: Path) -> None:
+    first = tmp_path / "a.pptmtpl.json"
+    second = tmp_path / "b.pptmtpl.json"
+    recent = pptmakew.remember_path((), first)
+    assert recent == (str(first),)
+    recent = pptmakew.remember_path(recent, second)
+    assert recent == (str(second), str(first))
+    recent = pptmakew.remember_path(recent, first)
+    assert recent == (str(first), str(second))
+    many = tuple(str(tmp_path / f"{index}.json") for index in range(pptmakew.MAX_RECENT + 3))
+    limited = pptmakew.remember_path(many, tmp_path / "new.json")
+    assert len(limited) == pptmakew.MAX_RECENT
+    assert limited[0] == str(tmp_path / "new.json")
+
+
+def test_settings_recent_templates_parse() -> None:
+    settings = pptmakew.settings_from_mapping(
+        {"recent_templates": ["D:/a.json", 123, "", "D:/b.json"]},
+    )
+    assert settings.recent_templates == ("D:/a.json", "D:/b.json")
 
 
 def test_safe_filename() -> None:
