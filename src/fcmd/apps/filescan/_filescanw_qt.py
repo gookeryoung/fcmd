@@ -1093,9 +1093,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         layout = page.content
 
         self._rules_table = make_table(
-            ("启用", "分组", "严重级", "名称", "匹配器"),
-            widths=(60, 110, 70, 170, 520),
-            stretch_columns=(4,),
+            ("启用", "分组", "严重级", "ID", "名称", "匹配器"),
+            widths=(60, 110, 70, 140, 170, 420),
+            stretch_columns=(5,),
             parent=page,
         )
         self._rules_table.setMinimumHeight(240)
@@ -1157,8 +1157,11 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             if color is not None:
                 severity_item.setForeground(QBrush(color))
             self._rules_table.setItem(row, 2, severity_item)
-            self._rules_table.setItem(row, 3, make_table_item(rule.name))
-            self._rules_table.setItem(row, 4, make_table_item(rule.matcher.describe()))
+            id_item = make_table_item(rule.id)
+            id_item.setToolTip("组合表达式引用这个 id，例如：pii and not email")
+            self._rules_table.setItem(row, 3, id_item)
+            self._rules_table.setItem(row, 4, make_table_item(rule.name))
+            self._rules_table.setItem(row, 5, make_table_item(rule.matcher.describe()))
         self._expression.setText(self.ruleset.expression)
         self._rule_hint.setText(
             f"{len(self.ruleset.rules)} 条规则，启用 {self.ruleset.enabled_count()}；"

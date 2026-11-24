@@ -76,6 +76,12 @@ def test_window_builds_with_defaults(home: Path) -> None:
         assert window._settings_page.page_key == "settings"
         assert window._whitelist_table.rowCount() >= 1
         assert window._rules_table.rowCount() == len(builtin_ruleset().rules)
+        # 规则表在名称前给出 id，方便直接拼组合表达式。
+        headers = [window._rules_table.horizontalHeaderItem(i).text() for i in range(window._rules_table.columnCount())]
+        assert headers == ["启用", "分组", "严重级", "ID", "名称", "匹配器"]
+        first_rule = builtin_ruleset().rules[0]
+        assert window._rules_table.item(0, 3).text() == first_rule.id
+        assert window._rules_table.item(0, 4).text() == first_rule.name
         # 扫描页只有任务列表：首项固定是虚线的「添加任务」，空态说明在其下方。
         assert window._tasks == []
         assert window._task_list.count() == 1

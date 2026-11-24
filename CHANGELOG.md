@@ -7,6 +7,8 @@
 
 ### 变更
 
+- `filescanw` 规则表在名称前新增 ID 列：直接显示规则 id（如 `cn_phone`），方便
+  在组合表达式里引用，悬停提示给出示例（`pii and not email`）。
 - `filescan` 内置规则扩充到 16 条，新增数据库连接串、密码赋值、JWT 令牌、
   密码哈希（bcrypt / argon2）、GitHub / Slack 令牌、阿里云 AccessKey ID、
   统一社会信用代码与微信号，按「个人信息 / 联系方式 / 财务信息 / 凭证 /
