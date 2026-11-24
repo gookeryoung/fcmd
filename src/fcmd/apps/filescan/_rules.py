@@ -39,9 +39,13 @@ from fcmd.apps.filescan._expr import (
 )
 from fcmd.apps.filescan._matcher import (
     CONTENT_TARGETS,
+    MATCH_DICTIONARY,
+    MATCH_ENTROPY,
     MATCH_FILETYPE,
+    MATCH_HASH,
     MATCH_KEYWORD,
     MATCH_KINDS,
+    MATCH_METADATA,
     MATCH_REGEX,
     MATCH_SIZE,
     MATCH_TARGETS,
@@ -54,6 +58,7 @@ from fcmd.apps.filescan._matcher import (
     compile_matcher,
     matcher_from_mapping,
     matcher_to_mapping,
+    split_terms,
 )
 from fcmd.apps.filescan._sizeutil import (
     SIZE_BETWEEN,
@@ -83,9 +88,13 @@ __all__ = [
     "DEFAULT_GROUP",
     "DEFAULT_RULESET_NAME",
     "DEFAULT_SEVERITY",
+    "MATCH_DICTIONARY",
+    "MATCH_ENTROPY",
     "MATCH_FILETYPE",
+    "MATCH_HASH",
     "MATCH_KEYWORD",
     "MATCH_KINDS",
+    "MATCH_METADATA",
     "MATCH_REGEX",
     "MATCH_SIZE",
     "MATCH_TARGETS",
@@ -129,6 +138,7 @@ __all__ = [
     "Rule",
     "RuleRef",
     "RuleSet",
+    "add_path_allowlist",
     "builtin_ruleset",
     "clear_rules",
     "compile_matcher",
@@ -229,6 +239,10 @@ class CompiledRule:
     size_start: int | None = None
     size_end: int | None = None
     file_types: frozenset[str] = frozenset()
+    hashes: frozenset[str] = frozenset()
+    threshold: float | None = None
+    min_length: int = 24
+    metadata_key: str = ""
 
     @property
     def id(self) -> str:
@@ -253,7 +267,7 @@ class CompiledRule:
         return self.rule.matcher.matches_path()
 
 
-def compile_rule(rule: Rule) -> CompiledRule:
+def compile_rule(rule: Rule) -> CompiledRule:  # noqa: PLR0911 - 逐类型编译
     """编译单条规则；时间规则只预解析时间窗口，不编译正则。"""
     matcher = rule.matcher
     if matcher.kind == MATCH_TIME:
@@ -261,6 +275,33 @@ def compile_rule(rule: Rule) -> CompiledRule:
         start = parse_time_value(matcher.value)
         end = parse_time_value(matcher.value2) if matcher.compare == TIME_BETWEEN else None
         return CompiledRule(rule=rule, regex=None, time_start=start, time_end=end)
+    if matcher.kind == MATCH_DICTIONARY:
+        matcher.validate()
+        terms = split_terms(matcher.value)
+        body = "|".join(re.escape(item) for item in sorted(terms, key=len, reverse=True))
+        return CompiledRule(rule=rule, regex=re.compile(body, re.IGNORECASE))
+    if matcher.kind == MATCH_HASH:
+        matcher.validate()
+        return CompiledRule(
+            rule=rule,
+            regex=None,
+            hashes=frozenset(item.lower() for item in split_terms(matcher.value)),
+        )
+    if matcher.kind == MATCH_ENTROPY:
+        matcher.validate()
+        return CompiledRule(
+            rule=rule,
+            regex=None,
+            threshold=float(matcher.value),
+            min_length=int(matcher.value2 or "24"),
+        )
+    if matcher.kind == MATCH_METADATA:
+        matcher.validate()
+        return CompiledRule(
+            rule=rule,
+            regex=re.compile(re.escape(matcher.text), re.IGNORECASE),
+            metadata_key=matcher.value,
+        )
     if matcher.kind == MATCH_FILETYPE:
         matcher.validate()
         types = frozenset(item.strip() for item in matcher.value.split(",") if item.strip())
@@ -474,6 +515,40 @@ def validate_ruleset(ruleset: RuleSet) -> None:
             raise ValueError(f"near 只支持内容 / 文件名规则，不能引用时间规则 {rule_id!r}")
 
 
+def add_path_allowlist(ruleset: RuleSet, path: str, *, name: str = "") -> RuleSet:
+    """把一条完整路径加入排除白名单：新增禁用的路径规则，并追加到启用组合式。
+
+    规则保持未启用（不进入默认 OR），但被组合式显式引用，因此仍参与匹配；
+    已在白名单时直接返回原规则集。
+    """
+    import hashlib
+
+    digest = hashlib.sha1(path.encode("utf-8")).hexdigest()[:8]
+    rule_id = f"allow_{digest}"
+    if ruleset.find(rule_id) is not None:
+        return ruleset
+    rule = Rule(
+        id=rule_id,
+        name=name or f"排除：{Path(path).name or path}",
+        matcher=Matcher(kind=MATCH_KEYWORD, text=path, target=TARGET_PATH),
+        enabled=False,
+    )
+    rules = (*ruleset.rules, rule)
+    enabled = [item for item in ruleset.expressions if item.enabled]
+    if enabled:
+        expressions = tuple(
+            replace(item, expression=f"({item.expression}) and not {rule_id}") if item.enabled else item
+            for item in ruleset.expressions
+        )
+    else:
+        base = " or ".join(item.id for item in ruleset.enabled_rules()) or "missing"
+        expressions = (
+            *ruleset.expressions,
+            Expression(id="allow_list", name="排除白名单", expression=f"({base}) and not {rule_id}"),
+        )
+    return RuleSet(name=ruleset.name, rules=rules, expressions=expressions)
+
+
 def disable_all(ruleset: RuleSet) -> RuleSet:
     """一键禁用全部规则与组合式（保留内容）。"""
     return replace(
@@ -589,7 +664,7 @@ def expression_from_mapping(raw: Any, *, index: int = 0) -> Expression:
 def ruleset_to_mapping(ruleset: RuleSet) -> dict[str, Any]:
     """规则集转可写入 JSON 的字典（``version`` 3：规则 + 组合式 + 时间规则）。"""
     return {
-        "version": 5,
+        "version": 6,
         "name": ruleset.name,
         "rules": [rule_to_mapping(rule) for rule in ruleset.rules],
         "expressions": [expression_to_mapping(item) for item in ruleset.expressions],

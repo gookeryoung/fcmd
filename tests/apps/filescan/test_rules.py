@@ -713,3 +713,20 @@ def test_rule_hit_thresholds_defaults_and_mapping() -> None:
                 "max_hits": -1,
             }
         )
+
+
+@pytest.mark.parametrize(
+    "matcher",
+    [
+        Matcher(kind="metadata", value="author", text="alice"),
+        Matcher(kind="dictionary", value="alpha\nbeta"),
+        Matcher(kind="hash", value="a" * 64),
+        Matcher(kind="entropy", value="4.5", value2="24"),
+        Matcher(kind="filetype", value="pdf,zip"),
+    ],
+)
+def test_advanced_matcher_mapping_roundtrip(matcher: Matcher) -> None:
+    matcher.validate()
+    payload = matcher_to_mapping(matcher)
+    assert matcher_from_mapping(payload) == matcher
+    assert matcher.describe()

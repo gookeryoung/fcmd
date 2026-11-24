@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fcmd.apps.filescan._filetype import FILE_TYPES
+from fcmd.apps.filescan._metadata import METADATA_KEYS, METADATA_LABELS
 from fcmd.apps.filescan._sizeutil import SIZE_BETWEEN, SIZE_LT, SIZE_OPS, parse_size_value
 from fcmd.apps.filescan._timeutil import (
     TIME_AFTER,
@@ -34,7 +35,21 @@ MATCH_REGEX = "regex"
 MATCH_TIME = "time"
 MATCH_SIZE = "size"
 MATCH_FILETYPE = "filetype"
-MATCH_KINDS: tuple[str, ...] = (MATCH_KEYWORD, MATCH_REGEX, MATCH_TIME, MATCH_SIZE, MATCH_FILETYPE)
+MATCH_METADATA = "metadata"
+MATCH_DICTIONARY = "dictionary"
+MATCH_HASH = "hash"
+MATCH_ENTROPY = "entropy"
+MATCH_KINDS: tuple[str, ...] = (
+    MATCH_KEYWORD,
+    MATCH_REGEX,
+    MATCH_TIME,
+    MATCH_SIZE,
+    MATCH_FILETYPE,
+    MATCH_METADATA,
+    MATCH_DICTIONARY,
+    MATCH_HASH,
+    MATCH_ENTROPY,
+)
 
 TARGET_CONTENT = "content"
 TARGET_FILENAME = "filename"
@@ -69,7 +84,7 @@ class Matcher:
             return self.case_sensitive
         return self.kind == MATCH_REGEX
 
-    def describe(self) -> str:
+    def describe(self) -> str:  # noqa: PLR0911, PLR0912 - 逐类型摘要
         """返回界面摘要，如 ``关键词: password（忽略大小写）``。"""
         if self.kind == MATCH_TIME:
             field = TIME_TARGET_LABELS.get(self.target, self.target)
@@ -79,6 +94,15 @@ class Matcher:
             return f"{field} {op} {self.value}"
         if self.kind == MATCH_FILETYPE:
             return f"文件类型: {self.value}"
+        if self.kind == MATCH_METADATA:
+            return f"元数据 {METADATA_LABELS.get(self.value, self.value)} 包含: {self.text}"
+        if self.kind == MATCH_DICTIONARY:
+            terms = split_terms(self.value)
+            return f"词典: {len(terms)} 项（{'、'.join(terms[:3])}{'…' if len(terms) > 3 else ''}）"
+        if self.kind == MATCH_HASH:
+            return f"文件哈希: {len(split_terms(self.value))} 个"
+        if self.kind == MATCH_ENTROPY:
+            return f"高熵串: ≥ {self.value}（长度 ≥ {self.value2 or '24'}）"
         if self.kind == MATCH_SIZE:
             op = _SIZE_OP_LABELS.get(self.compare, self.compare)
             if self.compare == SIZE_BETWEEN:
@@ -118,7 +142,7 @@ class Matcher:
         """是否文件大小规则。"""
         return self.kind == MATCH_SIZE
 
-    def validate(self) -> None:  # noqa: PLR0912 - 逐类型校验字段
+    def validate(self) -> None:  # noqa: PLR0911, PLR0912 - 逐类型校验字段
         """校验匹配器字段；非法时抛 ``ValueError``（中文说明）。"""
         if self.kind not in MATCH_KINDS:
             raise ValueError(f"未知匹配器类型: {self.kind!r}，只支持 {'/'.join(MATCH_KINDS)}")
@@ -127,6 +151,40 @@ class Matcher:
             return
         if self.kind == MATCH_SIZE:
             self._validate_size()
+            return
+        if self.kind == MATCH_METADATA:
+            if self.value not in METADATA_KEYS:
+                raise ValueError(f"未知元数据字段: {self.value!r}，只支持 {'/'.join(METADATA_KEYS)}")
+            if not self.text:
+                raise ValueError("元数据规则需要填写要匹配的文本")
+            return
+        if self.kind == MATCH_DICTIONARY:
+            if not split_terms(self.value):
+                raise ValueError("词典规则需要至少一个词条")
+            return
+        if self.kind == MATCH_HASH:
+            hashes = split_terms(self.value)
+            if not hashes:
+                raise ValueError("哈希规则需要至少一个 SHA-256 值")
+            bad = [
+                item for item in hashes if len(item) != 64 or any(char not in "0123456789abcdefABCDEF" for char in item)
+            ]
+            if bad:
+                raise ValueError("哈希必须是 64 位十六进制 SHA-256")
+            return
+        if self.kind == MATCH_ENTROPY:
+            try:
+                threshold = float(self.value)
+            except ValueError:
+                raise ValueError("高熵阈值必须是数字（0–8）") from None
+            if not 0 < threshold <= 8:
+                raise ValueError("高熵阈值必须在 (0, 8] 之间")
+            try:
+                length = int(self.value2 or "24")
+            except ValueError:
+                raise ValueError("最小长度必须是整数") from None
+            if length < 4:
+                raise ValueError("最小长度必须 ≥ 4")
             return
         if self.kind == MATCH_FILETYPE:
             types = [item.strip() for item in self.value.split(",") if item.strip()]
@@ -173,6 +231,16 @@ class Matcher:
             raise ValueError("大小区间的结束值必须大于开始值")
 
 
+def split_terms(value: str) -> list[str]:
+    """把词典 / 哈希文本按换行或逗号拆成非空条目（去重保序）。"""
+    items: list[str] = []
+    for part in value.replace(",", "\n").splitlines():
+        item = part.strip()
+        if item and item not in items:
+            items.append(item)
+    return items
+
+
 def compile_matcher(matcher: Matcher) -> re.Pattern[str]:
     """把匹配器编译成正则对象；关键词按需转义并加词边界，时间 / 大小规则不编译。"""
     matcher.validate()
@@ -187,7 +255,7 @@ def compile_matcher(matcher: Matcher) -> re.Pattern[str]:
     return re.compile(matcher.pattern, flags)
 
 
-def matcher_to_mapping(matcher: Matcher) -> dict[str, Any]:
+def matcher_to_mapping(matcher: Matcher) -> dict[str, Any]:  # noqa: PLR0912 - 逐类型映射
     """匹配器转字典（省略与类型默认一致的字段）。"""
     payload: dict[str, Any] = {"type": matcher.kind}
     if matcher.kind == MATCH_TIME:
@@ -199,6 +267,13 @@ def matcher_to_mapping(matcher: Matcher) -> dict[str, Any]:
         return payload
     if matcher.kind == MATCH_FILETYPE:
         payload["value"] = matcher.value
+        return payload
+    if matcher.kind in (MATCH_METADATA, MATCH_DICTIONARY, MATCH_HASH, MATCH_ENTROPY):
+        payload["value"] = matcher.value
+        if matcher.kind == MATCH_METADATA:
+            payload["text"] = matcher.text
+        if matcher.kind == MATCH_ENTROPY:
+            payload["value2"] = matcher.value2 or "24"
         return payload
     if matcher.kind == MATCH_SIZE:
         payload["compare"] = matcher.compare
@@ -242,6 +317,15 @@ def matcher_from_mapping(raw: Any) -> Matcher:  # noqa: PLR0912 - 逐类型校�
         if target == TARGET_CONTENT:
             target = "modified"
         matcher = Matcher(kind=kind, target=target, compare=compare, value=value, value2=value2)
+        matcher.validate()
+        return matcher
+    if kind in (MATCH_METADATA, MATCH_DICTIONARY, MATCH_HASH, MATCH_ENTROPY):
+        value = raw.get("value", "")
+        value2 = raw.get("value2", "24")
+        text = raw.get("text", "")
+        if not isinstance(value, str) or not isinstance(value2, str) or not isinstance(text, str):
+            raise ValueError("高级规则的 value / value2 / text 必须是字符串")
+        matcher = Matcher(kind=kind, value=value, value2=value2, text=text)
         matcher.validate()
         return matcher
     if kind == MATCH_FILETYPE:

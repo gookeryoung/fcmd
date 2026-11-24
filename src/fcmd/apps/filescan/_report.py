@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 __all__ = [
     "REPORT_FORMATS",
     "context_segments",
+    "file_risk_score",
     "filter_result",
     "format_text_report",
     "mask_text",
@@ -38,6 +39,15 @@ __all__ = [
 ]
 
 REPORT_FORMATS: tuple[str, ...] = ("text", "json", "csv")
+
+
+_RISK_WEIGHTS = {"info": 1, "low": 2, "medium": 4, "high": 8, "critical": 12}
+
+
+def file_risk_score(hit: FileHit) -> int:
+    """按命中严重级汇总文件风险分（0–100，用于结果排序 / 展示）。"""
+    score = sum(_RISK_WEIGHTS.get(item.severity or "medium", 4) for item in hit.matches)
+    return min(100, score)
 
 
 def mask_text(text: str) -> str:
@@ -257,7 +267,7 @@ def format_text_report(result: ScanResult, include_raw: bool = False) -> str:
         lines.append(hint)
     for hit in result.hits:
         encoding = f"{hit.encoding}，" if hit.encoding else ""
-        lines.append(f"[命中] {hit.path}（{encoding}{format_size(hit.size)}）")
+        lines.append(f"[命中] {hit.path}（{encoding}{format_size(hit.size)}，风险 {file_risk_score(hit)}）")
         if not hit.matches:
             lines.append("  - 表达式命中（无正向规则明细）")
             continue

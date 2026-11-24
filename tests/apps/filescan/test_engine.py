@@ -40,7 +40,11 @@ from fcmd.apps.filescan._engine import (
     walk_files,
 )
 from fcmd.apps.filescan._rules import (
+    MATCH_DICTIONARY,
+    MATCH_ENTROPY,
+    MATCH_HASH,
     MATCH_KEYWORD,
+    MATCH_METADATA,
     MATCH_REGEX,
     MATCH_SIZE,
     MATCH_TIME,
@@ -1140,3 +1144,91 @@ def test_archive_member_rule_matches_zip_entry(tmp_path: Path) -> None:
     match = result.hits[0].matches[0]
     assert match.excerpt == "customers"
     assert match.location == "归档成员"
+
+
+def test_dictionary_rule_matches_terms(tmp_path: Path) -> None:
+    _write(tmp_path, "a.txt", "项目代号 天狼星")
+    ruleset = RuleSet(
+        rules=(Rule(id="dict", name="词典", matcher=Matcher(kind=MATCH_DICTIONARY, value="天狼星\n北极星")),),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+    assert len(result.hits) == 1
+    assert result.hits[0].matches[0].excerpt == "天狼星"
+
+
+def test_hash_rule_matches_file_digest(tmp_path: Path) -> None:
+    import hashlib
+
+    path = _write(tmp_path, "a.txt", "secret")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    ruleset = RuleSet(rules=(Rule(id="h", name="哈希", matcher=Matcher(kind=MATCH_HASH, value=digest)),))
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+    assert len(result.hits) == 1
+    assert result.hits[0].matches[0].location == "文件哈希"
+
+
+def test_entropy_rule_matches_random_string(tmp_path: Path) -> None:
+    _write(tmp_path, "a.txt", "token aB3xK9mQ2pL7vR5tY8wZ1cN4")
+    ruleset = RuleSet(
+        rules=(Rule(id="ent", name="高熵", matcher=Matcher(kind=MATCH_ENTROPY, value="4.0", value2="16")),),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+    assert len(result.hits) == 1
+
+
+def test_metadata_rule_matches_office_author(tmp_path: Path) -> None:
+    import zipfile
+
+    path = tmp_path / "doc.docx"
+    core = (
+        '<?xml version="1.0"?><cp:coreProperties '
+        'xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Alice</dc:creator></cp:coreProperties>'
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("docProps/core.xml", core)
+    ruleset = RuleSet(
+        rules=(Rule(id="author", name="作者", matcher=Matcher(kind=MATCH_METADATA, value="author", text="alice")),),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+    assert len(result.hits) == 1
+    assert result.hits[0].matches[0].location == "元数据:作者"
+
+
+def test_file_risk_score_and_allowlist() -> None:
+    from fcmd.apps.filescan._engine import FileHit, RuleMatch
+    from fcmd.apps.filescan._report import file_risk_score
+    from fcmd.apps.filescan._rules import add_path_allowlist
+
+    hit = FileHit(
+        Path("a.txt"),
+        1,
+        "utf-8",
+        [
+            RuleMatch(
+                rule_id="a",
+                rule_name="A",
+                line_no=1,
+                start=0,
+                end=1,
+                excerpt="x",
+                context="x",
+                context_start=0,
+                severity="high",
+            ),
+            RuleMatch(
+                rule_id="b",
+                rule_name="B",
+                line_no=2,
+                start=0,
+                end=1,
+                excerpt="y",
+                context="y",
+                context_start=0,
+                severity="critical",
+            ),
+        ],
+    )
+    assert file_risk_score(hit) == 20
+    ruleset = add_path_allowlist(RuleSet(rules=(), expressions=()), "F:/x/y.txt")
+    assert ruleset.expressions and "allow_" in ruleset.expressions[-1].expression

@@ -100,6 +100,7 @@ from fcmd.apps.filescan._engine import (
     parse_skip_dirs_text,
     scan_paths,
 )
+from fcmd.apps.filescan._metadata import METADATA_KEYS, METADATA_LABELS
 from fcmd.apps.filescan._report import (
     context_segments,
     filter_result,
@@ -110,8 +111,12 @@ from fcmd.apps.filescan._report import (
 )
 from fcmd.apps.filescan._rules import (
     DEFAULT_SEVERITY,
+    MATCH_DICTIONARY,
+    MATCH_ENTROPY,
     MATCH_FILETYPE,
+    MATCH_HASH,
     MATCH_KEYWORD,
+    MATCH_METADATA,
     MATCH_REGEX,
     MATCH_SIZE,
     MATCH_TIME,
@@ -138,6 +143,7 @@ from fcmd.apps.filescan._rules import (
     Matcher,
     Rule,
     RuleSet,
+    add_path_allowlist,
     builtin_ruleset,
     clear_rules,
     effective_expression_text,
@@ -537,6 +543,10 @@ _KIND_LABELS: dict[str, str] = {
     MATCH_TIME: "时间",
     MATCH_SIZE: "文件大小",
     MATCH_FILETYPE: "文件类型",
+    MATCH_METADATA: "文档元数据",
+    MATCH_DICTIONARY: "自定义词典",
+    MATCH_HASH: "文件哈希",
+    MATCH_ENTROPY: "高熵串",
 }
 """规则类型下拉的中文名称（内部仍用稳定 id）。"""
 
@@ -630,6 +640,24 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             rule.matcher.value if rule and rule.matcher.kind == MATCH_FILETYPE else "", self
         )
         self._filetype_value.setPlaceholderText(" pdf,zip,exe（逗号分隔）")
+        self._metadata_key = QComboBox(self)
+        for key in METADATA_KEYS:
+            self._metadata_key.addItem(METADATA_LABELS[key], key)
+        current_key = rule.matcher.value if rule and rule.matcher.kind == MATCH_METADATA else METADATA_KEYS[0]
+        self._metadata_key.setCurrentIndex(max(self._metadata_key.findData(current_key), 0))
+        self._metadata_text = QLineEdit(rule.matcher.text if rule and rule.matcher.kind == MATCH_METADATA else "", self)
+        self._metadata_text.setPlaceholderText("元数据中包含的文本（忽略大小写）")
+        self._extra = self._make_multiline_editor("每行一个词条 / SHA-256")
+        if rule and rule.matcher.kind in (MATCH_DICTIONARY, MATCH_HASH):
+            self._extra.setPlainText(rule.matcher.value)
+        self._entropy_value = QLineEdit(
+            rule.matcher.value if rule and rule.matcher.kind == MATCH_ENTROPY else "4.5", self
+        )
+        self._entropy_value.setPlaceholderText("熵阈值 (0, 8]，默认 4.5")
+        self._entropy_min = QLineEdit(
+            rule.matcher.value2 if rule and rule.matcher.kind == MATCH_ENTROPY else "24", self
+        )
+        self._entropy_min.setPlaceholderText("最小长度，默认 24")
         self._validator = QComboBox(self)
         for validator in VALIDATORS:
             self._validator.addItem(VALIDATOR_LABELS[validator], validator)
@@ -698,6 +726,21 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._filetype_label = _label("文件类型")
         grid.addWidget(self._filetype_label, 16, 0)
         grid.addWidget(self._filetype_value, 16, 1)
+        self._metadata_key_label = _label("元数据字段")
+        grid.addWidget(self._metadata_key_label, 17, 0)
+        grid.addWidget(self._metadata_key, 17, 1)
+        self._metadata_text_label = _label("元数据文本")
+        grid.addWidget(self._metadata_text_label, 18, 0)
+        grid.addWidget(self._metadata_text, 18, 1)
+        self._extra_label = _label("词条 / 哈希")
+        grid.addWidget(self._extra_label, 19, 0)
+        grid.addWidget(self._extra, 19, 1)
+        self._entropy_value_label = _label("熵阈值")
+        grid.addWidget(self._entropy_value_label, 20, 0)
+        grid.addWidget(self._entropy_value, 20, 1)
+        self._entropy_min_label = _label("最小长度")
+        grid.addWidget(self._entropy_min_label, 21, 0)
+        grid.addWidget(self._entropy_min, 21, 1)
         outer.addLayout(grid)
 
         flags = QHBoxLayout()
@@ -776,13 +819,17 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         if self.isVisible():
             self.adjustSize()
 
-    def _sync_kind_fields(self, kind: str) -> None:
+    def _sync_kind_fields(self, kind: str) -> None:  # noqa: PLR0912 - 逐类型显隐
         """按类型切换可见字段：关键词 / 正则 / 时间 / 大小各显示自己的输入项。"""
         keyword = kind == MATCH_KEYWORD
         regex = kind == MATCH_REGEX
         time_rule = kind == MATCH_TIME
         size_rule = kind == MATCH_SIZE
         filetype_rule = kind == MATCH_FILETYPE
+        metadata_rule = kind == MATCH_METADATA
+        dictionary_rule = kind == MATCH_DICTIONARY
+        hash_rule = kind == MATCH_HASH
+        entropy_rule = kind == MATCH_ENTROPY
         pattern_rule = keyword or regex
         self._text.setVisible(keyword)
         self._text_label.setVisible(keyword)
@@ -796,6 +843,21 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._validator_label.setVisible(regex)
         self._filetype_value.setVisible(filetype_rule)
         self._filetype_label.setVisible(filetype_rule)
+        for widget in (self._metadata_key, self._metadata_key_label, self._metadata_text, self._metadata_text_label):
+            widget.setVisible(metadata_rule)
+        for widget in (self._extra, self._extra_label):
+            widget.setVisible(dictionary_rule or hash_rule)
+        if dictionary_rule:
+            self._extra.setPlaceholderText("每行一个词条（忽略大小写）")
+        elif hash_rule:
+            self._extra.setPlaceholderText("每行一个 64 位 SHA-256")
+        for widget in (
+            self._entropy_value,
+            self._entropy_value_label,
+            self._entropy_min,
+            self._entropy_min_label,
+        ):
+            widget.setVisible(entropy_rule)
         for text in ("时间字段", "时间条件", "起始时间"):
             self._time_labels[text].setVisible(time_rule)
         self._time_field.setVisible(time_rule)
@@ -816,6 +878,14 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             hint = "大小：按文件字节数比较，支持 10KB / 1.5MB / 2GB 或裸字节数；区间为半开 [起始, 结束)。"
         elif filetype_rule:
             hint = "文件类型：按魔数识别真实类型（逗号分隔，如 pdf,zip,exe），可发现改名文件。"
+        elif metadata_rule:
+            hint = "文档元数据：读取 docx/xlsx/pptx 的作者 / 公司 / 标题等字段并做包含匹配。"
+        elif dictionary_rule:
+            hint = "自定义词典：每行一个词条，命中任意词条即算该规则命中（忽略大小写）。"
+        elif hash_rule:
+            hint = "文件哈希：每行一个 SHA-256，按文件内容摘要精确匹配。"
+        elif entropy_rule:
+            hint = "高熵串：长度 ≥ 最小长度且 Shannon 熵 ≥ 阈值的随机 / 加密风格字符串。"
         elif keyword:
             hint = "关键词：按原文包含匹配，可勾选整词；默认不区分大小写。可换行，保存时合并为单行。"
         else:
@@ -837,6 +907,20 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
             )
         elif kind == MATCH_FILETYPE:
             matcher = Matcher(kind=kind, value=self._filetype_value.text().strip())
+        elif kind == MATCH_METADATA:
+            matcher = Matcher(
+                kind=kind,
+                value=self._metadata_key.currentData() or METADATA_KEYS[0],
+                text=self._metadata_text.text().strip(),
+            )
+        elif kind in (MATCH_DICTIONARY, MATCH_HASH):
+            matcher = Matcher(kind=kind, value=self._extra.toPlainText().strip())
+        elif kind == MATCH_ENTROPY:
+            matcher = Matcher(
+                kind=kind,
+                value=self._entropy_value.text().strip(),
+                value2=self._entropy_min.text().strip() or "24",
+            )
         elif kind == MATCH_SIZE:
             compare = self._size_op.currentData() or SIZE_LT
             matcher = Matcher(
@@ -2511,7 +2595,23 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         copy_path = menu.addAction("复制文件路径")
         copy_path.setEnabled(path is not None)
         copy_path.triggered.connect(self._copy_selected_paths)
+        menu.addSeparator()
+        allow = menu.addAction("加入路径排除白名单")
+        allow.setEnabled(path is not None)
+        allow.triggered.connect(self._allowlist_selected)
         menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _allowlist_selected(self) -> None:
+        """把选中行路径加入排除白名单（新增禁用路径规则并追加到启用组合式）。"""
+        paths = self._selected_paths()
+        if not paths:
+            self.set_page_status("results", "请先在结果树选择一行")
+            return
+        ruleset = self.ruleset
+        for path in paths:
+            ruleset = add_path_allowlist(ruleset, str(path))
+        self._sync_ruleset(ruleset, message=f"已将 {len(paths)} 条路径加入排除白名单（下次扫描生效）")
+        self.set_page_status("results", f"已将 {len(paths)} 条路径加入排除白名单（下次扫描生效）")
 
     def _result_item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
         """双击行直接定位该行文件。"""

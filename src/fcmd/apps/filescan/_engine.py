@@ -15,7 +15,10 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import math
 import os
+import re
 import stat
 import threading
 import time
@@ -37,6 +40,7 @@ from fcmd.apps.filescan._extract import (
     extract_document,
 )
 from fcmd.apps.filescan._filetype import archive_members, detect_file_type
+from fcmd.apps.filescan._metadata import METADATA_LABELS, read_document_metadata
 from fcmd.apps.filescan._rules import (
     SIZE_BETWEEN,
     SIZE_GT,
@@ -131,6 +135,8 @@ LOCATION_PATH = "路径"
 LOCATION_SIZE = "文件大小"
 LOCATION_FILETYPE = "文件类型"
 LOCATION_ARCHIVE = "归档成员"
+LOCATION_HASH = "文件哈希"
+LOCATION_METADATA = "元数据"
 LOCATION_TIME_LABELS = TIME_TARGET_LABELS
 """时间命中的位置标签（修改时间 / 创建时间 / 访问时间），``line_no`` 同样为 0。"""
 
@@ -962,7 +968,7 @@ def _read_text(path: Path, options: ScanOptions, size: int | None = None) -> tup
     return encoding, text, len(raw)
 
 
-def _collect_matches(  # noqa: PLR0913, PLR0917 - 匹配参数成组传入
+def _collect_matches(  # noqa: PLR0912, PLR0913, PLR0917 - 逐策略匹配 + 参数成组
     text: str,
     compiled_rules: Sequence[CompiledRule],
     options: ScanOptions,
@@ -980,6 +986,7 @@ def _collect_matches(  # noqa: PLR0913, PLR0917 - 匹配参数成组传入
     matches: list[RuleMatch] = []
     rule_lines: dict[str, set[int]] = {}
     rule_counts: dict[str, int] = {}
+    entropy_rules = [item for item in compiled_rules if item.threshold is not None]
     for line_no, line in enumerate(text.splitlines(), start=1):
         if _is_cancelled(token):
             return None
@@ -1015,7 +1022,36 @@ def _collect_matches(  # noqa: PLR0913, PLR0917 - 匹配参数成组传入
                             boundaries=boundaries,
                         )
                     )
+    for entropy_rule in entropy_rules:
+        pattern = re.compile(rf"[A-Za-z0-9+/=_-]{{{entropy_rule.min_length},}}")
+        threshold = entropy_rule.threshold or 0.0
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            for found in pattern.finditer(line):
+                if _shannon_entropy(found.group(0)) < threshold:
+                    continue
+                matched_ids.add(entropy_rule.id)
+                rule_counts[entropy_rule.id] = rule_counts.get(entropy_rule.id, 0) + 1
+                if len(matches) < limit:
+                    matches.append(
+                        _build_match(
+                            entropy_rule,
+                            line,
+                            line_no,
+                            found,
+                            options.context_chars,
+                            location=location,
+                        )
+                    )
     return matched_ids, matches, rule_lines, rule_counts
+
+
+def _shannon_entropy(value: str) -> float:
+    """Shannon 熵（bits/字符），用于发现随机 / 加密风格的字符串。"""
+    if not value:
+        return 0.0
+    counts = {char: value.count(char) for char in set(value)}
+    length = len(value)
+    return -sum((count / length) * math.log2(count / length) for count in counts.values())
 
 
 _DOCUMENT_REASONS: dict[str, str] = {
@@ -1262,6 +1298,83 @@ def _match_archive(
     return matched_ids, matches, rule_counts
 
 
+def _match_metadata(
+    path: Path,
+    compiled_rules: Sequence[CompiledRule],
+) -> tuple[set[str], list[RuleMatch], dict[str, int]]:
+    """对 Office 文档元数据（作者 / 公司 / 标题等）求值。"""
+    rules = [item for item in compiled_rules if item.metadata_key]
+    if not rules:
+        return set(), [], {}
+    metadata = read_document_metadata(path)
+    if not metadata:
+        return set(), [], {}
+    matched_ids: set[str] = set()
+    matches: list[RuleMatch] = []
+    rule_counts: dict[str, int] = {}
+    for compiled in rules:
+        value = metadata.get(compiled.metadata_key, "")
+        regex = compiled.regex
+        if not value or regex is None:
+            continue
+        match = regex.search(value)
+        if match is None:
+            continue
+        matched_ids.add(compiled.id)
+        rule_counts[compiled.id] = 1
+        label = METADATA_LABELS.get(compiled.metadata_key, compiled.metadata_key)
+        item = _build_match(
+            compiled,
+            value,
+            0,
+            match,
+            80,
+            location=f"{LOCATION_METADATA}:{label}",
+        )
+        matches.append(replace(item, sensitive=False))
+    return matched_ids, matches, rule_counts
+
+
+def _match_hash(
+    path: Path,
+    compiled_rules: Sequence[CompiledRule],
+    options: ScanOptions,
+) -> tuple[set[str], list[RuleMatch], dict[str, int]]:
+    """按 SHA-256 精确匹配文件内容（最多读取单文件上限）。"""
+    rules = [item for item in compiled_rules if item.hashes]
+    if not rules:
+        return set(), [], {}
+    try:
+        with path.open("rb") as handle:
+            digest = hashlib.sha256(handle.read(options.max_file_bytes)).hexdigest()
+    except OSError:
+        return set(), [], {}
+    matched_ids: set[str] = set()
+    matches: list[RuleMatch] = []
+    rule_counts: dict[str, int] = {}
+    for compiled in rules:
+        if digest not in compiled.hashes:
+            continue
+        matched_ids.add(compiled.id)
+        rule_counts[compiled.id] = 1
+        matches.append(
+            RuleMatch(
+                rule_id=compiled.id,
+                rule_name=compiled.name,
+                line_no=0,
+                start=0,
+                end=0,
+                excerpt=digest,
+                context=digest,
+                context_start=0,
+                location=LOCATION_HASH,
+                severity=compiled.severity,
+                sensitive=False,
+            )
+        )
+    return matched_ids, matches, rule_counts
+
+
 def _match_size(
     path: Path,
     compiled_rules: Sequence[CompiledRule],
@@ -1405,14 +1518,26 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
     size_ids, size_matches, size_counts = _match_size(path, context.compiled_rules, context.options, size)
     type_ids, type_matches, type_counts = _match_filetype(path, context.compiled_rules)
     archive_ids, archive_matches, archive_counts = _match_archive(path, context.compiled_rules, context.options)
-    metadata_matches = [*name_matches, *time_matches, *size_matches, *type_matches, *archive_matches]
-    metadata_ids = name_ids | time_ids | size_ids | type_ids | archive_ids
+    meta_ids, meta_matches, meta_counts = _match_metadata(path, context.compiled_rules)
+    hash_ids, hash_matches, hash_counts = _match_hash(path, context.compiled_rules, context.options)
+    metadata_matches = [
+        *name_matches,
+        *time_matches,
+        *size_matches,
+        *type_matches,
+        *archive_matches,
+        *meta_matches,
+        *hash_matches,
+    ]
+    metadata_ids = name_ids | time_ids | size_ids | type_ids | archive_ids | meta_ids | hash_ids
     metadata_counts = {
         **name_counts,
         **time_counts,
         **size_counts,
         **type_counts,
         **archive_counts,
+        **meta_counts,
+        **hash_counts,
     }
     suffix = path.suffix.lower()
     if context.options.scan_documents and suffix in DOCUMENT_EXTENSIONS:
