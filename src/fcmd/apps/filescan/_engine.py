@@ -251,7 +251,7 @@ DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
 """
 
 DEFAULT_SCAN_EXTENSIONS: tuple[str, ...] = DEFAULT_TEXT_EXTENSIONS + DOCUMENT_EXTENSIONS
-"""默认白名单：文本后缀 + 文档后缀（docx/xlsx/pptx/odt/ods 走文档抽取）。"""
+"""默认白名单：文本后缀 + 文档后缀（docx/xlsx/pptx/odt/ods/doc/xls/ppt/pdf 走文档抽取）。"""
 
 DEFAULT_SKIP_DIRS: tuple[str, ...] = (
     # 版本控制 / IDE / 依赖 / 构建产物
@@ -327,7 +327,7 @@ class ScanOptions:
     ``ext_whitelist`` 是后缀白名单（默认 :data:`DEFAULT_SCAN_EXTENSIONS`，含文本与
     文档后缀），名单外的文件不读内容直接跳过；``include_exts`` 只做白名单内的收窄，
     ``force_exts`` 强制扫描名单外的后缀（逃生口），``exclude_exts`` 优先级最高。
-    ``scan_documents`` 为真时 docx/xlsx/pptx/odt/ods 走文档抽取（默认开启），
+    ``scan_documents`` 为真时 docx/xlsx/pptx/odt/ods/doc/xls/ppt/pdf 走文档抽取（默认开启），
     关闭后这些后缀按普通文本读取（通常会被二进制判定跳过）。
     ``use_processes`` 只影响调度方式：达到 :data:`PROCESS_MIN_FILES` /
     :data:`PROCESS_MIN_BYTES` 阈值时用进程池绕开 GIL，结果与线程池逐字节一致。

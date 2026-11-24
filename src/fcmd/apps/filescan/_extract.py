@@ -1,9 +1,11 @@
-"""filescan 文档文本抽取：docx / xlsx / pptx / odt / ods / pdf。
+"""filescan 文档文本抽取：docx / xlsx / pptx / odt / ods / doc / xls / ppt / pdf。
 
 设计要点：
 
 - 前五种格式本质都是 zip + XML，用 ``zipfile`` 打开、``xml.etree.iterparse``
   流式抽取，不引入第三方依赖；
+- doc / xls / ppt 是 OLE 复合文档，由 :mod:`fcmd.apps.filescan._extract_legacy`
+  用标准库解析片段表 / SST / 记录树（按需导入，避免循环依赖）；
 - PDF 走可选依赖 ``pypdf``（``pip install "fcmd[pdf]"``），按 ``find_spec``
   探测 + 函数内延迟导入，缺失时抛 :data:`KIND_UNSUPPORTED` 并带安装提示；
 - 抽取结果是一组 :class:`TextUnit`（文本 + 可读位置），位置用于把命中回溯到
@@ -55,8 +57,11 @@ PDF_EXTENSIONS: tuple[str, ...] = (".pdf",)
 _ZIP_EXTENSIONS: tuple[str, ...] = (".docx", ".xlsx", ".pptx", ".odt", ".ods")
 """按 zip + XML 解析的后缀（标准库实现）。"""
 
-DOCUMENT_EXTENSIONS: tuple[str, ...] = _ZIP_EXTENSIONS + PDF_EXTENSIONS
-"""默认按文档解析的后缀（zip 容器 + PDF）。"""
+_OLE_EXTENSIONS: tuple[str, ...] = (".doc", ".xls", ".ppt")
+"""按 OLE 复合文档解析的旧版 Office 后缀（标准库实现，见 ``_extract_legacy``）。"""
+
+DOCUMENT_EXTENSIONS: tuple[str, ...] = _ZIP_EXTENSIONS + _OLE_EXTENSIONS + PDF_EXTENSIONS
+"""默认按文档解析的后缀（zip 容器 + 旧版 Office + PDF）。"""
 
 DOCUMENT_MAX_BYTES = 32 * 1024 * 1024
 """单个文档文件的读取上限（32 MiB）。"""
@@ -89,7 +94,7 @@ KIND_UNSUPPORTED = "unsupported"
 KIND_TOO_LARGE = "too_large"
 
 _OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
-"""OLE 复合文档魔数：加密后的 OOXML 会整体变成这种容器。"""
+"""OLE 复合文档魔数：加密后的 OOXML 会整体变成这种容器；旧版 Office 原生也是这种容器。"""
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -514,11 +519,17 @@ def extract_document(path: Path, size: int | None = None) -> list[TextUnit]:
     单元，否则按「无文本层」抛错。
     """
     suffix = path.suffix.lower()
-    extractor = _EXTRACTORS.get(suffix)
-    if extractor is None and suffix not in PDF_EXTENSIONS:
-        raise ExtractError(KIND_UNSUPPORTED, f"不支持解析 {suffix or '无后缀'} 文档")
-    _document_size(path, size)
-    units = _extract_zip_document(path, extractor) if extractor is not None else _extract_pdf(path)
+    if suffix in _OLE_EXTENSIONS:
+        from fcmd.apps.filescan._extract_legacy import extract_legacy_text
+
+        _document_size(path, size)
+        units = extract_legacy_text(path)
+    else:
+        extractor = _EXTRACTORS.get(suffix)
+        if extractor is None and suffix not in PDF_EXTENSIONS:
+            raise ExtractError(KIND_UNSUPPORTED, f"不支持解析 {suffix or '无后缀'} 文档")
+        _document_size(path, size)
+        units = _extract_zip_document(path, extractor) if extractor is not None else _extract_pdf(path)
     if not units:
         raise ExtractError(KIND_NO_TEXT, "文档没有可扫描的文本")
     return units

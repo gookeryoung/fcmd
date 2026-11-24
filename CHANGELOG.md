@@ -7,6 +7,9 @@
 
 ### 变更
 
+- `filescan` 文档解析补齐旧版 Office：`.doc` / `.xls` / `.ppt`（OLE 复合文档）纳入
+  内置白名单与 `DOCUMENT_EXTENSIONS`，用标准库解析片段表 / SST / 记录树；加密、
+  损坏、无文本分别归入既有跳过原因。
 - `filescan` 结果缓存改为长期有效：去掉 7 天 TTL，条目只在文件大小 / 修改时间或
   规则与命中相关选项变化时失效；保留 10 万条容量上限（最旧优先淘汰）与手动清理。
 - `filescan` 新增 SARIF 2.1.0 报告格式（`--format sarif` / GUI 导出 `.sarif`）：每条命中

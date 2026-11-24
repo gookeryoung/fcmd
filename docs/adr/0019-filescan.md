@@ -150,6 +150,15 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
 混合目录的扫描耗时主要由「白名单内文件数」决定（见 D9 实测）。需要扫描名单外
 格式时用 `force_exts`（CLI `--force-ext`、GUI「强制后缀」）或把白名单改成 `*`。
 
+文档解析（`scan_documents` 默认开）覆盖三组格式，全部用标准库（PDF 可选依赖）：
+
+- docx / xlsx / pptx / odt / ods：zip + XML 流式抽取，三重上限防解压炸弹
+  （成员数 5000 / 单部件 8 MiB / 总量 256 MiB）；
+- doc / xls / ppt：OLE 复合文档，自带最小 CFB 读取器（FAT / mini-FAT / 目录），
+  Word 走片段表、Excel 走 SST 共享字符串（含 CONTINUE 续记录）、PowerPoint 走
+  记录树的文本原子；加密文档记 `encrypted`，结构异常记 `corrupt`；
+- pdf：可选依赖 `pypdf`，缺失时记 `unsupported` 并附安装提示。
+
 遍历用 `os.scandir` 迭代实现，不跟随符号链接（除非显式开启），权限错误、
 读取失败记入 `errors` 并继续。二进制、超限、大小过滤、符号链接记入 `skipped`
 （带原因），不当作错误；`skip_dirs` / 隐藏目录在目录层剪枝，同样记入 `skipped`
