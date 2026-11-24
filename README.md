@@ -95,7 +95,7 @@ fcmd doctor            # 诊断环境问题
 |------|------|
 | `fcmd graph <tool> [subcommand]` | 可视化工具子命令的 DAG（Mermaid/layers/describe） |
 | `fcmd info [tool] [subcommand]` | 展示工具或子命令的元信息（不执行） |
-| `fcmd completion --shell bash\|zsh\|fish` | 生成 shell 补全脚本 |
+| `fcmd completion --shell bash\|zsh\|fish\|powershell` | 生成 shell 补全脚本 |
 | `fcmd yaml <file> [job]` | 从 YAML 加载任务图并执行（支持 `--dry-run`/`--strategy`） |
 | `fcmd env [--json]` | 展示运行环境（fcmd 版本、Python、平台、工具数、可选依赖）；`--vars [--prefix P]` 只读列出环境变量 |
 | `fcmd doctor` | 诊断环境问题（Python 版本、核心模块、工具模块、可选依赖、PATH 命令） |
@@ -107,6 +107,7 @@ shell 补全安装：
 eval "$(fcmd completion --shell bash)"       # bash
 eval "$(fcmd completion --shell zsh)"         # zsh
 fcmd completion --shell fish | source         # fish
+fcmd completion --shell powershell | Invoke-Expression   # PowerShell
 ```
 
 ## 工具列表

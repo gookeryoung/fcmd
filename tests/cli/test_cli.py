@@ -971,9 +971,19 @@ class TestBuiltinCompletion:
         out = capsys.readouterr().out
         assert "_fcmd_complete" in out
 
+    def test_completion_powershell_outputs_script(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd completion --shell powershell 输出 PowerShell 补全脚本。"""
+        app = FcmdApp(["completion", "--shell", "powershell"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "Register-ArgumentCompleter -Native -CommandName fcmd" in out
+        assert "CompletionResult" in out
+        assert "'pymake'" in out
+        assert "'pm'" in out
+
     def test_completion_invalid_shell_returns_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd completion --shell invalid 返回 1（argparse 报错）。"""
-        app = FcmdApp(["completion", "--shell", "powershell"])
+        app = FcmdApp(["completion", "--shell", "tcsh"])
         # argparse 解析失败 SystemExit(2) 被 _builtin_completion 直接抛出
         with pytest.raises(SystemExit) as exc_info:
             app.run()

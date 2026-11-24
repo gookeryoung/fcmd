@@ -18,7 +18,7 @@ from typing import Any
 
 from fcmd.cli._common import _BUILTIN_COMMANDS
 
-__all__ = ["gen_bash_script", "gen_fish_script", "gen_zsh_script"]
+__all__ = ["gen_bash_script", "gen_fish_script", "gen_powershell_script", "gen_zsh_script"]
 
 
 def gen_bash_script(tools_data: list[dict[str, Any]]) -> str:
@@ -138,3 +138,51 @@ def gen_fish_script(tools_data: list[dict[str, Any]]) -> str:
         for sc, help_text in tool["subs"]:
             lines.append(f"complete -c fcmd -f -n '{seen_cond}' -a '{sc}' -d '{help_text}'")
     return "\n".join(lines) + "\n"
+
+
+def _ps_quote(text: str) -> str:
+    """把文本渲染为 PowerShell 单引号字符串（内部单引号双写）。"""
+    return "'" + text.replace("'", "''") + "'"
+
+
+def gen_powershell_script(tools_data: list[dict[str, Any]]) -> str:
+    """生成 PowerShell 补全脚本（``Register-ArgumentCompleter -Native``）。"""
+    # 第一层：内建命令 + 工具名 + 别名 + 全局选项
+    first_words: list[str] = [*list(_BUILTIN_COMMANDS), "--version", "-V"]
+    for tool in tools_data:
+        first_words.append(tool["name"])
+        first_words.extend(tool["aliases"])
+    first_str = ", ".join(_ps_quote(word) for word in first_words)
+
+    # 子命令映射：工具名与别名各自一份，值相同
+    sub_entries: list[str] = []
+    for tool in tools_data:
+        if not tool["subs"]:
+            continue
+        subs_str = ", ".join(_ps_quote(sc) for sc, _ in tool["subs"])
+        for name in [tool["name"], *tool["aliases"]]:
+            sub_entries.append(f"        {_ps_quote(name)} = @({subs_str})")
+    sub_table = ",\n".join(sub_entries)
+
+    return (
+        "# fcmd PowerShell 补全脚本\n"
+        "# 安装: fcmd completion --shell powershell | Invoke-Expression\n"
+        "# 或保存为 fcmd-completion.ps1，并在 $PROFILE 中 . 引用该文件\n"
+        "Register-ArgumentCompleter -Native -CommandName fcmd -ScriptBlock {\n"
+        "    param($wordToComplete, $commandAst, $cursorPosition)\n"
+        f"    $firstLevel = @({first_str})\n"
+        "    $subcommands = @{\n"
+        f"{sub_table}\n"
+        "    }\n"
+        "    $elements = @($commandAst.CommandElements | ForEach-Object { $_.Extent.Text })\n"
+        "    $tool = if ($elements.Count -ge 2) { $elements[1] } else { '' }\n"
+        "    if ($tool -and $subcommands.ContainsKey($tool)) {\n"
+        "        $candidates = $subcommands[$tool]\n"
+        "    } else {\n"
+        "        $candidates = $firstLevel\n"
+        "    }\n"
+        '    $candidates | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {\n'
+        "        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)\n"
+        "    }\n"
+        "}\n"
+    )

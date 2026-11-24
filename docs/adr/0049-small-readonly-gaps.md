@@ -1,6 +1,6 @@
-# 0049 小型只读能力补齐：`env --vars` 与 `pathtool join/kind`
+# 0049 小型只读能力补齐：`env --vars`、`pathtool join/kind`、`completion powershell`
 
-- 状态：已落地（env / pathtool）；其余小项待办
+- 状态：已落地（env / pathtool / powershell 补全）；其余小项待办
 - 日期：2026-11-24
 - 关联：[0037](0037-unified-result-envelope.md)（机读输出）、[0048](0048-config-format-convert.md)（对照补齐）
 
@@ -20,6 +20,11 @@
 | D2 | `--vars --json` 输出 `{prefix, count, vars}`；无匹配时人类可读输出 `(无匹配的环境变量)`，退出码仍为 0 | 空结果按错误码 4（「查不到」不是错误，与 `grep` 无匹配一致） | 同上 |
 | D3 | 默认 `fcmd env`（不加 `--vars`）输出完全不变 | 把环境变量列表并进概览（一次性打印几百行，破坏概览的可读性） | 同上 |
 | D4 | `pathtool join <片段...>` 按 `Path` 语义拼接后规范化输出；`pathtool kind <path>` 输出「绝对路径 / 相对路径」 | `join` 只做字符串拼接（Windows 混合分隔符时结果不可用）；`kind` 用退出码 0/1 表达判定（与既有只读查询工具「打印结论、退出 0」不一致） | `infras/fs/path.py`、`tools/system/pathtool.py` |
+| D5 | `fcmd completion --shell powershell` 生成 `Register-ArgumentCompleter -Native` 脚本：第一层为内建命令 + 工具名/别名 + `--version`，第二层按「首参数命中工具」查子命令表 | 只为 PowerShell 设动态补全（每次 Tab 调 `fcmd info`，冷启动慢）；只补第一层（子命令是 fcmd 最常用的 Tab 场景） | `cli/_completion_scripts.py`、`cli/_builtins/completion_cmd.py` |
+
+`--shell` 从三值扩展到四值：原先取值非法的 `powershell` 现在是合法目标
+（这是有意行为变更，见「后果」）；非法 shell 的用法错误仍由 argparse 以
+退出码 2 拒绝。
 
 ## 验证
 
@@ -28,16 +33,22 @@
 - `tests/tools/system/test_cli_pathtool.py::TestJoinAndKind`：`join_path`
   基本拼接 / 消 `..` / 绝对片段覆盖 / 空片段报错，`join` 与 `kind`
   两个子命令的人类可读输出。
+- `tests/cli/test_completion_scripts.py`：PowerShell 脚本结构（补全注册、
+  第一层、子命令表、无子命令工具不入门映射）、单引号转义、全无子命令；
+  `tests/cli/test_cli.py::TestBuiltinCompletion`：`--shell powershell`
+  端到端输出，非法 shell 改用 `tcsh` 断言退出码 2。
 
 ## 后果
 
 - 脚本可 `fcmd env --vars --prefix PATH --json` 取机读结果，不依赖平台差异
   （`set` / `env` / `printenv`）；
 - 既有 `fcmd env` / `fcmd env --json` 与 `pathtool` 前四个子命令输出、
-  退出码零变化。
+  退出码零变化；
+- **`fcmd completion --shell powershell` 从「非法取值（退出 2）」变为
+  「正常生成脚本（退出 0）」**，这是本次唯一的用户可见行为变更；依赖
+  旧行为的调用方需改用其他非法值来测试参数校验。
 
 ## 交接
 
-- 其余小型缺口继续按批补齐：`completion powershell`、`txttool count` 字节数、
-  `stattool percentile`；
+- 其余小型缺口继续按批补齐：`txttool count` 字节数、`stattool percentile`；
 - 存量破坏性工具声明 `requires_confirmation` 属行为变更，仍未开启（见 0047）。

@@ -6,7 +6,12 @@ import argparse
 import sys
 from typing import Any
 
-from fcmd.cli._completion_scripts import gen_bash_script, gen_fish_script, gen_zsh_script
+from fcmd.cli._completion_scripts import (
+    gen_bash_script,
+    gen_fish_script,
+    gen_powershell_script,
+    gen_zsh_script,
+)
 from fcmd.cli._discovery import aliases_for, ensure_tools_discovered, import_all_tool_modules, tool_names
 from fcmd.core.exit_codes import ExitCode
 
@@ -14,13 +19,14 @@ __all__ = ["run"]
 
 
 def run(argv: list[str]) -> int:
-    """``fcmd completion --shell bash|zsh|fish``。
+    """``fcmd completion --shell bash|zsh|fish|powershell``。
 
     生成 shell 补全脚本到 stdout，可重定向安装::
 
         eval "$(fcmd completion --shell bash)"       # bash
         eval "$(fcmd completion --shell zsh)"         # zsh
         fcmd completion --shell fish | source         # fish
+        fcmd completion --shell powershell | Invoke-Expression   # PowerShell
 
     脚本为静态生成（嵌入当前工具/子命令名），新增工具后需重新生成。
     """
@@ -30,7 +36,7 @@ def run(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--shell",
-        choices=("bash", "zsh", "fish"),
+        choices=("bash", "zsh", "fish", "powershell"),
         default="bash",
         help="目标 shell（默认 bash）",
     )
@@ -47,8 +53,10 @@ def run(argv: list[str]) -> int:
         script = gen_bash_script(tools_data)
     elif parsed.shell == "zsh":
         script = gen_zsh_script(tools_data)
-    else:
+    elif parsed.shell == "fish":
         script = gen_fish_script(tools_data)
+    else:
+        script = gen_powershell_script(tools_data)
     sys.stdout.write(script)
     sys.stdout.flush()
     return 0
