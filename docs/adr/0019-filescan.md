@@ -303,6 +303,9 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
      「导入配置…」/「导出配置…」（配置见 D10）。
    设置页的控件就是扫描时用的那套值（`_scan_options()` 直接读），不需要额外同步。
 
+对话框上次目录（添加任务 / 导入 / 导出各记一份，`last_task_dir` /
+`last_import_dir` / `last_export_dir`）随设置持久化，下次打开直接落在上次位置；
+路径失效时回落系统默认位置。
 设置（目录、选项、规则集、几何位置与侧边栏折叠状态，含未在界面暴露的
 `encodings` / `max_hits_per_file` / `use_processes`）持久化到
 `~/.fcmd/ui/filescanw.json`；每页是 `AppPage` 子类，状态栏文字按页隔离

@@ -24,6 +24,7 @@ import fcmd
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _guiwindow
 from fcmd.gui.settings import SettingsStore
+from fcmd.gui.uistate import merge_recent, normalize_recent
 
 __all__ = [
     "DEFAULT_GEOMETRY",
@@ -72,10 +73,8 @@ valid_geometry = _guiconfig.valid_geometry
 
 
 def add_recent_file(files: list[str], path: Path, limit: int = RECENT_LIMIT) -> list[str]:
-    """把路径插入最近列表头部，去重并截断到 ``limit`` 条。"""
-    entry = str(path)
-    remaining = [item for item in files if item != entry]
-    return [entry, *remaining][:limit]
+    """把路径插入最近列表头部，去重（Windows 大小写不敏感）并截断到 ``limit`` 条。"""
+    return merge_recent(files, path, limit=limit)
 
 
 def load_settings(path: Path | None = None) -> PeviewSettings:
@@ -91,7 +90,7 @@ def load_settings(path: Path | None = None) -> PeviewSettings:
     if isinstance(file_path, str):
         settings.file_path = file_path
     if isinstance(recent, list):
-        settings.recent_files = [item for item in recent if isinstance(item, str)][:RECENT_LIMIT]
+        settings.recent_files = normalize_recent(recent, limit=RECENT_LIMIT)
     if isinstance(geometry, str) and valid_geometry(geometry):
         settings.geometry = geometry
     if isinstance(splitter, list) and len(splitter) == 2 and all(isinstance(item, int) for item in splitter):

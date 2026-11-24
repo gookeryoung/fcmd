@@ -215,6 +215,23 @@ def test_settings_use_cache_roundtrip() -> None:
     assert filescanw.settings_from_mapping({"use_cache": "no"}).use_cache is True
 
 
+def test_settings_dialog_dirs_roundtrip() -> None:
+    """对话框上次目录随设置持久化；缺失 / 非法类型回落空串。"""
+    settings = filescanw.FilescanSettings(
+        last_task_dir="D:/scan",
+        last_import_dir="D:/in",
+        last_export_dir="D:/out",
+    )
+    mapping = filescanw.settings_to_mapping(settings)
+    assert mapping["last_task_dir"] == "D:/scan"
+    assert mapping["last_import_dir"] == "D:/in"
+    assert mapping["last_export_dir"] == "D:/out"
+    loaded = filescanw.settings_from_mapping(mapping)
+    assert (loaded.last_task_dir, loaded.last_import_dir, loaded.last_export_dir) == ("D:/scan", "D:/in", "D:/out")
+    fallback = filescanw.settings_from_mapping({"last_export_dir": 3})
+    assert fallback.last_export_dir == ""
+
+
 def test_new_expression_id_avoids_rule_and_expression_ids() -> None:
     ruleset = builtin_ruleset()
     assert filescanw.new_expression_id(ruleset) == "expr"

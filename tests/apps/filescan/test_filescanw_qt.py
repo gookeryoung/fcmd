@@ -667,6 +667,48 @@ def test_add_remove_and_clear_tasks(home: Path, tmp_path: Path, monkeypatch: pyt
         window.deleteLater()
 
 
+def test_file_dialogs_remember_last_directory(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """添加任务 / 导入导出记住上次目录，下次打开直接落在同一位置。"""
+    from PySide6.QtWidgets import QFileDialog
+
+    first = tmp_path / "scan-a"
+    second = tmp_path / "scan-b"
+    out = tmp_path / "exports"
+    first.mkdir()
+    second.mkdir()
+    out.mkdir()
+    window = _window()
+    try:
+        picked: list[tuple[object, ...]] = []
+
+        def _pick_dir(*args: object, **_kwargs: object) -> str:
+            picked.append(args)
+            return str(first if len(picked) == 1 else second)
+
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", _pick_dir)
+        window._add_task()
+        assert window._current_settings().last_task_dir == str(first)
+        window._add_task()
+        assert picked[-1][2] == str(first)  # 第二次对话框从上次目录开始
+        assert window._current_settings().last_task_dir == str(second)
+        assert window._current_settings().last_task_dir == str(second)
+
+        saved: list[tuple[object, ...]] = []
+
+        def _save_file(*args: object, **_kwargs: object) -> tuple[str, str]:
+            saved.append(args)
+            return str(out / "filescan-rules.json"), "JSON (*.json)"
+
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", _save_file)
+        window._export_rules()
+        assert window._current_settings().last_export_dir == str(out)
+        window._export_rules()
+        assert Path(str(saved[-1][2])).parent == out
+        assert window._current_settings().last_export_dir == str(out)
+    finally:
+        window.deleteLater()
+
+
 def test_settings_page_holds_options_whitelist_and_cache(home: Path, sample: Path) -> None:
     """选项 / 白名单 / 缓存配置在设置页；扫描页只留目录、动作与只读摘要。"""
     from fcmd.gui.widgets import Card

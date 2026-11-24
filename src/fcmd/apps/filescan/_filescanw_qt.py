@@ -163,6 +163,7 @@ from fcmd.apps.filescan._scenarios import load_scenario, scenario_templates
 from fcmd.gui import style as _qt_theme
 from fcmd.gui.icons import icon
 from fcmd.gui.page import AppPage, PageSpec
+from fcmd.gui.uistate import PathHistory
 from fcmd.gui.widgets import (
     ButtonStateMixin,
     Card,
@@ -1334,6 +1335,13 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._viewing_task_id = ""
         self._rendered_result: ScanResult | None = None
         self._whitelist_notice = ""
+        # 文件 / 目录对话框的上次位置：与设置字段同名，读写交给共用 PathHistory。
+        self._dialog_state: dict[str, str] = {
+            "last_task_dir": self.settings.last_task_dir,
+            "last_import_dir": self.settings.last_import_dir,
+            "last_export_dir": self.settings.last_export_dir,
+        }
+        self._paths = PathHistory(self._dialog_state)
         super().__init__(
             title=TITLE,
             config_name=fw.SETTINGS_NAME,
@@ -1876,11 +1884,25 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         if isinstance(row, _ScanTaskRow):
             self._task_detail.render(row.task)
 
+    def _dialog_dir(self, field: str) -> str:
+        """文件 / 目录对话框的上次选择目录（共用 PathHistory）。"""
+        return self._paths.start(field)
+
+    def _remember_dialog_dir(self, field: str, chosen: str | Path) -> None:
+        """记住本次选择所在目录并立即落盘。"""
+        self._paths.remember(field, chosen)
+        self._persist_settings(self.geometry_text())
+
+    def _default_save_name(self, field: str, filename: str) -> str:
+        """保存对话框的默认路径：上次导出目录 + 默认文件名。"""
+        return self._paths.default_name(field, filename)
+
     def _add_task(self) -> None:
         """新增任务：先选目录，再生成唯一 id 与默认名称。"""
-        chosen = QFileDialog.getExistingDirectory(self, "添加扫描任务", "")
+        chosen = QFileDialog.getExistingDirectory(self, "添加扫描任务", self._dialog_dir("last_task_dir"))
         if not chosen:
             return
+        self._remember_dialog_dir("last_task_dir", chosen)
         normalized = str(Path(chosen).expanduser())
         if any(item.path == normalized for item in self._tasks):
             self.set_page_status("scan", f"目录已在任务列表中：{normalized}")
@@ -2193,9 +2215,15 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._sync_ruleset(clear_rules(self.ruleset), message="规则与组合式已清空")
 
     def _import_rules(self) -> None:
-        chosen, _ = QFileDialog.getOpenFileName(self, "导入规则集", "", "JSON (*.json);;全部文件 (*.*)")
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入规则集",
+            self._dialog_dir("last_import_dir"),
+            "JSON (*.json);;全部文件 (*.*)",
+        )
         if not chosen:
             return
+        self._remember_dialog_dir("last_import_dir", chosen)
         try:
             imported = load_ruleset(Path(chosen))
         except ValueError as exc:
@@ -2207,11 +2235,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         chosen, _ = QFileDialog.getSaveFileName(
             self,
             "导出规则集",
-            "filescan-rules.json",
+            self._default_save_name("last_export_dir", "filescan-rules.json"),
             "JSON (*.json)",
         )
         if not chosen:
             return
+        self._remember_dialog_dir("last_export_dir", chosen)
         try:
             save_ruleset(self.ruleset, Path(chosen))
         except OSError as exc:
@@ -2850,11 +2879,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         chosen, _ = QFileDialog.getSaveFileName(
             self,
             "导出扫描报告",
-            f"{stem}.csv",
+            self._default_save_name("last_export_dir", f"{stem}.csv"),
             "CSV (*.csv);;JSON (*.json);;SARIF (*.sarif);;文本 (*.txt)",
         )
         if not chosen:
             return
+        self._remember_dialog_dir("last_export_dir", chosen)
         suffix = Path(chosen).suffix.lower()
         fmt = {".json": "json", ".txt": "text", ".log": "text", ".sarif": "sarif"}.get(suffix, "csv")
         include_raw = self._export_raw.isChecked()
@@ -2883,9 +2913,15 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self.set_page_status("settings", f"扫描缓存已清理（{removed} 条）")
 
     def _import_config(self) -> None:
-        chosen, _ = QFileDialog.getOpenFileName(self, "导入扫描配置", "", "JSON (*.json);;全部文件 (*.*)")
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入扫描配置",
+            self._dialog_dir("last_import_dir"),
+            "JSON (*.json);;全部文件 (*.*)",
+        )
         if not chosen:
             return
+        self._remember_dialog_dir("last_import_dir", chosen)
         try:
             loaded = load_config(Path(chosen))
         except ValueError as exc:
@@ -2945,11 +2981,12 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         chosen, _ = QFileDialog.getSaveFileName(
             self,
             "导出扫描配置",
-            "filescan-config.json",
+            self._default_save_name("last_export_dir", "filescan-config.json"),
             "JSON (*.json)",
         )
         if not chosen:
             return
+        self._remember_dialog_dir("last_export_dir", chosen)
         try:
             options = self._scan_options()
         except ValueError as exc:
@@ -3045,6 +3082,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             filter_path=self._filter_path.text(),
             compact_mode=self.settings.compact_mode,
             show_skipped=self.settings.show_skipped,
+            last_task_dir=self._paths.raw("last_task_dir"),
+            last_import_dir=self._paths.raw("last_import_dir"),
+            last_export_dir=self._paths.raw("last_export_dir"),
         )
 
     def _persist_settings(self, geometry: str) -> None:

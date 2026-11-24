@@ -7,6 +7,12 @@
 
 ### 变更
 
+- GUI 持久化共享方案 P0（ADR 0050）：新增 `fcmd.gui.uistate`
+  （`PathHistory` / `RecentFiles` / `DebouncedSaver`）；filescanw 的对话框目录改用
+  `PathHistory`，pevieww 的最近文件改用共享去重 / 截断规则（Windows 大小写不敏感）。
+- `filescanw` 文件 / 目录对话框记住上次选择：添加任务、导入规则 / 配置、导出报告 /
+  规则集 / 配置分别持久化上次目录（`last_task_dir` / `last_import_dir` /
+  `last_export_dir`），下次打开落在同一位置；路径失效时回落系统默认。
 - `filescanw` 结果页「显示跳过项」开关（默认关闭）：跳过 / 范围外条目默认不刷进
   结果树，避免大目录下成千上万条「跳过」淹没命中；勾选后列出文件与原因并随设置持久化。
 - `filescanw` 紧凑模式（默认开启，结果页可关）：任务行走 dense 间距（按钮 26px），
