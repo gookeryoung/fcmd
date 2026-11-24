@@ -13,11 +13,19 @@ from fcmd.apps.filescan._rules import (
     DEFAULT_SEVERITY,
     MATCH_KEYWORD,
     MATCH_REGEX,
+    MATCH_TIME,
     SEVERITY_CRITICAL,
     SEVERITY_HIGH,
     SEVERITY_LEVELS,
     SEVERITY_LOW,
+    TARGET_CONTENT,
     TARGET_FILENAME,
+    TIME_AFTER,
+    TIME_BEFORE,
+    TIME_BETWEEN,
+    TIME_CREATED,
+    TIME_MODIFIED,
+    TIME_TARGET_LABELS,
     AndExpr,
     Expression,
     Matcher,
@@ -120,6 +128,7 @@ def test_rule_validate_rejects_bad_id_and_name() -> None:
 def test_compile_rule_exposes_id_and_name() -> None:
     compiled = compile_rule(_rule("abc"))
     assert (compiled.id, compiled.name) == ("abc", "规则abc")
+    assert compiled.regex is not None
     assert compiled.regex.search("abc")
 
 
@@ -314,7 +323,7 @@ def test_matcher_target_roundtrip_and_describe() -> None:
 def test_matcher_target_rejects_unknown_value() -> None:
     with pytest.raises(ValueError, match="未知匹配对象"):
         matcher_from_mapping({"type": MATCH_KEYWORD, "text": "x", "target": "path"})
-    with pytest.raises(ValueError, match="未知匹配对象"):
+    with pytest.raises(ValueError, match="匹配对象必须是"):
         Matcher(kind=MATCH_KEYWORD, text="x", target="path").validate()
 
 
@@ -558,3 +567,85 @@ def test_remove_expression_guards_references() -> None:
         ruleset.remove_expression("base")
     removed = ruleset.remove_expression("top")
     assert removed.expression_ids() == ("base",)
+
+
+def _time_matcher(**kwargs: object) -> Matcher:
+    params: dict[str, object] = {
+        "kind": MATCH_TIME,
+        "target": TIME_MODIFIED,
+        "compare": TIME_BEFORE,
+        "value": "2026-01-01",
+    }
+    params.update(kwargs)
+    return Matcher(**params)  # type: ignore[arg-type]
+
+
+def test_time_matcher_describe_and_validate() -> None:
+    before = _time_matcher()
+    assert before.describe() == "修改时间 早于 2026-01-01"
+    assert _time_matcher(target=TIME_CREATED, compare=TIME_AFTER).describe() == "创建时间 晚于 2026-01-01"
+    between = _time_matcher(compare=TIME_BETWEEN, value2="2027-01-01")
+    assert between.describe() == "修改时间 介于 2026-01-01 ~ 2027-01-01"
+
+    with pytest.raises(ValueError, match="匹配对象必须是"):
+        _time_matcher(target=TARGET_CONTENT).validate()
+    with pytest.raises(ValueError, match="未知时间条件"):
+        _time_matcher(compare="around").validate()
+    with pytest.raises(ValueError, match="时间值不能为空"):
+        _time_matcher(value="").validate()
+    with pytest.raises(ValueError, match="不是合法的 ISO-8601"):
+        _time_matcher(value="not-a-time").validate()
+    with pytest.raises(ValueError, match="结束时间必须晚于开始时间"):
+        _time_matcher(compare=TIME_BETWEEN, value="2027-01-01", value2="2026-01-01").validate()
+
+
+def test_time_matcher_mapping_roundtrip() -> None:
+    for matcher in (
+        _time_matcher(),
+        _time_matcher(target=TIME_CREATED, compare=TIME_AFTER, value="2026-06-01T09:30:00"),
+        _time_matcher(compare=TIME_BETWEEN, value="2026-01-01", value2="2027-01-01"),
+    ):
+        payload = matcher_to_mapping(matcher)
+        assert payload["type"] == MATCH_TIME
+        assert matcher_from_mapping(payload) == matcher
+    before_payload = matcher_to_mapping(_time_matcher())
+    assert "value2" not in before_payload
+    # 缺 target 时时间规则默认修改时间。
+    assert (
+        matcher_from_mapping({"type": MATCH_TIME, "compare": TIME_AFTER, "value": "2026-01-01"}).target == TIME_MODIFIED
+    )
+    with pytest.raises(ValueError, match="value / value2 必须是字符串"):
+        matcher_from_mapping({"type": MATCH_TIME, "value": 1})
+
+
+def test_time_matcher_compiles_to_window() -> None:
+    compiled = compile_rule(Rule(id="t", name="时间", matcher=_time_matcher()))
+    assert compiled.regex is None
+    assert compiled.time_start is not None
+    assert compiled.time_end is None
+    between = compile_rule(Rule(id="b", name="区间", matcher=_time_matcher(compare=TIME_BETWEEN, value2="2027-01-01")))
+    assert between.time_end is not None and between.time_end > between.time_start  # type: ignore[operator]
+    with pytest.raises(ValueError, match="时间规则不编译正则"):
+        compile_matcher(_time_matcher())
+
+
+def test_ruleset_time_rule_roundtrip_and_near_guard() -> None:
+    ruleset = RuleSet(
+        rules=(_rule("a"), Rule(id="old", name="旧文件", matcher=_time_matcher())),
+        expressions=(_expr("a or old"),),
+    )
+    restored = ruleset_from_mapping(ruleset_to_mapping(ruleset))
+    assert restored.find("old") is not None
+    assert restored.find("old").matcher.target == TIME_MODIFIED  # type: ignore[union-attr]
+    assert ruleset_to_mapping(restored)["version"] == 3
+
+    bad = RuleSet(
+        rules=(Rule(id="old", name="旧文件", matcher=_time_matcher()),),
+        expressions=(_expr("old near[2] old"),),
+    )
+    with pytest.raises(ValueError, match="near 只支持内容 / 文件名规则"):
+        validate_ruleset(bad)
+
+
+def test_time_target_labels_cover_all_targets() -> None:
+    assert set(TIME_TARGET_LABELS) == {TIME_MODIFIED, TIME_CREATED, "accessed"}

@@ -244,6 +244,62 @@ def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
         window.deleteLater()
 
 
+def test_rule_dialog_time_type_switches_fields(home: Path) -> None:
+    """时间类型只显示时间字段 / 条件 / 时间值；介于才显示结束时间，提交回填一致。"""
+    from fcmd.apps.filescan._filescanw_qt import _RuleDialog
+    from fcmd.apps.filescan._rules import MATCH_TIME, TIME_AFTER, TIME_BETWEEN, TIME_CREATED
+
+    window = _window()
+    try:
+        dialog = _RuleDialog(window, None)
+        try:
+            dialog._kind.setCurrentText(MATCH_TIME)
+            assert dialog._text.isHidden() is True
+            assert dialog._pattern.isHidden() is True
+            assert dialog._target.isHidden() is True
+            assert dialog._case.isHidden() is True
+            assert dialog._whole.isHidden() is True
+            assert dialog._time_field.isHidden() is False
+            assert dialog._time_op.isHidden() is False
+            assert dialog._time_value.isHidden() is False
+            assert dialog._time_end.isHidden() is True
+            assert "时间" in dialog._kind_hint.text()
+
+            dialog._time_op.setCurrentIndex(dialog._time_op.findData(TIME_BETWEEN))
+            assert dialog._time_end.isHidden() is False
+            dialog._time_field.setCurrentIndex(dialog._time_field.findData(TIME_CREATED))
+            dialog._time_value.setText("2026-01-01")
+            dialog._time_end.setText("2027-01-01")
+            dialog._commit()
+            result = dialog.value()
+            assert result is not None
+            matcher = result.matcher
+            assert matcher.kind == MATCH_TIME
+            assert matcher.target == TIME_CREATED
+            assert matcher.compare == TIME_BETWEEN
+            assert matcher.value == "2026-01-01"
+            assert matcher.value2 == "2027-01-01"
+        finally:
+            dialog.deleteLater()
+
+        rule = Rule(
+            id="old",
+            name="旧文件",
+            matcher=Matcher(kind=MATCH_TIME, target=TIME_CREATED, compare=TIME_AFTER, value="2026-01-01"),
+        )
+        dialog = _RuleDialog(window, rule)
+        try:
+            assert dialog._kind.currentText() == MATCH_TIME
+            assert dialog._time_field.currentData() == TIME_CREATED
+            assert dialog._time_op.currentData() == TIME_AFTER
+            assert dialog._time_value.text() == "2026-01-01"
+            assert dialog._time_end.isHidden() is True
+        finally:
+            dialog.deleteLater()
+    finally:
+        window.deleteLater()
+
+
 def test_scan_worker_masks_context(home: Path, sample: Path) -> None:
     from fcmd.apps.filescan._engine import CancelToken, ScanOptions
     from fcmd.apps.filescan._filescanw_qt import _scan_worker, _ScanProgress

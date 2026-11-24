@@ -52,13 +52,14 @@ def mask_text(text: str) -> str:
 def context_segments(match: RuleMatch, include_raw: bool = False) -> tuple[str, str, str]:
     """把上下文切成「命中前 / 命中 / 命中后」三段，文本与富文本共用同一口径。
 
-    默认中间段是打码文本，``include_raw=True`` 时是原文。三段拼起来等于
+    默认中间段是打码文本，``include_raw=True`` 或命中标记为非敏感（时间规则）时
+    是原文。三段拼起来等于
     :func:`render_context` 的结果，GUI 因此可以在中间段单独加底色而不重复实现
     打码逻辑。
     """
     start = match.context_start
     end = start + len(match.excerpt)
-    excerpt = match.excerpt if include_raw else mask_text(match.excerpt)
+    excerpt = match.excerpt if include_raw or not match.sensitive else mask_text(match.excerpt)
     return match.context[:start], excerpt, match.context[end:]
 
 
@@ -72,9 +73,9 @@ def match_note(match: RuleMatch, include_raw: bool = False) -> str:
     """单条命中的扫描说明：``【规则：名称，匹配项：片段】``。
 
     给「复制扫描说明」用：只包含规则名与命中片段，默认打码，``include_raw=True``
-    时才用原文（与报告 / 复制的开关同一口径）。
+    时才用原文（与报告 / 复制的开关同一口径）；时间等非敏感命中直接展示原文。
     """
-    excerpt = match.excerpt if include_raw else mask_text(match.excerpt)
+    excerpt = match.excerpt if include_raw or not match.sensitive else mask_text(match.excerpt)
     return f"【规则：{match.rule_name}，匹配项：{excerpt}】"
 
 
@@ -87,7 +88,7 @@ def _match_to_mapping(match: RuleMatch, include_raw: bool) -> dict[str, Any]:
         "line": match.line_no,
         "column": match.start + 1,
         "location": match.location,
-        "excerpt": match.excerpt if include_raw else mask_text(match.excerpt),
+        "excerpt": match.excerpt if include_raw or not match.sensitive else mask_text(match.excerpt),
         "context": render_context(match, include_raw),
     }
 
@@ -158,7 +159,7 @@ def result_to_csv(result: ScanResult, include_raw: bool = False) -> str:
                     match.start + 1,
                     hit.encoding,
                     match.location,
-                    match.excerpt if include_raw else mask_text(match.excerpt),
+                    match.excerpt if include_raw or not match.sensitive else mask_text(match.excerpt),
                     render_context(match, include_raw),
                 ]
             )

@@ -37,8 +37,22 @@ from fcmd.apps.filescan._expr import (
     positive_rule_ids,
     referenced_rule_ids,
 )
+from fcmd.apps.filescan._timeutil import (
+    TIME_ACCESSED,
+    TIME_AFTER,
+    TIME_BEFORE,
+    TIME_BETWEEN,
+    TIME_CREATED,
+    TIME_MODIFIED,
+    TIME_OP_LABELS,
+    TIME_OPS,
+    TIME_TARGET_LABELS,
+    TIME_TARGETS,
+    parse_time_value,
+)
 
 __all__ = [
+    "CONTENT_TARGETS",
     "DEFAULT_GROUP",
     "DEFAULT_RULESET_NAME",
     "DEFAULT_SEVERITY",
@@ -46,6 +60,7 @@ __all__ = [
     "MATCH_KINDS",
     "MATCH_REGEX",
     "MATCH_TARGETS",
+    "MATCH_TIME",
     "SEVERITY_CRITICAL",
     "SEVERITY_HIGH",
     "SEVERITY_INFO",
@@ -55,6 +70,16 @@ __all__ = [
     "SEVERITY_MEDIUM",
     "TARGET_CONTENT",
     "TARGET_FILENAME",
+    "TIME_ACCESSED",
+    "TIME_AFTER",
+    "TIME_BEFORE",
+    "TIME_BETWEEN",
+    "TIME_CREATED",
+    "TIME_MODIFIED",
+    "TIME_OPS",
+    "TIME_OP_LABELS",
+    "TIME_TARGETS",
+    "TIME_TARGET_LABELS",
     "AndExpr",
     "CompiledRule",
     "Expr",
@@ -95,12 +120,14 @@ DEFAULT_RULESET_NAME = "内置敏感规则"
 
 MATCH_KEYWORD = "keyword"
 MATCH_REGEX = "regex"
-MATCH_KINDS: tuple[str, ...] = (MATCH_KEYWORD, MATCH_REGEX)
+MATCH_TIME = "time"
+MATCH_KINDS: tuple[str, ...] = (MATCH_KEYWORD, MATCH_REGEX, MATCH_TIME)
 
 TARGET_CONTENT = "content"
 TARGET_FILENAME = "filename"
-MATCH_TARGETS: tuple[str, ...] = (TARGET_CONTENT, TARGET_FILENAME)
-"""匹配对象：``content`` 为文件正文（默认），``filename`` 为文件名（含后缀）。"""
+CONTENT_TARGETS: tuple[str, ...] = (TARGET_CONTENT, TARGET_FILENAME)
+MATCH_TARGETS: tuple[str, ...] = (*CONTENT_TARGETS, *TIME_TARGETS)
+"""匹配对象：内容 / 文件名 / 修改、创建、访问时间；合法组合由 ``Matcher.validate`` 约束。"""
 
 SEVERITY_INFO = "info"
 SEVERITY_LOW = "low"
@@ -152,15 +179,24 @@ class Matcher:
     case_sensitive: bool | None = None
     whole_word: bool = False
     target: str = TARGET_CONTENT
+    compare: str = TIME_BEFORE
+    value: str = ""
+    value2: str = ""
 
     def is_case_sensitive(self) -> bool:
-        """返回实际生效的大小写口径。"""
+        """返回实际生效的大小写口径（时间规则不区分大小写）。"""
         if self.case_sensitive is not None:
             return self.case_sensitive
         return self.kind == MATCH_REGEX
 
     def describe(self) -> str:
         """返回界面摘要，如 ``关键词: password（忽略大小写）``。"""
+        if self.kind == MATCH_TIME:
+            field = TIME_TARGET_LABELS.get(self.target, self.target)
+            op = TIME_OP_LABELS.get(self.compare, self.compare)
+            if self.compare == TIME_BETWEEN:
+                return f"{field} {op} {self.value} ~ {self.value2}"
+            return f"{field} {op} {self.value}"
         if self.kind == MATCH_KEYWORD:
             text = f"关键词: {self.text}"
             if self.whole_word:
@@ -177,12 +213,27 @@ class Matcher:
         """是否针对文件名求值。"""
         return self.target == TARGET_FILENAME
 
+    def is_time(self) -> bool:
+        """是否时间规则（按文件时间戳比较，不读内容）。"""
+        return self.kind == MATCH_TIME
+
     def validate(self) -> None:
         """校验匹配器字段；非法时抛 ``ValueError``（中文说明）。"""
         if self.kind not in MATCH_KINDS:
             raise ValueError(f"未知匹配器类型: {self.kind!r}，只支持 {'/'.join(MATCH_KINDS)}")
-        if self.target not in MATCH_TARGETS:
-            raise ValueError(f"未知匹配对象: {self.target!r}，只支持 {'/'.join(MATCH_TARGETS)}")
+        if self.kind == MATCH_TIME:
+            if self.target not in TIME_TARGETS:
+                raise ValueError(f"时间规则的匹配对象必须是 {'/'.join(TIME_TARGETS)} 之一，实际为 {self.target!r}")
+            if self.compare not in TIME_OPS:
+                raise ValueError(f"未知时间条件: {self.compare!r}，只支持 {'/'.join(TIME_OPS)}")
+            start = parse_time_value(self.value)
+            if self.compare == TIME_BETWEEN and parse_time_value(self.value2) <= start:
+                raise ValueError("时间区间的结束时间必须晚于开始时间")
+            return
+        if self.target not in CONTENT_TARGETS:
+            raise ValueError(
+                f"关键词 / 正则规则的匹配对象必须是 {'/'.join(CONTENT_TARGETS)} 之一，实际为 {self.target!r}"
+            )
         if self.kind == MATCH_KEYWORD:
             if not self.text:
                 raise ValueError("关键词不能为空")
@@ -196,8 +247,10 @@ class Matcher:
 
 
 def compile_matcher(matcher: Matcher) -> re.Pattern[str]:
-    """把匹配器编译成正则对象；关键词按需转义并加词边界。"""
+    """把匹配器编译成正则对象；关键词按需转义并加词边界，时间规则不编译。"""
     matcher.validate()
+    if matcher.kind == MATCH_TIME:
+        raise ValueError("时间规则不编译正则，请使用 compile_rule 预解析时间窗口")
     flags = 0 if matcher.is_case_sensitive() else re.IGNORECASE
     if matcher.kind == MATCH_KEYWORD:
         body = re.escape(matcher.text)
@@ -234,10 +287,12 @@ class Rule:
 
 @dataclass(frozen=True)
 class CompiledRule:
-    """规则 + 已编译正则，供扫描引擎复用。"""
+    """规则 + 已编译正则（或预解析的时间窗口），供扫描引擎复用。"""
 
     rule: Rule
-    regex: re.Pattern[str]
+    regex: re.Pattern[str] | None
+    time_start: float | None = None
+    time_end: float | None = None
 
     @property
     def id(self) -> str:
@@ -258,8 +313,14 @@ class CompiledRule:
 
 
 def compile_rule(rule: Rule) -> CompiledRule:
-    """编译单条规则。"""
-    return CompiledRule(rule=rule, regex=compile_matcher(rule.matcher))
+    """编译单条规则；时间规则只预解析时间窗口，不编译正则。"""
+    matcher = rule.matcher
+    if matcher.kind == MATCH_TIME:
+        matcher.validate()
+        start = parse_time_value(matcher.value)
+        end = parse_time_value(matcher.value2) if matcher.compare == TIME_BETWEEN else None
+        return CompiledRule(rule=rule, regex=None, time_start=start, time_end=end)
+    return CompiledRule(rule=rule, regex=compile_matcher(matcher))
 
 
 @dataclass(frozen=True)
@@ -456,7 +517,11 @@ def validate_ruleset(ruleset: RuleSet) -> None:
             raise ValueError(f"组合式 {item.id!r} 无效：{exc}") from exc
     # 全部组合式临时启用，保证未启用的组合式里的环也能被发现。
     probe = replace(ruleset, expressions=tuple(replace(item, enabled=True) for item in ruleset.expressions))
-    resolve_expression(probe)
+    resolved = resolve_expression(probe)
+    for rule_id in near_rule_ids(resolved):
+        rule = ruleset.find(rule_id)
+        if rule is not None and rule.matcher.is_time():
+            raise ValueError(f"near 只支持内容 / 文件名规则，不能引用时间规则 {rule_id!r}")
 
 
 def disable_all(ruleset: RuleSet) -> RuleSet:
@@ -486,8 +551,15 @@ def group_names(ruleset: RuleSet) -> tuple[str, ...]:
 # JSON 序列化
 # ---------------------------------------------------------------------- #
 def matcher_to_mapping(matcher: Matcher) -> dict[str, Any]:
-    """匹配器转字典（省略与类型默认一致的 ``case_sensitive``）。"""
+    """匹配器转字典（省略与类型默认一致的字段）。"""
     payload: dict[str, Any] = {"type": matcher.kind}
+    if matcher.kind == MATCH_TIME:
+        payload["target"] = matcher.target
+        payload["compare"] = matcher.compare
+        payload["value"] = matcher.value
+        if matcher.compare == TIME_BETWEEN:
+            payload["value2"] = matcher.value2
+        return payload
     if matcher.kind == MATCH_KEYWORD:
         payload["text"] = matcher.text
         if matcher.whole_word:
@@ -501,22 +573,41 @@ def matcher_to_mapping(matcher: Matcher) -> dict[str, Any]:
     return payload
 
 
-def matcher_from_mapping(raw: Any) -> Matcher:
+def matcher_from_mapping(raw: Any) -> Matcher:  # noqa: PLR0912 - 逐类型校验字段
     """从字典解析匹配器；字段类型不符或取值非法时抛 ``ValueError``。"""
     if not isinstance(raw, dict):
         raise ValueError("匹配器必须是 JSON 对象")
     kind = raw.get("type")
     if kind not in MATCH_KINDS:
         raise ValueError(f"未知匹配器类型: {kind!r}，只支持 {'/'.join(MATCH_KINDS)}")
+    target = raw.get("target", TARGET_CONTENT)
+    if target not in MATCH_TARGETS:
+        raise ValueError(f"未知匹配对象 target: {target!r}，只支持 {'/'.join(MATCH_TARGETS)}")
+    if kind == MATCH_TIME:
+        compare = raw.get("compare", TIME_BEFORE)
+        if not isinstance(compare, str):
+            raise ValueError("时间条件 compare 必须是字符串")
+        value = raw.get("value", "")
+        value2 = raw.get("value2", "")
+        if not isinstance(value, str) or not isinstance(value2, str):
+            raise ValueError("时间规则的 value / value2 必须是字符串")
+        if target == TARGET_CONTENT:
+            target = TIME_MODIFIED
+        matcher = Matcher(
+            kind=kind,
+            target=target,
+            compare=compare,
+            value=value,
+            value2=value2,
+        )
+        matcher.validate()
+        return matcher
     case_sensitive = raw.get("case_sensitive")
     if case_sensitive is not None and not isinstance(case_sensitive, bool):
         raise ValueError("case_sensitive 必须是布尔值")
     whole_word = raw.get("whole_word", False)
     if not isinstance(whole_word, bool):
         raise ValueError("whole_word 必须是布尔值")
-    target = raw.get("target", TARGET_CONTENT)
-    if target not in MATCH_TARGETS:
-        raise ValueError(f"未知匹配对象 target: {target!r}，只支持 {'/'.join(MATCH_TARGETS)}")
     if kind == MATCH_KEYWORD:
         text = raw.get("text", "")
         if not isinstance(text, str):
@@ -614,9 +705,9 @@ def expression_from_mapping(raw: Any, *, index: int = 0) -> Expression:
 
 
 def ruleset_to_mapping(ruleset: RuleSet) -> dict[str, Any]:
-    """规则集转可写入 JSON 的字典（``version`` 2：规则 + 组合式列表）。"""
+    """规则集转可写入 JSON 的字典（``version`` 3：规则 + 组合式 + 时间规则）。"""
     return {
-        "version": 2,
+        "version": 3,
         "name": ruleset.name,
         "rules": [rule_to_mapping(rule) for rule in ruleset.rules],
         "expressions": [expression_to_mapping(item) for item in ruleset.expressions],

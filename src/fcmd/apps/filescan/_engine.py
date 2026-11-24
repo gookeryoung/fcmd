@@ -37,6 +37,13 @@ from fcmd.apps.filescan._extract import (
     extract_document,
 )
 from fcmd.apps.filescan._rules import (
+    TIME_ACCESSED,
+    TIME_AFTER,
+    TIME_BEFORE,
+    TIME_BETWEEN,
+    TIME_CREATED,
+    TIME_MODIFIED,
+    TIME_TARGET_LABELS,
     CompiledRule,
     Expr,
     RuleSet,
@@ -47,6 +54,7 @@ from fcmd.apps.filescan._rules import (
     referenced_rule_ids,
     resolve_expression,
 )
+from fcmd.apps.filescan._timeutil import format_time_value
 from fcmd.infras.system import format_bytes
 from fcmd.infras.textio import detect_encoding, has_text_bom
 
@@ -113,6 +121,9 @@ REASON_DOC_TOO_LARGE = "超出文档解析上限"
 
 LOCATION_FILENAME = "文件名"
 """文件名命中的位置标签；此类命中 ``line_no`` 固定为 0。"""
+
+LOCATION_TIME_LABELS = TIME_TARGET_LABELS
+"""时间命中的位置标签（修改时间 / 创建时间 / 访问时间），``line_no`` 同样为 0。"""
 
 DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
     ".txt",
@@ -362,7 +373,8 @@ class RuleMatch:
 
     ``location`` 仅在文档路径下非空（如 ``段落 3`` / ``Sheet1!A12`` / ``幻灯片 2``），
     纯文本路径保持空串，报告与导出据此保持向后兼容。``severity`` 复制自规则，
-    便于报告 / GUI 无需回查规则集即可着色与筛选。
+    便于报告 / GUI 无需回查规则集即可着色与筛选。``sensitive=False`` 用于时间等
+    非敏感命中：展示 / 导出 / 复制都不打码。
     """
 
     rule_id: str
@@ -375,6 +387,7 @@ class RuleMatch:
     context_start: int
     location: str = ""
     severity: str = ""
+    sensitive: bool = True
 
 
 @dataclass
@@ -965,6 +978,8 @@ def _collect_matches(  # noqa: PLR0913, PLR0917 - 匹配参数成组传入
             target, boundaries = _normalize_line(line)
         for compiled in compiled_rules:
             regex = compiled.regex
+            if regex is None:
+                continue
             # 先用 search 判有无：绝大多数行不命中，可省掉 finditer 的迭代器分配；
             # 命中后才 finditer，匹配集合与顺序与直接 finditer 完全一致。
             if regex.search(target) is None:
@@ -1045,7 +1060,7 @@ def _match_filename(
         if not compiled.matches_filename:
             continue
         regex = compiled.regex
-        if regex.search(name) is None:
+        if regex is None or regex.search(name) is None:
             continue
         for match in regex.finditer(name):
             matched_ids.add(compiled.id)
@@ -1063,6 +1078,83 @@ def _match_filename(
                     )
                 )
     return matched_ids, matches, rule_lines
+
+
+def _file_times(info: os.stat_result) -> dict[str, float]:
+    """文件时间字段：创建时间优先 ``st_birthtime``，否则退回 ``st_ctime``。
+
+    Windows 的 ``st_ctime`` 即创建时间；Linux 无 birthtime 时它是 inode 变更时间，
+    文档与 GUI 都按「创建时间（平台近似）」提示。
+    """
+    birth = getattr(info, "st_birthtime", None)
+    return {
+        TIME_MODIFIED: info.st_mtime,
+        TIME_ACCESSED: info.st_atime,
+        TIME_CREATED: float(birth) if birth is not None else info.st_ctime,
+    }
+
+
+def _time_in_window(timestamp: float, compiled: CompiledRule) -> bool:
+    """按半开区间判定时间是否命中：before <、after >=、between [start, end)。"""
+    start = compiled.time_start
+    if start is None:
+        return False
+    compare = compiled.rule.matcher.compare
+    if compare == TIME_BEFORE:
+        return timestamp < start
+    if compare == TIME_AFTER:
+        return timestamp >= start
+    if compare == TIME_BETWEEN:
+        end = compiled.time_end
+        return end is not None and start <= timestamp < end
+    return False
+
+
+def _match_times(
+    path: Path,
+    compiled_rules: Sequence[CompiledRule],
+    options: ScanOptions,
+) -> tuple[set[str], list[RuleMatch], dict[str, set[int]]]:
+    """对文件时间规则求值；只 stat 一次，命中位置为时间字段、行号 0。
+
+    时间值不是敏感原文，``RuleMatch.sensitive`` 标记为 ``False``，报告与结果树
+    不会被 ``mask_text`` 打码。``rule_lines`` 恒为空（near 只支持内容 / 文件名）。
+    """
+    time_rules = [item for item in compiled_rules if item.regex is None]
+    if not time_rules:
+        return set(), [], {}
+    try:
+        info = path.stat()
+    except OSError:
+        return set(), [], {}
+    fields = _file_times(info)
+    limit = max(1, options.max_hits_per_file)
+    matched_ids: set[str] = set()
+    matches: list[RuleMatch] = []
+    for compiled in time_rules:
+        target = compiled.rule.matcher.target
+        timestamp = fields.get(target)
+        if timestamp is None or not _time_in_window(timestamp, compiled):
+            continue
+        matched_ids.add(compiled.id)
+        if len(matches) < limit:
+            text = format_time_value(timestamp)
+            matches.append(
+                RuleMatch(
+                    rule_id=compiled.id,
+                    rule_name=compiled.name,
+                    line_no=0,
+                    start=0,
+                    end=0,
+                    excerpt=text,
+                    context=text,
+                    context_start=0,
+                    location=LOCATION_TIME_LABELS.get(target, target),
+                    severity=compiled.severity,
+                    sensitive=False,
+                )
+            )
+    return matched_ids, matches, {}
 
 
 def _scan_document(path: Path, context: ScanContext, suffix: str, size: int | None) -> _Outcome:
@@ -1143,6 +1235,8 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
     name_ids, name_matches, name_lines = _match_filename(
         path, context.compiled_rules, context.options, context.near_ids
     )
+    time_ids, time_matches, time_lines = _match_times(path, context.compiled_rules, context.options)
+    metadata_matches = [*name_matches, *time_matches]
     suffix = path.suffix.lower()
     if context.options.scan_documents and suffix in DOCUMENT_EXTENSIONS:
         outcome = _scan_document(path, context, suffix, size)
@@ -1150,15 +1244,15 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
         outcome = _scan_text(path, context, size)
     if outcome.cancelled or outcome.error is not None:
         return outcome
-    ids = set(outcome.matched_ids) | name_ids
+    ids = set(outcome.matched_ids) | name_ids | time_ids
     rule_lines = {rule_id: set(lines) for rule_id, lines in outcome.rule_lines.items()}
-    for rule_id, lines in name_lines.items():
+    for rule_id, lines in (*name_lines.items(), *time_lines.items()):
         rule_lines.setdefault(rule_id, set()).update(lines)
     line_sets = {rule_id: frozenset(rule_lines.get(rule_id, ())) for rule_id in ids}
     if outcome.skipped is not None:
         if not evaluate_expression(context.expression, line_sets):
             return outcome
-        return _filename_only_outcome(path, context, name_matches, size)
+        return _metadata_only_outcome(path, context, metadata_matches, size)
     if not evaluate_expression(context.expression, line_sets):
         return _Outcome(
             path=path,
@@ -1167,7 +1261,7 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
             rule_lines=rule_lines,
         )
     limit = max(1, context.options.max_hits_per_file)
-    combined = [*name_matches, *outcome.matches]
+    combined = [*metadata_matches, *outcome.matches]
     detail = [item for item in combined if item.rule_id in context.positive_ids][:limit]
     hit = FileHit(path=path, size=outcome.size, encoding=outcome.encoding, matches=detail)
     return _Outcome(
@@ -1182,15 +1276,15 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
     )
 
 
-def _filename_only_outcome(
+def _metadata_only_outcome(
     path: Path,
     context: ScanContext,
-    name_matches: list[RuleMatch],
+    metadata_matches: list[RuleMatch],
     size: int | None,
 ) -> _Outcome:
-    """内容被跳过、但文件名规则命中时的结果：只报文件名命中明细。"""
+    """内容被跳过、但文件名 / 时间规则命中时的结果：只报元数据命中明细。"""
     limit = max(1, context.options.max_hits_per_file)
-    detail = [item for item in name_matches if item.rule_id in context.positive_ids][:limit]
+    detail = [item for item in metadata_matches if item.rule_id in context.positive_ids][:limit]
     actual = size
     if actual is None:
         try:
@@ -1198,7 +1292,7 @@ def _filename_only_outcome(
         except OSError:
             actual = 0
     hit = FileHit(path=path, size=actual, encoding="", matches=detail)
-    return _Outcome(path=path, hit=hit, size=actual, matches=tuple(name_matches))
+    return _Outcome(path=path, hit=hit, size=actual, matches=tuple(metadata_matches))
 
 
 # ---------------------------------------------------------------------- #

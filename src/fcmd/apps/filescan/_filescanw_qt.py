@@ -112,10 +112,18 @@ from fcmd.apps.filescan._rules import (
     DEFAULT_SEVERITY,
     MATCH_KEYWORD,
     MATCH_REGEX,
+    MATCH_TIME,
     SEVERITY_LABELS,
     SEVERITY_LEVELS,
     TARGET_CONTENT,
     TARGET_FILENAME,
+    TIME_BEFORE,
+    TIME_BETWEEN,
+    TIME_MODIFIED,
+    TIME_OP_LABELS,
+    TIME_OPS,
+    TIME_TARGET_LABELS,
+    TIME_TARGETS,
     Expression,
     Matcher,
     Rule,
@@ -539,9 +547,9 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._result: Rule | None = None
 
         current_kind = rule.matcher.kind if rule is not None else MATCH_KEYWORD
-        # 两种类型各自记住大小写开关：新增时用类型默认值（关键词不区分、正则区分）。
+        # 关键词 / 正则各自记住大小写开关：新增时用类型默认值（关键词不区分、正则区分）。
         self._case_by_kind = {MATCH_KEYWORD: False, MATCH_REGEX: True}
-        if rule is not None:
+        if rule is not None and current_kind in self._case_by_kind:
             self._case_by_kind[current_kind] = rule.matcher.is_case_sensitive()
 
         outer = QVBoxLayout(self)
@@ -556,7 +564,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._name = QLineEdit(rule.name if rule else "", self)
         self._group = QLineEdit(rule.group if rule else "自定义", self)
         self._kind = QComboBox(self)
-        self._kind.addItems([MATCH_KEYWORD, MATCH_REGEX])
+        self._kind.addItems([MATCH_KEYWORD, MATCH_REGEX, MATCH_TIME])
         self._kind.setCurrentText(current_kind)
         self._text = self._make_multiline_editor("关键词原文，如 password")
         self._text.setPlainText(rule.matcher.text if rule else "")
@@ -568,8 +576,24 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         self._target = QComboBox(self)
         self._target.addItem("文件内容", TARGET_CONTENT)
         self._target.addItem("文件名", TARGET_FILENAME)
-        current_target = rule.matcher.target if rule else TARGET_CONTENT
+        current_target = (
+            rule.matcher.target if rule and rule.matcher.target in (TARGET_CONTENT, TARGET_FILENAME) else TARGET_CONTENT
+        )
         self._target.setCurrentIndex(max(self._target.findData(current_target), 0))
+        self._time_field = QComboBox(self)
+        for target in TIME_TARGETS:
+            self._time_field.addItem(TIME_TARGET_LABELS[target], target)
+        current_time_field = rule.matcher.target if rule and rule.matcher.target in TIME_TARGETS else TIME_MODIFIED
+        self._time_field.setCurrentIndex(max(self._time_field.findData(current_time_field), 0))
+        self._time_op = QComboBox(self)
+        for op in TIME_OPS:
+            self._time_op.addItem(TIME_OP_LABELS[op], op)
+        current_op = rule.matcher.compare if rule and rule.matcher.kind == MATCH_TIME else TIME_BEFORE
+        self._time_op.setCurrentIndex(max(self._time_op.findData(current_op), 0))
+        self._time_value = QLineEdit(rule.matcher.value if rule and rule.matcher.kind == MATCH_TIME else "", self)
+        self._time_value.setPlaceholderText("2026-01-01T00:00:00 或 epoch 秒")
+        self._time_end = QLineEdit(rule.matcher.value2 if rule and rule.matcher.kind == MATCH_TIME else "", self)
+        self._time_end.setPlaceholderText("结束时间（介于时必填）")
 
         def _label(text: str) -> QLabel:
             label = QLabel(text, self)
@@ -597,15 +621,30 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         grid.addWidget(self._kind_hint, 5, 1)
         grid.addWidget(_label("严重级"), 6, 0)
         grid.addWidget(self._severity, 6, 1)
-        grid.addWidget(_label("匹配对象"), 7, 0)
+        self._target_label = _label("匹配对象")
+        grid.addWidget(self._target_label, 7, 0)
         grid.addWidget(self._target, 7, 1)
+        self._time_labels: dict[str, QLabel] = {}
+        for row, (text, widget) in enumerate(
+            (
+                ("时间字段", self._time_field),
+                ("时间条件", self._time_op),
+                ("起始时间", self._time_value),
+                ("结束时间", self._time_end),
+            ),
+            start=8,
+        ):
+            label = _label(text)
+            self._time_labels[text] = label
+            grid.addWidget(label, row, 0)
+            grid.addWidget(widget, row, 1)
         outer.addLayout(grid)
 
         flags = QHBoxLayout()
         flags.setContentsMargins(0, 0, 0, 0)
         flags.setSpacing(12)
         self._case = QCheckBox("区分大小写", self)
-        self._case.setChecked(self._case_by_kind[current_kind])
+        self._case.setChecked(self._case_by_kind.get(current_kind, False))
         self._case.toggled.connect(self._remember_case)
         self._whole = QCheckBox("整词匹配", self)
         self._whole.setChecked(rule.matcher.whole_word if rule else False)
@@ -618,6 +657,7 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         outer.addLayout(flags)
 
         self._kind.currentTextChanged.connect(self._sync_kind_fields)
+        self._time_op.currentIndexChanged.connect(self._sync_time_end)
         self._sync_kind_fields(current_kind)
 
         actions = QHBoxLayout()
@@ -636,24 +676,50 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
         return self._kind.currentText()
 
     def _remember_case(self, checked: bool) -> None:
-        self._case_by_kind[self._current_kind] = checked
+        kind = self._current_kind
+        if kind in self._case_by_kind:
+            self._case_by_kind[kind] = checked
+
+    def _sync_time_end(self, *_args: object) -> None:
+        """「介于」才显示结束时间；其它条件隐藏，避免误以为需要填。"""
+        between = self._current_kind == MATCH_TIME and self._time_op.currentData() == TIME_BETWEEN
+        self._time_end.setVisible(between)
+        self._time_labels["结束时间"].setVisible(between)
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        if self.isVisible():
+            self.adjustSize()
 
     def _sync_kind_fields(self, kind: str) -> None:
-        """按类型切换可见字段：关键词显示文本 / 整词，正则显示表达式。"""
+        """按类型切换可见字段：关键词 / 正则 / 时间各显示自己的输入项。"""
         keyword = kind == MATCH_KEYWORD
+        regex = kind == MATCH_REGEX
+        time_rule = kind == MATCH_TIME
         self._text.setVisible(keyword)
         self._text_label.setVisible(keyword)
-        self._pattern.setVisible(not keyword)
-        self._pattern_label.setVisible(not keyword)
+        self._pattern.setVisible(regex)
+        self._pattern_label.setVisible(regex)
         self._whole.setVisible(keyword)
+        self._case.setVisible(keyword or regex)
+        self._target.setVisible(not time_rule)
+        self._target_label.setVisible(not time_rule)
+        for text in ("时间字段", "时间条件", "起始时间"):
+            self._time_labels[text].setVisible(time_rule)
+        self._time_field.setVisible(time_rule)
+        self._time_op.setVisible(time_rule)
+        self._time_value.setVisible(time_rule)
+        self._sync_time_end()
         self._case.blockSignals(True)
         self._case.setChecked(self._case_by_kind.get(kind, False))
         self._case.blockSignals(False)
-        self._kind_hint.setText(
-            "关键词：按原文包含匹配，可勾选整词；默认不区分大小写。可换行，保存时合并为单行。"
-            if keyword
-            else "正则：按行逐条匹配（Python re 语法）；默认区分大小写。可换行，保存时合并为单行。"
-        )
+        if time_rule:
+            hint = "时间：按文件时间戳比较；创建时间在 Linux 上退化为 ctime（更接近元数据变更时间）。"
+        elif keyword:
+            hint = "关键词：按原文包含匹配，可勾选整词；默认不区分大小写。可换行，保存时合并为单行。"
+        else:
+            hint = "正则：按行逐条匹配（Python re 语法）；默认区分大小写。可换行，保存时合并为单行。"
+        self._kind_hint.setText(hint)
         # 显隐切换后让对话框高度跟随内容重新计算（隐藏字段不占空间）。
         layout = self.layout()
         if layout is not None:
@@ -663,14 +729,24 @@ class _RuleDialog(QDialog):  # pragma: no cover - 模态对话框
 
     def _commit(self) -> None:
         kind = self._current_kind
-        matcher = Matcher(
-            kind=kind,
-            text=_collapse_multiline(self._text.toPlainText()) if kind == MATCH_KEYWORD else "",
-            pattern=_collapse_multiline(self._pattern.toPlainText()) if kind == MATCH_REGEX else "",
-            case_sensitive=self._case.isChecked(),
-            whole_word=self._whole.isChecked() if kind == MATCH_KEYWORD else False,
-            target=self._target.currentData() or TARGET_CONTENT,
-        )
+        if kind == MATCH_TIME:
+            compare = self._time_op.currentData() or TIME_BEFORE
+            matcher = Matcher(
+                kind=kind,
+                target=self._time_field.currentData() or TIME_MODIFIED,
+                compare=compare,
+                value=self._time_value.text().strip(),
+                value2=self._time_end.text().strip() if compare == TIME_BETWEEN else "",
+            )
+        else:
+            matcher = Matcher(
+                kind=kind,
+                text=_collapse_multiline(self._text.toPlainText()) if kind == MATCH_KEYWORD else "",
+                pattern=_collapse_multiline(self._pattern.toPlainText()) if kind == MATCH_REGEX else "",
+                case_sensitive=self._case.isChecked(),
+                whole_word=self._whole.isChecked() if kind == MATCH_KEYWORD else False,
+                target=self._target.currentData() or TARGET_CONTENT,
+            )
         self._result = Rule(
             id=self._id.text().strip(),
             name=self._name.text().strip(),
@@ -2241,7 +2317,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             lines = [render_context(match, include_raw=raw) for match in matches]
             label = "上下文"
         else:
-            lines = [match.excerpt if raw else mask_text(match.excerpt) for match in matches]
+            lines = [match.excerpt if raw or not match.sensitive else mask_text(match.excerpt) for match in matches]
             label = "命中内容"
         self._copy_to_clipboard(
             "\n".join(lines),

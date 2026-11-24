@@ -103,6 +103,7 @@ def _match_to_mapping(match: RuleMatch) -> dict[str, Any]:
         "context": match.context,
         "context_start": match.context_start,
         "location": match.location,
+        "sensitive": match.sensitive,
     }
 
 
@@ -163,6 +164,7 @@ def _matches_value(raw: Any) -> list[RuleMatch]:
                 context=_str(item.get("context")),
                 context_start=_int(item.get("context_start")),
                 location=_str(item.get("location")),
+                sensitive=bool(item.get("sensitive", True)),
             )
         )
     return matches

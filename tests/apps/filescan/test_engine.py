@@ -42,7 +42,13 @@ from fcmd.apps.filescan._engine import (
 from fcmd.apps.filescan._rules import (
     MATCH_KEYWORD,
     MATCH_REGEX,
+    MATCH_TIME,
     TARGET_FILENAME,
+    TIME_AFTER,
+    TIME_BEFORE,
+    TIME_BETWEEN,
+    TIME_CREATED,
+    TIME_MODIFIED,
     Expression,
     Matcher,
     Rule,
@@ -917,3 +923,129 @@ def test_regex_rule_matches_ignore_case(tmp_path: Path) -> None:
     )
     result = scan_paths([tmp_path], RuleSet(rules=(rule,)))
     assert result.hits[0].matches[0].excerpt == "TOKEN=abc"
+
+
+def _time_rule(rule_id: str = "old", **kwargs: object) -> Rule:
+    params: dict[str, object] = {
+        "kind": MATCH_TIME,
+        "target": TIME_MODIFIED,
+        "compare": TIME_BEFORE,
+        "value": "2025-01-01",
+    }
+    params.update(kwargs)
+    return Rule(id=rule_id, name=rule_id, matcher=Matcher(**params))  # type: ignore[arg-type]
+
+
+def _touch(path: Path, timestamp: float) -> None:
+    os.utime(path, (timestamp, timestamp))
+
+
+def test_time_rule_matches_modified_before(tmp_path: Path) -> None:
+    old = _write(tmp_path, "old.txt", "nothing")
+    new = _write(tmp_path, "new.txt", "nothing")
+    boundary = 1_700_000_000.0
+    _touch(old, boundary - 3600)
+    _touch(new, boundary + 3600)
+
+    ruleset = RuleSet(rules=(_time_rule(value=str(boundary)),))
+    result = scan_paths([tmp_path], ruleset, ScanOptions(recursive=True))
+
+    assert [hit.path.name for hit in result.hits] == ["old.txt"]
+    match = result.hits[0].matches[0]
+    assert match.line_no == 0
+    assert match.location == "修改时间"
+    assert match.sensitive is False
+    assert match.excerpt == match.context
+
+
+def test_time_rule_after_is_inclusive(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.txt", "x")
+    boundary = 1_700_000_000.0
+    _touch(path, boundary)
+
+    at_boundary = RuleSet(rules=(_time_rule(compare=TIME_AFTER, value=str(boundary)),))
+    assert len(scan_paths([tmp_path], at_boundary, ScanOptions()).hits) == 1
+
+    before = RuleSet(rules=(_time_rule(compare=TIME_BEFORE, value=str(boundary)),))
+    assert scan_paths([tmp_path], before, ScanOptions()).hits == []
+
+
+def test_time_rule_between_uses_half_open_window(tmp_path: Path) -> None:
+    start, end = 1_700_000_000.0, 1_700_086_400.0
+    inside = _write(tmp_path, "in.txt", "x")
+    edge = _write(tmp_path, "edge.txt", "x")
+    _touch(inside, start)
+    _touch(edge, end)
+
+    ruleset = RuleSet(
+        rules=(_time_rule(compare=TIME_BETWEEN, value=str(start), value2=str(end)),),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+
+    assert [hit.path.name for hit in result.hits] == ["in.txt"]
+
+
+def test_time_rule_combines_with_content_and_filename(tmp_path: Path) -> None:
+    old = _write(tmp_path, "old.txt", "客户电话 13800138000")
+    new = _write(tmp_path, "new.txt", "客户电话 13800138000")
+    boundary = 1_700_000_000.0
+    _touch(old, boundary - 3600)
+    _touch(new, boundary + 3600)
+
+    ruleset = RuleSet(
+        rules=(
+            Rule(id="phone", name="手机", matcher=Matcher(kind=MATCH_REGEX, pattern=r"1\d{10}")),
+            _time_rule(value=str(boundary)),
+        ),
+        expressions=(Expression(id="e", name="组合", expression="phone and old"),),
+    )
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+
+    assert [hit.path.name for hit in result.hits] == ["old.txt"]
+    rule_ids = {match.rule_id for match in result.hits[0].matches}
+    assert rule_ids == {"phone", "old"}
+
+
+def test_time_rule_reports_even_when_content_is_skipped(tmp_path: Path) -> None:
+    path = _write(tmp_path, "secret.txt", b"\x00\x01\x02binary")
+    boundary = 1_700_000_000.0
+    _touch(path, boundary - 3600)
+
+    ruleset = RuleSet(rules=(_time_rule(value=str(boundary)),))
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+
+    assert len(result.hits) == 1
+    assert result.hits[0].matches[0].rule_id == "old"
+    assert result.skipped == []
+
+
+@pytest.mark.parametrize("target", [TIME_CREATED, "accessed"])
+def test_time_rule_supports_created_and_accessed(tmp_path: Path, target: str) -> None:
+    _write(tmp_path, "a.txt", "x")
+    ruleset = RuleSet(rules=(_time_rule(compare=TIME_AFTER, value="2000-01-01", target=target),))
+
+    result = scan_paths([tmp_path], ruleset, ScanOptions())
+
+    assert len(result.hits) == 1
+    assert result.hits[0].matches[0].location in {"创建时间", "访问时间"}
+
+
+def test_time_match_context_is_not_masked() -> None:
+    from fcmd.apps.filescan._engine import RuleMatch
+    from fcmd.apps.filescan._report import render_context
+    from fcmd.apps.filescan._timeutil import format_time_value
+
+    timestamp = 1_700_000_000.0
+    match = RuleMatch(
+        rule_id="old",
+        rule_name="旧文件",
+        line_no=0,
+        start=0,
+        end=0,
+        excerpt=format_time_value(timestamp),
+        context=format_time_value(timestamp),
+        context_start=0,
+        location="修改时间",
+        sensitive=False,
+    )
+    assert render_context(match) == format_time_value(timestamp)

@@ -20,7 +20,7 @@ from fcmd.apps.filescan._cache import (
 )
 from fcmd.apps.filescan._engine import ScanOptions, ScanResult, scan_paths
 from fcmd.apps.filescan._report import no_hit_hint
-from fcmd.apps.filescan._rules import MATCH_KEYWORD, Expression, Matcher, Rule, RuleSet
+from fcmd.apps.filescan._rules import MATCH_KEYWORD, MATCH_TIME, Expression, Matcher, Rule, RuleSet
 
 
 def _write(root: Path, relative: str, text: str) -> Path:
@@ -418,3 +418,15 @@ def test_default_cache_path_prefers_fcmd_home(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     assert default_cache_path() == Path.home() / ".fcmd" / "cache" / "filescan-cache.db"
+
+
+def test_time_rule_value_changes_fingerprint() -> None:
+    base_rule = Rule(
+        id="old",
+        name="旧文件",
+        matcher=Matcher(kind=MATCH_TIME, target="modified", compare="before", value="2026-01-01"),
+    )
+    changed_rule = replace(base_rule, matcher=replace(base_rule.matcher, value="2027-01-01"))
+    base = RuleSet(rules=(base_rule,))
+    changed = RuleSet(rules=(changed_rule,))
+    assert cache_fingerprint(base, ScanOptions()) != cache_fingerprint(changed, ScanOptions())

@@ -46,11 +46,13 @@
 - `id`（规则集内唯一，表达式引用它）、`name`、`group`（分组名，默认「内置」）、
   `enabled`、`severity`（严重级，`info` / `low` / `medium` / `high` / `critical`，
   默认 `medium`；旧规则集缺省时按 `medium` 补齐，非法值报中文错误）；
-- 匹配器二选一：
+- 匹配器三选一：
   - `keyword`：`text` + `case_sensitive` + `whole_word`（整词按 `\b` 边界，
     仅对首尾为词字符的关键词生效，避免中文关键词被误判）；
-  - `regex`：`pattern` + `ignore_case`（不支持跨行匹配，逐行求值）。
-- `target`：`content`（默认，匹配正文）或 `filename`（匹配文件名，见 D13）。
+  - `regex`：`pattern` + `ignore_case`（不支持跨行匹配，逐行求值）；
+  - `time`：`target`（`modified` / `created` / `accessed`）+ `compare`
+    （`before` / `after` / `between`）+ `value`（+ `between` 时的 `value2`），见 D16。
+- 内容类 `target`：`content`（默认，匹配正文）或 `filename`（匹配文件名，见 D13）。
 
 组合式（`Expression`）是独立的命名条目：`id`、`name`、`expression`、`enabled`。
 表达式采用可嵌套的文本 DSL：`rule_id` / `组合式 id`、`and` / `or` / `not`、圆括号，
@@ -84,13 +86,16 @@
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "name": "示例规则集",
   "rules": [
     {"id": "cn_id", "name": "身份证号", "group": "个人信息", "enabled": true,
      "matcher": {"type": "regex", "pattern": "\\d{17}[\\dXx]", "ignore_case": false}},
     {"id": "test_id", "name": "测试身份证", "group": "测试", "enabled": false,
-     "matcher": {"type": "keyword", "text": "test"}}
+     "matcher": {"type": "keyword", "text": "test"}},
+    {"id": "old_files", "name": "历史文件", "group": "时间", "enabled": true,
+     "matcher": {"type": "time", "target": "modified", "compare": "before",
+                 "value": "2026-01-01T00:00:00"}}
   ],
   "expressions": [
     {"id": "pii", "name": "个人信息", "expression": "cn_id and not test_id", "enabled": true},
@@ -240,7 +245,8 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
    摘要；双击行直接编辑）与 **组合式表**（启用、ID、名称、表达式）。规则表支持
    新增/编辑/删除（编辑对话框含严重级与匹配对象下拉）、启用/禁用、载入内置、清空、
    导入/导出/保存规则集；组合式表支持新增/编辑/删除、启用/禁用。规则对话框按
-   「类型」切换字段：关键词显示文本与整词选项，正则只显示表达式；大小写开关按类型
+   「类型」切换字段：关键词显示文本与整词选项，正则只显示表达式，时间显示时间字段 /
+   条件 / 起止时间（`介于` 才显示结束时间）；大小写开关按类型
    各记一份（关键词默认不区分、正则默认区分），保存时只带当前类型的字段。关键词
    与正则都用可换行的多行编辑器（按宽度折行、高度 64–96px），换行 / 行首缩进只用于
    排版，保存时合并为单行；切换类型时对话框高度随可见字段自动调整。组合式对话框里可
@@ -647,6 +653,24 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 - 该选项参与缓存指纹（开启 / 关闭会产生不同命中，不能复用旧缓存）；
 - 文件名规则不参与归一化（保持文件名原样匹配，见 D13）。
 
+### D16 时间规则（2026-11-25）
+
+规则新增 `kind=time`：按文件时间戳判定，不读取内容，也不做正则匹配。
+
+- `target`：`modified`（`st_mtime`）/ `created` / `accessed`（`st_atime`）；
+- `compare` + `value` / `value2`：ISO-8601 或 epoch 秒，口径为半开区间
+  `before: t < value`、`after: t >= value`、`between: value <= t < value2`；
+- 创建时间优先 `st_birthtime`，Windows 用 `st_ctime`（创建时间）；Linux 无
+  birthtime 时退化为 `st_ctime`（元数据变更时间），GUI / 文档明确提示；
+- 引擎在读内容前 `stat` 一次求值，命中 `line_no=0`、`location` 为时间字段
+  （修改时间 / 创建时间 / 访问时间），`RuleMatch.sensitive=False`，报告 / 结果树 /
+  复制都不打码；
+- 内容因二进制 / 加密被跳过时时间命中照常报告；与内容 / 文件名规则在同一表达式
+  里组合（`and` / `or` / `not`）；
+- `near[k]` 的操作数必须是内容 / 文件名规则，引用时间规则在加载 / 保存时直接报错；
+- 全局 `modified_after` / `modified_before` 仍是遍历期剪枝，范围外的文件不会被
+  时间规则命中。
+
 ### D15 邻近表达式 near[k]（2026-11-24）
 
 表达式新增二元（可链式）邻近算子：``a near[k] b`` / ``a within[k] b``，表示
@@ -721,6 +745,9 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   0 命中诊断与真实复现见 D12）。
 - 文件名规则：已落地（`Matcher.target` / `CompiledRule.matches_filename` +
   引擎 `_match_filename`，报告与 GUI 规则对话框同步，见 D13）。
+- 时间规则：已落地（`Matcher.kind=time` + `_timeutil` 解析 / 格式化 +
+  `CompiledRule.time_start/time_end` + 引擎 `_match_times`，GUI 类型切换与
+  规则表摘要同步，见 D16）。
 - 文本归一化：已落地（`ScanOptions.normalize_text` + 引擎 `_normalize_line`
   边界映射，CLI / 配置 / GUI 均可关闭并参与缓存指纹，见 D14）。
 - 邻近表达式：已落地（`NearExpr` + `near_rule_ids` + 引擎行号收集与滑动窗口

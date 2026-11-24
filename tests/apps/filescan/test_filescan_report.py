@@ -374,3 +374,31 @@ def test_json_stats_include_scope_split() -> None:
     assert stats["files_skipped_size_time"] == 0
     assert stats["files_out_of_scope"] == 4881
     assert stats["files_skipped_after_read"] == 4
+
+
+def test_time_match_is_not_masked_in_reports() -> None:
+    from fcmd.apps.filescan._engine import RuleMatch
+
+    timestamp = "2026-01-01 00:00:00"
+    match = RuleMatch(
+        rule_id="old",
+        rule_name="旧文件",
+        line_no=0,
+        start=0,
+        end=0,
+        excerpt=timestamp,
+        context=timestamp,
+        context_start=0,
+        location="修改时间",
+        sensitive=False,
+    )
+    assert context_segments(match) == ("", timestamp, "")
+    assert match_note(match) == f"【规则：旧文件，匹配项：{timestamp}】"
+    result = ScanResult(
+        roots=(Path("scan"),),
+        stats=ScanStats(hit_files=1, hit_count=1),
+        hits=[FileHit(Path("scan") / "old.txt", 10, "", [match])],
+    )
+    payload = result_to_mapping(result, include_raw=False)["hits"][0]["matches"][0]
+    assert payload["excerpt"] == timestamp
+    assert payload["context"] == timestamp
