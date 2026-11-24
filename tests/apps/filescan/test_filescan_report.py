@@ -215,7 +215,7 @@ def test_format_text_report_sections() -> None:
     )
     text = format_text_report(result)
     assert text.startswith("扫描完成：文件 3")
-    assert f"[命中] {Path('scan') / 'a.txt'}（utf-8，100 B）" in text
+    assert f"[命中] {Path('scan') / 'a.txt'}（utf-8，100 B，风险 " in text
     assert "第 3 行：tel 13*******78 end" in text
     assert "跳过：" in text and "二进制文件" in text
     assert "错误：" in text and "读取失败" in text
@@ -232,7 +232,7 @@ def test_text_report_filename_match_and_missing_encoding() -> None:
     match = _match(line=0, excerpt="secret", context="secret.txt", context_start=0, location="文件名")
     hit = FileHit(Path("scan") / "secret.txt", 12, "", [match])
     text = format_text_report(_result(hits=[hit]))
-    assert "（12 B）" in text
+    assert "（12 B" in text
     assert "@ 文件名：se**et.txt" in text
     assert "第 0 行" not in text
 

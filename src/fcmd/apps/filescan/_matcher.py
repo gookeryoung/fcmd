@@ -321,7 +321,7 @@ def matcher_from_mapping(raw: Any) -> Matcher:  # noqa: PLR0912 - 逐类型校�
         return matcher
     if kind in (MATCH_METADATA, MATCH_DICTIONARY, MATCH_HASH, MATCH_ENTROPY):
         value = raw.get("value", "")
-        value2 = raw.get("value2", "24")
+        value2 = raw.get("value2", "24") if kind == MATCH_ENTROPY else ""
         text = raw.get("text", "")
         if not isinstance(value, str) or not isinstance(value2, str) or not isinstance(text, str):
             raise ValueError("高级规则的 value / value2 / text 必须是字符串")

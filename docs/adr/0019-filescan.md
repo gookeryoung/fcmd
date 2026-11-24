@@ -91,7 +91,7 @@
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "name": "示例规则集",
   "rules": [
     {"id": "cn_id", "name": "身份证号", "group": "个人信息", "enabled": true,
@@ -702,8 +702,27 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 - **归档成员规则** `target=archive_path`：对 zip / tar 的成员路径做关键词 / 正则匹配
   （只读成员名，不解压内容，单归档上限 5000 项），命中 `location=归档成员`。
 - 两者都属于元数据阶段：内容被跳过 / 二进制时仍照常报告；`near[k]` 不参与。
-- 规则集 `version` 升到 5。GUI 规则类型下拉改用中文名称（关键词 / 正则 / 时间 /
+- 规则集 `version` 升到 5；D19 再升到 6。GUI 规则类型下拉改用中文名称（关键词 / 正则 / 时间 /
   文件大小 / 文件类型），内部仍存稳定 id。
+
+### D19 元数据 / 词典 / 哈希 / 高熵 / 风险与加白（2026-11-25）
+
+- **文档元数据** `kind=metadata`：读取 docx/xlsx/pptx 的 `docProps`（作者、最后修改者、
+  标题、主题、公司），`value` 为字段、`text` 为包含匹配（忽略大小写）；位置
+  `元数据:字段`。
+- **自定义词典** `kind=dictionary`：`value` 为换行 / 逗号分隔词条，编译为正则交替
+  （忽略大小写），适合客户名单、项目代号等大词表。
+- **文件哈希** `kind=hash`：`value` 为 SHA-256 列表，按文件内容摘要精确匹配；位置
+  `文件哈希`，`sensitive=False`。
+- **高熵串** `kind=entropy`：`value` 为 Shannon 熵阈值（0–8]，`value2` 为最小长度
+  （默认 24），扫描随机 / 加密风格字符串。
+- **风险分**：`_report.file_risk_score` 按命中严重级（提示 1 / 低 2 / 中 4 / 高 8 /
+  严重 12）汇总并封顶 100，文本报告与结果树文件行展示。
+- **一键加白**：结果页右键「加入路径排除白名单」→ `add_path_allowlist` 新增禁用的
+  路径规则并把它追加到启用组合式（`(...) and not allow_x`），下次扫描生效；不改写
+  历史结果。
+- 规则集 `version` 升到 6；GUI 类型下拉新增中文名称：文档元数据 / 自定义词典 /
+  文件哈希 / 高熵串。
 
 ### D15 邻近表达式 near[k]（2026-11-24）
 
@@ -779,6 +798,8 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   0 命中诊断与真实复现见 D12）。
 - 文件名规则：已落地（`Matcher.target` / `CompiledRule.matches_filename` +
   引擎 `_match_filename`，报告与 GUI 规则对话框同步，见 D13）。
+- 元数据 / 词典 / 哈希 / 高熵 / 风险与加白：已落地（`_metadata`、`_validators`、
+  `_report.file_risk_score`、`add_path_allowlist`，见 D19）。
 - 文件类型 / 归档成员：已落地（`_filetype` + `_engine._match_filetype` /
   `_match_archive`，GUI「文件类型」类型与「归档成员路径」目标，见 D18）。
 - 路径 / 大小 / 校验器 / 命中阈值：已落地（`_matcher` 路径与大小类型、
