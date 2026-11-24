@@ -227,9 +227,9 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `xmltool` | - | XML 处理（pretty/extract/minify/validate） |
-| `yamtool` | - | YAML 处理（pretty/get/keys/validate） |
+| `yamtool` | - | YAML 处理（pretty/get/keys/convert/validate，可转 JSON / TOML） |
 | `inifile` | - | INI 处理（get/set/list/keys，基于 configparser） |
-| `tomltool` | - | TOML 处理（get/keys/format/validate，基于标准库 tomllib） |
+| `tomltool` | - | TOML 处理（get/keys/format/convert/validate，可转 JSON / YAML，基于标准库 tomllib） |
 
 ### PDF（可选依赖）
 

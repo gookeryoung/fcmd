@@ -38,6 +38,7 @@ __all__ = [  # noqa: F405
     "select_columns",
     "set_ini_value",
     "sort_keys",
+    "to_toml",
     "validate_toml",
     "validate_xml",
     "validate_yaml",

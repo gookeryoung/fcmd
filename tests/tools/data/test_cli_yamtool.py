@@ -72,9 +72,9 @@ class TestRegistration:
         assert "yamtool" in list_tools()
 
     def test_subcommands(self) -> None:
-        """yamtool 有 pretty/get/keys/validate 四个子命令。"""
+        """yamtool 有 pretty/get/keys/convert/validate 五个子命令。"""
         subs = list_subcommands("yamtool")
-        assert set(subs) == {"pretty", "get", "keys", "validate"}
+        assert set(subs) == {"pretty", "get", "keys", "convert", "validate"}
 
 
 # ============================================================================ #
@@ -439,3 +439,86 @@ class TestYamtoolCLI:
         assert code == 0
         out = capsys.readouterr().out
         assert "语法校验失败" in out
+
+
+# ============================================================================ #
+# convert 子命令（YAML -> JSON / TOML）
+# ============================================================================ #
+class TestConvert:
+    """yamtool convert 的端到端测试。"""
+
+    def _sample(self, tmp_path: Path) -> Path:
+        path = tmp_path / "sample.yaml"
+        path.write_text(_SAMPLE_YAML, encoding="utf-8")
+        return path
+
+    def test_convert_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--to json 输出 JSON 且可解析。"""
+        import json
+
+        path = self._sample(tmp_path)
+        code = run_tool("yamtool", ["convert", str(path), "--to", "json"])
+        out = strip_framework_lines(capsys.readouterr().out)
+        assert code == 0
+        decoder = json.JSONDecoder()
+        parsed, _ = decoder.raw_decode(out[out.index("{") :])
+        assert parsed["database"]["host"] == "localhost"
+
+    def test_convert_toml(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--to toml 输出可被 tomllib 重新解析的 TOML。"""
+        from fcmd.infras._toml import loads
+
+        path = self._sample(tmp_path)
+        code = run_tool("yamtool", ["convert", str(path), "--to", "toml"])
+        out = strip_framework_lines(capsys.readouterr().out)
+        assert code == 0
+        parsed = loads(out)
+        assert parsed["name"] == "fcmd"
+        assert parsed["database"]["port"] == 5432
+
+    def test_convert_to_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--output 写文件。"""
+        path = self._sample(tmp_path)
+        target = tmp_path / "out.toml"
+        code = run_tool("yamtool", ["convert", str(path), "--to", "toml", "--output", str(target)])
+        captured = capsys.readouterr()
+        assert code == 0
+        assert "已写入" in captured.out
+        assert "[database]" in target.read_text(encoding="utf-8")
+
+    def test_convert_invalid_format(self, tmp_path: Path) -> None:
+        """--to 非法取值按用法错误退出（2）。"""
+        path = self._sample(tmp_path)
+        assert run_tool("yamtool", ["convert", str(path), "--to", "xml"]) == 2
+
+    def test_convert_missing_file(self, tmp_path: Path) -> None:
+        """源文件不存在退出 4。"""
+        assert run_tool("yamtool", ["convert", str(tmp_path / "no.yaml"), "--to", "json"]) == 4
+
+    def test_convert_broken_yaml(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """非良构 YAML 退出 3。"""
+        path = tmp_path / "broken.yaml"
+        path.write_text("name: fcmd\n  bad: indent\n", encoding="utf-8")
+        code = run_tool("yamtool", ["convert", str(path), "--to", "json"])
+        assert code == 3
+        assert "解析失败" in capsys.readouterr().out
+
+    def test_convert_non_mapping_to_toml(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """顶层为列表时无法转 TOML，退出 3。"""
+        path = tmp_path / "list.yaml"
+        path.write_text("- a\n- b\n", encoding="utf-8")
+        code = run_tool("yamtool", ["convert", str(path), "--to", "toml"])
+        assert code == 3
+        assert "无法转换为 TOML" in capsys.readouterr().out
+
+    def test_convert_missing_pyyaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PyYAML 缺失时退出 1。"""
+        from fcmd.infras.data import yaml as yaml_infra
+
+        path = self._sample(tmp_path)
+
+        def _boom() -> object:
+            raise ImportError("YAML 处理需要 PyYAML: pip install pyyaml")
+
+        monkeypatch.setattr(yaml_infra, "_yaml_module", _boom)
+        assert run_tool("yamtool", ["convert", str(path), "--to", "json"]) == 1

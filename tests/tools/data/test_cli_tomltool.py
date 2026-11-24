@@ -13,8 +13,10 @@ from fcmd.infras.data import (
     get_toml_value,
     keys_toml,
     read_toml,
+    to_toml,
     validate_toml,
 )
+from tests.helpers import strip_framework_lines
 
 # 模块导入即注册工具（@fcmd.tool 装饰器在导入时执行）
 
@@ -54,7 +56,7 @@ def test_tool_registered() -> None:
     """tomltool 工具已注册。"""
     assert "tomltool" in list_tools()
     subs = list_subcommands("tomltool")
-    assert set(subs) == {"get", "keys", "format", "validate"}
+    assert set(subs) == {"get", "keys", "format", "convert", "validate"}
 
 
 # ---------------------------------------------------------------------- #
@@ -215,3 +217,153 @@ def test_cli_file_not_found(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     captured = capsys.readouterr()
     assert code == 0
     assert "文件不存在" in captured.out
+
+
+# ---------------------------------------------------------------------- #
+# to_toml（写方向序列化）
+# ---------------------------------------------------------------------- #
+def test_to_toml_scalars_and_nested() -> None:
+    """标量、数组、子表与表数组按 TOML 结构输出。"""
+    text = to_toml(
+        {
+            "title": "demo",
+            "enabled": True,
+            "count": 3,
+            "ratio": 0.5,
+            "tags": ["a", "b"],
+            "empty": [],
+            "owner": {"name": "me", "ids": [1, 2]},
+            "items": [{"id": 1}, {"id": 2}],
+        }
+    )
+    assert 'title = "demo"' in text
+    assert "enabled = true" in text
+    assert "count = 3" in text
+    assert "ratio = 0.5" in text
+    assert 'tags = ["a", "b"]' in text
+    assert "empty = []" in text
+    assert "[owner]" in text
+    assert 'name = "me"' in text
+    assert "[[items]]" in text
+
+
+def test_to_toml_roundtrip(toml_file: Path) -> None:
+    """读入再写出后能被 tomllib 重新解析出等价数据。"""
+    from fcmd.infras._toml import loads
+
+    original = read_toml(toml_file)
+    assert loads(to_toml(original)) == original
+
+
+def test_to_toml_quotes_and_escapes() -> None:
+    """键名含特殊字符时加引号，字符串转义控制字符。"""
+    text = to_toml({"a b": 'quote " backslash \\ newline \n tab \t ctrl \x01', "普通": 1})
+    assert '"a b" = ' in text
+    assert 'quote \\" backslash \\\\ newline \\n tab \\t ctrl \\u0001' in text
+    assert '"\u666e\u901a" = 1' in text
+
+
+def test_to_toml_special_floats_and_datetime() -> None:
+    """nan/inf 与日期时间按 TOML 字面量输出。"""
+    from datetime import datetime
+
+    text = to_toml({"nan": float("nan"), "inf": float("inf"), "ninf": float("-inf"), "at": datetime(2024, 1, 2, 3)})
+    assert "nan = nan" in text
+    assert "inf = inf" in text
+    assert "ninf = -inf" in text
+    assert "at = 2024-01-02T03:00:00" in text
+
+
+def test_to_toml_empty_mapping() -> None:
+    """空映射输出空串。"""
+    assert to_toml({}) == ""
+
+
+def test_to_toml_rejects_unsupported() -> None:
+    """非映射顶层、None 值、非字符串键、未知类型都抛 ValueError。"""
+    with pytest.raises(ValueError, match="顶层必须是映射"):
+        to_toml([1, 2])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="None"):
+        to_toml({"a": None})
+    with pytest.raises(ValueError, match="键必须是字符串"):
+        to_toml({1: "a"})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="无法表示的类型"):
+        to_toml({"a": object()})
+
+
+# ---------------------------------------------------------------------- #
+# CLI convert
+# ---------------------------------------------------------------------- #
+def test_cli_convert_json(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """convert --to json 在标准输出给出 JSON。"""
+    code = run_tool("tomltool", ["convert", str(toml_file), "--to", "json"])
+    out = strip_framework_lines(capsys.readouterr().out)
+    assert code == 0
+    decoder = json.JSONDecoder()
+    data, _ = decoder.raw_decode(out[out.index("{") :])
+    assert data["project"]["name"] == "myapp"
+
+
+def test_cli_convert_yaml(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """convert --to yaml 在标准输出给出 YAML。"""
+    code = run_tool("tomltool", ["convert", str(toml_file), "--to", "yaml"])
+    out = strip_framework_lines(capsys.readouterr().out)
+    assert code == 0
+    assert "project:" in out
+    assert "name: myapp" in out
+
+
+def test_cli_convert_to_file(toml_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """--output 写到目标文件（父目录自动创建）。"""
+    target = tmp_path / "nested" / "out.json"
+    code = run_tool("tomltool", ["convert", str(toml_file), "--to", "json", "--output", str(target)])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "已写入" in captured.out
+    assert json.loads(target.read_text(encoding="utf-8"))["tool"]["ruff"]["line-length"] == 100
+
+
+def test_cli_convert_invalid_format(toml_file: Path) -> None:
+    """--to 取值不在枚举内按用法错误退出（2）。"""
+    assert run_tool("tomltool", ["convert", str(toml_file), "--to", "xml"]) == 2
+
+
+def test_cli_convert_file_not_found(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """源文件不存在退出 4。"""
+    code = run_tool("tomltool", ["convert", str(tmp_path / "nope.toml"), "--to", "json"])
+    captured = capsys.readouterr()
+    assert code == 4
+    assert "错误" in captured.out + captured.err or "错误" in captured.err
+
+
+def test_cli_convert_invalid_toml(invalid_toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """源文件语法错误退出 3。"""
+    code = run_tool("tomltool", ["convert", str(invalid_toml_file), "--to", "json"])
+    assert code == 3
+    assert "解析失败" in capsys.readouterr().out + ""
+
+
+def test_cli_convert_missing_pyyaml(
+    toml_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """PyYAML 缺失时退出 1 并提示安装。"""
+    from fcmd.infras.data import yaml as yaml_infra
+
+    def _boom() -> object:
+        raise ImportError("YAML 处理需要 PyYAML: pip install pyyaml")
+
+    monkeypatch.setattr(yaml_infra, "_yaml_module", _boom)
+    code = run_tool("tomltool", ["convert", str(toml_file), "--to", "yaml"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "PyYAML" in captured.out + captured.err
+
+
+def test_cli_convert_write_failure(toml_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """目标路径不可写时退出 1。"""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    code = run_tool("tomltool", ["convert", str(toml_file), "--to", "json", "--output", str(blocker / "out.json")])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "写入目标文件失败" in captured.out + captured.err

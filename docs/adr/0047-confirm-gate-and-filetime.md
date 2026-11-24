@@ -57,9 +57,9 @@
   `archivex`、`reshack edit`、`csvtool from-json`、`fonttool install`、
   `filesync apply`、`setenv`、`taskkill`、`writefile`）尚未逐个声明
   `requires_confirmation`；逐个开启属于行为变更，需单独评估并告知用户；
-- 对照分析中的其余缺口按「价值 / 成本」排期：TOML/YAML 跨格式转换、
-  只读环境变量查询、`pathtool join/abs`、`completion powershell`、
-  `txttool count` 字节数、`stattool percentile`；`--json` 的空缺工具按
-  [ADR 0037](0037-unified-result-envelope.md) P2 继续接入；
+- 对照分析中的其余缺口按「价值 / 成本」排期：只读环境变量查询、
+  `pathtool join/abs`、`completion powershell`、`txttool count` 字节数、
+  `stattool percentile`（TOML/YAML 跨格式转换见 [0048](0048-config-format-convert.md)）；
+  `--json` 的空缺工具按 [ADR 0037](0037-unified-result-envelope.md) P2 继续接入；
 - 目录锁、通用断点续传、缓存框架、PyO3 绑定明确不补（fcmd 单进程 CLI +
   原子写，下载/缓存策略按 app 语义下沉）。
