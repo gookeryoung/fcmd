@@ -8,8 +8,8 @@
 ### 变更
 
 - 帮助文档渲染层拆到 `gui/docview`：Markdown 改 `markdown-it-py`（表格 / 删除线）、
-  代码块按 Obsidian 风格渲染（顶部语言栏 + 复制链接 + 贴底代码区），Pygments
-  深/浅主题高亮，超长或未知语言回退纯文本；
+  代码块用艺术化容器（左侧强调色细条 + 无边框暗色背景 + 轻量语言 / 复制行），
+  Pygments 深/浅主题高亮，超长或未知语言回退纯文本；
   `HelpView` 统一搜索高亮、标题定位与链接处理，`help.py` 只保留窗口编排（ADR 0056）。
 - GUI 分栏手柄统一为 `QuietSplitter`：`make_splitter()` 默认返回 4px 透明手柄，
   hover / 拖动时显示强调色；llmw 对话与工作流去掉 `ChatSplitter` 自定义，

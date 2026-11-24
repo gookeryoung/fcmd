@@ -45,21 +45,22 @@ def _code_block_html(
     theme: Theme,
     mono_family: str,
 ) -> str:
-    """Obsidian 风格代码块：顶部语言栏 + 复制链接，下方贴着代码正文。"""
+    """艺术化代码块：左侧强调色细条 + 无边框暗色容器 + 轻量语言/复制行。"""
     palette = theme.palette
     mono = mono_family or "monospace"
     label = escape(language or "text")
-    header_style = f"background:{palette.surface_hover}; padding:4px 9px; border:none;"
-    label_style = f"color:{palette.muted}; font-family:'{mono}'; font-size:{theme.fonts.small}pt;"
-    copy_style = f"color:{palette.accent}; text-decoration:none; font-size:{theme.fonts.small}pt;"
-    code_bg = f"background:{palette.log_bg}; border:none;"
+    label_style = f"color:{palette.accent}; font-family:'{mono}'; font-size:{theme.fonts.small}pt;"
+    copy_style = f"color:{palette.muted}; text-decoration:none; font-size:{theme.fonts.small}pt;"
+    cell = f"background:{palette.log_bg}; border:none;"
     return (
         '<table width="100%" cellspacing="0" cellpadding="0" '
-        f'style="margin:8px 0; border:1px solid {palette.border}; border-collapse:collapse;">'
-        f'<tr><td style="{header_style}"><span style="{label_style}">{label}</span></td>'
-        f'<td align="right" style="{header_style}"><a href="fcmd-copy-code:{index}" style="{copy_style}">复制</a></td></tr>'
-        f'<tr><td colspan="2" style="{code_bg} padding:0;">'
-        f'<pre style="{code_bg} padding:8px 10px;"><code>{highlighted}</code></pre></td></tr></table>\n'
+        f'style="margin:10px 0; border:none; border-collapse:collapse;">'
+        f'<tr><td rowspan="2" width="3" style="background:{palette.accent}; border:none;"></td>'
+        f'<td style="{cell} padding:8px 14px 2px 14px;"><span style="{label_style}">{label}</span></td>'
+        f'<td align="right" style="{cell} padding:8px 14px 2px 14px;">'
+        f'<a href="fcmd-copy-code:{index}" style="{copy_style}">复制</a></td></tr>'
+        f'<tr><td colspan="2" style="{cell} padding:0 14px 12px 14px;">'
+        f'<pre style="{cell} margin:0; padding:0;"><code>{highlighted}</code></pre></td></tr></table>\n'
     )
 
 

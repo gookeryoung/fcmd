@@ -17,7 +17,7 @@
 | D1 | 标题提取下沉 `shared/helpdoc.py`：`help_outline` / `help_headings`，CLI 与 GUI 共用 | `shared/helpdoc.py` |
 | D2 | 新增 `gui/docview/` 包：`render.py`（Markdown → HTML）、`highlight.py`（Pygments）、`theme.py`（QTextDocument CSS）、`view.py`（`HelpView`） | `gui/docview/` |
 | D3 | Markdown 改用 `markdown-it-py`（`commonmark` + table / strikethrough，`html=False`），不再依赖 Qt 自带解析器 | `render.py` |
-| D4 | 代码块按语言 Pygments 高亮，未知语言 / 超 2000 行回退转义；按 Obsidian 风格渲染为「顶部语言栏 + 复制链接 + 贴底代码区」的双行表格，由 `HelpView` 拦截 `fcmd-copy-code:<index>` 复制原文 | `highlight.py`、`render.py`、`view.py` |
+| D4 | 代码块按语言 Pygments 高亮，未知语言 / 超 2000 行回退转义；渲染为左侧强调色细条 + 无边框暗色容器，语言名与复制链接轻量置于顶部，由 `HelpView` 拦截 `fcmd-copy-code:<index>` 复制原文 | `highlight.py`、`render.py`、`view.py` |
 | D5 | `HelpView` 统一维护搜索高亮、标题定位、相对链接 / 图片基准目录；`gui/help.py` 只保留窗口导航 / 目录树 / 示例 / 菜单 | `view.py`、`help.py` |
 | D6 | 显式声明 `markdown-it-py>=4` 与 `pygments>=2`，不再依赖 `rich` 的传递依赖 | `pyproject.toml`、`uv.lock` |
 
@@ -34,8 +34,8 @@
 
 - P0：`gui/docview/` 包、`shared.helpdoc.help_outline` / `help_headings`、
   `markdown-it-py` 渲染、主题 CSS 迁移。
-- P1：Pygments 代码高亮（深色 `one-dark` / 浅色 `friendly`）、Obsidian 风格
-  语言栏 + 复制链接、超长 / 未知语言回退；`HelpView` 搜索高亮 / 定位 / 链接处理。
+- P1：Pygments 代码高亮（深色 `one-dark` / 浅色 `friendly`）、艺术化
+  左侧强调条 + 顶部语言 / 复制行、超长 / 未知语言回退；`HelpView` 搜索高亮 / 定位 / 链接处理。
 
 ## 交接
 

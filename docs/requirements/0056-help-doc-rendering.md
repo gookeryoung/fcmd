@@ -18,7 +18,7 @@
 | # | 需求句（原文片段） | 可实施约束 | 涉及模块 | 验收方式 |
 |---|---|---|---|---|
 | C1 | 「提升渲染能力」 | 帮助正文改用 `markdown-it-py` 渲染 HTML，支持表格 / 删除线 / fence，禁用原始 HTML | `gui/docview/render.py` | `tests/gui/docview/test_render.py` |
-| C2 | 「包括代码块」 | 代码块按 Obsidian 风格渲染：顶部语言栏 + 复制链接 + 贴底代码区；按语言用 Pygments 高亮，未知语言 / 超长代码块回退转义文本 | `gui/docview/highlight.py`、`render.py`、`view.py` | 高亮 / 复制测试 |
+| C2 | 「包括代码块」 | 代码块用艺术化容器：左侧强调色细条 + 无边框暗色背景，顶部轻量语言名 / 复制链接；按语言 Pygments 高亮，未知语言 / 超长回退转义文本 | `gui/docview/highlight.py`、`render.py`、`view.py` | 高亮 / 复制测试 |
 | C3 | 「建议放哪」 | 渲染逻辑从 `gui/help.py` 抽到 `gui/docview/` 包；纯标题提取下沉 `shared/helpdoc.py`；窗口只留编排 | `gui/docview/`、`shared/helpdoc.py`、`gui/help.py` | 目录 / 架构守卫 |
 | C4 | 「进一步提升」 | 搜索高亮、标题定位、相对链接 / 图片基准目录、代码复制由 `HelpView` 统一维护；其它 GUI 可复用 | `gui/docview/view.py` | `tests/gui/docview/test_view.py` |
 
