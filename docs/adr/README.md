@@ -53,4 +53,4 @@
 | [0046](0046-large-qt-app-split.md) | 大型 Qt 应用拆分：wslman / llmw 页面化与窗口瘦身；`apps/<app>/qt/` 布局例外、状态归属、P0–P5 分期与行数守卫 | 已落地（wslman + llmw 模型/运行页拆分；chat/paint 按触达再迁） |
 | [0047](0047-confirm-gate-and-filetime.md) | 破坏性写操作的确认闸门（`requires_confirmation` + `--confirm`）与 `filetime` 工具（mtime/atime 读/写）；schema 增加 `json` / `requires_confirmation` 标记 | 已落地 |
 | [0048](0048-config-format-convert.md) | 配置格式跨转换：`tomltool convert`（TOML → JSON/YAML）与 `yamtool convert`（YAML → JSON/TOML），自实现 `to_toml` 写方向序列化 | 已落地 |
-| [0049](0049-small-readonly-gaps.md) | 小型只读能力补齐：`env --vars [--prefix]`、`pathtool join` / `kind`、`completion powershell` | env / pathtool / powershell 已落地（其余小项待办） |
+| [0049](0049-small-readonly-gaps.md) | 小型只读能力补齐：`env --vars [--prefix]`、`pathtool join` / `kind`、`completion powershell`、`txttool count` 字节数、`stattool percentile` | 已落地 |

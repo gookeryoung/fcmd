@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import base64
+import math
 import secrets
 import statistics
 import string
@@ -108,6 +109,26 @@ def stat_median(numbers: list[float]) -> float:
     if not numbers:
         raise ValueError("数据列表为空，无法计算中位数")
     return statistics.median(numbers)
+
+
+def stat_percentile(numbers: list[float], percent: float) -> float:
+    """线性插值百分位数（与 numpy 默认的 ``linear`` 方法一致）。
+
+    ``percent`` 取 0–100：0 为最小值、100 为最大值；样本量足够时按位置
+    ``(n-1) * percent / 100`` 在相邻两点间线性插值。
+    """
+    if not numbers:
+        raise ValueError("数据列表为空，无法计算百分位数")
+    if not 0 <= percent <= 100:
+        raise ValueError(f"百分位数必须在 0 到 100 之间，当前: {percent}")
+    ordered = sorted(numbers)
+    position = (len(ordered) - 1) * percent / 100
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return float(ordered[lower])
+    weight = position - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
 
 
 def stat_stddev(numbers: list[float]) -> float:

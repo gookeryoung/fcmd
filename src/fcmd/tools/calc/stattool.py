@@ -1,4 +1,4 @@
-"""stattool 工具：均值、中位数、标准差、方差与统计摘要。
+"""stattool 工具：均值、中位数、百分位数、标准差、方差与统计摘要。
 
 计算逻辑在 :mod:`fcmd.infras.calc`；本模块负责文件加载错误的呈现与结果输出。
 """
@@ -92,6 +92,20 @@ def stattool_mean(file: Path, json_output: bool = False) -> None:
 def stattool_median(file: Path, json_output: bool = False) -> None:
     """计算中位数（median）子命令。"""
     _run_stat_action("median", calc.stat_median, "中位数", file, json_output)
+
+
+@fx.tool(
+    "stattool",
+    subcommand="percentile",
+    help="计算百分位数（0–100）",
+    param_help={
+        "file": "数据文件路径（每行一个数字）",
+        "p": "百分位数（0–100，默认 50）",
+    },
+)
+def stattool_percentile(file: Path, p: float = 50, json_output: bool = False) -> None:
+    """计算线性插值百分位数（percentile）子命令。"""
+    _run_stat_action("percentile", lambda numbers: calc.stat_percentile(numbers, p), f"P{p:g}", file, json_output)
 
 
 @fx.tool(

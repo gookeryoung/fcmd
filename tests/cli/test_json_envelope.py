@@ -193,9 +193,9 @@ def test_casetool_snake_json(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_txttool_count_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     f = tmp_path / "a.txt"
-    f.write_text("one two\nthree\n", encoding="utf-8")
+    f.write_bytes(b"one two\nthree\n")
     payload = _run_ok("txttool", ["count", str(f)], capsys)
-    assert payload["data"] == {"lines": 2, "words": 3, "chars": 14}
+    assert payload["data"] == {"lines": 2, "words": 3, "chars": 14, "bytes": 14}
 
 
 def test_txttool_missing_file_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -31,21 +31,23 @@ def _require_file(subcommand: str, path: str, json_output: bool) -> Path | None:
 @fx.tool(
     "txttool",
     subcommand="count",
-    help="统计行/词/字符数",
+    help="统计行/词/字符/字节数",
     param_help={"path": "目标文件路径"},
 )
 def count(path: str, json_output: bool = False) -> None:
-    """统计文本文件的行数、单词数、字符数。"""
+    """统计文本文件的行数、单词数、字符数与字节数（磁盘大小）。"""
     file_path = _require_file("count", path, json_output)
     if file_path is None:
         return
-    stats = textinfra.count_text(textinfra.read_text_file(file_path))
+    stats: dict[str, int] = dict(textinfra.count_text(textinfra.read_text_file(file_path)))
+    stats["bytes"] = file_path.stat().st_size
     if json_output:
         emit_result("txttool", "count", stats)
         return
     print(f"行数: {stats['lines']}")
     print(f"词数: {stats['words']}")
     print(f"字符数: {stats['chars']}")
+    print(f"字节数: {stats['bytes']}")
 
 
 @fx.tool(

@@ -266,7 +266,7 @@ DESCRIPTIONS: dict[str, str] = {
     "textdiff": "比较两个文本文件",
     "timetool": "显示当前时间",
     "tomltool": "按点路径取值",
-    "txttool": "统计行/词/字符数",
+    "txttool": "统计行/词/字符/字节数",
     "urlcheck": "检测单个 URL 可访问性与延迟",
     "urltool": "解析 URL 各组成部分",
     "videoconv": "视频格式转换（mp4/mkv/avi/mov/wmv/flv/webm/gif）：编码器、比特率、帧率、缩放、CRF、预设与外部音轨可配，支持通配符批量，依赖系统 ffmpeg",
@@ -380,13 +380,13 @@ HELP: dict[str, str] = {
     "screenshot": "screenshot 子命令\n+-------------------+\n| 子命令 | 说明     |\n|--------+----------|\n| area   | 区域截图 |\n| full   | 全屏截图 |\n+-------------------+\n",
     "setenv": "usage: setenv [-h] [--default] [--dry-run] [-q] [--strategy STRATEGY]\n              name value\n\n设置环境变量\n\npositional arguments:\n  name                 环境变量名\n  value                环境变量值\n\noptions:\n  -h, --help           show this help message and exit\n  --default            为 True 时使用 setdefault 不覆盖已有值\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "sshcopyid": "usage: sshcopyid [-h] [--port PORT] [--keypath KEYPATH] [--timeout TIMEOUT]\n                 [--dry-run] [-q] [--strategy STRATEGY]\n                 hostname username password\n\n部署 SSH 公钥到远程服务器\n\npositional arguments:\n  hostname             远程服务器主机名或 IP 地址\n  username             远程服务器用户名\n  password             远程服务器密码（Linux 经 SSHPASS 环境变量传递，不进命令行；Windows检测到 plink\n                       时经 -pw 命令行参数传递，OpenSSH 分支无法自动注入需交互输入）\n\noptions:\n  -h, --help           show this help message and exit\n  --port PORT          SSH 端口（默认 22）\n  --keypath KEYPATH    公钥文件路径（默认 ~/.ssh/id_rsa.pub，使用前展开为绝对路径）\n  --timeout TIMEOUT    SSH 连接超时秒数（默认 30）\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
-    "stattool": "stattool 子命令\n+------------------------------+\n| 子命令    | 说明             |\n|-----------+------------------|\n| mean      | 计算算术平均值   |\n| median    | 计算中位数       |\n| stddev    | 计算样本标准差   |\n| summarize | 输出完整统计摘要 |\n| variance  | 计算样本方差     |\n+------------------------------+\n",
+    "stattool": "stattool 子命令\n+------------------------------------+\n| 子命令     | 说明                  |\n|------------+-----------------------|\n| mean       | 计算算术平均值        |\n| median     | 计算中位数            |\n| percentile | 计算百分位数（0–100） |\n| stddev     | 计算样本标准差        |\n| summarize  | 输出完整统计摘要      |\n| variance   | 计算样本方差          |\n+------------------------------------+\n",
     "sysinfo": "usage: sysinfo [-h] [--json-output] [--dry-run] [-q] [--strategy STRATEGY]\n\n收集并打印系统信息\n\noptions:\n  -h, --help            show this help message and exit\n  --json-output, --json\n                        以 JSON 输出（--json 同义）\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n\n示例:\n  fcmd sysinfo\n  fcmd sysinfo --json\n  fcmd sysinfo --json > sysinfo.json\n",
     "taskkill": "usage: taskkill [-h] [--dry-run] [-q] [--strategy STRATEGY] names [names ...]\n\n按名称终止进程（跨平台）\n\npositional arguments:\n  names                进程名称列表（按名称前缀匹配）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "textdiff": "textdiff 子命令\n+---------------------------+\n| 子命令 | 说明             |\n|--------+------------------|\n| dir    | 比较两个目录     |\n| file   | 比较两个文本文件 |\n+---------------------------+\n",
     "timetool": "timetool 子命令\n+------------------------------+\n| 子命令   | 说明              |\n|----------+-------------------|\n| convert  | 时区转换          |\n| fromunix | Unix 时间戳转时间 |\n| now      | 显示当前时间      |\n| parse    | 解析时间字符串    |\n| unix     | 转 Unix 时间戳    |\n+------------------------------+\n",
     "tomltool": "tomltool 子命令\n+---------------------------------+\n| 子命令   | 说明                 |\n|----------+----------------------|\n| convert  | 转换为 JSON 或 YAML  |\n| format   | 转为 JSON 格式化输出 |\n| get      | 按点路径取值         |\n| keys     | 列出顶层键           |\n| validate | 语法校验             |\n+---------------------------------+\n",
-    "txttool": "txttool 子命令\n+---------------------------+\n| 子命令 | 说明             |\n|--------+------------------|\n| case   | 大小写转换       |\n| count  | 统计行/词/字符数 |\n| sort   | 排序文本行       |\n| unique | 去重文本行       |\n+---------------------------+\n",
+    "txttool": "txttool 子命令\n+--------------------------------+\n| 子命令 | 说明                  |\n|--------+-----------------------|\n| case   | 大小写转换            |\n| count  | 统计行/词/字符/字节数 |\n| sort   | 排序文本行            |\n| unique | 去重文本行            |\n+--------------------------------+\n",
     "urlcheck": "urlcheck 子命令\n+----------------------------------------+\n| 子命令 | 说明                          |\n|--------+-------------------------------|\n| r      | 批量探测 URL 并按访问速度排序 |\n| u      | 检测单个 URL 可访问性与延迟   |\n+----------------------------------------+\n",
     "urltool": "urltool 子命令\n+--------------------------------+\n| 子命令   | 说明                |\n|----------+---------------------|\n| addquery | 添加查询参数        |\n| baseurl  | 提取基础 URL        |\n| parse    | 解析 URL 各组成部分 |\n| query    | 提取查询参数值      |\n+--------------------------------+\n",
     "videoconv": "usage: videoconv [-h] [--output-dir OUTPUT_DIR]\n                 [--output-format {mp4,avi,mkv,mov,wmv,flv,webm,gif}]\n                 [--video-codec VIDEO_CODEC] [--audio-codec AUDIO_CODEC]\n                 [--video-bitrate VIDEO_BITRATE]\n                 [--audio-bitrate AUDIO_BITRATE] [--frame-rate FRAME_RATE]\n                 [--scale SCALE] [--crf CRF]\n                 [--preset {ultrafast,superfast,veryfast,faster,fast,medium,slow,slower,veryslow}]\n                 [--no-audio] [--audio-file AUDIO_FILE] [--dry-run] [-q]\n                 [--strategy STRATEGY]\n                 inputs [inputs ...]\n\n视频格式转换（编码器/比特率/帧率/缩放/CRF/预设/外部音轨，支持通配符批量）\n\npositional arguments:\n  inputs                输入视频文件或通配符模式（如 *.m4s、**/*.mp4），可多个\n\noptions:\n  -h, --help            show this help message and exit\n  --output-dir OUTPUT_DIR\n                        输出目录，默认与输入文件同目录\n  --output-format {mp4,avi,mkv,mov,wmv,flv,webm,gif}\n                        输出格式（默认 mp4）\n  --video-codec VIDEO_CODEC\n                        视频编码器（默认 libx264）\n  --audio-codec AUDIO_CODEC\n                        音频编码器（默认 aac）\n  --video-bitrate VIDEO_BITRATE\n                        视频比特率 kbps，非 CRF 编码器生效（默认 2500）\n  --audio-bitrate AUDIO_BITRATE\n                        音频比特率 kbps（默认 128）\n  --frame-rate FRAME_RATE\n                        目标帧率，省略时保持源帧率\n  --scale SCALE         分辨率缩放因子（默认 1.0，0.5 表示缩放到一半）\n  --crf CRF             恒定速率因子 0-51，越小质量越高（默认 23）\n  --preset {ultrafast,superfast,veryfast,faster,fast,medium,slow,slower,veryslow}\n                        编码预设（默认 medium）\n  --no-audio            移除音轨\n  --audio-file AUDIO_FILE\n                        用于替换/合并的外部音频文件\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
@@ -534,11 +534,11 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "cbb584edc5764de74a6b943622acb034"
+DIGEST = "378b520a4491eb9abb62818201e73763"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
-SUBCOMMAND_TOTAL = 404
+SUBCOMMAND_TOTAL = 405
 
 
 if __name__ == "__main__":  # pragma: no cover

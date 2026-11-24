@@ -17,6 +17,7 @@ from fcmd.infras.calc import (
     load_numbers,
     stat_mean,
     stat_median,
+    stat_percentile,
     stat_stddev,
     stat_summarize,
     stat_variance,
@@ -41,9 +42,9 @@ class TestRegistration:
         assert "stattool" in list_tools()
 
     def test_subcommands(self) -> None:
-        """stattool 有 mean/median/stddev/variance/summarize 五个子命令。"""
+        """stattool 有 mean/median/percentile/stddev/variance/summarize 六个子命令。"""
         subs = list_subcommands("stattool")
-        assert set(subs) == {"mean", "median", "stddev", "variance", "summarize"}
+        assert set(subs) == {"mean", "median", "percentile", "stddev", "variance", "summarize"}
 
 
 # ============================================================================ #
@@ -379,3 +380,79 @@ class TestStattoolCLI:
         assert code == 3
         out = capsys.readouterr().out
         assert expected in out
+
+
+# ============================================================================ #
+# stat_percentile
+# ============================================================================ #
+class TestStatPercentile:
+    """stat_percentile 测试。"""
+
+    def test_median_equals_p50(self) -> None:
+        """P50 与中位数一致（奇数个）。"""
+        assert stat_percentile([1.0, 2.0, 3.0, 4.0, 5.0], 50) == 3.0
+
+    def test_bounds(self) -> None:
+        """P0 为最小值，P100 为最大值。"""
+        data = [3.0, 1.0, 2.0]
+        assert stat_percentile(data, 0) == 1.0
+        assert stat_percentile(data, 100) == 3.0
+
+    def test_linear_interpolation(self) -> None:
+        """非整数位置按线性插值（numpy linear 口径）。"""
+        assert stat_percentile([1.0, 2.0, 3.0, 4.0], 25) == pytest.approx(1.75)
+        assert stat_percentile([1.0, 2.0, 3.0, 4.0], 90) == pytest.approx(3.7)
+
+    def test_single_value(self) -> None:
+        """单值任意百分位都返回自身。"""
+        assert stat_percentile([42.0], 37) == 42.0
+
+    def test_empty_raises(self) -> None:
+        """空列表抛 ValueError。"""
+        with pytest.raises(ValueError, match="数据列表为空"):
+            stat_percentile([], 50)
+
+    @pytest.mark.parametrize("percent", [-1, 100.5])
+    def test_out_of_range_raises(self, percent: float) -> None:
+        """百分位超出 0–100 抛 ValueError。"""
+        with pytest.raises(ValueError, match="0 到 100"):
+            stat_percentile([1.0, 2.0], percent)
+
+
+class TestStattoolPercentileCLI:
+    """percentile 子命令端到端测试。"""
+
+    def test_default_p50(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """默认 p=50 输出中位数。"""
+        path = tmp_path / "data.txt"
+        _write_data(path, "1\n2\n3\n4\n5\n")
+        assert run_tool("stattool", ["percentile", str(path)]) == 0
+        assert "3" in capsys.readouterr().out
+
+    def test_explicit_p(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--p 指定百分位。"""
+        path = tmp_path / "data.txt"
+        _write_data(path, "1\n2\n3\n4\n5\n")
+        assert run_tool("stattool", ["percentile", str(path), "--p", "100"]) == 0
+        assert "5" in capsys.readouterr().out
+
+    def test_out_of_range(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--p 越界退出 3 并给出中文提示。"""
+        path = tmp_path / "data.txt"
+        _write_data(path, "1\n2\n")
+        code = run_tool("stattool", ["percentile", str(path), "--p", "120"])
+        assert code == 3
+        out = capsys.readouterr().out
+        assert "P120 计算失败" in out
+        assert "0 到 100" in out
+
+    def test_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--json 输出结果信封。"""
+        import json as json_mod
+
+        path = tmp_path / "data.txt"
+        _write_data(path, "1\n2\n3\n4\n5\n")
+        assert run_tool("stattool", ["percentile", str(path), "--json"]) == 0
+        raw = capsys.readouterr().out
+        payload = json_mod.loads(raw[raw.index("{") :])
+        assert payload["data"] == {"result": 3.0}

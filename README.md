@@ -200,7 +200,7 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `txttool` | - | 文本处理（case/count/sort/unique） |
+| `txttool` | - | 文本处理（case/count/sort/unique；count 含行/词/字符/字节数） |
 | `asciitool` | - | ASCII 码表（char/code/table） |
 | `codetool` | - | 编解码（Base64/URL/HTML/Hex/ROT13） |
 | `casetool` | - | 命名风格转换（camel/snake/kebab/pascal） |
@@ -216,7 +216,7 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 | `regextool` | - | 正则表达式（match/find/replace/split） |
 | `regexvalidate` | - | 正则校验（匹配/全匹配/findall/分组与正则特征分析，支持 ignorecase/multiline/dotall） |
 | `regexvalidatew` | - | 正则校验器窗口版（Qt：实时校验、20 个典型示例、历史记录与语法帮助，设置持久化到 `~/.fcmd/ui/regexvalidate.json`） |
-| `stattool` | - | 统计工具（mean/median/stddev/variance/summarize） |
+| `stattool` | - | 统计工具（mean/median/percentile/stddev/variance/summarize） |
 | `textdiff` | - | 文本比较（行级 diff，统一格式输出） |
 | `timetool` | - | 时间工具（now/parse/unix/fromunix/convert） |
 | `calcdate` | - | 日期计算（add/workdays/diff/compare） |

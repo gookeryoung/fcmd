@@ -196,15 +196,26 @@ class TestTxttoolCLI:
     """``txttool`` 通过 ``run_tool`` 调用测试。"""
 
     def test_count_via_run_tool(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd txttool count <file> 统计行/词/字符数。"""
+        """fcmd txttool count <file> 统计行/词/字符/字节数。"""
         f = tmp_path / "a.txt"
-        f.write_text("hello world\nfoo bar", encoding="utf-8")
+        f.write_bytes(b"hello world\nfoo bar")
         code = run_tool("txttool", ["count", str(f)])
         assert code == 0
         out = capsys.readouterr().out
         assert "行数: 2" in out
         assert "词数: 4" in out
         assert "字符数: 19" in out
+        assert "字节数: 19" in out
+
+    def test_count_bytes_multibyte(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """字节数按磁盘 utf-8 大小计（中文 3 字节/字，与字符数不同）。"""
+        f = tmp_path / "cn.txt"
+        f.write_bytes("中文\n".encode())
+        code = run_tool("txttool", ["count", str(f)])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "字符数: 3" in out
+        assert "字节数: 7" in out
 
     def test_count_empty_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """空文件统计全部为 0。"""
