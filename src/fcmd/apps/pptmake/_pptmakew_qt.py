@@ -68,8 +68,9 @@ from fcmd.apps.pptmake.pptmakew import (
     save_settings,
     slide_label,
 )
+from fcmd.gui.icons import set_icon as _set_icon
 from fcmd.gui.page import AppPage, PageSpec
-from fcmd.gui.widgets import Card, PageScroll, button, make_splitter
+from fcmd.gui.widgets import Card, PageScroll, button, icon_button, make_splitter
 from fcmd.gui.window import QtMainWindow
 
 __all__ = ["PAGES", "PptmakeQtWindow", "run_qt"]
@@ -88,6 +89,13 @@ THUMB_HEIGHT = 54.0
 THUMB_STRIP_HEIGHT = 92
 
 _PALETTE_LABELS = dict(core.PALETTE_FIELDS)
+
+
+def _action_button(icon_name: str, tooltip: str, *, text: str = "") -> QWidget:
+    """紧凑动作按钮：只显示图标（或极短标记）+ tooltip，窄面板不会被文字撑爆。"""
+    widget = icon_button(text, tooltip=tooltip)
+    _set_icon(widget, icon_name, tone="muted")
+    return widget
 
 
 def _brush(color: str) -> QBrush:
@@ -437,15 +445,15 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self.menuBar().update()
 
     def _make_header_buttons(self) -> tuple[QWidget, ...]:
-        """设计页标题行的快捷动作：新建 / 导入 / 导出模板 / 导出 PPTX。"""
+        """设计页标题行的快捷动作（仅图标）：新建 / 导入 / 导出模板 / 导出 PPTX。"""
         widgets: list[QWidget] = []
-        for text, icon, handler in (
-            ("新建", "plus", self._new_template),
-            ("导入", "folder-open", self._import_file),
-            ("导出模板", "save", self._export_template),
-            ("导出 PPTX", "export", self._export_pptx),
+        for icon, tooltip, handler in (
+            ("plus", "新建模板", self._new_template),
+            ("folder-open", "导入模板 / PPTX", self._import_file),
+            ("save", "导出模板（JSON）", self._export_template),
+            ("export", "导出 PPTX", self._export_pptx),
         ):
-            widget = button(text, icon=icon)
+            widget = _action_button(icon, tooltip)
             widget.clicked.connect(handler)
             widgets.append(widget)
         return tuple(widgets)
@@ -552,16 +560,17 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         page_buttons = QHBoxLayout()
         page_buttons.setContentsMargins(0, 0, 0, 0)
         page_buttons.setSpacing(4)
-        for text, handler in (
-            ("添加", self._add_slide),
-            ("复制", self._duplicate_slide),
-            ("删除", self._delete_slide),
-            ("上移", lambda: self._move_slide(-1)),
-            ("下移", lambda: self._move_slide(1)),
+        for icon, tooltip, handler in (
+            ("plus", "添加页面", self._add_slide),
+            ("copy", "复制页面", self._duplicate_slide),
+            ("trash", "删除页面", self._delete_slide),
+            ("chevron-up", "上移页面", lambda: self._move_slide(-1)),
+            ("chevron-down", "下移页面", lambda: self._move_slide(1)),
         ):
-            widget = button(text)
+            widget = _action_button(icon, tooltip)
             widget.clicked.connect(handler)
             page_buttons.addWidget(widget)
+        page_buttons.addStretch(1)
         pages.body.addLayout(page_buttons)
         layout.addWidget(pages, 3)
 
@@ -586,13 +595,13 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         toolbar.addStretch(1)
         self._zoom_label = QLabel("适应窗口", card)
         toolbar.addWidget(self._zoom_label)
-        for text, handler in (
-            ("适应窗口", lambda: self._set_zoom(None)),
-            ("100%", lambda: self._set_zoom(1.0)),
-            ("+", lambda: self._step_zoom(1.25)),
-            ("−", lambda: self._step_zoom(0.8)),
+        for icon, tooltip, text, handler in (
+            ("maximize", "适应窗口", "", lambda: self._set_zoom(None)),
+            ("scan", "实际大小（100%）", "", lambda: self._set_zoom(1.0)),
+            ("zoom-in", "放大", "", lambda: self._step_zoom(1.25)),
+            ("zoom-out", "缩小", "", lambda: self._step_zoom(0.8)),
         ):
-            widget = button(text)
+            widget = _action_button(icon, tooltip, text=text)
             widget.clicked.connect(handler)
             toolbar.addWidget(widget)
         card.body.addLayout(toolbar)
