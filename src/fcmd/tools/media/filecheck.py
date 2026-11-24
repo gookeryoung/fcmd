@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
+from fcmd.core.result import emit_result, report_error
 
 __all__ = [
     "Issue",
@@ -731,17 +732,54 @@ def run_filecheck(
     print(f"报告已输出：{report_path}")
 
 
+def _json_payload(result: ScanResult) -> dict[str, Any]:
+    """把扫描结果转为机读字典（不写入报告文件）。"""
+    errors = [item for item in result.issues if item.level == "错误"]
+    warns = [item for item in result.issues if item.level == "警告"]
+    notes = [item for item in result.issues if item.level == "提示"]
+    return {
+        "root": str(result.root),
+        "all_files": result.all_files,
+        "chunk_kb": result.chunk_kb,
+        "stats": result.stats,
+        "summary": {
+            "checked": int(result.stats.get("checked", 0)),
+            "errors": len(errors),
+            "warnings": len(warns),
+            "notes": len(notes),
+            "dir_errors": len(result.dir_errors),
+            "missing_groups": len(result.missing),
+        },
+        "issues": [{"level": item.level, "path": item.path, "message": item.message} for item in result.issues],
+        "missing": [
+            {
+                "dirpath": group.dirpath,
+                "prefix": group.prefix,
+                "season": group.season,
+                "found": group.found,
+                "lo": group.lo,
+                "hi": group.hi,
+                "missing": list(group.missing),
+            }
+            for group in result.missing
+        ],
+        "dir_errors": result.dir_errors,
+    }
+
+
 @fcmd.tool("filecheck", help="文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数")
 def filecheck_cmd(
     path: Path | None = None,
     workers: int = min(16, max(4, (os.cpu_count() or 4) * 2)),
     chunk_kb: int = 64,
     all_files: bool = False,
+    json_output: bool = False,
 ) -> None:
     """快速筛查磁盘故障导致的丢失/损坏视频剧集文件与缺失集数。
 
     每个文件只读取头尾各 64KB（可调），不读取整个文件，多线程并发检查。
-    报告输出到被扫描的根目录下。
+    默认把报告写入被扫描的根目录；``--json`` 改为只在标准输出给出结构化
+    结果，不写报告文件。
 
     Parameters
     ----------
@@ -753,8 +791,26 @@ def filecheck_cmd(
         每个文件头尾各读取的大小，单位 KB（默认：64）
     all_files:
         检查所有文件而不仅是视频文件
+    json_output:
+        只输出机读信封，不写报告文件
     """
-    run_filecheck(path=path, workers=workers, chunk_kb=chunk_kb, all_files=all_files)
+    if not json_output:
+        run_filecheck(path=path, workers=workers, chunk_kb=chunk_kb, all_files=all_files)
+        return
+    root = path.expanduser().resolve() if path is not None else Path.cwd()
+    if not root.is_dir():
+        report_error(
+            "filecheck",
+            None,
+            code="FILE_NOT_FOUND",
+            message=f"路径不存在或不是目录: {root}",
+            field="path",
+            expected="已存在的目录",
+            json_output=True,
+        )
+        return
+    result = scan_directory(root, max(1, workers), max(4, chunk_kb) * 1024, all_files)
+    emit_result("filecheck", None, _json_payload(result))
 
 
 @fcmd.main("filecheck")

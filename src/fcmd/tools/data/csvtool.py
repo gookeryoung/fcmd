@@ -147,17 +147,39 @@ def from_json(file: Path, output: str = "") -> None:
         "output": "输出 CSV 路径（默认: 打印到标准输出）",
     },
 )
-def select(file: Path, columns: list[str], output: str = "") -> None:
+def select(file: Path, columns: list[str], output: str = "", json_output: bool = False) -> None:
     """按列筛选 CSV。"""
     try:
         header, rows = data.read_csv(file, has_header=True)
         if header is None:
+            if json_output:
+                emit_result(
+                    "csvtool", "select", {"file": str(file), "header": [], "rows": [], "output": output or None}
+                )
+                return
             print("CSV 文件为空")
             return
         new_header, new_rows = data.select_columns(rows, header, columns)
         if output:
             data.write_csv(Path(output), new_rows, header=new_header)
+            if json_output:
+                emit_result(
+                    "csvtool",
+                    "select",
+                    {
+                        "file": str(file),
+                        "output": output,
+                        "header": new_header,
+                        "rows": new_rows,
+                        "count": len(new_rows),
+                    },
+                )
+                return
             print(f"筛选完成: {file} -> {output}（{len(new_rows)} 行）")
+        elif json_output:
+            emit_result(
+                "csvtool", "select", {"file": str(file), "header": new_header, "rows": new_rows, "count": len(new_rows)}
+            )
         else:
             print(data.format_table(new_header, new_rows))
     except FileNotFoundError as exc:
@@ -169,7 +191,7 @@ def select(file: Path, columns: list[str], output: str = "") -> None:
             field="file",
             expected="已存在的 CSV 文件",
             hint="确认路径存在且是文件",
-            json_output=False,
+            json_output=json_output,
         )
     except ValueError as exc:
         report_error(
@@ -180,7 +202,7 @@ def select(file: Path, columns: list[str], output: str = "") -> None:
             field="columns",
             expected="CSV 表头中存在的列名",
             hint="先运行 fcmd csvtool show <file> 查看列名",
-            json_output=False,
+            json_output=json_output,
         )
 
 
@@ -194,13 +216,33 @@ def select(file: Path, columns: list[str], output: str = "") -> None:
         "output": "输出 CSV 路径（默认: 打印到标准输出）",
     },
 )
-def merge(files: list[Path], mode: str = "union", output: str = "") -> None:
+def merge(files: list[Path], mode: str = "union", output: str = "", json_output: bool = False) -> None:
     """合并多个 CSV。"""
     try:
         header, rows = data.merge_csvs(files, mode=mode)
         if output:
             data.write_csv(Path(output), rows, header=header)
+            if json_output:
+                emit_result(
+                    "csvtool",
+                    "merge",
+                    {
+                        "files": [str(f) for f in files],
+                        "mode": mode,
+                        "output": output,
+                        "header": header,
+                        "rows": rows,
+                        "count": len(rows),
+                    },
+                )
+                return
             print(f"合并完成: {len(files)} 个文件 -> {output}（{len(rows)} 行）")
+        elif json_output:
+            emit_result(
+                "csvtool",
+                "merge",
+                {"files": [str(f) for f in files], "mode": mode, "header": header, "rows": rows, "count": len(rows)},
+            )
         else:
             print(data.format_table(header, rows))
     except FileNotFoundError as exc:
@@ -212,7 +254,7 @@ def merge(files: list[Path], mode: str = "union", output: str = "") -> None:
             field="files",
             expected="已存在的 CSV 文件列表",
             hint="确认每个输入文件路径存在",
-            json_output=False,
+            json_output=json_output,
         )
     except ValueError as exc:
         report_error(
@@ -223,5 +265,5 @@ def merge(files: list[Path], mode: str = "union", output: str = "") -> None:
             field="files",
             expected="至少 2 个同结构 CSV 文件",
             hint="确认文件数 >= 2，且 mode/表头一致",
-            json_output=False,
+            json_output=json_output,
         )

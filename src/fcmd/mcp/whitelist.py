@@ -52,6 +52,11 @@ _JSON_READY: frozenset[tuple[str, str | None]] = frozenset(
         ("inifile", "get"),
         ("inifile", "list"),
         ("inifile", "keys"),
+        # 文件与归档
+        ("filecheck", None),
+        ("archivex", "list"),
+        ("csvtool", "select"),
+        ("csvtool", "merge"),
         # PE 只读中已接入 --json 的部分
         ("peview", "info"),
         ("peview", "sections"),

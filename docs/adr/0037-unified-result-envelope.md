@@ -57,12 +57,16 @@ csvtool 非 JSON 子命令；`folderzip` 属写操作，单独评估。
 
 ### P2 落地进度
 
-已接入（2026-11-24）：`which`、`pathtool`（show/rel/norm/diff）、`tomltool`
-（get/keys/format/validate）、`inifile`（get/list/keys）；MCP 白名单
-`_JSON_READY` 同步补齐这四个工具的条目。
+已接入（2026-11-24）：
 
-待办：`filecheck`、`archivex list`、`csvtool select/merge`、`urlcheck`、
-`portcheck`、`iptool`、`filescan scan`、LLM 与领域应用工具。
+- 路径与命令：`which`、`pathtool`（show/rel/norm/diff）；
+- 结构化配置：`tomltool`（get/keys/format/validate）、`inifile`（get/list/keys）；
+- 文件与归档：`filecheck`（`--json` 不写报告文件）、`archivex list`、
+  `csvtool`（select/merge）。
+
+MCP 白名单 `_JSON_READY` 同步补齐上述条目。
+
+待办：`urlcheck`、`portcheck`、`iptool`、`filescan scan`、LLM 与领域应用工具。
 
 ### P3 收口（待办）
 

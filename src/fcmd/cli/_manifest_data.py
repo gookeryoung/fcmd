@@ -305,7 +305,7 @@ HELP: dict[str, str] = {
     "dynacalcw": "usage: dynacalcw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开 dynacalc 窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "envdev": "envdev 子命令\n+-----------------------------------------------------------------------------+\n| 子命令 | 说明                                                               |\n|--------+--------------------------------------------------------------------|\n| all    | 一键配置所有环境                                                   |\n| app    | 应用/系统类一键配置（linux-mirror/qt-libs/fonts/docker/docker-mir… |\n| check  | 检测开发环境配置状态                                               |\n| lang   | 语言类一键配置（python/js/rust/go/java/node）                      |\n| mirror | 镜像站点探测 / 指定服务镜像测速与自动选取                          |\n+-----------------------------------------------------------------------------+\n",
     "envw": "usage: envw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开环境变量编辑器窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
-    "filecheck": "usage: filecheck [-h] [--path PATH] [--workers WORKERS] [--chunk-kb CHUNK_KB]\n                 [--all-files] [--dry-run] [-q] [--strategy STRATEGY]\n\n文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数\n\noptions:\n  -h, --help           show this help message and exit\n  --path PATH          要检查的根目录（默认：当前路径）\n  --workers WORKERS    并发检查线程数（默认：CPU 核数的 2 倍，上限 16）\n  --chunk-kb CHUNK_KB  每个文件头尾各读取的大小，单位 KB（默认：64）\n  --all-files          检查所有文件而不仅是视频文件\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
+    "filecheck": "usage: filecheck [-h] [--path PATH] [--workers WORKERS] [--chunk-kb CHUNK_KB]\n                 [--all-files] [--json-output] [--dry-run] [-q]\n                 [--strategy STRATEGY]\n\n文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数\n\noptions:\n  -h, --help            show this help message and exit\n  --path PATH           要检查的根目录（默认：当前路径）\n  --workers WORKERS     并发检查线程数（默认：CPU 核数的 2 倍，上限 16）\n  --chunk-kb CHUNK_KB   每个文件头尾各读取的大小，单位 KB（默认：64）\n  --all-files           检查所有文件而不仅是视频文件\n  --json-output, --json\n                        只输出机读信封，不写报告文件\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
     "filedate": "filedate 子命令\n+--------------------------------+\n| 子命令 | 说明                  |\n|--------+-----------------------|\n| add    | 添加/更新文件日期前缀 |\n| clear  | 清除文件日期前缀      |\n+--------------------------------+\n",
     "filelevel": "filelevel 子命令\n+-----------------------+\n| 子命令 | 说明         |\n|--------+--------------|\n| set    | 设置文件等级 |\n+-----------------------+\n",
     "filerename": "filerename 子命令\n+------------------------------------+\n| 子命令  | 说明                     |\n|---------+--------------------------|\n| case    | 转换文件名大小写         |\n| insert  | 在文件名指定位置插入文本 |\n| replace | 正则替换文件名主干       |\n+------------------------------------+\n",
@@ -534,7 +534,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "fb39ed16a71829ac85c504b7fb65552f"
+DIGEST = "a9c1d6a0f6f39f082446e40fe7dd3fb6"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

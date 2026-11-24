@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import fcmd
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, IgnoreSpec, should_skip_parts
 
 __all__ = [
@@ -465,7 +466,7 @@ def archivex_extract(archive: Path, output: str = "") -> None:
 
 
 @fcmd.tool("archivex", subcommand="list", help="列出归档文件内容")
-def archivex_list(archive: Path) -> None:
+def archivex_list(archive: Path, json_output: bool = False) -> None:
     """列出归档文件内容。
 
     Parameters
@@ -474,12 +475,37 @@ def archivex_list(archive: Path) -> None:
         归档文件路径
     """
     if not archive.exists():
-        print(f"归档文件不存在: {archive}")
+        report_error(
+            "archivex",
+            "list",
+            code="FILE_NOT_FOUND",
+            message=f"归档文件不存在: {archive}",
+            field="archive",
+            expected="存在的归档文件",
+            json_output=json_output,
+        )
         return
     try:
         names = list_archive(archive)
     except (ValueError, FileNotFoundError, RuntimeError) as e:
-        print(str(e))
+        if isinstance(e, FileNotFoundError):
+            code = "FILE_NOT_FOUND"
+        elif isinstance(e, ValueError):
+            code = "INVALID_ARGUMENT"
+        else:
+            code = "RUNTIME_ERROR"
+        report_error(
+            "archivex",
+            "list",
+            code=code,
+            message=str(e),
+            field="archive",
+            expected="可识别的归档文件（zip/tar/gz/bz2/xz/7z/rar）",
+            json_output=json_output,
+        )
+        return
+    if json_output:
+        emit_result("archivex", "list", {"archive": str(archive), "count": len(names), "entries": names})
         return
     if not names:
         print("（空归档）")

@@ -655,18 +655,18 @@ class TestCLISubcommands:
         assert "2 项" in captured.out
 
     def test_list_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """list 归档不存在时提示。"""
+        """list 归档不存在时按 FILE_NOT_FOUND 退出（4）。"""
         code = run_tool("archivex", ["list", str(tmp_path / "no.zip")])
-        assert code == 0
+        assert code == 4
         captured = capsys.readouterr()
         assert "归档文件不存在" in captured.out
 
     def test_list_unsupported(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """list 不支持的格式时提示。"""
+        """list 不支持的格式时按 INVALID_ARGUMENT 退出（3）。"""
         archive = tmp_path / "a.iso"
         archive.write_bytes(b"data")
         code = run_tool("archivex", ["list", str(archive)])
-        assert code == 0
+        assert code == 3
         captured = capsys.readouterr()
         assert "不支持的归档格式" in captured.out
 
