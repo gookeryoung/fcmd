@@ -3,9 +3,9 @@
 配置文件（JSON，``version`` 为 :data:`CONFIG_VERSION`）::
 
     {
-      "version": 1,
+      "version": 2,
       "roots": ["D:/data"],
-      "rules": {"version": 1, "name": "…", "rules": [...], "expression": "…"},
+      "rules": {"version": 2, "name": "…", "rules": [...], "expressions": [...]},
       "options": {
         "recursive": true, "max_depth": 0, "follow_symlinks": false,
         "skip_dirs": [".git", "node_modules"], "skip_hidden": false,
@@ -40,7 +40,7 @@ from __future__ import annotations
 import codecs
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -57,9 +57,7 @@ from fcmd.apps.filescan._engine import (
 )
 from fcmd.apps.filescan._rules import (
     RuleSet,
-    builtin_ruleset,
     load_ruleset,
-    parse_expression,
     ruleset_from_mapping,
     ruleset_to_mapping,
 )
@@ -77,7 +75,7 @@ __all__ = [
     "save_config",
 ]
 
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
 """当前配置文件版本号。"""
 
 REPORT_FORMATS: tuple[str, ...] = ("text", "json", "csv")
@@ -239,7 +237,6 @@ def config_from_mapping(raw: Any, *, base_dir: Path | None = None) -> ScanConfig
     roots = _roots_value(raw, warnings)
     options = _options_value(raw.get("options"), warnings)
     ruleset = _rules_value(raw, base_dir, warnings)
-    ruleset = _expression_value(ruleset, raw, warnings)
     report = _report_value(raw.get("report"), warnings)
     mask = _bool_field(report, "mask", True, "report.", warnings)
     fmt = _format_value(report, warnings)
@@ -526,26 +523,6 @@ def _rules_value(raw: Mapping[str, Any], base_dir: Path | None, warnings: list[s
     except ValueError as exc:
         _warn(warnings, "rules_path", f"无法加载（{exc}），已忽略，将由调用方回落到默认规则")
         return None
-
-
-def _expression_value(ruleset: RuleSet | None, raw: Mapping[str, Any], warnings: list[str]) -> RuleSet | None:
-    """用顶层 ``expression`` 覆盖规则集表达式；非法时保留原表达式并提示。"""
-    if "expression" not in raw:
-        return ruleset
-    value = raw["expression"]
-    if not isinstance(value, str):
-        _warn(warnings, "expression", f"应为字符串，实际为 {_show(value)}，已忽略")
-        return ruleset
-    text = value.strip()
-    if not text:
-        return ruleset
-    base = ruleset if ruleset is not None else builtin_ruleset()
-    try:
-        parse_expression(text, base.rule_ids())
-    except ValueError as exc:
-        _warn(warnings, "expression", f"无效（{exc}），已忽略")
-        return ruleset
-    return replace(base, expression=text)
 
 
 def _report_value(raw: Any, warnings: list[str]) -> Mapping[str, Any]:

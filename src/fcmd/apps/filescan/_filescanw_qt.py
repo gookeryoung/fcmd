@@ -115,16 +115,20 @@ from fcmd.apps.filescan._rules import (
     SEVERITY_LEVELS,
     TARGET_CONTENT,
     TARGET_FILENAME,
+    Expression,
     Matcher,
     Rule,
     RuleSet,
     builtin_ruleset,
-    default_expression,
+    clear_rules,
+    effective_expression_text,
     load_ruleset,
     referenced_rule_ids,
     resolve_expression,
     save_ruleset,
     severity_label,
+    validate_expression,
+    validate_ruleset,
 )
 from fcmd.gui import style as _qt_theme
 from fcmd.gui.page import AppPage, PageSpec
@@ -785,6 +789,116 @@ class _ContextDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
         return QSize(base.width(), max(base.height(), height))
 
 
+class _ExpressionDialog(QDialog):  # pragma: no cover - 模态对话框
+    """新增 / 编辑组合式：id、名称、表达式文本与启用状态，可插入规则 / 组合式 id。"""
+
+    def __init__(self, parent: QWidget, ruleset: RuleSet, expression: Expression | None = None) -> None:
+        super().__init__(parent)
+        self._ruleset = ruleset
+        self._result: Expression | None = None
+        self.setWindowTitle("编辑组合式" if expression is not None else "新增组合式")
+        self.setMinimumWidth(760)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(8)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+        self._id = QLineEdit(expression.id if expression is not None else fw.new_expression_id(ruleset), self)
+        grid.addWidget(QLabel("ID", self), 0, 0)
+        grid.addWidget(self._id, 0, 1)
+        self._name = QLineEdit(expression.name if expression is not None else "", self)
+        grid.addWidget(QLabel("名称", self), 1, 0)
+        grid.addWidget(self._name, 1, 1)
+        self._expr = QLineEdit(expression.expression if expression is not None else "", self)
+        self._expr.setPlaceholderText("例如：(pii or phone) and not allow_list")
+        grid.addWidget(QLabel("表达式", self), 2, 0)
+        grid.addWidget(self._expr, 2, 1)
+
+        insert_row = QHBoxLayout()
+        insert_row.setContentsMargins(0, 0, 0, 0)
+        insert_row.setSpacing(6)
+        self._insert_source = QComboBox(self)
+        for rule in ruleset.rules:
+            self._insert_source.addItem(f"规则：{rule.id}（{rule.name}）", rule.id)
+        for item in ruleset.expressions:
+            if expression is not None and item.id == expression.id:
+                continue
+            self._insert_source.addItem(f"组合式：{item.id}（{item.name}）", item.id)
+        insert_row.addWidget(hint_label("插入 ID", wrap=False))
+        insert_row.addWidget(self._insert_source, 1)
+        insert_button = button("插入到表达式")
+        insert_button.clicked.connect(self._insert_selected_id)
+        insert_row.addWidget(insert_button)
+        grid.addLayout(insert_row, 3, 1)
+        outer.addLayout(grid)
+
+        flags = QHBoxLayout()
+        self._enabled = QCheckBox("启用（默认参与生效表达式）", self)
+        self._enabled.setChecked(expression.enabled if expression is not None else True)
+        flags.addWidget(self._enabled)
+        flags.addStretch(1)
+        validate_button = button("校验")
+        validate_button.clicked.connect(self._validate)
+        flags.addWidget(validate_button)
+        cancel = button("取消")
+        cancel.clicked.connect(self.reject)
+        flags.addWidget(cancel)
+        confirm_button = button("保存", kind="primary")
+        confirm_button.clicked.connect(self._commit)
+        flags.addWidget(confirm_button)
+        outer.addLayout(flags)
+
+    def _candidate(self) -> Expression:
+        return Expression(
+            id=self._id.text().strip(),
+            name=self._name.text().strip(),
+            expression=self._expr.text().strip(),
+            enabled=self._enabled.isChecked(),
+        )
+
+    def _checked(self) -> Expression:
+        candidate = self._candidate()
+        validate_expression(self._ruleset, candidate)
+        return candidate
+
+    def _insert_selected_id(self) -> None:
+        target = self._insert_source.currentData()
+        if not isinstance(target, str) or not target:
+            return
+        text = self._expr.text()
+        cursor = max(0, min(self._expr.cursorPosition(), len(text)))
+        before = "" if cursor == 0 or text[cursor - 1].isspace() or text[cursor - 1] == "(" else " "
+        after = "" if cursor >= len(text) or text[cursor].isspace() or text[cursor] == ")" else " "
+        inserted = f"{before}{target}{after}"
+        self._expr.setText(f"{text[:cursor]}{inserted}{text[cursor:]}")
+        self._expr.setCursorPosition(cursor + len(inserted))
+        self._expr.setFocus()
+
+    def _validate(self) -> None:
+        try:
+            self._checked()
+        except ValueError as exc:
+            QMessageBox.critical(self, "组合式无效", str(exc))
+            return
+        QMessageBox.information(self, "组合式有效", "表达式解析通过")
+
+    def _commit(self) -> None:
+        try:
+            self._result = self._checked()
+        except ValueError as exc:
+            QMessageBox.critical(self, "组合式无效", str(exc))
+            return
+        self.accept()
+
+    def value(self) -> Expression | None:
+        """提交的组合式；取消时为 ``None``。"""
+        return self._result
+
+
 class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """敏感内容扫描窗口：侧边栏分页（扫描 / 结果 / 规则 / 设置）+ 状态栏 + 任务日志。"""
 
@@ -1155,26 +1269,33 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
-        expression = Card("组合表达式（and / or / not，括号可嵌套；留空表示 OR 全部启用规则）")
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
-        self._expression = QLineEdit(expression)
-        self._expression.setPlaceholderText("例如：pii and not email")
-        row.addWidget(self._expression, 1)
-        insert_button = button("插入选中规则")
-        insert_button.setToolTip("把规则表选中行的 id 插入到光标位置，便于拼组合表达式")
-        insert_button.clicked.connect(self._insert_rule_id)
-        row.addWidget(insert_button)
-        apply_button = button("应用")
-        apply_button.clicked.connect(self._apply_expression)
-        row.addWidget(apply_button)
-        validate_button = button("校验")
-        validate_button.clicked.connect(self._validate_expression)
-        row.addWidget(validate_button)
-        expression.body.addLayout(row)
+        expression = Card("组合式（and / or / not / near[k]，括号可嵌套；可引用规则 id 与其它组合式 id）")
+        self._expression_table = make_table(
+            ("启用", "ID", "名称", "表达式"),
+            widths=(60, 150, 170, 540),
+            stretch_columns=(3,),
+            parent=page,
+        )
+        self._expression_table.setMinimumHeight(150)
+        self._expression_table.cellDoubleClicked.connect(lambda _row, _column: self._edit_expression())
+        expression.body.addWidget(self._expression_table, 1)
+        expression_buttons = QHBoxLayout()
+        expression_buttons.setContentsMargins(0, 0, 0, 0)
+        expression_buttons.setSpacing(4)
+        for text, handler in (
+            ("新增组合式", self._add_expression),
+            ("编辑组合式", self._edit_expression),
+            ("删除组合式", self._delete_expression),
+            ("启用", lambda: self._set_expressions_enabled(True)),
+            ("禁用", lambda: self._set_expressions_enabled(False)),
+        ):
+            widget = button(text)
+            widget.clicked.connect(handler)
+            expression_buttons.addWidget(widget)
+        expression_buttons.addStretch(1)
+        expression.body.addLayout(expression_buttons)
         expression.body.addWidget(
-            hint_label("启用的规则进入默认 OR；表达式里显式引用的规则即使未启用也会参与匹配，可只作为组合构件。")
+            hint_label("启用的组合式按 OR 生效；未启用的组合式仍可被引用。没有启用组合式时默认 OR 全部启用规则。")
         )
         self._rule_hint = hint_label("")
         expression.body.addWidget(self._rule_hint)
@@ -1202,10 +1323,19 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             self._rules_table.setItem(row, 3, id_item)
             self._rules_table.setItem(row, 4, make_table_item(rule.name))
             self._rules_table.setItem(row, 5, make_table_item(rule.matcher.describe()))
-        self._expression.setText(self.ruleset.expression)
+        self._expression_table.setRowCount(0)
+        for row, item in enumerate(self.ruleset.expressions):
+            self._expression_table.insertRow(row)
+            enabled = make_table_item("是" if item.enabled else "否")
+            enabled.setData(Qt.ItemDataRole.UserRole, item.id)
+            self._expression_table.setItem(row, 0, enabled)
+            self._expression_table.setItem(row, 1, make_table_item(item.id))
+            self._expression_table.setItem(row, 2, make_table_item(item.name))
+            self._expression_table.setItem(row, 3, make_table_item(item.expression))
         self._rule_hint.setText(
-            f"{len(self.ruleset.rules)} 条规则，启用 {self.ruleset.enabled_count()}；"
-            f"生效表达式：{self.ruleset.expression.strip() or default_expression(self.ruleset) or '（无）'}"
+            f"{len(self.ruleset.rules)} 条规则（启用 {self.ruleset.enabled_count()}）；"
+            f"{len(self.ruleset.expressions)} 条组合式（启用 {len(self.ruleset.enabled_expressions())}）；"
+            f"生效表达式：{effective_expression_text(self.ruleset) or '（无）'}"
         )
         current = self._filter_rule.currentText()
         self._filter_rule.blockSignals(True)
@@ -1548,7 +1678,7 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             if not any(item.id == candidate.id for item in self.ruleset.rules):
                 rules = (*self.ruleset.rules, candidate)
             new_set = replace(self.ruleset, rules=rules)
-            resolve_expression(new_set)
+            validate_ruleset(new_set)
         except ValueError as exc:
             QMessageBox.critical(self, "规则无效", str(exc))
             return
@@ -1587,9 +1717,9 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
         self._sync_ruleset(builtin_ruleset(), message="已载入内置敏感规则")
 
     def _clear_rules(self) -> None:
-        if not confirm(self, "清空规则", "确定清空全部规则与表达式？"):
+        if not confirm(self, "清空规则", "确定清空全部规则与组合式？"):
             return
-        self._sync_ruleset(replace(self.ruleset, rules=(), expression=""), message="规则已清空")
+        self._sync_ruleset(clear_rules(self.ruleset), message="规则与组合式已清空")
 
     def _import_rules(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(self, "导入规则集", "", "JSON (*.json);;全部文件 (*.*)")
@@ -1618,42 +1748,78 @@ class FilescanQtWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需�
             return
         self.set_page_status("rules", f"规则集已导出到 {chosen}")
 
-    def _apply_expression(self) -> None:
-        try:
-            updated = fw.apply_expression(self.ruleset, self._expression.text())
-        except ValueError as exc:
-            QMessageBox.critical(self, "表达式无效", str(exc))
-            return
-        self._sync_ruleset(updated, message="表达式已应用")
-
-    def _insert_rule_id(self) -> None:
-        """把规则表选中行的 id 插入表达式光标处（按需补空格，不覆盖已有文本）。"""
-        row = self._rules_table.currentRow()
+    # ------------------------------------------------------------------ #
+    # 组合式
+    # ------------------------------------------------------------------ #
+    def _selected_expression_id(self) -> str | None:
+        row = self._expression_table.currentRow()
         if row < 0:
-            self.set_page_status("rules", "请先在规则表选择一条规则")
-            return
-        item = self._rules_table.item(row, 3)
-        rule_id = item.text() if item is not None else ""
-        if not rule_id:
-            return
-        text = self._expression.text()
-        cursor = max(0, min(self._expression.cursorPosition(), len(text)))
-        before = "" if cursor == 0 or text[cursor - 1].isspace() or text[cursor - 1] == "(" else " "
-        after = "" if cursor >= len(text) or text[cursor].isspace() or text[cursor] == ")" else " "
-        inserted = f"{before}{rule_id}{after}"
-        self._expression.setText(f"{text[:cursor]}{inserted}{text[cursor:]}")
-        self._expression.setCursorPosition(cursor + len(inserted))
-        self._expression.setFocus()
-        self.set_page_status("rules", f"已插入规则 id：{rule_id}")
+            return None
+        item = self._expression_table.item(row, 1)
+        return item.text() if item is not None and item.text() else None
 
-    def _validate_expression(self) -> None:
-        try:
-            expression = self._expression.text().strip()
-            resolve_expression(replace(self.ruleset, expression=expression))
-        except ValueError as exc:
-            QMessageBox.critical(self, "表达式无效", str(exc))
+    def _selected_expression_ids(self) -> set[str]:
+        ids: set[str] = set()
+        for index in self._expression_table.selectionModel().selectedRows():
+            item = self._expression_table.item(index.row(), 1)
+            if item is not None and item.text():
+                ids.add(item.text())
+        return ids
+
+    def _add_expression(self) -> None:
+        self._expression_dialog(None)
+
+    def _edit_expression(self) -> None:
+        expression_id = self._selected_expression_id()
+        if expression_id is None:
+            self.set_page_status("rules", "请先在组合式表中选择一条组合式")
             return
-        QMessageBox.information(self, "表达式有效", "表达式解析通过")
+        item = self.ruleset.find_expression(expression_id)
+        if item is not None:
+            self._expression_dialog(item)
+
+    def _expression_dialog(self, expression: Expression | None) -> None:
+        dialog = _ExpressionDialog(self, self.ruleset, expression)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        candidate = dialog.value()
+        if candidate is None:
+            return
+        try:
+            validate_expression(self.ruleset, candidate)
+        except ValueError as exc:
+            QMessageBox.critical(self, "组合式无效", str(exc))
+            return
+        self._sync_ruleset(self.ruleset.replace_expression(candidate), message=f"已保存组合式 {candidate.id}")
+
+    def _delete_expression(self) -> None:
+        expression_id = self._selected_expression_id()
+        if expression_id is None:
+            self.set_page_status("rules", "请先在组合式表中选择一条组合式")
+            return
+        item = self.ruleset.find_expression(expression_id)
+        name = item.name if item is not None else expression_id
+        if not confirm(self, "删除组合式", f"确定删除组合式 {expression_id}（{name}）？"):
+            return
+        try:
+            new_set = self.ruleset.remove_expression(expression_id)
+        except ValueError as exc:
+            QMessageBox.critical(self, "无法删除", str(exc))
+            return
+        self._sync_ruleset(new_set, message=f"已删除组合式 {expression_id}")
+
+    def _set_expressions_enabled(self, enabled: bool) -> None:
+        selected = self._selected_expression_ids()
+        if not selected:
+            self.set_page_status("rules", "请先在组合式表中选择组合式")
+            return
+        expressions = tuple(
+            replace(item, enabled=enabled) if item.id in selected else item for item in self.ruleset.expressions
+        )
+        self._sync_ruleset(
+            replace(self.ruleset, expressions=expressions),
+            message=f"已{'启用' if enabled else '禁用'} {len(selected)} 条组合式",
+        )
 
     # ------------------------------------------------------------------ #
     # 扫描

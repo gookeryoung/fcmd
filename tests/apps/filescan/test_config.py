@@ -246,15 +246,21 @@ def test_broken_rules_falls_back_to_none_with_warning() -> None:
     assert "rules" in "\n".join(parsed.warnings)
 
 
-def test_expression_override_is_validated() -> None:
+def test_embedded_expressions_are_validated() -> None:
     payload = _config_payload()
-    payload["expression"] = "not exist_rule"
+    payload["rules"] = {
+        "version": 2,
+        "rules": [{"id": "a", "name": "A", "matcher": {"type": "keyword", "text": "x"}}],
+        "expressions": [{"id": "e", "name": "E", "expression": "not exist_rule"}],
+    }
     parsed = config_from_mapping(payload)
-    assert "expression" in "\n".join(parsed.warnings)
-    payload["expression"] = ""
+    assert parsed.ruleset is None
+    assert "rules" in "\n".join(parsed.warnings)
+
+    payload["rules"]["expressions"] = [{"id": "e", "name": "E", "expression": "a"}]
     valid = config_from_mapping(payload)
     assert valid.ruleset is not None
-    assert valid.ruleset.expression == parsed.ruleset.expression  # type: ignore[union-attr]
+    assert valid.ruleset.expressions[0].expression == "a"
     assert valid.warnings == ()
 
 

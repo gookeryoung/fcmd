@@ -20,7 +20,7 @@ from fcmd.apps.filescan._cache import (
 )
 from fcmd.apps.filescan._engine import ScanOptions, ScanResult, scan_paths
 from fcmd.apps.filescan._report import no_hit_hint
-from fcmd.apps.filescan._rules import MATCH_KEYWORD, Matcher, Rule, RuleSet
+from fcmd.apps.filescan._rules import MATCH_KEYWORD, Expression, Matcher, Rule, RuleSet
 
 
 def _write(root: Path, relative: str, text: str) -> Path:
@@ -35,7 +35,8 @@ def _ruleset(expression: str = "") -> RuleSet:
         Rule(id="phone", name="手机号", matcher=Matcher(kind=MATCH_KEYWORD, text="13812345678")),
         Rule(id="name", name="姓名", matcher=Matcher(kind=MATCH_KEYWORD, text="张三")),
     )
-    return RuleSet(name="测试规则", rules=rules, expression=expression)
+    expressions = () if not expression.strip() else (Expression(id="expr", name="组合式", expression=expression),)
+    return RuleSet(name="测试规则", rules=rules, expressions=expressions)
 
 
 @pytest.fixture

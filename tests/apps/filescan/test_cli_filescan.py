@@ -119,7 +119,7 @@ def test_scan_custom_rule_file_and_expression(
                     {"id": "phone", "name": "手机", "matcher": {"type": "keyword", "text": "手机"}},
                     {"id": "clean", "name": "干净", "matcher": {"type": "keyword", "text": "敏感"}},
                 ],
-                "expression": "phone and not clean",
+                "expressions": [{"id": "e", "name": "组合式", "expression": "phone and not clean"}],
             }
         ),
         encoding="utf-8",
@@ -273,7 +273,10 @@ def test_rules_validate_invalid_expression(tmp_path: Path) -> None:
     invalid = tmp_path / "invalid.json"
     invalid.write_text(
         json.dumps(
-            {"rules": [{"id": "a", "name": "A", "matcher": {"type": "keyword", "text": "x"}}], "expression": "b"}
+            {
+                "rules": [{"id": "a", "name": "A", "matcher": {"type": "keyword", "text": "x"}}],
+                "expressions": [{"id": "e", "name": "E", "expression": "b"}],
+            }
         ),
         encoding="utf-8",
     )

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QApplication, QTableWidget
 from fcmd.apps.filescan import filescanw
 from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanResult, ScanStats
 from fcmd.apps.filescan._filescanw_qt import FilescanQtWindow
-from fcmd.apps.filescan._rules import Matcher, Rule, RuleSet, builtin_ruleset
+from fcmd.apps.filescan._rules import Expression, Matcher, Rule, RuleSet, builtin_ruleset, validate_expression
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
@@ -139,7 +139,7 @@ def test_whitelist_delete_keeps_single_group(home: Path) -> None:
         window.deleteLater()
 
 
-def test_rules_enable_and_expression(home: Path) -> None:
+def test_rules_enable_and_expression_list(home: Path) -> None:
     window = _window()
     try:
         window._rules_table.selectRow(0)
@@ -148,12 +148,31 @@ def test_rules_enable_and_expression(home: Path) -> None:
         window._rules_table.selectRow(0)
         window._set_rules_enabled(True)
         assert window.ruleset.rules[0].enabled is True
-        window._expression.setText("cn_phone or cn_id")
-        window._apply_expression()
-        assert window.ruleset.expression == "cn_phone or cn_id"
-        window._expression.setText("and (")
-        window._apply_expression()
-        assert window.ruleset.expression == "cn_phone or cn_id"
+
+        first_two = " or ".join(rule.id for rule in window.ruleset.rules[:2])
+        window._sync_ruleset(
+            window.ruleset.replace_expression(Expression(id="combo", name="组合", expression=first_two)),
+            message="ok",
+        )
+        assert window._expression_table.rowCount() == 1
+        assert window._expression_table.item(0, 0).text() == "是"
+        assert window._expression_table.item(0, 1).text() == "combo"
+        assert window._expression_table.item(0, 3).text() == first_two
+
+        window._expression_table.selectRow(0)
+        window._set_expressions_enabled(False)
+        item = window.ruleset.find_expression("combo")
+        assert item is not None and item.enabled is False
+        window._expression_table.selectRow(0)
+        window._set_expressions_enabled(True)
+        item = window.ruleset.find_expression("combo")
+        assert item is not None and item.enabled is True
+
+        # 循环引用 / 引用不存在的 id 被拒绝，原规则集不变。
+        with pytest.raises(ValueError, match="循环引用"):
+            validate_expression(window.ruleset, Expression(id="loop", name="循环", expression="loop"))
+        with pytest.raises(ValueError):
+            validate_expression(window.ruleset, Expression(id="bad", name="坏", expression="missing_rule"))
     finally:
         window.deleteLater()
 
@@ -172,7 +191,6 @@ def test_scan_worker_masks_context(home: Path, sample: Path) -> None:
                 enabled=True,
             ),
         ),
-        expression="",
     )
     bridge = _ScanProgress()
     result, note = _scan_worker(
@@ -191,6 +209,34 @@ def test_scan_worker_masks_context(home: Path, sample: Path) -> None:
     rendered = str([render_context(match, False) for hit in result.hits for match in hit.matches])
     assert "13800138000" not in rendered
     assert "*" in rendered
+
+
+def test_expression_dialog_inserts_rule_and_expression_ids(home: Path) -> None:
+    """组合式对话框可插入规则 / 组合式 id，并默认生成不冲突的 id。"""
+    from fcmd.apps.filescan._filescanw_qt import _ExpressionDialog
+
+    window = _window()
+    try:
+        rule_id = window.ruleset.rules[0].id
+        window._sync_ruleset(
+            window.ruleset.replace_expression(Expression(id="base", name="基础", expression=rule_id)),
+            message="ok",
+        )
+        dialog = _ExpressionDialog(window, window.ruleset)
+        try:
+            assert dialog._id.text() == "expr"
+            dialog._insert_source.setCurrentIndex(0)
+            dialog._expr.setText("abc and ")
+            dialog._expr.setCursorPosition(len("abc and "))
+            dialog._insert_selected_id()
+            assert dialog._expr.text() == f"abc and {rule_id}"
+
+            labels = [dialog._insert_source.itemText(i) for i in range(dialog._insert_source.count())]
+            assert any(label.startswith("组合式：base") for label in labels)
+        finally:
+            dialog.deleteLater()
+    finally:
+        window.deleteLater()
 
 
 def test_settings_persisted_on_close(home: Path, sample: Path) -> None:

@@ -10,7 +10,7 @@
   可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出 / 复制原文」才输出
   敏感原文）。
 - **规则**：规则表、新增 / 编辑 / 删除、启用 / 禁用、载入内置、清空、
-  导入 / 导出规则集，以及 ``and`` / ``or`` / ``not`` 组合表达式输入与校验。
+  导入 / 导出规则集，以及组合式列表（``and`` / ``or`` / ``not``，可嵌套引用）的维护与校验。
 - **设置**：递归 / 深度 / 符号链接、后缀白名单表格（类型 / 后缀两列，每行一个
   类型，后缀用英文逗号分隔，可新增 / 编辑 / 删除类型（支持多选批量删除）并逐项
   校验）、后缀包含/排除、强制后缀、大小与修改时间上下限、跳过二进制、解析文档、
@@ -34,7 +34,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +59,6 @@ from fcmd.apps.filescan._results import results_from_mapping, results_to_mapping
 from fcmd.apps.filescan._rules import (
     RuleSet,
     builtin_ruleset,
-    parse_expression,
     ruleset_from_mapping,
     ruleset_to_mapping,
 )
@@ -71,10 +70,10 @@ __all__ = [
     "WHITELIST_GROUPS",
     "FilescanSettings",
     "ScanTask",
-    "apply_expression",
     "group_whitelist",
     "load_results",
     "load_settings",
+    "new_expression_id",
     "new_scan_task",
     "parse_and_validate_ext_line",
     "parse_whitelist_text",
@@ -456,12 +455,15 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
     )
 
 
-def apply_expression(ruleset: RuleSet, text: str) -> RuleSet:
-    """校验并应用表达式文本；非法时抛 ``ValueError``，空串表示恢复默认 OR。"""
-    expression = text.strip()
-    if expression:
-        parse_expression(expression, ruleset.rule_ids())
-    return replace(ruleset, expression=expression)
+def new_expression_id(ruleset: RuleSet, base: str = "expr") -> str:
+    """生成规则集内唯一的组合式 id（``base`` / ``base-2`` / ``base-3`` …）。"""
+    taken = set(ruleset.all_ids())
+    if base not in taken:
+        return base
+    index = 2
+    while f"{base}-{index}" in taken:
+        index += 1
+    return f"{base}-{index}"
 
 
 def _ext_group(text: str) -> tuple[str, ...]:

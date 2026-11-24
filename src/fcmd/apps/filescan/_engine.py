@@ -42,6 +42,7 @@ from fcmd.apps.filescan._rules import (
     RuleSet,
     compile_rule,
     evaluate_expression,
+    near_rule_ids,
     positive_rule_ids,
     referenced_rule_ids,
     resolve_expression,
@@ -349,6 +350,7 @@ class ScanContext:
     positive_ids: frozenset[str]
     options: ScanOptions
     token: CancelToken | None = None
+    near_ids: frozenset[str] = frozenset()
 
 
 # ---------------------------------------------------------------------- #
@@ -497,6 +499,7 @@ class _Outcome:
     cancelled: bool = False
     matched_ids: frozenset[str] = frozenset()
     matches: tuple[RuleMatch, ...] = ()
+    rule_lines: dict[str, set[int]] = field(default_factory=dict)
     size: int = 0
     encoding: str = ""
 
@@ -654,6 +657,7 @@ def _is_hidden(entry: os.DirEntry[str]) -> bool:
         return True
     if os.name != "nt":
         return False
+    attributes = 0
     try:
         attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
     except OSError:
@@ -935,17 +939,23 @@ def _read_text(path: Path, options: ScanOptions, size: int | None = None) -> tup
     return encoding, text, len(raw)
 
 
-def _collect_matches(
+def _collect_matches(  # noqa: PLR0913, PLR0917 - 匹配参数成组传入
     text: str,
     compiled_rules: Sequence[CompiledRule],
     options: ScanOptions,
     token: CancelToken | None,
     location: str = "",
-) -> tuple[set[str], list[RuleMatch]] | None:
-    """逐行匹配全部规则；返回 ``(命中规则 id, 命中明细)``，取消时返回 ``None``。"""
+    near_ids: frozenset[str] = frozenset(),
+) -> tuple[set[str], list[RuleMatch], dict[str, set[int]]] | None:
+    """逐行匹配全部规则；返回 ``(命中规则 id, 命中明细, 邻近规则行号)``。
+
+    ``near_ids`` 中的规则额外记录命中行号，供 ``near`` 表达式按邻近求值；
+    其余规则只记录 id / 明细，避免为大文件保存无用的行号集合。
+    """
     limit = max(1, options.max_hits_per_file)
     matched_ids: set[str] = set()
     matches: list[RuleMatch] = []
+    rule_lines: dict[str, set[int]] = {}
     for line_no, line in enumerate(text.splitlines(), start=1):
         if _is_cancelled(token):
             return None
@@ -961,6 +971,8 @@ def _collect_matches(
                 continue
             for match in regex.finditer(target):
                 matched_ids.add(compiled.id)
+                if near_ids and compiled.id in near_ids:
+                    rule_lines.setdefault(compiled.id, set()).add(line_no)
                 if len(matches) < limit:
                     matches.append(
                         _build_match(
@@ -973,7 +985,7 @@ def _collect_matches(
                             boundaries=boundaries,
                         )
                     )
-    return matched_ids, matches
+    return matched_ids, matches, rule_lines
 
 
 _DOCUMENT_REASONS: dict[str, str] = {
@@ -988,11 +1000,12 @@ _DOCUMENT_REASONS: dict[str, str] = {
 def _collect_units(
     units: Sequence[TextUnit],
     context: ScanContext,
-) -> tuple[set[str], list[RuleMatch]] | None:
+) -> tuple[set[str], list[RuleMatch], dict[str, set[int]]] | None:
     """对文档抽取出的文本单元逐个复用逐行匹配，并受全局命中上限约束。"""
     limit = max(1, context.options.max_hits_per_file)
     matched_ids: set[str] = set()
     matches: list[RuleMatch] = []
+    rule_lines: dict[str, set[int]] = {}
     for unit in units:
         if _is_cancelled(context.token):
             return None
@@ -1002,27 +1015,32 @@ def _collect_units(
             context.options,
             context.token,
             unit.location,
+            context.near_ids,
         )
         if collected is None:
             return None
-        unit_ids, unit_matches = collected
+        unit_ids, unit_matches, unit_lines = collected
         matched_ids |= unit_ids
+        for rule_id, lines in unit_lines.items():
+            rule_lines.setdefault(rule_id, set()).update(lines)
         for item in unit_matches:
             if len(matches) < limit:
                 matches.append(item)
-    return matched_ids, matches
+    return matched_ids, matches, rule_lines
 
 
 def _match_filename(
     path: Path,
     compiled_rules: Sequence[CompiledRule],
     options: ScanOptions,
-) -> tuple[set[str], list[RuleMatch]]:
+    near_ids: frozenset[str] = frozenset(),
+) -> tuple[set[str], list[RuleMatch], dict[str, set[int]]]:
     """对文件名求值文件名规则；位置记为 :data:`LOCATION_FILENAME`、行号 0。"""
     name = path.name
     limit = max(1, options.max_hits_per_file)
     matched_ids: set[str] = set()
     matches: list[RuleMatch] = []
+    rule_lines: dict[str, set[int]] = {}
     for compiled in compiled_rules:
         if not compiled.matches_filename:
             continue
@@ -1031,6 +1049,8 @@ def _match_filename(
             continue
         for match in regex.finditer(name):
             matched_ids.add(compiled.id)
+            if near_ids and compiled.id in near_ids:
+                rule_lines.setdefault(compiled.id, set()).add(0)
             if len(matches) < limit:
                 matches.append(
                     _build_match(
@@ -1042,7 +1062,7 @@ def _match_filename(
                         location=LOCATION_FILENAME,
                     )
                 )
-    return matched_ids, matches
+    return matched_ids, matches, rule_lines
 
 
 def _scan_document(path: Path, context: ScanContext, suffix: str, size: int | None) -> _Outcome:
@@ -1067,12 +1087,13 @@ def _scan_document(path: Path, context: ScanContext, suffix: str, size: int | No
     collected = _collect_units(units, context)
     if collected is None:
         return _Outcome(path=path, cancelled=True)
-    matched_ids, matches = collected
+    matched_ids, matches, rule_lines = collected
     return _Outcome(
         path=path,
         bytes_read=byte_count,
         matched_ids=frozenset(matched_ids),
         matches=tuple(matches),
+        rule_lines=rule_lines,
         size=byte_count,
         encoding=suffix.lstrip("."),
     )
@@ -1090,15 +1111,22 @@ def _scan_text(path: Path, context: ScanContext, size: int | None) -> _Outcome:
     except _ReadError as error:
         return _Outcome(path=path, error=ScanError(path, str(error)))
 
-    collected = _collect_matches(text, context.compiled_rules, context.options, context.token)
+    collected = _collect_matches(
+        text,
+        context.compiled_rules,
+        context.options,
+        context.token,
+        near_ids=context.near_ids,
+    )
     if collected is None:
         return _Outcome(path=path, cancelled=True)
-    matched_ids, matches = collected
+    matched_ids, matches, rule_lines = collected
     return _Outcome(
         path=path,
         bytes_read=byte_count,
         matched_ids=frozenset(matched_ids),
         matches=tuple(matches),
+        rule_lines=rule_lines,
         size=byte_count,
         encoding=encoding,
     )
@@ -1112,7 +1140,9 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
     """
     if _is_cancelled(context.token):
         return _Outcome(path=path, cancelled=True)
-    name_ids, name_matches = _match_filename(path, context.compiled_rules, context.options)
+    name_ids, name_matches, name_lines = _match_filename(
+        path, context.compiled_rules, context.options, context.near_ids
+    )
     suffix = path.suffix.lower()
     if context.options.scan_documents and suffix in DOCUMENT_EXTENSIONS:
         outcome = _scan_document(path, context, suffix, size)
@@ -1121,12 +1151,21 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
     if outcome.cancelled or outcome.error is not None:
         return outcome
     ids = set(outcome.matched_ids) | name_ids
+    rule_lines = {rule_id: set(lines) for rule_id, lines in outcome.rule_lines.items()}
+    for rule_id, lines in name_lines.items():
+        rule_lines.setdefault(rule_id, set()).update(lines)
+    line_sets = {rule_id: frozenset(rule_lines.get(rule_id, ())) for rule_id in ids}
     if outcome.skipped is not None:
-        if not evaluate_expression(context.expression, ids):
+        if not evaluate_expression(context.expression, line_sets):
             return outcome
         return _filename_only_outcome(path, context, name_matches, size)
-    if not evaluate_expression(context.expression, ids):
-        return _Outcome(path=path, bytes_read=outcome.bytes_read, matched_ids=frozenset(ids))
+    if not evaluate_expression(context.expression, line_sets):
+        return _Outcome(
+            path=path,
+            bytes_read=outcome.bytes_read,
+            matched_ids=frozenset(ids),
+            rule_lines=rule_lines,
+        )
     limit = max(1, context.options.max_hits_per_file)
     combined = [*name_matches, *outcome.matches]
     detail = [item for item in combined if item.rule_id in context.positive_ids][:limit]
@@ -1137,6 +1176,7 @@ def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Out
         bytes_read=outcome.bytes_read,
         matched_ids=frozenset(ids),
         matches=tuple(combined),
+        rule_lines=rule_lines,
         size=outcome.size,
         encoding=outcome.encoding,
     )
@@ -1319,6 +1359,7 @@ def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入
         positive_ids=positive,
         options=opts,
         token=token,
+        near_ids=frozenset(near_rule_ids(expression)),
     )
     walk = walk_files(roots, opts, token)
     result = ScanResult(

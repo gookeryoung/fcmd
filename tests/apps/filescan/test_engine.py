@@ -43,10 +43,12 @@ from fcmd.apps.filescan._rules import (
     MATCH_KEYWORD,
     MATCH_REGEX,
     TARGET_FILENAME,
+    Expression,
     Matcher,
     Rule,
     RuleSet,
     compile_rule,
+    near_rule_ids,
     parse_expression,
 )
 
@@ -119,7 +121,8 @@ def _ruleset(*specs: tuple[str, str], expression: str = "") -> RuleSet:
         )
         for rule_id, text in specs
     )
-    return RuleSet(rules=rules, expression=expression)
+    expressions = () if not expression.strip() else (Expression(id="expr", name="组合式", expression=expression),)
+    return RuleSet(rules=rules, expressions=expressions)
 
 
 def _context(
@@ -130,11 +133,13 @@ def _context(
 ) -> ScanContext:
     """构造单文件扫描上下文，便于直接断言 :func:`scan_file` 行为。"""
     compiled = tuple(compile_rule(rule) for rule in ruleset.enabled_rules())
+    expr = parse_expression(expression or " or ".join(item.id for item in compiled) or "missing")
     return ScanContext(
         compiled_rules=compiled,
-        expression=parse_expression(expression or " or ".join(item.id for item in compiled) or "missing"),
+        expression=expr,
         positive_ids=frozenset(positive if positive is not None else {item.id for item in compiled}),
         options=options or ScanOptions(),
+        near_ids=frozenset(near_rule_ids(expr)),
     )
 
 
@@ -393,6 +398,32 @@ def test_scan_file_respects_hit_limit(tmp_path: Path) -> None:
     assert len(outcome.hit.matches) == 2
 
 
+def test_scan_file_near_expression_uses_line_distance(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.txt", "password\n filler\n phone\n")
+    ruleset = RuleSet(
+        rules=(
+            Rule(id="pw", name="密码", matcher=Matcher(kind=MATCH_KEYWORD, text="password")),
+            Rule(id="ph", name="手机", matcher=Matcher(kind=MATCH_KEYWORD, text="phone")),
+        ),
+        expressions=(Expression(id="expr", name="组合式", expression="pw near[2] ph"),),
+    )
+    outcome = scan_file(path, _context(ruleset, expression="pw near[2] ph"))
+    assert outcome.hit is not None
+    assert {item.rule_id for item in outcome.hit.matches} == {"pw", "ph"}
+
+
+def test_scan_file_near_expression_rejects_distant_lines(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.txt", "password\n filler\n filler\n phone\n")
+    ruleset = RuleSet(
+        rules=(
+            Rule(id="pw", name="密码", matcher=Matcher(kind=MATCH_KEYWORD, text="password")),
+            Rule(id="ph", name="手机", matcher=Matcher(kind=MATCH_KEYWORD, text="phone")),
+        ),
+        expressions=(Expression(id="expr", name="组合式", expression="pw near[2] ph"),),
+    )
+    assert scan_file(path, _context(ruleset, expression="pw near[2] ph")).hit is None
+
+
 def test_scan_file_normalizes_fullwidth_text(tmp_path: Path) -> None:
     path = _write(tmp_path, "a.txt", "密码：ｐａｓｓｗｏｒｄ＝abc\n")
     ruleset = RuleSet(rules=(Rule(id="kw", name="关键词", matcher=Matcher(kind=MATCH_KEYWORD, text="password")),))
@@ -475,7 +506,7 @@ def test_filename_and_content_rules_combine_in_expression(tmp_path: Path) -> Non
                 matcher=Matcher(kind=MATCH_KEYWORD, text="alpha", target=TARGET_FILENAME),
             ),
         ),
-        expression="body and name",
+        expressions=(Expression(id="expr", name="组合式", expression="body and name"),),
     )
     outcome = scan_file(path, _context(ruleset, expression="body and name"))
     assert outcome.hit is not None

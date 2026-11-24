@@ -58,9 +58,10 @@ from fcmd.apps.filescan._report import (
     write_report,
 )
 from fcmd.apps.filescan._rules import (
+    Expression,
     RuleSet,
     builtin_ruleset,
-    default_expression,
+    effective_expression_text,
     group_names,
     load_ruleset,
     resolve_expression,
@@ -222,7 +223,7 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     rules:
         规则集 JSON 文件，留空使用内置敏感规则
     expr:
-        组合表达式（覆盖规则集内表达式），如 ``cn_id and not allow_list``
+        组合表达式（本次扫描唯一默认生效，替换 / 新增为 ``cli_expr``），如 ``cn_id and not allow_list``
     recursive:
         递归扫描子目录，默认开启；``--no-recursive`` 只扫描根目录
     max_depth:
@@ -283,11 +284,14 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         _fail("请至少指定一个待扫描目录")
     ruleset = _load_ruleset(rules)
     if expr.strip():
-        ruleset = replace(ruleset, expression=expr)
+        # 命令行表达式是本次唯一默认生效的组合式：其余组合式保留为构件（禁用）。
+        others = tuple(replace(item, enabled=False) for item in ruleset.expressions)
+        cli = Expression(id="cli_expr", name="命令行表达式", expression=expr.strip(), enabled=True)
+        ruleset = replace(ruleset, expressions=(*others, cli))
     try:
         resolve_expression(ruleset)
     except ValueError as exc:
-        _fail(f"规则表达式无效: {exc}")
+        _fail(f"组合表达式无效: {exc}")
     options = _build_options(
         ext_whitelist,
         include_ext,
@@ -409,7 +413,7 @@ def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成
     try:
         resolve_expression(ruleset)
     except ValueError as exc:
-        _fail(f"规则表达式无效: {exc}")
+        _fail(f"组合表达式无效: {exc}")
     fmt = format or loaded.format
     include_raw = raw or not loaded.mask
     store = _open_cache(cache, clear_cache)
@@ -467,9 +471,14 @@ def rules_command(
             _fail(f"无法写入规则集 {target}: {exc}")
         print(f"规则集已导出到 {target}（{len(ruleset.rules)} 条）")
         return
-    expression = ruleset.expression.strip() or default_expression(ruleset) or "（无启用规则）"
-    print(f"规则集：{ruleset.name}（{len(ruleset.rules)} 条，启用 {ruleset.enabled_count()}）")
-    print(f"表达式：{expression}")
+    print(
+        f"规则集：{ruleset.name}（{len(ruleset.rules)} 条规则，启用 {ruleset.enabled_count()}；"
+        f"{len(ruleset.expressions)} 条组合式，启用 {len(ruleset.enabled_expressions())}）"
+    )
+    print(f"生效表达式：{effective_expression_text(ruleset) or '（无启用规则）'}")
+    for item in ruleset.expressions:
+        mark = "启用" if item.enabled else "禁用"
+        print(f"  [{mark}] {item.id:<16} {item.name}：{item.expression}")
     for group in group_names(ruleset):
         print(f"[{group}]")
         for rule in ruleset.rules:

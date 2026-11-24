@@ -1,9 +1,10 @@
 """filescan 规则模型与表达式（纯逻辑，不注册工具）。
 
 规则分两类匹配器：关键词（可选大小写敏感与整词）与正则；多条规则通过
-``and`` / ``or`` / ``not`` 与括号组成可嵌套表达式。表达式在**文件级**求值：
-叶子规则为真表示该规则在文件任意一行命中，报告只列出参与表达式且实际命中的
-正向规则明细。
+``and`` / ``or`` / ``not`` / ``near[k]`` 与括号组成可嵌套表达式。表达式在
+**文件级**求值：叶子规则为真表示该规则在文件任意一行命中，报告只列出参与表达式
+且实际命中的正向规则明细。``near[k]`` 表示若干规则在跨度不超过 k 行的窗口内
+同时出现（k 默认 1），需要按行号求值。
 
 规则集以 JSON 保存（见 :func:`ruleset_to_mapping`），加载时严格校验字段、
 正则与表达式引用，错误信息带规则名或位置，不静默丢弃。
@@ -20,7 +21,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    pass
+
+from fcmd.apps.filescan._expr import (
+    _IDENT_RE,
+    AndExpr,
+    Expr,
+    NearExpr,
+    NotExpr,
+    OrExpr,
+    RuleRef,
+    evaluate_expression,
+    near_rule_ids,
+    parse_expression,
+    positive_rule_ids,
+    referenced_rule_ids,
+)
 
 __all__ = [
     "DEFAULT_GROUP",
@@ -42,7 +58,9 @@ __all__ = [
     "AndExpr",
     "CompiledRule",
     "Expr",
+    "Expression",
     "Matcher",
+    "NearExpr",
     "NotExpr",
     "OrExpr",
     "Rule",
@@ -55,16 +73,21 @@ __all__ = [
     "default_expression",
     "disable_all",
     "dump_ruleset",
+    "effective_expression_text",
     "evaluate_expression",
     "group_names",
     "load_ruleset",
+    "near_rule_ids",
     "parse_expression",
     "positive_rule_ids",
+    "referenced_rule_ids",
     "resolve_expression",
     "ruleset_from_mapping",
     "ruleset_to_mapping",
     "save_ruleset",
     "severity_label",
+    "validate_expression",
+    "validate_ruleset",
 ]
 
 DEFAULT_GROUP = "内置"
@@ -108,10 +131,6 @@ SEVERITY_LABELS: dict[str, str] = {
 def severity_label(value: str) -> str:
     """返回严重级的中文标签；未知值原样返回，避免展示层因脏数据崩溃。"""
     return SEVERITY_LABELS.get(value, value)
-
-
-_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
-_KEYWORDS = frozenset({"and", "or", "not"})
 
 
 # ---------------------------------------------------------------------- #
@@ -243,178 +262,29 @@ def compile_rule(rule: Rule) -> CompiledRule:
     return CompiledRule(rule=rule, regex=compile_matcher(rule.matcher))
 
 
-# ---------------------------------------------------------------------- #
-# 表达式
-# ---------------------------------------------------------------------- #
 @dataclass(frozen=True)
-class RuleRef:
-    """叶子：引用一条规则。"""
+class Expression:
+    """一条命名、可启停的组合式；引用规则 id 或其它组合式 id。
 
-    rule_id: str
-
-
-@dataclass(frozen=True)
-class NotExpr:
-    """逻辑非。"""
-
-    item: Expr
-
-
-@dataclass(frozen=True)
-class AndExpr:
-    """逻辑与（空与非真）。"""
-
-    items: tuple[Expr, ...] = ()
-
-
-@dataclass(frozen=True)
-class OrExpr:
-    """逻辑或（空或为假）。"""
-
-    items: tuple[Expr, ...] = ()
-
-
-Expr = RuleRef | NotExpr | AndExpr | OrExpr
-
-
-def _tokenize(text: str) -> list[tuple[str, str]]:
-    """把表达式拆成 ``(类型, 文本)`` 记号；未知字符直接报错。"""
-    tokens: list[tuple[str, str]] = []
-    pos = 0
-    while pos < len(text):
-        char = text[pos]
-        if char.isspace():
-            pos += 1
-            continue
-        if char in "()":
-            tokens.append((char, char))
-            pos += 1
-            continue
-        match = _IDENT_RE.match(text, pos)
-        if match is None:
-            rest = text[pos:].strip()
-            raise ValueError(f"表达式包含无法识别的字符: {rest[:20]!r}")
-        word = match.group(0)
-        lowered = word.lower()
-        if lowered in _KEYWORDS:
-            tokens.append((lowered, word))
-        else:
-            tokens.append(("ident", word))
-        pos = match.end()
-    return tokens
-
-
-class _Parser:
-    """递归下降解析：``or`` 优先级低于 ``and``，``not`` 为一元前缀。"""
-
-    def __init__(self, tokens: list[tuple[str, str]], rule_ids: Sequence[str] | None) -> None:
-        self._tokens = tokens
-        self._pos = 0
-        self._rule_ids = None if rule_ids is None else frozenset(rule_ids)
-
-    def parse(self) -> Expr:
-        if not self._tokens:
-            raise ValueError("表达式为空")
-        expr = self._parse_or()
-        if self._pos != len(self._tokens):
-            raise ValueError(f"表达式存在多余内容: {self._tokens[self._pos][1]!r}")
-        return expr
-
-    def _peek(self) -> tuple[str, str] | None:
-        return self._tokens[self._pos] if self._pos < len(self._tokens) else None
-
-    def _take(self) -> tuple[str, str]:
-        token = self._tokens[self._pos]
-        self._pos += 1
-        return token
-
-    def _at(self, kind: str) -> bool:
-        token = self._peek()
-        return token is not None and token[0] == kind
-
-    def _parse_or(self) -> Expr:
-        items = [self._parse_and()]
-        while self._at("or"):
-            self._take()
-            items.append(self._parse_and())
-        return items[0] if len(items) == 1 else OrExpr(tuple(items))
-
-    def _parse_and(self) -> Expr:
-        items = [self._parse_unary()]
-        while self._at("and"):
-            self._take()
-            items.append(self._parse_unary())
-        return items[0] if len(items) == 1 else AndExpr(tuple(items))
-
-    def _parse_unary(self) -> Expr:
-        token = self._peek()
-        if token is None:
-            raise ValueError("表达式不完整：末尾缺少规则或右括号")
-        if token[0] == "not":
-            self._take()
-            return NotExpr(self._parse_unary())
-        return self._parse_primary()
-
-    def _parse_primary(self) -> Expr:
-        token = self._peek()
-        if token is None:
-            raise ValueError("表达式不完整：缺少规则或右括号")
-        if token[0] == "(":
-            self._take()
-            expr = self._parse_or()
-            closing = self._peek()
-            if closing is None or closing[0] != ")":
-                raise ValueError("表达式括号不配对：缺少右括号")
-            self._take()
-            return expr
-        if token[0] == "ident":
-            self._take()
-            rule_id = token[1]
-            if self._rule_ids is not None and rule_id not in self._rule_ids:
-                known = "、".join(sorted(self._rule_ids)) or "（无）"
-                raise ValueError(f"表达式引用了不存在的规则: {rule_id}（可用规则: {known}）")
-            return RuleRef(rule_id)
-        raise ValueError(f"表达式此处应为规则或左括号，实际为 {token[1]!r}")
-
-
-def parse_expression(text: str, rule_ids: Sequence[str] | None = None) -> Expr:
-    """解析表达式文本；``rule_ids`` 非空时校验引用是否合法。
-
-    Raises
-    ------
-    ValueError
-        空表达式、未知记号、括号不配对、引用不存在的规则等。
+    ``enabled`` 只决定「是否默认生效」：未启用的组合式仍可被其它组合式引用，
+    作为构件参与展开。生效集合没有启用的组合式时回落到 OR 全部启用规则。
     """
-    return _Parser(_tokenize(text), rule_ids).parse()
 
+    id: str
+    name: str
+    expression: str
+    enabled: bool = True
 
-def evaluate_expression(expr: Expr, matched_ids: frozenset[str] | set[str]) -> bool:
-    """在文件级求值：``matched_ids`` 为文件内命中的规则 id 集合。"""
-    if isinstance(expr, RuleRef):
-        return expr.rule_id in matched_ids
-    if isinstance(expr, NotExpr):
-        return not evaluate_expression(expr.item, matched_ids)
-    if isinstance(expr, AndExpr):
-        return all(evaluate_expression(item, matched_ids) for item in expr.items)
-    return any(evaluate_expression(item, matched_ids) for item in expr.items)
-
-
-def positive_rule_ids(expr: Expr) -> tuple[str, ...]:
-    """收集正向上下文中的规则 id（``not`` 分支内的规则不产出命中明细）。"""
-    found: list[str] = []
-
-    def walk(node: Expr, negated: bool) -> None:
-        if isinstance(node, RuleRef):
-            if not negated and node.rule_id not in found:
-                found.append(node.rule_id)
-        elif isinstance(node, NotExpr):
-            walk(node.item, not negated)
-        else:
-            for item in node.items:
-                walk(item, negated)
-
-    walk(expr, False)
-    return tuple(found)
+    def validate(self) -> None:
+        """校验 id / 名称 / 表达式文本非空；引用关系由规则集统一校验。"""
+        if not _IDENT_RE.fullmatch(self.id):
+            raise ValueError(
+                f"组合式 id 非法（{self.id!r}）：只允许字母、数字、下划线、点与连字符，且以字母或下划线开头"
+            )
+        if not self.name:
+            raise ValueError(f"组合式 {self.id!r} 缺少名称")
+        if not self.expression.strip():
+            raise ValueError(f"组合式 {self.id!r} 的表达式不能为空")
 
 
 # ---------------------------------------------------------------------- #
@@ -422,23 +292,44 @@ def positive_rule_ids(expr: Expr) -> tuple[str, ...]:
 # ---------------------------------------------------------------------- #
 @dataclass
 class RuleSet:
-    """一组规则 + 组合表达式。``expression`` 为空表示 OR 全部启用规则。"""
+    """一组规则 + 组合式列表。
+
+    ``expressions`` 中 ``enabled`` 的组合式按 OR 生效；没有启用的组合式时，
+    生效表达式回落为 OR 全部启用规则。组合式可嵌套引用其它组合式，加载时做
+    环检测。
+    """
 
     name: str = DEFAULT_RULESET_NAME
     rules: tuple[Rule, ...] = ()
-    expression: str = ""
+    expressions: tuple[Expression, ...] = ()
 
     def find(self, rule_id: str) -> Rule | None:
         """按 id 查规则。"""
         return next((rule for rule in self.rules if rule.id == rule_id), None)
 
+    def find_expression(self, expression_id: str) -> Expression | None:
+        """按 id 查组合式。"""
+        return next((item for item in self.expressions if item.id == expression_id), None)
+
     def rule_ids(self) -> tuple[str, ...]:
-        """全部规则 id（含禁用规则）。"""
+        """全部规则 id（含未启用规则）。"""
         return tuple(rule.id for rule in self.rules)
+
+    def expression_ids(self) -> tuple[str, ...]:
+        """全部组合式 id（含未启用组合式）。"""
+        return tuple(item.id for item in self.expressions)
+
+    def all_ids(self) -> tuple[str, ...]:
+        """规则与组合式共用的 id 命名空间（表达式里可引用任一）。"""
+        return (*self.rule_ids(), *self.expression_ids())
 
     def enabled_rules(self) -> tuple[Rule, ...]:
         """启用的规则。"""
         return tuple(rule for rule in self.rules if rule.enabled)
+
+    def enabled_expressions(self) -> tuple[Expression, ...]:
+        """默认生效的组合式。"""
+        return tuple(item for item in self.expressions if item.enabled)
 
     def replace_rule(self, rule: Rule) -> RuleSet:
         """替换同 id 规则（不存在时追加）。"""
@@ -447,13 +338,32 @@ class RuleSet:
             rules = (*self.rules, rule)
         return replace(self, rules=rules)
 
+    def replace_expression(self, expression: Expression) -> RuleSet:
+        """替换同 id 组合式（不存在时追加）。"""
+        items = tuple(expression if item.id == expression.id else item for item in self.expressions)
+        if expression.id not in self.expression_ids():
+            items = (*self.expressions, expression)
+        return replace(self, expressions=items)
+
     def remove_rule(self, rule_id: str) -> RuleSet:
-        """删除规则；表达式仍引用已删规则时抛 ``ValueError``。"""
+        """删除规则；仍有表达式引用已删规则时抛 ``ValueError``。"""
         rules = tuple(item for item in self.rules if item.id != rule_id)
-        expression = self.expression
-        if expression.strip():
-            parse_expression(expression, [item.id for item in rules])
-        return replace(self, rules=rules, expression=expression)
+        candidate = replace(self, rules=rules)
+        validate_ruleset(candidate)
+        return candidate
+
+    def remove_expression(self, expression_id: str) -> RuleSet:
+        """删除组合式；仍有其它组合式引用它时抛 ``ValueError``。"""
+        for item in self.expressions:
+            if item.id == expression_id:
+                continue
+            try:
+                node = parse_expression(item.expression, self.all_ids())
+            except ValueError as exc:
+                raise ValueError(f"组合式 {item.id!r} 无效：{exc}") from exc
+            if expression_id in referenced_rule_ids(node):
+                raise ValueError(f"组合式 {item.id!r} 仍引用 {expression_id!r}，请先修改或删除引用")
+        return replace(self, expressions=tuple(item for item in self.expressions if item.id != expression_id))
 
     def enabled_count(self) -> int:
         """启用规则数。"""
@@ -466,25 +376,101 @@ def default_expression(rules: RuleSet) -> str:
     return " or ".join(ids)
 
 
-def resolve_expression(ruleset: RuleSet) -> Expr:
-    """返回生效表达式：显式表达式优先，否则 OR 全部启用规则。
+def effective_expression_text(ruleset: RuleSet) -> str:
+    """用于展示的生效表达式文本：启用组合式按 OR 拼接，否则默认 OR 启用规则。"""
+    enabled = [item.expression.strip() for item in ruleset.enabled_expressions() if item.expression.strip()]
+    if enabled:
+        return " or ".join(f"({text})" for text in enabled)
+    return default_expression(ruleset)
 
-    显式表达式按规则集全部 id 校验（允许引用禁用的规则，求值时为假）。
+
+def resolve_expression(ruleset: RuleSet) -> Expr:
+    """返回生效表达式 AST：启用组合式 OR，否则 OR 全部启用规则。
+
+    组合式可引用规则 id 或其它组合式 id，这里递归展开并检测循环引用。
+    ``enabled`` 只决定默认生效集合：被引用的未启用组合式（及未启用规则）
+    仍参与展开，可以作为构件使用。
     """
-    text = ruleset.expression.strip()
-    if text:
-        return parse_expression(text, ruleset.rule_ids())
-    return OrExpr(tuple(RuleRef(rule.id) for rule in ruleset.enabled_rules()))
+    enabled = ruleset.enabled_expressions()
+    if not enabled:
+        return OrExpr(tuple(RuleRef(rule.id) for rule in ruleset.enabled_rules()))
+    specs = {item.id: item for item in ruleset.expressions}
+    allowed = ruleset.all_ids()
+    cache: dict[str, Expr] = {}
+    stack: list[str] = []
+
+    def expand(node: Expr) -> Expr:
+        if isinstance(node, RuleRef):
+            nested = specs.get(node.rule_id)
+            return expand_spec(nested.id) if nested is not None else node
+        if isinstance(node, NotExpr):
+            return NotExpr(expand(node.item))
+        if isinstance(node, NearExpr):
+            items: list[RuleRef] = []
+            for item in node.items:
+                if item.rule_id in specs:
+                    raise ValueError(f"near 的每一项必须是规则 id，不能引用组合式 {item.rule_id!r}")
+                items.append(item)
+            return NearExpr(tuple(items), node.distance)
+        if isinstance(node, AndExpr):
+            return AndExpr(tuple(expand(item) for item in node.items))
+        return OrExpr(tuple(expand(item) for item in node.items))
+
+    def expand_spec(expression_id: str) -> Expr:
+        if expression_id in cache:
+            return cache[expression_id]
+        if expression_id in stack:
+            chain = " -> ".join([*stack, expression_id])
+            raise ValueError(f"组合式存在循环引用：{chain}")
+        stack.append(expression_id)
+        try:
+            expanded = expand(parse_expression(specs[expression_id].expression, allowed))
+        finally:
+            stack.pop()
+        cache[expression_id] = expanded
+        return expanded
+
+    items = tuple(expand_spec(item.id) for item in enabled)
+    return items[0] if len(items) == 1 else OrExpr(items)
+
+
+def validate_expression(ruleset: RuleSet, expression: Expression) -> None:
+    """校验一条组合式（含加入后的引用 / 循环）；不改动原规则集。"""
+    expression.validate()
+    others = [item.id for item in ruleset.expressions if item.id != expression.id]
+    if expression.id in ruleset.rule_ids() or expression.id in others:
+        raise ValueError(f"规则 / 组合式 id 重复: {expression.id}")
+    validate_ruleset(ruleset.replace_expression(expression))
+
+
+def validate_ruleset(ruleset: RuleSet) -> None:
+    """校验 id 命名空间、全部组合式的引用与循环（含未启用的组合式）。"""
+    ids = ruleset.all_ids()
+    if len(set(ids)) != len(ids):
+        raise ValueError("规则 / 组合式 id 重复")
+    allowed = ids
+    for item in ruleset.expressions:
+        try:
+            parse_expression(item.expression, allowed)
+        except ValueError as exc:
+            raise ValueError(f"组合式 {item.id!r} 无效：{exc}") from exc
+    # 全部组合式临时启用，保证未启用的组合式里的环也能被发现。
+    probe = replace(ruleset, expressions=tuple(replace(item, enabled=True) for item in ruleset.expressions))
+    resolve_expression(probe)
 
 
 def disable_all(ruleset: RuleSet) -> RuleSet:
-    """一键禁用全部规则（保留规则与表达式）。"""
-    return replace(ruleset, rules=tuple(replace(rule, enabled=False) for rule in ruleset.rules))
+    """一键禁用全部规则与组合式（保留内容）。"""
+    return replace(
+        ruleset,
+        rules=tuple(replace(rule, enabled=False) for rule in ruleset.rules),
+        expressions=tuple(replace(item, enabled=False) for item in ruleset.expressions),
+    )
 
 
 def clear_rules(ruleset: RuleSet) -> RuleSet:
-    """一键清空：删除全部规则并清空表达式。"""
-    return replace(ruleset, rules=(), expression="")
+    """一键清空：删除全部规则与组合式。"""
+    return replace(ruleset, rules=(), expressions=())
 
 
 def group_names(ruleset: RuleSet) -> tuple[str, ...]:
@@ -596,18 +582,49 @@ def rule_from_mapping(raw: Any, *, index: int = 0) -> Rule:
     return rule
 
 
-def ruleset_to_mapping(ruleset: RuleSet) -> dict[str, Any]:
-    """规则集转可写入 JSON 的字典。"""
+def expression_to_mapping(expression: Expression) -> dict[str, Any]:
+    """组合式转字典。"""
     return {
-        "version": 1,
+        "id": expression.id,
+        "name": expression.name,
+        "expression": expression.expression,
+        "enabled": expression.enabled,
+    }
+
+
+def expression_from_mapping(raw: Any, *, index: int = 0) -> Expression:
+    """从字典解析组合式；错误信息带条目序号。"""
+    if not isinstance(raw, dict):
+        raise ValueError(f"第 {index + 1} 条组合式必须是 JSON 对象")
+    expression_id = raw.get("id")
+    name = raw.get("name")
+    text = raw.get("expression")
+    enabled = raw.get("enabled", True)
+    if not isinstance(expression_id, str) or not expression_id:
+        raise ValueError(f"第 {index + 1} 条组合式缺少字符串 id")
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"组合式 {expression_id!r} 的 name 必须是非空字符串")
+    if not isinstance(text, str):
+        raise ValueError(f"组合式 {expression_id!r} 的 expression 必须是字符串")
+    if not isinstance(enabled, bool):
+        raise ValueError(f"组合式 {expression_id!r} 的 enabled 必须是布尔值")
+    expression = Expression(id=expression_id, name=name, expression=text, enabled=enabled)
+    expression.validate()
+    return expression
+
+
+def ruleset_to_mapping(ruleset: RuleSet) -> dict[str, Any]:
+    """规则集转可写入 JSON 的字典（``version`` 2：规则 + 组合式列表）。"""
+    return {
+        "version": 2,
         "name": ruleset.name,
         "rules": [rule_to_mapping(rule) for rule in ruleset.rules],
-        "expression": ruleset.expression,
+        "expressions": [expression_to_mapping(item) for item in ruleset.expressions],
     }
 
 
 def ruleset_from_mapping(raw: Any) -> RuleSet:
-    """从字典解析规则集，校验重复 id、表达式引用与字段类型。"""
+    """从字典解析规则集，校验重复 id、表达式引用、嵌套循环与字段类型。"""
     if not isinstance(raw, dict):
         raise ValueError("规则集必须是 JSON 对象")
     name = raw.get("name", DEFAULT_RULESET_NAME)
@@ -624,12 +641,19 @@ def ruleset_from_mapping(raw: Any) -> RuleSet:
             raise ValueError(f"规则 id 重复: {rule.id}")
         seen.add(rule.id)
         rules.append(rule)
-    expression = raw.get("expression", "")
-    if not isinstance(expression, str):
-        raise ValueError("expression 必须是字符串")
-    if expression.strip():
-        parse_expression(expression, [rule.id for rule in rules])
-    return RuleSet(name=name, rules=tuple(rules), expression=expression)
+    raw_expressions = raw.get("expressions", [])
+    if not isinstance(raw_expressions, list):
+        raise ValueError("expressions 必须是数组")
+    expressions: list[Expression] = []
+    for index, item in enumerate(raw_expressions):
+        expression = expression_from_mapping(item, index=index)
+        if expression.id in seen:
+            raise ValueError(f"规则 / 组合式 id 重复: {expression.id}")
+        seen.add(expression.id)
+        expressions.append(expression)
+    ruleset = RuleSet(name=name, rules=tuple(rules), expressions=tuple(expressions))
+    validate_ruleset(ruleset)
+    return ruleset
 
 
 def dump_ruleset(ruleset: RuleSet) -> str:
@@ -663,10 +687,10 @@ def save_ruleset(ruleset: RuleSet, path: Path) -> None:
 # 内置敏感规则
 # ---------------------------------------------------------------------- #
 def builtin_ruleset() -> RuleSet:
-    """返回内置敏感规则集（表达式为空，即 OR 全部启用规则）。
+    """返回内置敏感规则集（无组合式，即 OR 全部启用规则）。
 
     规则数据在 :mod:`fcmd.apps.filescan._builtin`，此处延迟导入以避免循环依赖。
     """
     from fcmd.apps.filescan._builtin import builtin_rules
 
-    return RuleSet(name=DEFAULT_RULESET_NAME, rules=builtin_rules(), expression="")
+    return RuleSet(name=DEFAULT_RULESET_NAME, rules=builtin_rules())

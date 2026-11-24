@@ -19,7 +19,9 @@ from fcmd.apps.filescan._rules import (
     SEVERITY_LOW,
     TARGET_FILENAME,
     AndExpr,
+    Expression,
     Matcher,
+    NearExpr,
     NotExpr,
     OrExpr,
     Rule,
@@ -32,13 +34,16 @@ from fcmd.apps.filescan._rules import (
     default_expression,
     disable_all,
     dump_ruleset,
+    effective_expression_text,
     evaluate_expression,
     group_names,
     load_ruleset,
     matcher_from_mapping,
     matcher_to_mapping,
+    near_rule_ids,
     parse_expression,
     positive_rule_ids,
+    referenced_rule_ids,
     resolve_expression,
     rule_from_mapping,
     rule_to_mapping,
@@ -46,7 +51,13 @@ from fcmd.apps.filescan._rules import (
     ruleset_to_mapping,
     save_ruleset,
     severity_label,
+    validate_expression,
+    validate_ruleset,
 )
+
+
+def _expr(text: str, *, expression_id: str = "expr", enabled: bool = True) -> Expression:
+    return Expression(id=expression_id, name=f"组合式{expression_id}", expression=text, enabled=enabled)
 
 
 def _rule(rule_id: str = "a", *, enabled: bool = True, group: str = "g") -> Rule:
@@ -150,6 +161,52 @@ def test_parse_rejects_malformed(text: str, message: str) -> None:
         parse_expression(text, ["a"])
 
 
+def test_parse_near_expression() -> None:
+    expr = parse_expression("a near b", ["a", "b"])
+    assert expr == NearExpr((RuleRef("a"), RuleRef("b")), 1)
+    expr = parse_expression("a within[3] b", ["a", "b"])
+    assert expr == NearExpr((RuleRef("a"), RuleRef("b")), 3)
+    expr = parse_expression("a and b near[2] c", ["a", "b", "c"])
+    assert isinstance(expr, AndExpr)
+    assert expr.items[1] == NearExpr((RuleRef("b"), RuleRef("c")), 2)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("a near[0] b", "必须 ≥ 1"),
+        ("a near[x] b", "正整数"),
+        ("a near[2 b", "右中括号"),
+        ("(a or b) near c", "必须是规则 id"),
+        ("a near[1] b near[2] c", "窗口行数必须一致"),
+    ],
+)
+def test_parse_near_rejects_invalid_input(text: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_expression(text, ["a", "b", "c"])
+
+
+def test_evaluate_near_uses_line_sets() -> None:
+    expr = parse_expression("a near[2] b", ["a", "b"])
+    assert evaluate_expression(expr, {"a": {2}, "b": {4}}) is True
+    assert evaluate_expression(expr, {"a": {2}, "b": {5}}) is False
+    assert evaluate_expression(expr, {"a": {2}}) is False
+    expr3 = parse_expression("a near b", ["a", "b"])
+    assert evaluate_expression(expr3, {"a": {2}, "b": {3}}) is True
+    assert evaluate_expression(expr3, {"a": {2}, "b": {4}}) is False
+
+
+def test_evaluate_near_requires_line_information() -> None:
+    expr = parse_expression("a near b", ["a", "b"])
+    with pytest.raises(ValueError, match="行号"):
+        evaluate_expression(expr, frozenset({"a", "b"}))
+
+
+def test_near_rule_ids_collects_references() -> None:
+    expr = parse_expression("(a near[2] b) or not c", ["a", "b", "c"])
+    assert near_rule_ids(expr) == ("a", "b")
+
+
 def test_evaluate_expression_nodes() -> None:
     matched = frozenset({"a"})
     assert evaluate_expression(RuleRef("a"), matched)
@@ -170,7 +227,7 @@ def test_positive_rule_ids_skips_negated_branches() -> None:
 # 规则集
 # ---------------------------------------------------------------------- #
 def test_ruleset_helpers() -> None:
-    ruleset = RuleSet(name="n", rules=(_rule("a"), _rule("b", enabled=False)), expression="")
+    ruleset = RuleSet(name="n", rules=(_rule("a"), _rule("b", enabled=False)))
     assert ruleset.rule_ids() == ("a", "b")
     assert [rule.id for rule in ruleset.enabled_rules()] == ["a"]
     assert ruleset.enabled_count() == 1
@@ -192,7 +249,7 @@ def test_ruleset_replace_and_remove() -> None:
 
 
 def test_remove_rule_guards_expression_reference() -> None:
-    ruleset = RuleSet(rules=(_rule("a"), _rule("b")), expression="a and b")
+    ruleset = RuleSet(rules=(_rule("a"), _rule("b")), expressions=(_expr("a and b"),))
     with pytest.raises(ValueError, match="不存在的规则: b"):
         ruleset.remove_rule("b")
 
@@ -203,11 +260,11 @@ def test_disable_all_and_clear_rules() -> None:
     assert disabled.enabled_count() == 0
     assert disabled.rule_ids() == ("a", "b")
     cleared = clear_rules(ruleset)
-    assert cleared.rules == () and cleared.expression == ""
+    assert cleared.rules == () and cleared.expressions == ()
 
 
 def test_resolve_expression_prefers_explicit_and_handles_disabled() -> None:
-    ruleset = RuleSet(rules=(_rule("a"), _rule("b", enabled=False)), expression="a or b")
+    ruleset = RuleSet(rules=(_rule("a"), _rule("b", enabled=False)), expressions=(_expr("a or b"),))
     expr = resolve_expression(ruleset)
     assert evaluate_expression(expr, frozenset({"b"}))
     assert positive_rule_ids(expr) == ("a", "b")
@@ -229,7 +286,7 @@ def test_ruleset_json_roundtrip() -> None:
                 enabled=False,
             ),
         ),
-        expression="a or not b",
+        expressions=(_expr("a or not b"),),
     )
     restored = ruleset_from_mapping(ruleset_to_mapping(ruleset))
     assert ruleset_to_mapping(restored) == ruleset_to_mapping(ruleset)
@@ -337,8 +394,8 @@ def test_ruleset_mapping_rejects_invalid() -> None:
         ruleset_from_mapping({"name": ""})
     with pytest.raises(ValueError, match="rules 必须是数组"):
         ruleset_from_mapping({"rules": {}})
-    with pytest.raises(ValueError, match="expression 必须是字符串"):
-        ruleset_from_mapping({"rules": [], "expression": 1})
+    with pytest.raises(ValueError, match="expressions 必须是数组"):
+        ruleset_from_mapping({"rules": [], "expressions": 1})
     with pytest.raises(ValueError, match="规则 id 重复"):
         ruleset_from_mapping(
             {
@@ -350,7 +407,10 @@ def test_ruleset_mapping_rejects_invalid() -> None:
         )
     with pytest.raises(ValueError, match="不存在的规则"):
         ruleset_from_mapping(
-            {"rules": [{"id": "a", "name": "x", "matcher": {"type": MATCH_KEYWORD, "text": "x"}}], "expression": "b"}
+            {
+                "rules": [{"id": "a", "name": "x", "matcher": {"type": MATCH_KEYWORD, "text": "x"}}],
+                "expressions": [{"id": "e", "name": "E", "expression": "b"}],
+            }
         )
 
 
@@ -435,3 +495,66 @@ def test_builtin_rules_do_not_match_plain_text() -> None:
     ruleset = builtin_ruleset()
     text = "普通文本，没有任何敏感内容。"
     assert not any(compile_matcher(rule.matcher).search(text) for rule in ruleset.rules)
+
+
+def test_expression_list_and_nesting() -> None:
+    ruleset = RuleSet(
+        rules=(_rule("a"), _rule("b"), _rule("c")),
+        expressions=(
+            _expr("a and not b", expression_id="base"),
+            _expr("base or c", expression_id="top"),
+        ),
+    )
+    assert ruleset.expression_ids() == ("base", "top")
+    assert ruleset.all_ids() == ("a", "b", "c", "base", "top")
+    expr = resolve_expression(ruleset)
+    assert positive_rule_ids(expr) == ("a", "c")
+    assert referenced_rule_ids(expr) == ("a", "b", "c")
+    assert effective_expression_text(ruleset) == "(a and not b) or (base or c)"
+
+
+def test_disabled_expression_can_be_building_block() -> None:
+    ruleset = RuleSet(
+        rules=(_rule("a"), _rule("b")),
+        expressions=(
+            _expr("a and b", expression_id="base", enabled=False),
+            _expr("base", expression_id="top"),
+        ),
+    )
+    expr = resolve_expression(ruleset)
+    assert evaluate_expression(expr, frozenset({"a", "b"}))
+    assert not evaluate_expression(expr, frozenset({"a"}))
+
+
+def test_expression_cycle_is_rejected() -> None:
+    ruleset = RuleSet(
+        rules=(_rule("a"),),
+        expressions=(
+            _expr("top", expression_id="base"),
+            _expr("base", expression_id="top"),
+        ),
+    )
+    with pytest.raises(ValueError, match="循环引用"):
+        validate_ruleset(ruleset)
+
+
+def test_validate_expression_rejects_duplicate_id_and_bad_near() -> None:
+    ruleset = RuleSet(rules=(_rule("a"), _rule("b")), expressions=(_expr("a", expression_id="base"),))
+    with pytest.raises(ValueError, match="id 重复"):
+        validate_expression(ruleset, _expr("a", expression_id="a"))
+    with pytest.raises(ValueError, match="near 的每一项必须是规则 id"):
+        validate_expression(ruleset, _expr("a near[2] base", expression_id="near_one"))
+
+
+def test_remove_expression_guards_references() -> None:
+    ruleset = RuleSet(
+        rules=(_rule("a"),),
+        expressions=(
+            _expr("a", expression_id="base"),
+            _expr("base", expression_id="top"),
+        ),
+    )
+    with pytest.raises(ValueError, match="仍引用"):
+        ruleset.remove_expression("base")
+    removed = ruleset.remove_expression("top")
+    assert removed.expression_ids() == ("base",)

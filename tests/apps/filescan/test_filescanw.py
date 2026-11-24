@@ -12,7 +12,7 @@ import pytest
 from fcmd.apps.filescan import filescanw
 from fcmd.apps.filescan._engine import ScanResult, ScanStats
 from fcmd.apps.filescan._report import scan_summary
-from fcmd.apps.filescan._rules import builtin_ruleset, disable_all
+from fcmd.apps.filescan._rules import Expression, builtin_ruleset, disable_all
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
@@ -106,7 +106,10 @@ def test_settings_from_mapping_bad_paths_container() -> None:
 
 def test_settings_from_mapping_keeps_valid_ruleset() -> None:
     ruleset = builtin_ruleset()
-    custom = replace(ruleset, expression="email and not cn_phone")
+    custom = replace(
+        ruleset,
+        expressions=(Expression(id="custom", name="自定义", expression="email and not cn_phone"),),
+    )
     settings = filescanw.settings_from_mapping({"ruleset": filescanw.ruleset_to_mapping(custom)})
     assert settings.ruleset == custom
 
@@ -212,23 +215,13 @@ def test_settings_use_cache_roundtrip() -> None:
     assert filescanw.settings_from_mapping({"use_cache": "no"}).use_cache is True
 
 
-def test_apply_expression_accepts_valid_expression() -> None:
+def test_new_expression_id_avoids_rule_and_expression_ids() -> None:
     ruleset = builtin_ruleset()
-    updated = filescanw.apply_expression(ruleset, "  email OR cn_phone ")
-    assert updated.expression == "email OR cn_phone"
-    assert updated.rules == ruleset.rules
-
-
-def test_apply_expression_clears_to_default() -> None:
-    updated = filescanw.apply_expression(builtin_ruleset(), "   ")
-    assert updated.expression == ""
-
-
-def test_apply_expression_rejects_invalid() -> None:
-    with pytest.raises(ValueError):
-        filescanw.apply_expression(builtin_ruleset(), "(email")
-    with pytest.raises(ValueError):
-        filescanw.apply_expression(builtin_ruleset(), "unknown_rule")
+    assert filescanw.new_expression_id(ruleset) == "expr"
+    taken = replace(ruleset, expressions=(Expression(id="expr", name="E", expression="email"),))
+    assert filescanw.new_expression_id(taken) == "expr-2"
+    clash = replace(taken, expressions=(*taken.expressions, Expression(id="expr-2", name="E2", expression="email")))
+    assert filescanw.new_expression_id(clash) == "expr-3"
 
 
 def test_parse_whitelist_text_handles_comments_and_separators() -> None:

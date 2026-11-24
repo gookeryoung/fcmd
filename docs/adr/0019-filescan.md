@@ -52,7 +52,8 @@
   - `regex`：`pattern` + `ignore_case`（不支持跨行匹配，逐行求值）。
 - `target`：`content`（默认，匹配正文）或 `filename`（匹配文件名，见 D13）。
 
-表达式采用可嵌套的文本 DSL：`rule_id`、`and` / `or` / `not`、圆括号，
+组合式（`Expression`）是独立的命名条目：`id`、`name`、`expression`、`enabled`。
+表达式采用可嵌套的文本 DSL：`rule_id` / `组合式 id`、`and` / `or` / `not`、圆括号，
 `and` 优先级高于 `or`，`not` 只能作用于单个规则或括号组。例：
 
 ```
@@ -64,31 +65,42 @@
 逐行求值时 `not` 对所有无命中行都为真。文件命中后，报告只列出参与表达式且
 实际命中的正向规则的逐行命中（`not` 分支仅用于判定，不产出命中明细）。
 
-未写表达式时默认 `or` 全部启用规则；引用了不存在的规则、未知记号、
-括号不配对、空表达式一律报中文错误，不静默忽略。
+生效规则：
 
-`enabled` 只决定「表达式为空时是否进入默认 `or`」。生效表达式（无论默认还是
-显式）**引用到的规则全部参与匹配**，包括未启用的规则：因此可以把规则当作组合
-式的构件（只在表达式里使用），例如两条规则都不启用、只写
-`phone and not test_phone`，扫描仍会按组合式命中。引擎按表达式引用集合编译规则，
-未被引用的规则不参与计算。
+- 全部 `enabled` 的组合式按 `or` 拼接为生效表达式；
+- 没有启用的组合式时回落到默认 `or` 全部启用规则；
+- `enabled` 只决定「是否默认生效」，**被引用的未启用组合式 / 未启用规则仍参与
+  匹配**：可以只把规则或组合式当构件使用（例如两条规则都未启用、只写
+  `phone and not test_phone` 的组合式）；
+- 组合式可引用其它组合式（嵌套展开），加载 / 保存时做环检测；
+- 规则与组合式共用 id 命名空间（不可重名）；`near[k]` 的操作数必须是规则，
+  不能是组合式。
+
+引用了不存在的 id、未知记号、括号不配对、空表达式、重复 id、循环引用一律报
+中文错误，不静默忽略。引擎按生效表达式引用集合编译规则，未被引用的规则不参与
+计算。
 
 规则集 JSON（`*.filescan.json`，同时接受任意 `.json`）：
 
 ```json
 {
-  "version": 1,
-  "name": "内置敏感规则",
+  "version": 2,
+  "name": "示例规则集",
   "rules": [
     {"id": "cn_id", "name": "身份证号", "group": "个人信息", "enabled": true,
-     "matcher": {"type": "regex", "pattern": "\\d{17}[\\dXx]", "ignore_case": false}}
+     "matcher": {"type": "regex", "pattern": "\\d{17}[\\dXx]", "ignore_case": false}},
+    {"id": "test_id", "name": "测试身份证", "group": "测试", "enabled": false,
+     "matcher": {"type": "keyword", "text": "test"}}
   ],
-  "expression": "(cn_id or bank_card) and not allow_list"
+  "expressions": [
+    {"id": "pii", "name": "个人信息", "expression": "cn_id and not test_id", "enabled": true},
+    {"id": "base", "name": "基础组合", "expression": "pii", "enabled": false}
+  ]
 }
 ```
 
-加载时逐字段校验（未知类型、非法正则、重复 id、未知规则引用、非对象条目
-都返回带规则名的中文错误）。内置规则按分组覆盖：个人信息（身份证号）、
+加载时逐字段校验（未知类型、非法正则、重复 id、未知引用、循环引用、非对象条目
+都返回带 id 的中文错误）。内置规则按分组覆盖：个人信息（身份证号）、
 联系方式（手机号、邮箱）、财务信息（银行卡号）、凭证（API Key / 访问令牌、
 AWS 访问密钥、私钥头、数据库连接串、密码赋值、JWT 令牌、密码哈希
 bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
@@ -224,12 +236,12 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
    「导出 / 复制原文」后按原文复制；支持按规则、严重级与路径筛选；
    导出 CSV/JSON/文本（同一开关只影响导出与复制，不改变结果树展示），扫描结束
    后自动切到本页。
-3. **规则**：规则表（启用、分组、严重级、**ID**、名称、匹配器摘要；ID 放在名称前，
-   供直接拼组合表达式；双击行直接编辑）、
-   新增/编辑/删除（编辑对话框含严重级下拉）、启用/禁用、载入内置、清空、
-   导入/导出/保存规则集、表达式输入框与校验；表达式旁提供「插入选中规则」把规则表
-   选中行的 id 插到光标处，并在下方提示「启用 = 默认 OR，显式引用时未启用规则也参与
-   匹配」，便于只把规则当组合构件使用。
+3. **规则**：上下两张表 —— **规则表**（启用、分组、严重级、**ID**、名称、匹配器
+   摘要；双击行直接编辑）与 **组合式表**（启用、ID、名称、表达式）。规则表支持
+   新增/编辑/删除（编辑对话框含严重级下拉）、启用/禁用、载入内置、清空、导入/
+   导出/保存规则集；组合式表支持新增/编辑/删除、启用/禁用。组合式对话框里可
+   直接「插入到表达式」规则 id 或其它组合式 id，保存前校验引用、重复 id 与循环；
+   未启用的组合式仍可被引用，卡片下方提示「启用 = 默认生效，禁用只退出默认 OR」。
 4. **设置**：三张卡片纵向排布（`PageScroll`）——
    - **扫描范围**：递归 / 跟随符号链接 / 跳过二进制 / 解析文档 / 跳过隐藏文件五个开关 +
      `FormGrid` 两列表单（深度、最小 / 最大字节、单文件上限、并发数、上下文长度、
@@ -384,13 +396,13 @@ make bench-filescan                                          # 同上（独立 t
 CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个文件。配置由
 `_config.py` 统一读写，CLI / GUI 共用同一份字段与容错口径。
 
-配置文件（JSON，`version` 当前为 1，省略时按 1 处理）：
+配置文件（JSON，`version` 当前为 2，省略时按旧版本处理）：
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "roots": ["D:/data"],
-  "rules": { "version": 1, "name": "内置敏感规则", "rules": [], "expression": "…" },
+  "rules": { "version": 2, "name": "内置敏感规则", "rules": [], "expressions": [] },
   "options": {
     "recursive": true, "max_depth": 0, "follow_symlinks": false,
     "ext_whitelist": [".txt", ".log"],
@@ -407,11 +419,10 @@ CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个�
 
 | 分组 | 字段 | 说明 |
 |---|---|---|
-| 顶层 | `version` | 配置版本号，当前 1 |
+| 顶层 | `version` | 配置版本号，当前 2 |
 | | `roots` | 根目录数组（CLI `run` 必填） |
 | | `rules` | 内嵌规则集（与 `filescan rules --action export` 同构） |
 | | `rules_path` | 外部规则集引用（相对配置文件目录，`rules` 优先） |
-| | `expression` | 覆盖规则集表达式（空串表示沿用规则集原值） |
 | | `report.mask` | 真=报告打码，假=输出原文（CLI `--raw` / GUI「导出 / 复制原文」的反面） |
 | | `report.format` | `text` / `json` / `csv` |
 | `options` | `recursive` / `max_depth` / `follow_symlinks` | 遍历范围 |
@@ -450,7 +461,7 @@ CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个�
 
 - CLI：`filescan scan … --save-config FILE` 存当前生效参数；`filescan run
   --config FILE` 加载执行（命令行只覆盖输出类参数，避免优先级歧义）；
-- GUI：扫描页「导入配置…」按字段回填各控件（目录、开关、白名单表格、表达式、
+- GUI：扫描页「导入配置…」按字段回填各控件（目录、开关、白名单表格、规则与组合式、
   规则页），「导出配置…」把当前界面状态（含未暴露的 `encodings` /
   `max_hits_per_file` / `use_processes`，由设置持久化承载）写出。
 
@@ -632,6 +643,22 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
 - 该选项参与缓存指纹（开启 / 关闭会产生不同命中，不能复用旧缓存）；
 - 文件名规则不参与归一化（保持文件名原样匹配，见 D13）。
 
+### D15 邻近表达式 near[k]（2026-11-24）
+
+表达式新增二元（可链式）邻近算子：``a near[k] b`` / ``a within[k] b``，表示
+若干规则命中出现在跨度不超过 ``k`` 行的窗口内，``k`` 省略时默认 1（同行或相邻
+行）。优先级从高到低：``not`` > ``near`` > ``and`` > ``or``。
+
+- 例：``password near[3] cn_phone`` 表示密码与手机号出现在 3 行窗口内；
+- 为避免歧义，``near`` 的每一项必须是规则 id（不支持括号嵌套 ``and`` / ``or`` /
+  ``not``）；同一链上的 ``k`` 必须一致，否则报错；
+- 求值依赖行号：引擎只对 ``near`` 中引用的规则额外记录命中行号（其余规则仍只记
+  id 与明细，避免大文件保存无用的行号集合）；``evaluate_expression`` 兼容旧的
+  「id 集合」入参，含 ``near`` 而传入集合时明确报错而不是静默给出错误结论；
+- 文件名规则命中记为第 0 行，参与 ``near`` 时按 0 行计算（与正文行距离较远时
+  通常不成立，符合直觉）；
+- GUI 表达式标题与占位提示同步说明 ``near[k]``。
+
 ## 验收
 
 - 对含身份证号/手机号/邮箱/API Key 的样例目录扫描，命中文件、规则、行号与
@@ -692,3 +719,5 @@ CREATE INDEX entries_stored_at ON entries(stored_at);
   引擎 `_match_filename`，报告与 GUI 规则对话框同步，见 D13）。
 - 文本归一化：已落地（`ScanOptions.normalize_text` + 引擎 `_normalize_line`
   边界映射，CLI / 配置 / GUI 均可关闭并参与缓存指纹，见 D14）。
+- 邻近表达式：已落地（`NearExpr` + `near_rule_ids` + 引擎行号收集与滑动窗口
+  求值，见 D15）。
