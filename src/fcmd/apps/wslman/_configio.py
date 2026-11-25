@@ -21,6 +21,7 @@ from fcmd.apps.wslman._configfiles import (
     _MANAGED_PATHS,
     _PROBE_PREFIX,
     CONFIG_BACKUP_PREFIX,
+    GROUP_SHELL,
     GROUP_SSH,
     WRITE_PREFIX,
     ConfigGroup,
@@ -48,6 +49,7 @@ __all__ = [
     "probe_script",
     "remote_read_argv",
     "restore_script",
+    "shell_syntax",
     "source_file_path",
     "target_dir_mode",
     "write_script",
@@ -152,6 +154,18 @@ def parse_probe(text: str) -> ConfigTarget:
     )
 
 
+def shell_syntax(path: str) -> str:
+    """Shell 配置写入前用来做语法检查的解释器；非 Shell 配置返回空串。
+
+    迁移来的 rc 一旦有语法错误（Windows CRLF、没闭合的 ``if``），实例的登录 shell
+    会直接起不来，用户连进去改都做不到；所以写盘前先 ``bash -n`` / ``zsh -n`` 兜一层。
+    """
+    group = group_for_path(path)
+    if group is None or group.key != GROUP_SHELL:
+        return ""
+    return "zsh" if posixpath.basename(path).casefold() == ".zshrc" else "bash"
+
+
 def _safe_rel(path: str) -> str:
     """只接受受管路径：拒绝绝对路径与 ``..``，避免把文件写到 ``$HOME`` 之外。"""
     normalized = posixpath.normpath(path)
@@ -160,19 +174,28 @@ def _safe_rel(path: str) -> str:
     return normalized
 
 
-def write_script(
+def write_script(  # noqa: PLR0913 - 写入口径按项目逐项展开（路径 / 权限 / 覆盖 / 备份 / 目录权限 / 语法检查）
     path: str,
     mode: int,
     *,
     overwrite: bool,
     backup: str,
     dir_mode: int = _DEFAULT_DIR_MODE,
+    syntax: str = "",
 ) -> str:
     """生成写单个配置文件的脚本；内容从 stdin 读入，不出现在命令行里。
 
     ``overwrite=False`` 时目标已存在会以退出码 3 失败；``overwrite=True`` 时先把
     原文件移到 ``$HOME/<backup>/<path>``，再写入新文件。中间目录按 ``dir_mode``
-    建好（SSH 是 700，其余 755）。覆盖时额外输出备份路径，供「还原上次迁移」使用。
+    建好（SSH 是 700，其余 755），**但不动 ``$HOME`` 本身**：``.bashrc`` /
+    ``.gitconfig`` 这类家目录一级文件的父目录就是 ``$HOME``，原先无差别
+    ``chmod 755 $HOME`` 会把 ``/root`` 的 700 改成 755。
+
+    ``syntax`` 非空（``bash`` / ``zsh``）时，先对写好的临时文件做语法检查：
+    迁移来的 rc 带语法错误会让实例的登录 shell 直接起不来，所以宁可拒绝写入
+    （退出码 4，实例内原文件不动）也不能把它落盘。检查器不存在时跳过。
+    语法检查在「备份原文件」之前完成：否则拒绝写入时原 rc 已经被移到备份目录，
+    相当于把用户的 Shell 配置弄丢了。覆盖时额外输出备份路径，供「还原上次迁移」使用。
     """
     rel = _safe_rel(path)
     quoted_rel = shlex.quote(rel)
@@ -181,15 +204,31 @@ def write_script(
     quoted_backup = shlex.quote(backup)
     quoted_backup_rel = shlex.quote(backup_rel)
     overwrite_flag = 1 if overwrite else 0
+    syntax_lines = (
+        (
+            f'if command -v {syntax} >/dev/null 2>&1 && ! {syntax} -n "$tmp" >/dev/null 2>&1; then',
+            '    echo "Shell 配置语法检查未通过，已放弃写入：$target" >&2',
+            "    exit 4",
+            "fi",
+        )
+        if syntax
+        else ()
+    )
     return "\n".join(
         (
             "set -euo pipefail",
-            'home="$HOME"',
+            'home="${HOME%/}"',
             "umask 022",
             f'target="$home"/{quoted_rel}',
             'dir="$(dirname "$target")"',
             'mkdir -p "$dir"',
-            f'chmod {dir_mode:03o} "$dir"',
+            f'if [ "$dir" != "$home" ]; then chmod {dir_mode:03o} "$dir"; fi',
+            'tmp="$dir/.fcmd-config.$$"',
+            "trap 'rm -f \"$tmp\"' EXIT",
+            "umask 077",
+            'cat > "$tmp"',
+            f'chmod {mode:03o} "$tmp"',
+            *syntax_lines,
             'if [ -e "$target" ] || [ -L "$target" ]; then',
             f'    if [ "{overwrite_flag}" -ne 1 ]; then',
             '        echo "目标已存在且未确认覆盖：$target" >&2',
@@ -208,11 +247,6 @@ def write_script(
             '    backup_rel="${backup#"$home"/}"',
             '    printf "WSLCFG_BACKUP=%s\\n" "$(printf \'%s\' "$backup_rel" | base64 | tr -d \'\\n\')"',
             "fi",
-            'tmp="$dir/.fcmd-config.$$"',
-            "trap 'rm -f \"$tmp\"' EXIT",
-            "umask 077",
-            'cat > "$tmp"',
-            f'chmod {mode:03o} "$tmp"',
             'mv -f "$tmp" "$target"',
             f'chmod {mode:03o} "$target"',
             f'echo "已写入 $target（权限 {mode:03o}）"',

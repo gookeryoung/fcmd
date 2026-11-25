@@ -102,6 +102,8 @@ def mirror_script(source: str = SYSTEM_MIRROR_DEFAULT) -> str:
 
     先写一份 ``99fcmd-lock-timeout``：linuxmirrors 自己也会调 ``apt-get``，
     持锁进程（首跑的 unattended-upgrades / apt-daily）未退出时直接报错会让换源白做。
+    下载脚本与换源拆成两条带提示的命令：镜像站慢时 curl 要十几秒且没有任何输出，
+    进程替换 ``bash <(curl …)`` 会让日志先静默十几秒，看起来像卡死。
     """
     return "\n".join(
         (
@@ -109,12 +111,18 @@ def mirror_script(source: str = SYSTEM_MIRROR_DEFAULT) -> str:
             "mkdir -p /etc/apt/apt.conf.d",
             f"printf 'DPkg::Lock::Timeout \"600\";\\n' > {_APT_LOCK_CONF}",
             "if ! command -v curl >/dev/null 2>&1; then",
+            '    echo "安装 curl…"',
             f"    apt-get update {_APT_LOCK_TIMEOUT}",
             f"    apt-get install -y curl {_APT_LOCK_TIMEOUT}",
             "fi",
-            f"bash <(curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 {MIRROR_URL}) "
-            f"--source {source} --use-intranet-source false --protocol https "
+            f'echo "下载 linuxmirrors 换源脚本（{MIRROR_URL}）…"',
+            'lms="$(mktemp)"',
+            f'curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 {MIRROR_URL} -o "$lms" '
+            '-w "脚本已下载：%{size_download} 字节 / %{time_total}s\\n"',
+            f'echo "开始换源：{source}"',
+            f'bash "$lms" --source {source} --use-intranet-source false --protocol https '
             "--backup true --install-epel false --upgrade-software false --clean-cache true --ignore-backup-tips",
+            'rm -f "$lms"',
             'echo "系统镜像源配置完成"',
         )
     )

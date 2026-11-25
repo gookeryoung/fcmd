@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.wslman import _configfiles
+from fcmd.apps.wslman import _configfiles, _configio, _configrestore
 from fcmd.apps.wslman._errors import WslmanError
 
 
@@ -114,7 +114,6 @@ def test_scan_host_classifies_sorts_and_skips(tmp_path: Path) -> None:
         ".ssh/notes.txt",
         ".ssh/putty.ppk",
         ".gitconfig",
-        ".bashrc",
     ]
     by_path = {item.path: item for item in files}
     assert by_path[".ssh/id_ed25519"].kind == "private"
@@ -124,7 +123,39 @@ def test_scan_host_classifies_sorts_and_skips(tmp_path: Path) -> None:
     assert by_path[".ssh/notes.txt"].warning == "未知类型，确认后再迁移"
     assert by_path[".ssh/known_hosts"].warning == ""
     assert by_path[".gitconfig"].group == "git"
-    assert "Shell" in by_path[".bashrc"].warning
+
+
+def test_scan_host_skips_shell_config_from_windows_host(tmp_path: Path) -> None:
+    """Windows 家目录的 .bashrc 是 Git for Windows 脚手架，不能当实例 Shell 配置迁。
+
+    实测（本机 ``C:\\Users\\<user>\\.bashrc``，CRLF + 一行 ``PIP_INDEX_URL``）：列出来并
+    勾选迁移会整份顶掉实例里的 rc，丢掉 ``[ -z "$PS1" ] && return`` 与 fcmd 写的
+    nvm / ``~/.local/bin`` 块。Shell 组只在来源是 WSL 实例时才有内容。
+    """
+    (tmp_path / ".bashrc").write_bytes(b'\r\nexport PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"\r\n')
+    (tmp_path / ".profile").write_text("export A=1\n", encoding="utf-8")
+    (tmp_path / ".zshrc").write_text("export B=1\n", encoding="utf-8")
+    (tmp_path / ".gitconfig").write_text("[user]\n\tname = me\n", encoding="utf-8")
+
+    files = _configfiles.scan_host(tmp_path)
+    assert [item.path for item in files] == [".gitconfig"]
+    # 只扫 Shell 组时什么都不返回，而不是退化成把 Windows 侧 rc 交上去。
+    shell_group = _configfiles.group_by_key("shell")
+    assert shell_group is not None
+    assert _configfiles.scan_host(tmp_path, groups=(shell_group,)) == ()
+
+    # 状态文案也保持一致：来源选 Windows 宿主时 Shell 显示「无文件」并说明要用实例做来源。
+    states = {state.key: state for state in _configfiles.group_states(files, _configfiles.ConfigTarget())}
+    assert states["shell"].label == "无文件"
+    assert "WSL 实例" in states["shell"].detail
+
+
+def test_shell_syntax_picks_checker_for_shell_configs_only() -> None:
+    assert _configio.shell_syntax(".bashrc") == "bash"
+    assert _configio.shell_syntax(".profile") == "bash"
+    assert _configio.shell_syntax(".zshrc") == "zsh"
+    assert _configio.shell_syntax(".gitconfig") == ""
+    assert _configio.shell_syntax(".ssh/config") == ""
 
 
 def test_scan_host_warns_when_windows_only_config_will_be_adapted(tmp_path: Path) -> None:
@@ -465,11 +496,55 @@ def test_write_script_creates_parents_and_refuses_unconfirmed_overwrite() -> Non
     assert '[ "0" -ne 1 ]' in script
     assert "exit 3" in script
     assert 'target="$home"/.config/git/config' in script
-    assert 'chmod 755 "$dir"' in script
+    assert 'if [ "$dir" != "$home" ]; then chmod 755 "$dir"; fi' in script
     assert "chmod 644" in script
     assert 'cat > "$tmp"' in script
     assert "WSLCFG_WRITTEN=" in script
     assert "rm -f" in script or "trap" in script
+
+
+def test_write_script_never_chmods_home_itself() -> None:
+    """家目录一级文件（.bashrc / .gitconfig）的父目录就是 $HOME，不能跟着改权限。
+
+    原脚本无条件 ``chmod 755 "$dir"``，迁移 .gitconfig 时会把 ``/root`` 从 700 改成 755。
+    """
+    script = _configfiles.write_script(
+        ".gitconfig", 0o644, overwrite=False, backup="fcmd-config-backup-1", dir_mode=0o755
+    )
+    assert 'chmod 755 "$dir"\n' not in script
+    assert 'if [ "$dir" != "$home" ]; then chmod 755 "$dir"; fi' in script
+    # SSH 子目录（~/.ssh）仍然要按 700 收紧。
+    ssh = _configfiles.write_script(
+        ".ssh/id_ed25519", 0o600, overwrite=False, backup=".ssh/fcmd-ssh-backup-1", dir_mode=0o700
+    )
+    assert 'if [ "$dir" != "$home" ]; then chmod 700 "$dir"; fi' in ssh
+
+
+def test_write_script_guards_shell_syntax_before_replacing_target() -> None:
+    """Shell 配置语法错会让实例登录 shell 起不来：写盘前先 ``bash -n``。"""
+    script = _configfiles.write_script(
+        ".bashrc", 0o644, overwrite=True, backup="fcmd-config-backup-1", dir_mode=0o755, syntax="bash"
+    )
+    check = script.index('bash -n "$tmp"')
+    move = script.index('mv -f "$tmp" "$target"')
+    # 语法检查必须在「备份原文件」之前：否则拒绝写入时原 rc 已被移走，等于把配置弄丢。
+    backup_block = script.index('[ "1" -ne 1 ]')
+    assert check < backup_block < move
+    assert 'echo "Shell 配置语法检查未通过' in script
+    assert "exit 4" in script
+    assert 'mv "$target" "$backup"' not in script[:check]
+
+    zsh = _configfiles.write_script(
+        ".zshrc", 0o644, overwrite=False, backup="fcmd-config-backup-1", dir_mode=0o755, syntax="zsh"
+    )
+    assert 'zsh -n "$tmp"' in zsh
+
+    # 非 Shell 配置（Git / SSH）不做语法检查。
+    git = _configfiles.write_script(
+        ".gitconfig", 0o644, overwrite=False, backup="fcmd-config-backup-1", dir_mode=0o755, syntax=""
+    )
+    assert '-n "$tmp"' not in git
+    assert "exit 4" not in git
 
 
 def test_write_script_backups_when_overwrite_confirmed_and_quotes_names() -> None:
@@ -571,7 +646,7 @@ def test_snapshot_mapping_roundtrip_and_bad_rows() -> None:
         stamp=1700000000.0,
     )
     mapping = _configfiles.snapshot_to_mapping(snapshot)
-    assert set(mapping) == set(_configfiles._SNAPSHOT_FIELDS)
+    assert set(mapping) == set(_configrestore._SNAPSHOT_FIELDS)
     assert all(isinstance(value, str) for value in mapping.values())
     assert _configfiles.snapshot_from_mapping(mapping) == snapshot
 

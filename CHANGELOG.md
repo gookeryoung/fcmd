@@ -708,6 +708,14 @@ native 主题下是深色字压选中蓝底（几乎看不清），切到已启�
 
 ### 修复
 
+- `wslmanw` 迁移配置文件时不再把 Windows 宿主的 `.bashrc` 当 Shell 配置迁进实例：
+  Windows 家目录里那份是 Git for Windows 的脚手架（CRLF + 一行 `PIP_INDEX_URL`），
+  整份覆盖会把发行版自己的 rc（含 fcmd 写的 nvm / `~/.local/bin` 块）顶没，出现
+  「复制 Git + Shell 配置后实例进不去、只能再用「初始化配置」把文件移走」的现场；现在
+  来源选 Windows 宿主时 Shell 组不参与扫描（要迁 Shell 配置选一个 WSL 实例作来源）。同时 Shell 配置
+  写盘前先 `bash -n` / `zsh -n`，语法不通就以退出码 4 拒绝写入（检查在备份原文件之前，
+  实例内原 rc 不动），写 `.bashrc` / `.gitconfig` 也不会再 `chmod 755 $HOME`（旧脚本会
+  把 `/root` 的 700 改成 755）。
 - `wslmanw` 初始化环境选「软件包源」为指定镜像（如中科大）时，APT / YUM 却固定用
   阿里云换源，`apt-get update` 仍可能很慢：换源域名改为由软件包源推出（腾讯映射到
   `mirrors.cloud.tencent.com`，自动 / 官方 PyPI 仍用阿里云）；系统源与所选源不一致时
@@ -716,6 +724,10 @@ native 主题下是深色字压选中蓝底（几乎看不清），切到已启�
   报 `E: Could not get lock /var/lib/dpkg/lock-frontend`、退出码 100：「安装 XX」步骤全部
   `apt-get` 加 `-o DPkg::Lock::Timeout=600` 排队等锁，换源步骤再写一份
   `/etc/apt/apt.conf.d/99fcmd-lock-timeout`，linuxmirrors 内部调的 `apt-get` 也跟着等。
+- `wslmanw` 换系统源步骤不再「先静默十几秒才出字」：下载 linuxmirrors 脚本与执行换源
+  拆成两条命令，先打「下载 linuxmirrors 换源脚本…」，下载完报字节数与耗时、再打
+  「开始换源：<域名>」；进程替换 `bash <(curl …)` 下载期间无任何输出，镜像站慢时
+  会被当成卡死。
 - 提升画图生成稳定性：sd-server 的 `txt2img` 在进程内串行执行，聊天 / 工作流 /
   看护不会同时向同一服务发多个生成请求；画图启动 / 出图共用操作锁，避免自动重启
   与生成互相踩踏。生成途中服务退出时自动重启并重试一次；连接重置（如

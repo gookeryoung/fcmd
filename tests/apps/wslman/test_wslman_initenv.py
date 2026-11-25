@@ -66,10 +66,24 @@ def test_mirror_script_contains_requested_command_and_non_interactive_flags() ->
     task = _initenv.task_by_key("mirror")
     assert task is not None
     script = task.steps[0].script
-    assert "bash <(curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 https://linuxmirrors.cn/main.sh)" in script
+    assert "curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 https://linuxmirrors.cn/main.sh" in script
+    assert 'bash "$lms"' in script
     assert "--source mirrors.aliyun.com" in script
     assert "--ignore-backup-tips" in script
     assert task.steps[0].root is True
+
+
+def test_mirror_script_reports_download_and_switch_progress() -> None:
+    """下载 linuxmirrors 脚本要约十几秒：先吐一行提示，不让日志静默到像卡死。"""
+    script = _initenv.mirror_script("mirrors.ustc.edu.cn")
+    download = script.index("下载 linuxmirrors 换源脚本")
+    curl = script.index("curl -fsSL")
+    switch = script.index("开始换源：mirrors.ustc.edu.cn")
+    assert download < curl < switch
+    # 下载完成后报字节数与耗时，用户能看出慢在哪一段。
+    assert "%{size_download}" in script
+    assert "%{time_total}" in script
+    assert 'echo "系统镜像源配置完成"' in script
 
 
 def test_apt_and_mirror_scripts_wait_for_apt_lock() -> None:

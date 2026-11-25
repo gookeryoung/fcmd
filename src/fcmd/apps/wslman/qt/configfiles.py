@@ -727,6 +727,8 @@ class _ConfigMigrateSection(_ConfigUndoMixin, Card):  # pragma: no cover - Qt �
                 overwrite=path in overwrite,
                 backup=_owner._configfiles.backup_root(entry.group, stamp),
                 dir_mode=_owner._configfiles.target_dir_mode(group),
+                # Shell 配置写盘前先过语法检查：语法错会让实例登录 shell 直接起不来。
+                syntax=_owner._configio.shell_syntax(path),
             )
             self._bridge.event.emit(f"[{path}] 写入 ~/{path}（权限 {entry.mode_text}）…")
             result = env.runner.run(
@@ -742,6 +744,11 @@ class _ConfigMigrateSection(_ConfigUndoMixin, Card):  # pragma: no cover - Qt �
                 hint = tail[-1] if tail else "查看日志，或在实例内手动检查配置文件"
                 if result.returncode == 3:
                     hint = "目标文件在扫描后才出现；重新扫描并确认覆盖后再试"
+                elif result.returncode == 4:
+                    hint = (
+                        "Shell 配置未通过语法检查（常见原因：Windows CRLF、未闭合的 if / 引号），"
+                        "已放弃写入，实例内原文件未改动；修好来源文件后重新扫描再迁移"
+                    )
                 raise _owner.runtime_error(f"{path} 迁移失败（退出码 {result.returncode}）", hint=hint)
             mode, owner, written_size = _owner._configfiles.parse_write_meta(text)
             if mode != entry.mode_text:

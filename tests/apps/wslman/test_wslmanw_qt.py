@@ -3270,6 +3270,88 @@ def test_config_migrate_adapts_windows_only_git_config(
         owner.deleteLater()
 
 
+def test_config_migrate_section_refuses_windows_host_shell_config(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """来源选 Windows 宿主时不提供 Shell 组，避免顶掉实例 rc 后进不去。"""
+    source = tmp_path / "home"
+    source.mkdir()
+    (source / ".bashrc").write_bytes(b'\r\nexport PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"\r\n')
+    (source / ".gitconfig").write_text("[user]\n\tname = me\n", encoding="utf-8")
+    owner = QWidget()
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"))
+    try:
+        section.source.set_value(str(source))
+        monkeypatch.setattr(section, "refresh", lambda: None)
+        windows = _configfiles.ConfigSource(_configfiles.SOURCE_WINDOWS, "", str(source))
+        section._scan_done((_configfiles.scan_host(source), _configfiles.ConfigTarget(home="/root"), windows))
+        assert set(section._boxes) == {".gitconfig"}
+        assert section._group_boxes["shell"].isEnabled() is False
+        assert section._group_tags["shell"].text() == "Shell 无文件"
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_config_migrate_checks_shell_syntax_and_maps_refusal(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Shell 配置写入带 ``bash -n``；语法检查拒绝（退出码 4）要给出可操作提示。"""
+    source = tmp_path / "home"
+    source.mkdir()
+    (source / ".bashrc").write_bytes(b"export A=1\n")
+    owner = QWidget()
+    section = _wslmanw_qt._ConfigMigrateSection(owner, _distro("Ubuntu"))
+    try:
+        section.source.set_value(str(source))
+        section._files = {".bashrc": _configfiles.ConfigFile(".bashrc", 11, "shell", "config")}
+        scripts: list[str] = []
+
+        class _Runner:
+            def run(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+            ) -> CommandResult:
+                scripts.append(argv[-1])
+                return CommandResult(tuple(argv), 0, b"WSLCFG_WRITTEN=644|root|11\n", b"", 1)
+
+        class _FakeEnv:
+            runner = _Runner()
+
+        monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+        monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+        assert section._migrate([".bashrc"], set()) == "已迁移 1 个文件"
+        assert 'bash -n "$tmp"' in scripts[0]
+
+        class _Refuse:
+            def run(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+            ) -> CommandResult:
+                return CommandResult(tuple(argv), 4, b"", "Shell 配置语法检查未通过".encode(), 1)
+
+        class _RefuseEnv:
+            runner = _Refuse()
+
+        monkeypatch.setattr(cli, "_build_environment", _RefuseEnv)
+        with pytest.raises(WslmanError) as refused:
+            section._migrate([".bashrc"], set())
+        assert refused.value.code == "RUNTIME_ERROR"
+        assert "语法检查" in (refused.value.hint or "")
+        assert "原文件未改动" in (refused.value.hint or "")
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
 def test_config_migrate_from_another_instance_streams_files(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """跨实例来源：扫描经 wsl.exe 探测，读取走 cat 文件流，内容不进入命令行。"""
     probe_debian = (

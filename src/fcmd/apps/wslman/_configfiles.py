@@ -7,8 +7,11 @@
 - ``shell``：``~/.bashrc`` / ``~/.profile`` / ``~/.zshrc``。
 
 来源可以是 Windows 宿主的家目录，也可以是任一其它已安装 WSL 实例的 ``$HOME``；
-目标固定为当前实例的 ``$HOME``。每个项目都像「初始化环境」那样独立展示状态：
-来源里有几个文件、实例里是否已经一致，来源为空的项目标「无文件」而不是「未迁移」。
+目标固定为当前实例的 ``$HOME``。**Shell 配置只在实例侧有意义**：Windows 家目录的
+``.bashrc`` 是 Git for Windows 的脚手架，搬进实例会整份顶掉发行版自己的 rc（连带
+fcmd 写的 nvm / ``~/.local/bin`` 块），所以来源选 Windows 宿主时该组不参与扫描。
+每个项目都像「初始化环境」那样独立展示状态：来源里有几个文件、实例里是否已经一致，
+来源为空的项目标「无文件」而不是「未迁移」。
 
 只负责扫描、分类、生成探测与写入脚本、解析结果与持久化快照；文件内容由界面线程
 读入后通过 stdin 送进实例，避免私钥 / 令牌出现在命令行。SSH 目录仍按 OpenSSH
@@ -24,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fcmd.apps.wslman import _configadapt, _sshfiles
+from fcmd.apps.wslman import _configadapt, _configrestore, _sshfiles
 from fcmd.apps.wslman._configrestore import RestoreEntry, RestoreRecord
 from fcmd.apps.wslman._errors import not_found, runtime_error
 
@@ -348,22 +351,6 @@ class MigrationSnapshot:
         return group_stats(self.group_counts)
 
 
-_SNAPSHOT_FIELDS: tuple[str, ...] = (
-    "label",
-    "tone",
-    "detail",
-    "matched",
-    "total",
-    "source_label",
-    "source_path",
-    "source_count",
-    "target_count",
-    "target_summary",
-    "scanned_at",
-    "group_counts",
-)
-
-
 def group_by_key(key: str) -> ConfigGroup | None:
     return _GROUP_MAP.get(key)
 
@@ -425,7 +412,11 @@ def _sort_key(item: ConfigFile) -> tuple[int, int, str]:
 
 
 def scan_host(home: Path | str, groups: Sequence[ConfigGroup] = GROUPS) -> tuple[ConfigFile, ...]:
-    """列出宿主家目录里各项目的文件；单个文件读不到只跳过，不影响整次扫描。"""
+    """列出宿主家目录里各项目的文件；单个文件读不到只跳过，不影响整次扫描。
+
+    只扫 ``windows=True`` 的项目：Windows 家目录的 ``.bashrc`` 是 Git for Windows 的
+    脚手架，列出来只会诱导用户把实例的 rc 整份顶掉。
+    """
     root = Path(home)
     try:
         if not root.is_dir():
@@ -438,6 +429,8 @@ def scan_host(home: Path | str, groups: Sequence[ConfigGroup] = GROUPS) -> tuple
 
     files: list[ConfigFile] = []
     for group in groups:
+        if not group.windows:
+            continue
         for rel in group.paths:
             target = root / Path(*rel.split("/"))
             if rel in group.directories:
@@ -696,59 +689,6 @@ def snapshot_summary(snapshot: MigrationSnapshot) -> str:
     return f"{label} {snapshot.source_count} 个文件 · 实例内 {snapshot.target_count} 个文件"
 
 
-def snapshot_to_mapping(snapshot: MigrationSnapshot) -> dict[str, str]:
-    state = snapshot.state
-    values = {
-        "label": state.label,
-        "tone": state.tone,
-        "detail": state.detail,
-        "matched": str(state.matched),
-        "total": str(state.total),
-        "source_label": snapshot.source_label,
-        "source_path": snapshot.source_path,
-        "source_count": str(snapshot.source_count),
-        "target_count": str(snapshot.target_count),
-        "target_summary": snapshot.target_summary,
-        "scanned_at": snapshot.scanned_at,
-        "group_counts": snapshot.group_counts,
-    }
-    return {name: values.get(name, "") for name in _SNAPSHOT_FIELDS}
-
-
-def _count(raw: object) -> int:
-    try:
-        value = int(str(raw).strip())
-    except (TypeError, ValueError):
-        return 0
-    return value if value > 0 else 0
-
-
-def snapshot_from_mapping(raw: object) -> MigrationSnapshot | None:
-    """从设置文件恢复上次扫描结果；没有标签（坏行 / 旧版本）时返回 ``None``。"""
-    if not isinstance(raw, Mapping):
-        return None
-    label = str(raw.get("label") or "").strip()
-    if not label:
-        return None
-    state = MigrationState(
-        label,
-        str(raw.get("tone") or "muted").strip() or "muted",
-        str(raw.get("detail") or "").strip(),
-        _count(raw.get("matched")),
-        _count(raw.get("total")),
-    )
-    return MigrationSnapshot(
-        state=state,
-        source_label=str(raw.get("source_label") or "").strip(),
-        source_path=str(raw.get("source_path") or "").strip(),
-        source_count=_count(raw.get("source_count")),
-        target_count=_count(raw.get("target_count")),
-        target_summary=str(raw.get("target_summary") or "").strip(),
-        scanned_at=str(raw.get("scanned_at") or "").strip(),
-        group_counts=str(raw.get("group_counts") or "").strip(),
-    )
-
-
 # 探测 / 写入 / 还原脚本独立在 _configio，避免单个模块超过行数预算；这里按需转发导出名，
 # 既保留 ``_configfiles.write_script`` 这套旧调用，又避免两个模块在导入期互相依赖。
 _LAZY_EXPORTS = frozenset(
@@ -756,8 +696,6 @@ _LAZY_EXPORTS = frozenset(
         "backup_root",
         "initialize_script",
         "parse_backup_path",
-        "source_file_path",
-        "target_dir_mode",
         "parse_init_result",
         "parse_probe",
         "parse_write_meta",
@@ -765,6 +703,10 @@ _LAZY_EXPORTS = frozenset(
         "probe_script",
         "remote_read_argv",
         "restore_script",
+        "snapshot_from_mapping",
+        "snapshot_to_mapping",
+        "source_file_path",
+        "target_dir_mode",
         "write_script",
     }
 )
@@ -786,10 +728,13 @@ if TYPE_CHECKING:
         target_dir_mode,
         write_script,
     )
+    from fcmd.apps.wslman._configrestore import snapshot_from_mapping, snapshot_to_mapping
 
 
 def __getattr__(name: str) -> object:
     if name in _LAZY_EXPORTS:
+        if name in {"snapshot_from_mapping", "snapshot_to_mapping"}:
+            return getattr(_configrestore, name)
         from fcmd.apps.wslman import _configio
 
         return getattr(_configio, name)

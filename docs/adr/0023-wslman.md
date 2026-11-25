@@ -494,7 +494,10 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   重复初始化的绝大部分耗时。所有 `apt-get` 都带 `-o DPkg::Lock::Timeout=600`：首跑常撞上
   `unattended-upgrades` / `apt-daily` 持锁，直接报 `Could not get lock`（退出码 100）会让
   整次初始化中断；换源步骤另写 `/etc/apt/apt.conf.d/99fcmd-lock-timeout`，让 linuxmirrors
-  内部调的 `apt-get` 也排队等锁。nvm 与 `~/.local/bin` 会以带标记的 rc 块写进 `~/.bashrc` /
+  内部调的 `apt-get` 也排队等锁。换源步骤把「下载 linuxmirrors 脚本」与「开始换源」
+  拆成两条带提示的命令（下载完报字节数与耗时），不再用进程替换 `bash <(curl …)`：
+  镜像站慢时那次 curl 实测要十几秒且完全无输出，日志静默得像卡死。
+  nvm 与 `~/.local/bin` 会以带标记的 rc 块写进 `~/.bashrc` /
   `~/.profile`（幂等、不重复追加），并把 node / npm / npx / bun 软链到 `~/.local/bin`，
   保证 `bash -lc`（只读 profile）也能测到 node / bun，同时 `nvm which default` 有值时不重装。
   打开即后台探测实例环境并按探测结果回填：
@@ -523,7 +526,12 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   `~/.gitignore_global`、`~/.config/git/*`）、`shell`（`~/.bashrc` / `~/.profile` /
   `~/.zshrc`）。来源可以是 Windows 宿主家目录（默认 `%USERPROFILE%`，可在卡片里改选），
   也可以是**任一其它已安装 WSL 实例**的 `$HOME`（下拉选择；当前实例不出现在来源里）。
-  `shell` 在 Windows 宿主没有对应位置，来源选宿主时该组显示「无文件」并禁用。
+  `shell` 在 Windows 宿主没有对应位置：扫描阶段按 `ConfigGroup.windows=False` 直接跳过，
+  来源选宿主时该组显示「无文件」并禁用。Windows 家目录的 `.bashrc` 是 Git for Windows 的
+  脚手架（CRLF + 一行 `PIP_INDEX_URL`），整份搬进实例会顶掉发行版自己的 rc，连带丢掉
+  fcmd 写的 nvm / `~/.local/bin` 块——本机就是这样：复制 Git + Shell 配置后实例进不去，
+  只能用「初始化配置」把 `~/.bashrc` / `~/.profile` 移走才恢复。要迁 Shell 配置，
+  来源必须选一个 WSL 实例。
   来源行切换类型 / 实例后清空旧结果；目标实例运行中才自动重扫，停止时只提示，手动「扫描」
   会先确认“wsl -d 会启动实例”；确认后同样用看护进程保持 Running，避免扫描命令结束就把
   实例带回 Stopped。跨实例扫描通过 `wsl.exe -d <实例> --exec bash -lc <探测脚本>` 读取
@@ -546,8 +554,12 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   配置文件只看「已存在 + 权限正确」，只有 SSH 私钥 / 公钥 / known_hosts 才按大小比对，
   避免适配过的配置永远显示「部分迁移」。已经被旧版本迁坏的 `~/.gitconfig`，重新扫描来源
   再迁移一次即可覆盖修复。写入口径：SSH 目录 700、私钥 600、其余配置 644，中间目录按 755
-  建好；写后回读 `stat` 校验权限，不符直接报错。实例内已有同名文件不静默覆盖：确认框逐条列出，确认后 SSH 先备份到
-  `~/.ssh/fcmd-ssh-backup-<时间>/`、其它项目备份到 `~/.fcmd-config-backup-<时间>/` 再写入；
+  建好，但**不动 `$HOME` 本身**（`.bashrc` / `.gitconfig` 这类一级文件的父目录就是
+  `$HOME`，旧脚本无差别 `chmod 755 "$dir"` 会把 `/root` 的 700 改成 755）；写后回读 `stat`
+  校验权限，不符直接报错。Shell 配置写盘前先 `bash -n` / `zsh -n`（检查器不存在时跳过）：
+  语法不通以退出码 4 拒绝写入，且检查放在「备份原文件」之前完成，实例内 rc 保持原样，
+  不会出现「备份完才发现不能用」的半截状态。实例内已有同名文件不静默覆盖：确认框逐条列出，确认后 SSH 先备份到
+  `~/.ssh/fcmd-ssh-backup-<时间>/`、其它项目备份到 `~/fcmd-config-backup-<时间>/` 再写入；
   未确认时脚本以退出码 3 失败（扫描后新出现的同名文件同样拒绝）。文件内容经 stdin 送进目标
   `wsl.exe`，命令行与日志只出现路径与权限。卡片标题行既有每个项目的短标签（绿＝已一致 /
   黄＝部分 / 红＝未迁移 / 灰＝无文件），也有整体标签，全部由每次扫描的实际结果推导
