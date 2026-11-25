@@ -12,23 +12,39 @@ CLI 的 ``validate`` / ``export`` / ``build`` 与编辑器（pptmakew）的设�
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
-from fcmd.apps.pptmake._core import LAYOUT_TEXT, TemplateSpec
+from fcmd.apps.pptmake._core import LAYOUT_TEXT, SlideSpec, TemplateSpec
 from fcmd.apps.pptmake._design import Oval, Picture, Primitive, Rect, Text, build_draw_list
 from fcmd.apps.pptmake._preview import contrast_ratio, overflow_issues
+from fcmd.apps.pptmake._rules import rule_for
 from fcmd.console import print_error
 
 __all__ = [
     "BODY_CONTRAST",
+    "CONTRAST",
     "LARGE_CONTRAST",
     "MIN_FONT_PT",
+    "MISSING",
+    "OVERFLOW",
+    "SMALL",
+    "UNLABELED",
+    "PageIssue",
     "Quality",
+    "fix_slide",
+    "fix_template",
+    "quality_details",
     "quality_issues",
     "required_contrast",
 ]
+
+OVERFLOW: Final[str] = "overflow"
+MISSING: Final[str] = "missing"
+SMALL: Final[str] = "small"
+UNLABELED: Final[str] = "unlabeled"
+CONTRAST: Final[str] = "contrast"
 
 MIN_FONT_PT: Final[float] = 12.0
 # 设计坐标 96 单位 / 英寸，1 单位 = 0.75pt。
@@ -89,31 +105,61 @@ def _backdrop_of(primitives: tuple[Primitive, ...], text: Text, default: str) ->
     return backdrop
 
 
-def quality_issues(spec: TemplateSpec, *, verbose: bool, base_dir: Path | None = None) -> Quality:
-    """汇总（溢出, 缺失图片, 过小字号, 缺替代文本, 对比度不足）；``verbose`` 时逐页打印。"""
-    counts = Quality()
+@dataclass(frozen=True, slots=True)
+class PageIssue:
+    """设计检查面板的一行：页码、类别、问题数与可展开明细。"""
+
+    page: int
+    layout: str
+    kind: str
+    count: int
+    message: str
+    details: tuple[str, ...] = ()
+
+    @property
+    def label(self) -> str:
+        """版式中文名（未知布局回落原名）。"""
+        return LAYOUT_TEXT.get(self.layout, self.layout)
+
+    @property
+    def fixable(self) -> bool:
+        """一键修复可机械处理的类别（溢出截断、替代文本占位）。"""
+        return self.kind in (OVERFLOW, UNLABELED)
+
+    def describe(self) -> str:
+        """列表展示文案：「第 3 页（要点）：2 处可能溢出」。"""
+        return f"第 {self.page} 页（{self.label}）：{self.message}"
+
+
+def quality_details(spec: TemplateSpec, *, base_dir: Path | None = None) -> tuple[PageIssue, ...]:
+    """逐页、逐类别列出质量问题；编辑器检查面板与 ``quality_issues`` 共用。"""
+    issues: list[PageIssue] = []
     for index, slide in enumerate(spec.slides, start=1):
         image = Path(slide.image)
         if slide.image and not image.is_absolute() and base_dir is not None:
             image = base_dir / image
-        missing = 1 if slide.image and not image.is_file() else 0
-        if missing and verbose:
-            print_error(f"第 {index} 页图片不存在：{slide.image}")
+        if slide.image and not image.is_file():
+            issues.append(PageIssue(index, slide.layout, MISSING, 1, f"图片不存在：{slide.image}"))
         primitives = build_draw_list(slide, spec, page_number=index, page_total=len(spec.slides))
-        issues = overflow_issues(primitives)
-        if issues and verbose:
-            print(f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{len(issues)} 处可能溢出")
-            for issue in issues[:3]:
-                print(f"  - {issue.message}")
-        tiny = sum(1 for primitive in primitives if isinstance(primitive, Text) and primitive.size < MIN_FONT_UNITS)
-        if tiny and verbose:
-            print(
-                f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{tiny} 处字号小于 {MIN_FONT_PT:g}pt"
+        overflow = overflow_issues(primitives)
+        if overflow:
+            issues.append(
+                PageIssue(
+                    index,
+                    slide.layout,
+                    OVERFLOW,
+                    len(overflow),
+                    f"{len(overflow)} 处可能溢出",
+                    tuple(item.message for item in overflow),
+                )
             )
-        page_background = next((item.fill for item in primitives if isinstance(item, Rect) and item.fill), "#FFFFFF")
+        tiny = sum(1 for primitive in primitives if isinstance(primitive, Text) and primitive.size < MIN_FONT_UNITS)
+        if tiny:
+            issues.append(PageIssue(index, slide.layout, SMALL, tiny, f"{tiny} 处字号小于 {MIN_FONT_PT:g}pt"))
         unlabeled = sum(1 for item in primitives if isinstance(item, Picture) and item.path and not item.alt)
-        if unlabeled and verbose:
-            print(f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{unlabeled} 张图片缺少替代文本")
+        if unlabeled:
+            issues.append(PageIssue(index, slide.layout, UNLABELED, unlabeled, f"{unlabeled} 张图片缺少替代文本"))
+        page_background = next((item.fill for item in primitives if isinstance(item, Rect) and item.fill), "#FFFFFF")
         low = sum(
             1
             for item in primitives
@@ -122,16 +168,80 @@ def quality_issues(spec: TemplateSpec, *, verbose: bool, base_dir: Path | None =
             and not item.decorative
             and contrast_ratio(item.color, _backdrop_of(primitives, item, page_background)) < required_contrast(item)
         )
-        if low and verbose:
-            print(
-                f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{low} 处文字对比度低于 "
-                f"{BODY_CONTRAST:g}:1（正文）/ {LARGE_CONTRAST:g}:1（大字）"
+        if low:
+            issues.append(
+                PageIssue(
+                    index,
+                    slide.layout,
+                    CONTRAST,
+                    low,
+                    f"{low} 处文字对比度低于 {BODY_CONTRAST:g}:1（正文）/ {LARGE_CONTRAST:g}:1（大字）",
+                )
             )
-        counts = Quality(
-            overflow=counts.overflow + len(issues),
-            missing=counts.missing + missing,
-            small=counts.small + tiny,
-            unlabeled=counts.unlabeled + unlabeled,
-            contrast=counts.contrast + low,
-        )
+    return tuple(issues)
+
+
+def quality_issues(spec: TemplateSpec, *, verbose: bool, base_dir: Path | None = None) -> Quality:
+    """汇总（溢出, 缺失图片, 过小字号, 缺替代文本, 对比度不足）；``verbose`` 时逐页打印。"""
+    details = quality_details(spec, base_dir=base_dir)
+    counts = Quality(
+        overflow=sum(item.count for item in details if item.kind == OVERFLOW),
+        missing=sum(item.count for item in details if item.kind == MISSING),
+        small=sum(item.count for item in details if item.kind == SMALL),
+        unlabeled=sum(item.count for item in details if item.kind == UNLABELED),
+        contrast=sum(item.count for item in details if item.kind == CONTRAST),
+    )
+    if verbose:
+        for item in details:
+            if item.kind == MISSING:
+                print_error(f"第 {item.page} 页（{item.label}）：{item.message}")
+                continue
+            print(f"第 {item.page} 页（{item.label}）：{item.message}")
+            if item.kind == OVERFLOW:
+                for line in item.details[:3]:
+                    print(f"  - {line}")
     return counts
+
+
+def fix_slide(slide: SlideSpec) -> tuple[SlideSpec, tuple[str, ...]]:
+    """按版式容量做机械修复：截断标题 / 要点、补替代文本占位，不改写文案。"""
+    rule = rule_for(slide.layout)
+    fixes: list[str] = []
+    title = slide.title
+    if len(title.strip()) > rule.max_title:
+        title = title.strip()[: rule.max_title - 1].rstrip() + "…"
+        fixes.append(f"标题截断到 {rule.max_title} 字以内")
+    bullets = slide.bullets[: rule.max_bullets]
+    if len(slide.bullets) > rule.max_bullets:
+        fixes.append(f"要点删减至 {rule.max_bullets} 条")
+    truncated = False
+    capped: list[str] = []
+    for item in bullets:
+        if len(item) > rule.max_chars:
+            capped.append(item[: rule.max_chars - 1].rstrip() + "…")
+            truncated = True
+        else:
+            capped.append(item)
+    if truncated:
+        fixes.append(f"要点截断到 {rule.max_chars} 字以内")
+    alt = slide.image_alt
+    if slide.image.strip() and not alt.strip():
+        alt = f"{title.strip() or '示意图'} 配图"
+        fixes.append("补充替代文本占位")
+    if not fixes:
+        return slide, ()
+    return replace(slide, title=title, bullets=tuple(capped), image_alt=alt), tuple(fixes)
+
+
+def fix_template(spec: TemplateSpec) -> tuple[TemplateSpec, tuple[str, ...]]:
+    """整份模板执行机械修复；返回新模板与逐页修复说明。"""
+    slides: list[SlideSpec] = []
+    notes: list[str] = []
+    for index, slide in enumerate(spec.slides, start=1):
+        fixed, applied = fix_slide(slide)
+        if applied:
+            notes.append(f"第 {index} 页：{'、'.join(applied)}")
+        slides.append(fixed)
+    if not notes:
+        return spec, ()
+    return replace(spec, slides=tuple(slides)), tuple(notes)

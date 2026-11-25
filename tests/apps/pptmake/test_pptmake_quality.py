@@ -10,6 +10,7 @@ from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _design, _quality
 from fcmd.apps.pptmake._design import Oval, Rect, Text
 from fcmd.apps.pptmake._preview import contrast_ratio
+from fcmd.apps.pptmake._rules import rule_for
 
 
 def _text(  # noqa: PLR0913 - 测试工厂逐字段复刻 Text 签名
@@ -110,3 +111,66 @@ def test_verbose_reports_contrast_detail(capsys: pytest.CaptureFixture[str]) -> 
     _quality.quality_issues(spec, verbose=True)
     output = capsys.readouterr().out
     assert "对比度低于 4.5:1" in output
+
+
+def test_quality_details_lists_kinds_and_describe() -> None:
+    """检查面板拿到逐页明细：类别、数量与可读文案。"""
+    spec = core.TemplateSpec(
+        slides=(
+            core.SlideSpec(
+                layout=core.LAYOUT_BULLETS,
+                title="溢出",
+                bullets=tuple("这是一行非常长的要点文字" * 8 for _ in range(12)),
+            ),
+            core.SlideSpec(layout=core.LAYOUT_IMAGE, title="图", image="missing.png"),
+        )
+    )
+    details = _quality.quality_details(spec)
+    kinds = {item.kind for item in details}
+    assert _quality.OVERFLOW in kinds
+    assert _quality.UNLABELED in kinds
+    assert all(item.page >= 1 for item in details)
+    assert details[0].describe().startswith("第 ")
+    assert all(item.fixable == (item.kind in (_quality.OVERFLOW, _quality.UNLABELED)) for item in details)
+
+
+def test_quality_issues_counts_match_details() -> None:
+    """汇总计数与明细逐项求和一致。"""
+    spec = core.TemplateSpec(
+        slides=(
+            core.SlideSpec(
+                layout=core.LAYOUT_BULLETS,
+                title="溢出",
+                bullets=tuple("这是一行非常长的要点文字" * 8 for _ in range(12)),
+            ),
+        )
+    )
+    details = _quality.quality_details(spec)
+    report = _quality.quality_issues(spec, verbose=False)
+    assert report.overflow == sum(item.count for item in details if item.kind == _quality.OVERFLOW)
+    assert report.total == sum(item.count for item in details)
+
+
+def test_fix_slide_truncates_and_fills_alt() -> None:
+    """一键修复：标题 / 要点按容量截断，图片补替代文本占位。"""
+    rule = rule_for(core.LAYOUT_BULLETS)
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_BULLETS,
+        title="标" * (rule.max_title + 5),
+        bullets=tuple("点" * (rule.max_chars + 5) for _ in range(rule.max_bullets + 3)),
+        image="assets/hero.png",
+    )
+    fixed, notes = _quality.fix_slide(slide)
+    assert len(fixed.title) <= rule.max_title
+    assert len(fixed.bullets) == rule.max_bullets
+    assert all(len(item) <= rule.max_chars for item in fixed.bullets)
+    assert fixed.image_alt
+    assert notes
+
+
+def test_fix_template_keeps_clean_template() -> None:
+    """没有可修问题时原样返回，避免制造无意义的撤销记录。"""
+    template = core.new_template()
+    fixed, notes = _quality.fix_template(template)
+    assert fixed is template
+    assert notes == ()

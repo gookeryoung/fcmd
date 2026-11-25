@@ -150,6 +150,42 @@ def test_image_ratio_numeric_fine_tune(window: Any) -> None:
     assert window._image_ratio_spin.value() == 35
 
 
+def test_check_panel_lists_issues_and_fixes(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """检查面板：列出问题、点击跳页，一键修复截断超容量要点。"""
+    rule = _pptmakew_qt.rule_for(core.LAYOUT_BULLETS)
+    template = core.new_template(
+        slides=(
+            core.SlideSpec(
+                layout=core.LAYOUT_BULLETS,
+                title="溢出页",
+                bullets=tuple("这是一行非常长的要点文字" * 8 for _ in range(rule.max_bullets + 4)),
+                image="assets/hero.png",
+            ),
+        )
+    )
+    window._set_template(template)
+    window._inspector_tabs.setCurrentIndex(window._inspector_tabs.count() - 1)
+    assert window._check_list.count() >= 1
+    assert "问题" in window._check_summary.text()
+    assert window._check_fix_button.isEnabled()
+    window._on_check_item_clicked(window._check_list.item(0))
+    assert window._slides_list.currentRow() == 0
+
+    monkeypatch.setattr(_pptmakew_qt.QMessageBox, "information", staticmethod(lambda *args, **kwargs: None))
+    window._fix_quality_issues()
+    slide = window._template.slides[0]
+    assert len(slide.bullets) <= rule.max_bullets
+    assert all(len(item) <= rule.max_chars for item in slide.bullets)
+    assert slide.image_alt
+
+
+def test_check_panel_reports_clean_template(window: Any) -> None:
+    window._refresh_check_panel()
+    assert window._check_list.count() == 0
+    assert "未发现" in window._check_summary.text()
+    assert not window._check_fix_button.isEnabled()
+
+
 def test_overflow_badge_and_status_detail(window: Any) -> None:
     """溢出页在缩略图与状态栏使用同一计数（角标数据源）。"""
     window._slides_list.setCurrentRow(0)
@@ -267,10 +303,11 @@ def test_drag_reorder_updates_template(window: Any) -> None:
 
 
 def test_sorter_view_and_inspector_toggle(window: Any) -> None:
-    assert window._inspector_tabs.count() == 3
+    assert window._inspector_tabs.count() == 4
     assert window._inspector_tabs.tabText(0) == "内容"
     assert window._inspector_tabs.tabText(1) == "版式"
     assert window._inspector_tabs.tabText(2) == "备注"
+    assert window._inspector_tabs.tabText(3) == "检查"
     assert window._layout_hint.text()
 
     window._toggle_sorter_view()

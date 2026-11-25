@@ -69,7 +69,7 @@ from PySide6.QtWidgets import (
 
 from fcmd import __version__
 from fcmd.apps.pptmake import _core as core
-from fcmd.apps.pptmake import _office
+from fcmd.apps.pptmake import _office, _quality
 from fcmd.apps.pptmake import _preview as preview
 from fcmd.apps.pptmake import _tokens as tokens
 from fcmd.apps.pptmake._design import (
@@ -1390,6 +1390,32 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         notes_layout.setContentsMargins(4, 6, 4, 4)
         notes_layout.addWidget(self._note_text, 1)
         self._inspector_tabs.addTab(notes_tab, "备注")
+
+        check_tab = QWidget(self._inspector_tabs)
+        check_layout = QVBoxLayout(check_tab)
+        check_layout.setContentsMargins(4, 6, 4, 4)
+        check_layout.setSpacing(6)
+        self._check_summary = QLabel("", check_tab)
+        self._check_summary.setWordWrap(True)
+        self._check_summary.setObjectName("Hint")
+        self._check_list = QListWidget(check_tab)
+        self._check_list.setMinimumHeight(120)
+        self._check_list.setWordWrap(True)
+        self._check_list.itemClicked.connect(self._on_check_item_clicked)
+        check_actions = QHBoxLayout()
+        check_actions.setContentsMargins(0, 0, 0, 0)
+        refresh_button = button("重新检查")
+        refresh_button.clicked.connect(self._refresh_check_panel)
+        self._check_fix_button = button("一键修复")
+        self._check_fix_button.clicked.connect(self._fix_quality_issues)
+        check_actions.addWidget(refresh_button)
+        check_actions.addWidget(self._check_fix_button)
+        check_actions.addStretch(1)
+        check_layout.addWidget(self._check_summary)
+        check_layout.addWidget(self._check_list, 1)
+        check_layout.addLayout(check_actions)
+        self._inspector_tabs.addTab(check_tab, "检查")
+        self._inspector_tabs.currentChanged.connect(self._on_inspector_tab_changed)
         form_card.body.addWidget(self._inspector_tabs, 1)
         layout.addWidget(form_card, 1)
         return panel
@@ -1535,6 +1561,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._refresh_color_buttons()
         self._refresh_layout_icons()
         self._refresh_slides()
+        self._refresh_check_panel()
         self._refresh_canvases()
         self._sync_history_actions()
 
@@ -2166,6 +2193,46 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._refresh_slides()
         self._refresh_canvases()
 
+    def _on_inspector_tab_changed(self, index: int) -> None:
+        """切到「检查」标签时重新跑一遍质量检查。"""
+        if self._inspector_tabs.tabText(index) == "检查":
+            self._refresh_check_panel()
+
+    def _refresh_check_panel(self) -> None:
+        """设计检查：逐页列出溢出 / 缺图 / 小字 / 替代文本 / 对比度问题。"""
+        details = _quality.quality_details(self._template)
+        self._check_list.clear()
+        for issue in details:
+            item = QListWidgetItem(issue.describe())
+            item.setData(Qt.ItemDataRole.UserRole, issue.page)
+            if issue.details:
+                item.setToolTip("\n".join(issue.details))
+            self._check_list.addItem(item)
+        total = sum(issue.count for issue in details)
+        if total:
+            self._check_summary.setText(f"共 {total} 处问题；点击条目跳到对应页，可一键修复机械问题。")
+        else:
+            self._check_summary.setText("未发现设计问题。")
+        self._check_fix_button.setEnabled(any(issue.fixable for issue in details))
+
+    def _on_check_item_clicked(self, item: QListWidgetItem) -> None:
+        page = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(page, int) and 0 < page <= len(self._template.slides):
+            self._slides_list.setCurrentRow(page - 1)
+
+    def _fix_quality_issues(self) -> None:
+        """一键修复：截断超容量标题 / 要点，给缺 alt 的图片补占位。"""
+        fixed, notes = _quality.fix_template(self._template)
+        if not notes:
+            QMessageBox.information(self, "设计检查", "没有可自动修复的问题。")
+            return
+        if not self._commit(fixed, "一键修复设计问题"):
+            return
+        self._refresh_all()
+        summary = "\n".join(notes[:8]) + ("\n…" if len(notes) > 8 else "")
+        QMessageBox.information(self, "设计检查", f"已修复 {len(notes)} 页：\n{summary}")
+        self.set_status(f"设计检查：已修复 {len(notes)} 页")
+
     def _pick_color(self, field: str) -> None:
         current = getattr(self._template.theme.palette, field)
         label = _PALETTE_LABELS[field]
@@ -2288,6 +2355,18 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         if not path:
             return
         target = Path(path)
+        report = _quality.quality_issues(sliced, verbose=False)
+        if report.total:
+            answer = QMessageBox.question(
+                self,
+                "设计检查",
+                f"当前导出范围还有 {report.total} 处设计问题（溢出 / 缺图 / 小字 / 替代文本 / 对比度）。\n"
+                "可在右侧「检查」标签查看明细并一键修复。仍要导出吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         try:
             count = export_pptx(sliced, target)
         except core.TemplateError as exc:
