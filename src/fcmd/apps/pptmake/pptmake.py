@@ -46,7 +46,7 @@ from fcmd.apps.pptmake._core import (
     template_from_mapping,
     template_to_mapping,
 )
-from fcmd.apps.pptmake._library import build_sample
+from fcmd.apps.pptmake._library import SCENE_TEXT, SCENES, build_sample, scene_style
 from fcmd.apps.pptmake._pptx import export_potx, export_pptx, import_pptx
 from fcmd.apps.pptmake._quality import BODY_CONTRAST, MIN_FONT_PT, quality_issues
 from fcmd.apps.pptmake._rules import check_template
@@ -63,9 +63,9 @@ __all__ = [
     "validate_command",
 ]
 
-_DESCRIPTION = "PPT 模板生成器：内置二十四种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿"
+_DESCRIPTION = "PPT 模板生成器：内置二十四种版式与六套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿"
 
-StyleName = Literal["aurora", "porcelain", "graphite", "coral"]
+StyleName = Literal["aurora", "porcelain", "graphite", "coral", "business", "deepsea"]
 AspectName = Literal["16:9", "4:3"]
 DecorName = Literal["orbs", "grid", "frame", "minimal"]
 
@@ -101,6 +101,12 @@ def presets_command() -> None:
     lines.append("装饰样式：")
     lines.extend(f"  {decor:<10} {DECOR_TEXT[decor]}" for decor in DECORS)
     lines.append("")
+    lines.append("场景包：")
+    for scene, layouts in SCENES.items():
+        lines.append(
+            f"  {scene:<14} {SCENE_TEXT[scene]:<6} {len(layouts):>2} 页 · 推荐风格 {STYLE_TEXT[scene_style(scene)]}"
+        )
+    lines.append("")
     lines.append("画幅：" + " / ".join(f"{aspect}（{ASPECT_TEXT[aspect]}）" for aspect in (ASPECT_16_9, ASPECT_4_3)))
     print("\n".join(lines))
 
@@ -124,13 +130,16 @@ def init_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     name:
         模板名称，缺省取文件名
     style:
-        风格预设：aurora=极光蓝、porcelain=素瓷青、graphite=石墨金、coral=珊瑚暖
+        风格预设：aurora=极光蓝、porcelain=素瓷青、graphite=石墨金、coral=珊瑚暖、
+        business=商务浅色、deepsea=深海墨蓝
     aspect:
         画幅：16:9 宽屏或 4:3 经典
     decor:
         装饰样式：orbs=光斑、grid=网格、frame=边框、minimal=极简
     scene:
-        场景示例：launch=产品发布、quarterly=季度汇报、proposal=方案提案；留空生成覆盖全部版式的模板
+        场景示例：launch=产品发布、quarterly=季度汇报、proposal=方案提案、financing=融资路演、
+        retrospective=项目复盘、training=产品培训、academic=学术汇报、government=政务汇报；
+        留空生成覆盖全部版式的模板
     overwrite:
         允许覆盖已存在的模板文件
     """

@@ -244,8 +244,8 @@ DESCRIPTIONS: dict[str, str] = {
     "pevieww": "PE 查看器窗口版（Qt）：按分类浏览 DOS/NT/可选头、数据目录、节表、导入导出、资源、重定位、调试与签名，详情与十六进制联动；设置持久化到 ~/.fcmd/ui/pevieww.json",
     "piptool": "安装包",
     "portcheck": "检查端口占用",
-    "pptmake": "PPT 模板生成器：内置二十四种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿",
-    "pptmakew": "PPT 模板设计器（Qt）：十三种布局、四套风格、六个语义色实时预览，模板 JSON 与 PPTX 双向导入导出；设置持久化到 ~/.fcmd/ui/pptmakew.json",
+    "pptmake": "PPT 模板生成器：内置二十四种版式与六套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿",
+    "pptmakew": "PPT 模板设计器（Qt）：二十四种布局、六套风格、六个语义色实时预览，模板 JSON 与 PPTX 双向导入导出；设置持久化到 ~/.fcmd/ui/pptmakew.json",
     "pymake": "推送代码到所有远程仓库",
     "pyprof": "非侵入式 Python 代码性能分析（cProfile 采集 + HTML 报告）",
     "randtool": "生成强密码",
@@ -533,7 +533,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "9ab246c6b90bc39d0ef15b74c5b5e32f"
+DIGEST = "841e3275d4077c4ff1560f73120d34a8"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

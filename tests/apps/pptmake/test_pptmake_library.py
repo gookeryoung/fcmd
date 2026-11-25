@@ -17,10 +17,25 @@ def test_build_sample_uses_scene_layout_order(scene: str) -> None:
     assert str(len(library.SCENES[scene])) in template.description
 
 
-@pytest.mark.parametrize("style", (core.STYLE_AURORA, core.STYLE_PORCELAIN, core.STYLE_GRAPHITE, core.STYLE_CORAL))
+@pytest.mark.parametrize("style", core.STYLES)
 def test_build_sample_applies_style_palette(style: str) -> None:
     template = library.build_sample("launch", style=style)
     assert template.theme.palette == core.palette_for_style(style)
+
+
+def test_scene_packs_cover_eight_scenes_with_page_counts() -> None:
+    """场景包 8 个，每个 9–12 页，且推荐风格均为内置预设。"""
+    assert len(library.SCENES) == 8
+    assert set(library.SCENE_TEXT) == set(library.SCENES)
+    assert set(library.SCENE_STYLE) == set(library.SCENES)
+    for scene, layouts in library.SCENES.items():
+        assert 9 <= len(layouts) <= 12
+        assert library.scene_style(scene) in core.STYLES
+
+
+def test_scene_style_rejects_unknown_scene() -> None:
+    with pytest.raises(core.TemplateError, match="未知场景"):
+        library.scene_style("unknown")
 
 
 def test_build_sample_custom_name_and_aspect() -> None:

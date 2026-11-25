@@ -1,7 +1,7 @@
-"""内置示例模板库：四款风格 × 三个场景，供 ``pptmake init --scene`` 一键取用。
+"""内置示例模板库：六个风格 × 八个场景，供 ``pptmake init --scene`` 一键取用。
 
-只组合既有版式与示例页，不引入新的视觉规则；场景差异体现在页面构成，
-风格差异沿用 :func:`fcmd.apps.pptmake._core.new_template` 的调色板。
+只组合既有版式与示例页，不引入新的视觉规则；场景差异体现在页面构成与
+推荐风格，风格差异沿用 :func:`fcmd.apps.pptmake._core.new_template` 的调色板。
 """
 
 from __future__ import annotations
@@ -12,6 +12,11 @@ from fcmd.apps.pptmake._core import (
     ASPECT_16_9,
     DECOR_ORBS,
     STYLE_AURORA,
+    STYLE_BUSINESS,
+    STYLE_CORAL,
+    STYLE_DEEPSEA,
+    STYLE_GRAPHITE,
+    STYLE_PORCELAIN,
     TemplateError,
     TemplateSpec,
     new_slide,
@@ -24,10 +29,12 @@ from fcmd.apps.pptmake._core import (
 from fcmd.apps.pptmake._layouts import (
     LAYOUT_AGENDA,
     LAYOUT_APPENDIX,
+    LAYOUT_BULLETS,
     LAYOUT_CARDS,
     LAYOUT_CHART,
     LAYOUT_CHART_CONCLUSION,
     LAYOUT_CLOSING,
+    LAYOUT_CODE,
     LAYOUT_COMPARISON,
     LAYOUT_CONTACT,
     LAYOUT_COVER,
@@ -38,9 +45,11 @@ from fcmd.apps.pptmake._layouts import (
     LAYOUT_SECTION,
     LAYOUT_TEAM,
     LAYOUT_TESTIMONIAL,
+    LAYOUT_TIMELINE,
+    LAYOUT_TWO_COLUMN,
 )
 
-__all__ = ["SCENES", "SCENE_TEXT", "build_sample", "scene_layouts"]
+__all__ = ["SCENES", "SCENE_STYLE", "SCENE_TEXT", "build_sample", "scene_layouts", "scene_style"]
 
 SCENES: Final[dict[str, tuple[str, ...]]] = {
     "launch": (
@@ -76,11 +85,86 @@ SCENES: Final[dict[str, tuple[str, ...]]] = {
         LAYOUT_CONTACT,
         LAYOUT_CLOSING,
     ),
+    "financing": (
+        LAYOUT_COVER,
+        LAYOUT_AGENDA,
+        LAYOUT_PROBLEM_SOLUTION,
+        LAYOUT_METRICS,
+        LAYOUT_CHART,
+        LAYOUT_COMPARISON,
+        LAYOUT_TEAM,
+        LAYOUT_TESTIMONIAL,
+        LAYOUT_CONTACT,
+        LAYOUT_CLOSING,
+    ),
+    "retrospective": (
+        LAYOUT_COVER,
+        LAYOUT_AGENDA,
+        LAYOUT_SECTION,
+        LAYOUT_TIMELINE,
+        LAYOUT_PROCESS,
+        LAYOUT_PROBLEM_SOLUTION,
+        LAYOUT_METRICS,
+        LAYOUT_CHART_CONCLUSION,
+        LAYOUT_APPENDIX,
+        LAYOUT_CLOSING,
+    ),
+    "training": (
+        LAYOUT_COVER,
+        LAYOUT_AGENDA,
+        LAYOUT_SECTION,
+        LAYOUT_BULLETS,
+        LAYOUT_TWO_COLUMN,
+        LAYOUT_CARDS,
+        LAYOUT_PROCESS,
+        LAYOUT_CODE,
+        LAYOUT_APPENDIX,
+        LAYOUT_CLOSING,
+    ),
+    "academic": (
+        LAYOUT_COVER,
+        LAYOUT_AGENDA,
+        LAYOUT_SECTION,
+        LAYOUT_BULLETS,
+        LAYOUT_CHART,
+        LAYOUT_CHART_CONCLUSION,
+        LAYOUT_COMPARISON,
+        LAYOUT_METRICS,
+        LAYOUT_APPENDIX,
+        LAYOUT_CLOSING,
+    ),
+    "government": (
+        LAYOUT_COVER,
+        LAYOUT_AGENDA,
+        LAYOUT_SECTION,
+        LAYOUT_METRICS,
+        LAYOUT_PROCESS,
+        LAYOUT_PROBLEM_SOLUTION,
+        LAYOUT_COMPARISON,
+        LAYOUT_TIMELINE,
+        LAYOUT_APPENDIX,
+        LAYOUT_CLOSING,
+    ),
 }
 SCENE_TEXT: Final[dict[str, str]] = {
     "launch": "产品发布",
     "quarterly": "季度汇报",
     "proposal": "方案提案",
+    "financing": "融资路演",
+    "retrospective": "项目复盘",
+    "training": "产品培训",
+    "academic": "学术汇报",
+    "government": "政务汇报",
+}
+SCENE_STYLE: Final[dict[str, str]] = {
+    "launch": STYLE_AURORA,
+    "quarterly": STYLE_BUSINESS,
+    "proposal": STYLE_PORCELAIN,
+    "financing": STYLE_DEEPSEA,
+    "retrospective": STYLE_GRAPHITE,
+    "training": STYLE_CORAL,
+    "academic": STYLE_BUSINESS,
+    "government": STYLE_PORCELAIN,
 }
 
 
@@ -90,6 +174,14 @@ def scene_layouts(scene: str) -> tuple[str, ...]:
     if key not in SCENES:
         raise TemplateError(f"未知场景 {scene!r}，可选：{' / '.join(SCENES)}")
     return SCENES[key]
+
+
+def scene_style(scene: str) -> str:
+    """返回场景的推荐风格；未知场景抛出 :class:`TemplateError`。"""
+    key = scene.strip().lower()
+    if key not in SCENE_STYLE:
+        raise TemplateError(f"未知场景 {scene!r}，可选：{' / '.join(SCENES)}")
+    return SCENE_STYLE[key]
 
 
 def build_sample(

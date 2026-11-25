@@ -91,14 +91,17 @@ from fcmd.apps.pptmake._palette import (
     PALETTE_FIELDS,
     PALETTES,
     STYLE_AURORA,
+    STYLE_BUSINESS,
     STYLE_CORAL,
     STYLE_CUSTOM,
+    STYLE_DEEPSEA,
     STYLE_GRAPHITE,
     STYLE_PORCELAIN,
     STYLE_TEXT,
     STYLES,
     Palette,
 )
+from fcmd.apps.pptmake._paths import TEMPLATE_SUFFIX, default_pptx_path, default_template_path
 from fcmd.apps.pptmake._tokens import DesignTokens, TokenError, tokens_from_mapping, tokens_to_mapping
 
 __all__ = [
@@ -175,7 +178,9 @@ __all__ = [
     "PALETTE_FIELDS",
     "STYLES",
     "STYLE_AURORA",
+    "STYLE_BUSINESS",
     "STYLE_CORAL",
+    "STYLE_DEEPSEA",
     "STYLE_GRAPHITE",
     "STYLE_PORCELAIN",
     "STYLE_TEXT",
@@ -219,7 +224,6 @@ __all__ = [
 ]
 
 TEMPLATE_VERSION: Final[int] = 4
-TEMPLATE_SUFFIX: Final[str] = ".pptmtpl.json"
 
 # ---------------------------------------------------------------------- #
 # 画幅
@@ -747,25 +751,8 @@ def save_template(template: TemplateSpec, path: Path) -> None:
 
 
 # ---------------------------------------------------------------------- #
-# 默认路径与摘要
+# 摘要
 # ---------------------------------------------------------------------- #
-def default_pptx_path(template_path: Path) -> Path:
-    """由模板路径推导同名 ``.pptx``（``demo.pptmtpl.json`` → ``demo.pptx``）。"""
-    name = template_path.name
-    for suffix in (TEMPLATE_SUFFIX, ".json"):
-        if name.lower().endswith(suffix):
-            name = name[: -len(suffix)]
-            break
-    else:
-        name = template_path.stem
-    return template_path.with_name(f"{name}.pptx")
-
-
-def default_template_path(pptx_path: Path) -> Path:
-    """由 PPTX 路径推导模板文件路径（``demo.pptx`` → ``demo.pptmtpl.json``）。"""
-    return pptx_path.with_name(f"{pptx_path.stem}{TEMPLATE_SUFFIX}")
-
-
 def summary_lines(template: TemplateSpec) -> list[str]:
     """模板摘要（CLI ``inspect`` 与 GUI 状态栏共用）。"""
     palette = template.theme.palette

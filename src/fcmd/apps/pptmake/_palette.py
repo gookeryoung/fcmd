@@ -20,8 +20,10 @@ __all__ = [
     "PALETTE_FIELDS",
     "STYLES",
     "STYLE_AURORA",
+    "STYLE_BUSINESS",
     "STYLE_CORAL",
     "STYLE_CUSTOM",
+    "STYLE_DEEPSEA",
     "STYLE_GRAPHITE",
     "STYLE_PORCELAIN",
     "STYLE_TEXT",
@@ -32,13 +34,24 @@ STYLE_AURORA: Final[str] = "aurora"
 STYLE_PORCELAIN: Final[str] = "porcelain"
 STYLE_GRAPHITE: Final[str] = "graphite"
 STYLE_CORAL: Final[str] = "coral"
+STYLE_BUSINESS: Final[str] = "business"
+STYLE_DEEPSEA: Final[str] = "deepsea"
 STYLE_CUSTOM: Final[str] = "custom"
-STYLES: Final[tuple[str, ...]] = (STYLE_AURORA, STYLE_PORCELAIN, STYLE_GRAPHITE, STYLE_CORAL)
+STYLES: Final[tuple[str, ...]] = (
+    STYLE_AURORA,
+    STYLE_PORCELAIN,
+    STYLE_GRAPHITE,
+    STYLE_CORAL,
+    STYLE_BUSINESS,
+    STYLE_DEEPSEA,
+)
 STYLE_TEXT: Final[dict[str, str]] = {
     STYLE_AURORA: "极光蓝",
     STYLE_PORCELAIN: "素瓷青",
     STYLE_GRAPHITE: "石墨金",
     STYLE_CORAL: "珊瑚暖",
+    STYLE_BUSINESS: "商务浅色",
+    STYLE_DEEPSEA: "深海墨蓝",
     STYLE_CUSTOM: "自定义",
 }
 
@@ -107,5 +120,23 @@ PALETTES: Final[dict[str, Palette]] = {
         secondary="#2A6F97",
         text="#2B211D",
         muted="#806C63",
+    ),
+    # 商务浅色：中性冷灰底，投影与打印都保持正文 4.5:1 以上。
+    STYLE_BUSINESS: Palette(
+        background="#F4F6F9",
+        surface="#FFFFFF",
+        accent="#1F5FBF",
+        secondary="#0F7B6C",
+        text="#1A2233",
+        muted="#55617A",
+    ),
+    # 深海墨蓝：比极光蓝更深的海底调，强调色提亮以拉开层级。
+    STYLE_DEEPSEA: Palette(
+        background="#0A1A2F",
+        surface="#122A47",
+        accent="#6FB1FF",
+        secondary="#4ADBD0",
+        text="#EAF2FB",
+        muted="#A8BCD4",
     ),
 }

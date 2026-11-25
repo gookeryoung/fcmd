@@ -51,6 +51,10 @@ def test_normalize_enums() -> None:
 
 
 def test_palette_and_labels() -> None:
+    assert len(core.STYLES) == 6
+    assert core.STYLE_BUSINESS in core.STYLES and core.STYLE_DEEPSEA in core.STYLES
+    assert core.style_label(core.STYLE_BUSINESS) == "商务浅色"
+    assert core.style_label(core.STYLE_DEEPSEA) == "深海墨蓝"
     assert core.palette_for_style(core.STYLE_PORCELAIN) == core.Palette(
         background="#F7F4EE",
         surface="#FFFFFF",

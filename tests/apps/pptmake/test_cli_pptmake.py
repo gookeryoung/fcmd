@@ -37,6 +37,9 @@ def test_presets_lists_styles_layouts_and_decors(capsys: pytest.CaptureFixture[s
     assert "内置布局" in output
     assert "封面" in output
     assert "装饰样式" in output
+    assert "场景包" in output
+    assert "融资路演" in output
+    assert "推荐风格" in output
     assert "16:9" in output
 
 
