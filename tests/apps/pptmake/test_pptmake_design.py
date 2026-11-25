@@ -386,6 +386,22 @@ def test_image_layout_grid_splits_panel_into_rows(ratio: str, cells: int) -> Non
     assert (picture.x, picture.y, picture.w, picture.h) == (panels[0].x, panels[0].y, panels[0].w, panels[0].h)
 
 
+def test_image_layout_grid_fills_cells_with_multiple_images() -> None:
+    """多图栅格按 ``images`` 顺序逐格填图，并自动补未标注图的替代文本。"""
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_IMAGE,
+        title="多图",
+        image="assets/a.png",
+        images=("assets/a.png", "assets/b.png", "assets/c.png"),
+        image_ratio=core.IMAGE_RATIO_GRID_3,
+    )
+    pictures = [item for item in design.build_draw_list(slide, template) if isinstance(item, design.Picture)]
+    assert [picture.path for picture in pictures] == ["assets/a.png", "assets/b.png", "assets/c.png"]
+    assert pictures[0].alt == ""
+    assert pictures[1].alt.endswith("图2") and pictures[2].alt.endswith("图3")
+
+
 def test_image_layout_renders_caption_below_panel() -> None:
     template = _template()
     slide = core.SlideSpec(

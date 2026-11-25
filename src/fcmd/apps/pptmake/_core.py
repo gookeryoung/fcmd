@@ -55,6 +55,7 @@ from fcmd.apps.pptmake._image import (
     normalize_image_fit,
     normalize_image_focus,
     normalize_image_ratio,
+    normalize_images,
 )
 from fcmd.apps.pptmake._layouts import (
     DEFAULT_PAGE_NUMBER_HIDDEN,
@@ -212,6 +213,7 @@ __all__ = [
     "normalize_image_fit",
     "normalize_image_focus",
     "normalize_image_ratio",
+    "normalize_images",
     "normalize_layout",
     "normalize_style",
     "palette_for_style",
@@ -303,6 +305,7 @@ class SlideSpec:
     image_alt: str = ""
     image_caption: str = ""
     image_focus: str = "center"
+    images: tuple[str, ...] = ()
     image_ratio: str = ""
     background: str = "inherit"
     chart_type: str = CHART_BAR
@@ -542,6 +545,7 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
                 "image_alt": slide.image_alt,
                 "image_caption": slide.image_caption,
                 "image_focus": slide.image_focus,
+                "images": list(slide.images),
                 "image_ratio": slide.image_ratio,
                 "background": slide.background,
                 "chart_type": slide.chart_type,
@@ -601,6 +605,7 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
     try:
         image_focus = normalize_image_focus(raw.get("image_focus", IMAGE_FOCUS_CENTER))
         image_ratio = normalize_image_ratio(raw.get("image_ratio", ""))
+        images = normalize_images(raw.get("images", ()))
         background = normalize_background(raw.get("background", BACKGROUND_INHERIT))
     except ValueError as exc:
         raise TemplateError(str(exc)) from exc
@@ -620,6 +625,7 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         image_alt=str(alt_raw or "").strip(),
         image_caption=str(caption_raw or "").strip(),
         image_focus=image_focus,
+        images=images,
         image_ratio=image_ratio,
         background=background,
         chart_type=charts.chart_type,

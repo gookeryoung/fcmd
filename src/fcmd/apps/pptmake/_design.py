@@ -1356,6 +1356,13 @@ def _paint_image_hint(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几�
     )
 
 
+def _image_paths(slide: SlideSpec) -> tuple[str, ...]:
+    """图片序列：多图优先，只设 ``image`` 时退回单图。"""
+    if slide.images:
+        return slide.images
+    return (slide.image,) if slide.image else ()
+
+
 def _paint_image_panel(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几何一一对应
     out: list[Primitive], ctx: _Ctx, slide: SlideSpec, x: float, y: float, w: float, h: float
 ) -> None:
@@ -1372,8 +1379,9 @@ def _paint_image_panel(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几�
             radius=round(ctx.radius.card),
         )
     )
-    if slide.image:
-        out.append(Picture(x, y, w, h, slide.image, slide.image_fit, alt=slide.image_alt, focus=slide.image_focus))
+    paths = _image_paths(slide)
+    if paths:
+        out.append(Picture(x, y, w, h, paths[0], slide.image_fit, alt=slide.image_alt, focus=slide.image_focus))
     else:
         _paint_image_art(out, ctx, x, y, w, h)
         _paint_image_hint(out, ctx, x, y, w, h)
@@ -1389,8 +1397,9 @@ def _paint_image_cells(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几�
     h: float,
     cells: int,
 ) -> None:
-    """多图栅格：等高单元格；已有图片先填第一格，其余留占位。"""
+    """多图栅格：等高单元格；按 ``images`` 顺序逐格填图，其余留占位。"""
     gap = ctx.spacing.gap
+    paths = _image_paths(slide)
     row_height = round((h - gap * (cells - 1)) / cells)
     for index in range(cells):
         cell_y = y + index * (row_height + gap)
@@ -1407,36 +1416,40 @@ def _paint_image_cells(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几�
                 radius=round(ctx.radius.card),
             )
         )
-        if index == 0 and slide.image:
+        if index < len(paths):
+            alt = (
+                slide.image_alt if index == 0 else f"{slide.image_alt or slide.title.strip() or '示意图'} 图{index + 1}"
+            )
             out.append(
                 Picture(
                     x,
                     cell_y,
                     w,
                     cell_height,
-                    slide.image,
+                    paths[index],
                     slide.image_fit,
-                    alt=slide.image_alt,
+                    alt=alt,
                     focus=slide.image_focus,
                 )
             )
         else:
             _paint_image_art(out, ctx, x, cell_y, w, cell_height)
-    if not slide.image:
+    if not paths:
         _paint_image_hint(out, ctx, x, y, w, h)
 
 
 def _render_image_full(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
     """全出血图片：图片铺满整页并压暗，文字压在左侧。"""
     palette = ctx.palette
-    if slide.image:
+    paths = _image_paths(slide)
+    if paths:
         out.append(
             Picture(
                 0,
                 0,
                 ctx.width,
                 ctx.height,
-                slide.image,
+                paths[0],
                 fit="cover",
                 alt=slide.image_alt,
                 focus=slide.image_focus,

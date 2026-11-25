@@ -43,6 +43,7 @@ __all__ = [
     "normalize_image_fit",
     "normalize_image_focus",
     "normalize_image_ratio",
+    "normalize_images",
 ]
 
 IMAGE_FOCUS_CENTER: Final[str] = "center"
@@ -170,3 +171,22 @@ def image_ratio_cells(value: object) -> int:
 def image_ratio_full(value: object) -> bool:
     """是否为全出血大图比例。"""
     return str(value or "").strip().lower() == IMAGE_RATIO_FULL
+
+
+def normalize_images(value: object) -> tuple[str, ...]:
+    """校验多图路径：接受字符串或数组，去空、去重后返回元组。"""
+    if value is None or value == "":
+        return ()
+    if isinstance(value, str):
+        text = value.strip()
+        return (text,) if text else ()
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"images 需为路径字符串数组：{value!r}")
+    paths: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"images 需为路径字符串数组：{item!r}")
+        text = item.strip()
+        if text and text not in paths:
+            paths.append(text)
+    return tuple(paths)

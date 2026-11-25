@@ -135,11 +135,12 @@ def quality_details(spec: TemplateSpec, *, base_dir: Path | None = None) -> tupl
     """逐页、逐类别列出质量问题；编辑器检查面板与 ``quality_issues`` 共用。"""
     issues: list[PageIssue] = []
     for index, slide in enumerate(spec.slides, start=1):
-        image = Path(slide.image)
-        if slide.image and not image.is_absolute() and base_dir is not None:
-            image = base_dir / image
-        if slide.image and not image.is_file():
-            issues.append(PageIssue(index, slide.layout, MISSING, 1, f"图片不存在：{slide.image}"))
+        for raw in slide.images or ((slide.image,) if slide.image else ()):
+            image = Path(raw)
+            if not image.is_absolute() and base_dir is not None:
+                image = base_dir / image
+            if not image.is_file():
+                issues.append(PageIssue(index, slide.layout, MISSING, 1, f"图片不存在：{raw}"))
         primitives = build_draw_list(slide, spec, page_number=index, page_total=len(spec.slides))
         overflow = overflow_issues(primitives)
         if overflow:
@@ -225,7 +226,7 @@ def fix_slide(slide: SlideSpec) -> tuple[SlideSpec, tuple[str, ...]]:
     if truncated:
         fixes.append(f"要点截断到 {rule.max_chars} 字以内")
     alt = slide.image_alt
-    if slide.image.strip() and not alt.strip():
+    if (slide.image.strip() or slide.images) and not alt.strip():
         alt = f"{title.strip() or '示意图'} 配图"
         fixes.append("补充替代文本占位")
     if not fixes:

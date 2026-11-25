@@ -5,6 +5,8 @@ from __future__ import annotations
 import zipfile
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from xml.etree import ElementTree
 
 import pytest
@@ -365,8 +367,126 @@ def test_import_upgrades_picture_table_chart_and_notes(tmp_path: Path) -> None:
     assert template.slides[2].subtitle == "现状|目标"
     assert template.slides[2].bullets[0] == "速度|小时级|分钟级"
     assert template.slides[3].bullets == ("Q1|42", "Q2|68", "Q3|54")
-    assert len(report) == 4
+    assert len(report) == 6
+    assert report[-1].startswith("保留率：")
+    assert "图片 100.0%（1/1）" in report[-1]
+    assert "表格 100.0%（1/1）" in report[-1]
+    assert "图表 100.0%（1/1）" in report[-1]
+    assert "备注 100.0%（1/1）" in report[-1]
+    assert "文本 100.0%（4/4）" in report[-1]
     assert "图片" in report[1]
+
+
+def test_import_multi_picture_maps_to_grid_and_splits(tmp_path: Path) -> None:
+    """同尺寸并排图：2 张 → 单页 grid-2；4 张 → 两页 grid-2。"""
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    api = _pptx._api()
+    presentation = api.Presentation()
+    image_path = tmp_path / "tile.png"
+    Image.new("RGB", (400, 300), "#3366FF").save(image_path)
+    width = presentation.slide_width
+    height = presentation.slide_height
+    cover = presentation.slides.add_slide(presentation.slide_layouts[6])
+    cover.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "多图导入"
+    for count in (2, 4):
+        slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+        slide.shapes.add_textbox(0, 0, 400, 60).text_frame.text = f"{count} 张图"
+        slide.shapes.add_textbox(0, 70, 400, 60).text_frame.text = "并排展示"
+        for index in range(count):
+            slide.shapes.add_picture(
+                str(image_path),
+                round(width * (0.02 + index * 0.25)),
+                round(height * 0.2),
+                round(width * 0.24),
+                round(height * 0.55),
+            )
+    source = tmp_path / "grid.pptx"
+    presentation.save(str(source))
+    assets = tmp_path / "grid.assets"
+    template = _pptx.import_pptx(source, assets_dir=assets)
+    assert [slide.layout for slide in template.slides] == [core.LAYOUT_COVER] + [core.LAYOUT_IMAGE] * 3
+    assert [slide.image_ratio for slide in template.slides[1:]] == ["grid-2", "grid-2", "grid-2"]
+    assert [len(slide.images) for slide in template.slides[1:]] == [2, 2, 2]
+    assert template.slides[1].image == template.slides[1].images[0]
+    assert all((assets / path.split("/", 1)[1]).is_file() for slide in template.slides[1:] for path in slide.images)
+    assert _quality.quality_issues(template, base_dir=tmp_path, verbose=False).total == 0
+
+
+def _fill_table(shape: Any, rows: tuple[tuple[str, ...], ...]) -> None:
+    table = shape.table
+    for row_index, row in enumerate(rows):
+        for column_index, value in enumerate(row):
+            table.cell(row_index, column_index).text = value
+
+
+def test_import_multi_table_merges_same_header_and_splits_otherwise(tmp_path: Path) -> None:
+    api = _pptx._api()
+    presentation = api.Presentation()
+    cover = presentation.slides.add_slide(presentation.slide_layouts[6])
+    cover.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "多表导入"
+    merged = presentation.slides.add_slide(presentation.slide_layouts[6])
+    merged.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "同表头"
+    for index in range(2):
+        shape = merged.shapes.add_table(2, 3, 0, 100 + index * 100, 3000000, 800000)
+        _fill_table(shape, (("指标", "现状", "目标"), (f"项{index}", "甲", "乙")))
+    split = presentation.slides.add_slide(presentation.slide_layouts[6])
+    split.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "异表头"
+    for index, header in enumerate((("维度", "A", "B"), ("阶段", "C", "D"))):
+        shape = split.shapes.add_table(2, 3, 0, 100 + index * 100, 3000000, 800000)
+        _fill_table(shape, (header, ("行", "1", "2")))
+    source = tmp_path / "tables.pptx"
+    presentation.save(str(source))
+    report: list[str] = []
+    template = _pptx.import_pptx(source, report=report)
+    assert [slide.layout for slide in template.slides] == [
+        core.LAYOUT_COVER,
+        core.LAYOUT_COMPARISON,
+        core.LAYOUT_COMPARISON,
+        core.LAYOUT_COMPARISON,
+    ]
+    assert template.slides[1].bullets == ("项0|甲|乙", "项1|甲|乙")
+    assert template.slides[2].subtitle == "A|B"
+    assert template.slides[3].title == "异表头（2）"
+    assert "合并" in report[1] and "拆 2 页" in report[2]
+
+
+def test_import_reads_text_inside_group_shape(tmp_path: Path) -> None:
+    api = _pptx._api()
+    presentation = api.Presentation()
+    cover = presentation.slides.add_slide(presentation.slide_layouts[6])
+    cover.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "组合导入"
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    group = slide.shapes.add_group_shape()
+    group.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "分组标题"
+    group.shapes.add_textbox(0, 80, 400, 60).text_frame.text = "分组说明"
+    source = tmp_path / "group.pptx"
+    presentation.save(str(source))
+    template = _pptx.import_pptx(source)
+    assert template.slides[1].title == "分组标题"
+    assert template.slides[1].bullets == ("分组说明",)
+
+
+def test_smartart_texts_follow_node_order() -> None:
+    blob = (
+        '<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst>'
+        "<dgm:pt><dgm:t><a:t>节点一</a:t></dgm:t></dgm:pt>"
+        "<dgm:pt><dgm:t><a:t>节点二</a:t></dgm:t></dgm:pt>"
+        "</dgm:ptLst></dgm:dataModel>"
+    ).encode()
+
+    class _Part:
+        blob = b""
+
+    class _Rel:
+        reltype = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData"
+        target_part = _Part()
+
+    _Rel.target_part.blob = blob  # type: ignore[misc]
+    slide = SimpleNamespace(part=SimpleNamespace(rels={1: _Rel()}))
+    assert _pptx_import._smartart_texts(slide) == ["节点一", "节点二"]
 
 
 def test_export_potx_marks_template_content_type(tmp_path: Path) -> None:
@@ -498,12 +618,31 @@ def test_base_asset_layouts_placeholders_and_size() -> None:
     assert core.default_template().theme.palette.accent[1:] in theme
 
 
+def test_base_asset_every_layout_has_required_placeholders() -> None:
+    """24/24 版式都带标题（idx 0）与正文（idx 1）占位符，新增版式漏配即失败。"""
+    path = _base.base_path(core.ASPECT_16_9)
+    assert path is not None
+    presentation = _pptx._api().Presentation(str(path))
+    layouts = list(presentation.slide_layouts)
+    assert len(layouts) == len(core.LAYOUTS) == 24
+    for layout in layouts:
+        placeholders = {
+            placeholder.placeholder_format.idx: placeholder.placeholder_format.type
+            for placeholder in layout.placeholders
+        }
+        assert placeholders[0].name == "TITLE", layout.name
+        assert placeholders[1].name == "SUBTITLE", layout.name
+
+
 def test_base_asset_builder_regenerates_valid_package(tmp_path: Path) -> None:
     target = tmp_path / "base.pptx"
     assert _base_asset.build(target) == len(core.LAYOUTS)
     presentation = _pptx._api().Presentation(str(target))
     assert len(presentation.slide_layouts) == len(core.LAYOUTS)
     assert (presentation.slide_width, presentation.slide_height) == (12192000, 6858000)
+    for layout in presentation.slide_layouts:
+        indices = {placeholder.placeholder_format.idx for placeholder in layout.placeholders}
+        assert indices == {0, 1}, layout.name
 
 
 def test_native_export_writes_titles_into_layout_placeholders(tmp_path: Path) -> None:

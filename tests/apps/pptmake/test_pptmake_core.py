@@ -184,6 +184,18 @@ def test_invalid_image_ratio_rejected() -> None:
         core.template_from_mapping({"slides": [{"layout": "image", "image_ratio": True}]})
 
 
+def test_images_roundtrip_and_normalize() -> None:
+    template = core.template_from_mapping(
+        {"slides": [{"layout": "image", "image": "a.png", "images": ["a.png", "b.png", "a.png", ""]}]},
+    )
+    assert template.slides[0].images == ("a.png", "b.png")
+    assert core.template_to_mapping(template)["slides"][0]["images"] == ["a.png", "b.png"]
+    assert core.normalize_images("a.png") == ("a.png",)
+    assert core.normalize_images(None) == ()
+    with pytest.raises(core.TemplateError, match="images"):
+        core.template_from_mapping({"slides": [{"layout": "image", "images": [1, 2]}]})
+
+
 def test_image_ratio_helpers() -> None:
     assert core.image_ratio_share(core.IMAGE_RATIO_40_60) == pytest.approx(0.6)
     assert core.image_ratio_share(core.IMAGE_RATIO_50_50) == pytest.approx(0.5)

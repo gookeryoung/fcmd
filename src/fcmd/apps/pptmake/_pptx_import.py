@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -22,6 +23,8 @@ from fcmd.apps.pptmake._core import (
     DECOR_ORBS,
     DEFAULT_BODY_FONT,
     DEFAULT_HEADING_FONT,
+    IMAGE_RATIO_GRID_2,
+    IMAGE_RATIO_GRID_3,
     LAYOUT_BULLETS,
     LAYOUT_CHART,
     LAYOUT_CLOSING,
@@ -40,11 +43,34 @@ from fcmd.apps.pptmake._core import (
     relative_luminance,
 )
 from fcmd.apps.pptmake._pptx_util import _api
+from fcmd.apps.pptmake._preview import contrast_ratio
+from fcmd.apps.pptmake._quality import BODY_CONTRAST, fix_template
+from fcmd.apps.pptmake._rules import rule_for
 
 __all__ = ["import_pptx"]
 
 _NAMESPACE = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+_DGM_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
 _PICTURE_MIN_AREA = 0.12
+_PICTURE_SAME_TOLERANCE = 0.05
+_REPORT_KINDS = ("文本", "图片", "表格", "图表", "备注")
+
+
+@dataclass
+class ImportStats:
+    """五类内容的「发现 / 保留」计数，用于报告末尾的保留率摘要。"""
+
+    found: dict[str, int] = field(default_factory=lambda: dict.fromkeys(_REPORT_KINDS, 0))
+    kept: dict[str, int] = field(default_factory=lambda: dict.fromkeys(_REPORT_KINDS, 0))
+
+    def summary(self) -> str:
+        """格式化为 ``保留率：文本 98.0%（49/50） · …``；总量为 0 时按 100% 计。"""
+        parts: list[str] = []
+        for kind in _REPORT_KINDS:
+            total, kept = self.found[kind], self.kept[kind]
+            rate = 100.0 if total == 0 else kept / total * 100
+            parts.append(f"{kind} {rate:.1f}%（{kept}/{total}）")
+        return "保留率：" + " · ".join(parts)
 
 
 def _theme_color(colors: ElementTree.Element | None, tag: str) -> str | None:
@@ -105,23 +131,53 @@ def _read_theme(path: Path) -> tuple[Palette, str, str]:
     accent = _safe_color(_theme_color(colors, "accent1"), default.accent)
     secondary = _safe_color(_theme_color(colors, "accent2"), default.secondary)
     surface_mix = 0.05 if relative_luminance(background) >= 0.5 else 0.10
+    muted = mix_hex(background, text, 0.45)
+    if contrast_ratio(muted, background) < BODY_CONTRAST:
+        muted = mix_hex(background, text, 0.65)
+    if contrast_ratio(muted, background) < BODY_CONTRAST:
+        muted = text
     palette = Palette(
         background=background,
         surface=mix_hex(background, text, surface_mix),
         accent=accent,
         secondary=secondary,
         text=text,
-        muted=mix_hex(background, text, 0.45),
+        muted=muted,
     )
     heading_font = _first_typeface(root.find(".//a:fontScheme/a:majorFont", _NAMESPACE)) or DEFAULT_HEADING_FONT
     body_font = _first_typeface(root.find(".//a:fontScheme/a:minorFont", _NAMESPACE)) or DEFAULT_BODY_FONT
     return palette, heading_font, body_font
 
 
-def _slide_texts(slide: Any) -> list[str]:
-    """按段落提取一页中的所有非空文本。"""
+def _iter_shapes(shapes: Any) -> Any:
+    """递归遍历组合形状，按文档顺序产出叶子形状。"""
+    for shape in shapes:
+        nested = getattr(shape, "shapes", None)
+        if nested is not None:
+            yield from _iter_shapes(nested)
+        else:
+            yield shape
+
+
+def _smartart_texts(slide: Any) -> list[str]:
+    """从 ``diagramData`` 部件按节点顺序提取 SmartArt 文本。"""
     texts: list[str] = []
-    for shape in slide.shapes:
+    with contextlib.suppress(Exception):
+        for rel in slide.part.rels.values():
+            if not rel.reltype.endswith("/diagramData"):
+                continue
+            root = ElementTree.fromstring(rel.target_part.blob)
+            for point in root.iter(f"{{{_DGM_NAMESPACE}}}pt"):
+                text = "".join(point.itertext()).strip()
+                if text:
+                    texts.append(text)
+    return texts
+
+
+def _slide_texts(slide: Any) -> list[str]:
+    """按段落提取一页中的所有非空文本（含组合形状与 SmartArt）。"""
+    texts: list[str] = []
+    for shape in _iter_shapes(slide.shapes):
         if not getattr(shape, "has_text_frame", False):
             continue
         for paragraph in shape.text_frame.paragraphs:
@@ -130,6 +186,7 @@ def _slide_texts(slide: Any) -> list[str]:
                 text = paragraph.text.strip()
             if text:
                 texts.append(text)
+    texts.extend(_smartart_texts(slide))
     return texts
 
 
@@ -141,29 +198,124 @@ def _slide_notes(slide: Any) -> str:
     return frame.text.strip() if frame is not None else ""
 
 
-def _picture_shape(slide: Any, presentation: Any) -> Any | None:
-    """取面积最大的图片；占比低于阈值视为装饰图，不单独成版。"""
+def _picture_shapes(slide: Any, presentation: Any) -> list[Any]:
+    """按从上到下、从左到右返回面积达标的图片；小于阈值视为装饰。"""
     page_area = max(presentation.slide_width * presentation.slide_height, 1)
-    candidates = [shape for shape in slide.shapes if shape.shape_type == 13 and shape.width and shape.height]
-    if not candidates:
-        return None
-    shape = max(candidates, key=lambda item: item.width * item.height)
-    return shape if shape.width * shape.height / page_area >= _PICTURE_MIN_AREA else None
+    candidates = [
+        shape
+        for shape in _iter_shapes(slide.shapes)
+        if shape.shape_type == 13
+        and shape.width
+        and shape.height
+        and shape.width * shape.height / page_area >= _PICTURE_MIN_AREA
+    ]
+    return sorted(candidates, key=lambda item: (round(item.top or 0), round(item.left or 0)))
 
 
-def _table_data(slide: Any) -> tuple[str, tuple[str, ...]] | None:
-    """把第一个表格转成对比矩阵：表头作列名，其余行作用 ``|`` 分隔的维度。"""
-    for shape in slide.shapes:
+def _same_size(shapes: list[Any]) -> bool:
+    """判断图片是否同尺寸（容差 5%），用于识别「一组并排图」。"""
+    width, height = shapes[0].width, shapes[0].height
+    return all(
+        abs(shape.width - width) <= width * _PICTURE_SAME_TOLERANCE
+        and abs(shape.height - height) <= height * _PICTURE_SAME_TOLERANCE
+        for shape in shapes
+    )
+
+
+def _image_plan(count: int) -> list[tuple[str, int]]:
+    """多图映射规则：2 张双格、3 张三格、4 张拆两页双格，更多按 3 张一页切分。"""
+    if count <= 1:
+        return [("", 1)]
+    if count == 2:
+        return [(IMAGE_RATIO_GRID_2, 2)]
+    if count == 3:
+        return [(IMAGE_RATIO_GRID_3, 3)]
+    if count == 4:
+        return [(IMAGE_RATIO_GRID_2, 2), (IMAGE_RATIO_GRID_2, 2)]
+    plan: list[tuple[str, int]] = []
+    remaining = count
+    while remaining > 0:
+        if remaining >= 3:
+            plan.append((IMAGE_RATIO_GRID_3, 3))
+            remaining -= 3
+        elif remaining == 2:
+            plan.append((IMAGE_RATIO_GRID_2, 2))
+            remaining = 0
+        else:
+            plan.append(("", 1))
+            remaining = 0
+    return plan
+
+
+def _extract_pictures(pictures: list[Any], assets_dir: Path, stem: str) -> list[tuple[str, str]]:
+    """逐张抽取图片到资产目录，返回 ``(相对路径, 替代文本)``；失败项跳过。"""
+    extracted: list[tuple[str, str]] = []
+    for picture in pictures:
+        with contextlib.suppress(Exception):
+            alt = picture._element.nvPicPr.cNvPr.get("descr", "") or ""
+            extracted.append((_extract_image(picture, assets_dir, stem), alt))
+    return extracted
+
+
+def _tables_data(slide: Any) -> list[tuple[str, tuple[str, ...]]]:
+    """把所有表格转成对比矩阵：表头作列名，其余行作用 ``|`` 分隔的维度。"""
+    tables: list[tuple[str, tuple[str, ...]]] = []
+    for shape in _iter_shapes(slide.shapes):
         if not getattr(shape, "has_table", False):
             continue
         rows = [[cell.text.strip() for cell in row.cells] for row in shape.table.rows]
         rows = [row for row in rows if any(row)]
         if len(rows) < 2:
-            return None
+            continue
         header = rows[0]
         subtitle = "|".join(header[1:]) if len(header) > 1 else "|".join(header)
-        return subtitle, tuple("|".join(row) for row in rows[1:])
-    return None
+        tables.append((subtitle, tuple("|".join(row) for row in rows[1:])))
+    return tables
+
+
+def _sequence_title(title: str, index: int) -> str:
+    """拆页时的续页标题：保留原题并在容量内追加序号。"""
+    suffix = f"（{index}）"
+    return title[: max(0, rule_for(LAYOUT_COMPARISON).max_title - len(suffix))] + suffix
+
+
+def _table_slides(title: str, tables: list[tuple[str, tuple[str, ...]]], note: str) -> tuple[list[SlideSpec], bool]:
+    """多表映射：同表头且总行数可容纳时合并，否则每表一页（拆页）。"""
+    if len(tables) == 1:
+        subtitle, bullets = tables[0]
+        return [
+            SlideSpec(
+                layout=LAYOUT_COMPARISON,
+                title=title,
+                subtitle=subtitle,
+                bullets=_cap(LAYOUT_COMPARISON, bullets),
+                note=note,
+            )
+        ], False
+    headers = {subtitle for subtitle, _rows in tables}
+    merged_rows = tuple(row for _subtitle, rows in tables for row in rows)
+    if len(headers) == 1 and len(merged_rows) <= rule_for(LAYOUT_COMPARISON).max_bullets:
+        return [
+            SlideSpec(
+                layout=LAYOUT_COMPARISON,
+                title=title,
+                subtitle=tables[0][0],
+                bullets=merged_rows,
+                note=note,
+            )
+        ], True
+    pages: list[SlideSpec] = []
+    for order, (subtitle, bullets) in enumerate(tables):
+        pages.append(
+            SlideSpec(
+                layout=LAYOUT_COMPARISON,
+                title=title if order == 0 else _sequence_title(title, order + 1),
+                subtitle=subtitle,
+                bullets=_cap(LAYOUT_COMPARISON, bullets),
+                note=note if order == 0 else "",
+            )
+        )
+    return pages, False
 
 
 def _chart_kind(chart_type: Any) -> str:
@@ -178,7 +330,7 @@ def _chart_kind(chart_type: Any) -> str:
 
 def _chart_data(slide: Any) -> tuple[str, tuple[str, ...], str] | None:
     """把第一个图表还原成 ``(chart_type, bullets, unit)``。"""
-    for shape in slide.shapes:
+    for shape in _iter_shapes(slide.shapes):
         if not getattr(shape, "has_chart", False):
             continue
         chart = shape.chart
@@ -211,12 +363,43 @@ def _extract_image(shape: Any, assets_dir: Path, stem: str) -> str:
 
 def _cap(layout: str, bullets: tuple[str, ...]) -> tuple[str, ...]:
     """按版式容量截断要点，保证导入结果能直接通过 ``validate``。"""
-    from fcmd.apps.pptmake._rules import rule_for
-
     return bullets[: rule_for(layout).max_bullets]
 
 
-def import_pptx(path: Path, *, assets_dir: Path | None = None, report: list[str] | None = None) -> TemplateSpec:
+def _grid_slides(  # noqa: PLR0913, PLR0917 - 页面字段与栅格计划一一对应
+    title: str,
+    subtitle: str,
+    bullets: tuple[str, ...],
+    images: list[tuple[str, str]],
+    plan: list[tuple[str, int]],
+    note: str = "",
+) -> list[SlideSpec]:
+    """按栅格映射生成图片页；首图写入 ``image``，同组其余进入 ``images``。"""
+    pages: list[SlideSpec] = []
+    offset = 0
+    for order, (ratio, count) in enumerate(plan):
+        chunk = images[offset : offset + count]
+        offset += count
+        paths = tuple(path for path, _alt in chunk)
+        pages.append(
+            SlideSpec(
+                layout=LAYOUT_IMAGE,
+                title=title,
+                subtitle=subtitle if order == 0 else "",
+                bullets=bullets if order == 0 else (),
+                image=paths[0] if paths else "",
+                images=paths if ratio else (),
+                image_alt=chunk[0][1] if chunk else "",
+                image_ratio=ratio,
+                note=note if order == 0 else "",
+            )
+        )
+    return pages
+
+
+def import_pptx(  # noqa: PLR0912 - 按内容类型分派，分支数随支持类型增长
+    path: Path, *, assets_dir: Path | None = None, report: list[str] | None = None
+) -> TemplateSpec:
     """把现有 PPTX 尽力转换为模板，并复用主题配色与字体。
 
     图片按内容哈希抽取到 ``assets_dir`` 并映射为图片版式，表格还原为对比
@@ -235,6 +418,7 @@ def import_pptx(path: Path, *, assets_dir: Path | None = None, report: list[str]
     stem = "".join(char if char.isalnum() or char in "-_" else "-" for char in path.stem) or "slide"
     lines = report if report is not None else []
     slides: list[SlideSpec] = []
+    stats = ImportStats()
     for index, slide in enumerate(slides_raw):
         page = index + 1
         texts = _slide_texts(slide)
@@ -245,17 +429,27 @@ def import_pptx(path: Path, *, assets_dir: Path | None = None, report: list[str]
             texts.insert(0, title_text)
         note = _slide_notes(slide)
         chart = _chart_data(slide)
-        table = _table_data(slide) if chart is None else None
-        picture = _picture_shape(slide, presentation)
-        image = ""
-        image_alt = ""
-        if picture is not None and assets_dir is not None:
-            with contextlib.suppress(Exception):
-                image = _extract_image(picture, assets_dir, stem)
-                image_alt = picture._element.nvPicPr.cNvPr.get("descr", "") or ""
+        tables = _tables_data(slide) if chart is None else []
+        pictures = _picture_shapes(slide, presentation)
+        extracted = _extract_pictures(pictures, assets_dir, stem) if assets_dir is not None else []
+        image = extracted[0][0] if extracted else ""
+        image_alt = extracted[0][1] if extracted else ""
+        stats.found["文本"] += len(texts)
+        stats.found["图片"] += len(pictures)
+        stats.found["表格"] += len(tables)
+        stats.found["图表"] += 1 if chart is not None else 0
+        stats.found["备注"] += 1 if note else 0
+        stats.kept["备注"] += 1 if note else 0
         if not texts:
-            slides.append(SlideSpec(layout=LAYOUT_BULLETS, note=note))
-            lines.append(f"第 {page} 页：丢弃（无文本）")
+            suffix = "；备注保留" if note else ""
+            if extracted:
+                plan = _image_plan(len(extracted)) if len(extracted) > 1 else [("", 1)]
+                slides.extend(_grid_slides("", "", (), extracted, plan, note))
+                stats.kept["图片"] += len(extracted)
+                lines.append(f"第 {page} 页：保留图片 → 图片版式{suffix}")
+            else:
+                slides.append(SlideSpec(layout=LAYOUT_BULLETS, note=note))
+                lines.append(f"第 {page} 页：丢弃（无文本）")
             continue
         title = texts[0]
         rest = texts[1:]
@@ -273,9 +467,12 @@ def import_pptx(path: Path, *, assets_dir: Path | None = None, report: list[str]
                 )
             )
             lines.append(f"第 {page} 页：保留封面{suffix}")
+            stats.kept["文本"] += 1 + min(2, len(rest))
+            stats.kept["图片"] += 1 if image else 0
             continue
         if index == len(slides_raw) - 1 and any(word in title.lower() for word in ("thank", "谢谢", "感谢")):
             slides.append(SlideSpec(layout=LAYOUT_CLOSING, title=title, subtitle=" ".join(rest[:2]), note=note))
+            stats.kept["文本"] += 1 + min(2, len(rest))
             lines.append(f"第 {page} 页：保留结尾{suffix}")
             continue
         if chart is not None:
@@ -291,38 +488,41 @@ def import_pptx(path: Path, *, assets_dir: Path | None = None, report: list[str]
                 )
             )
             lines.append(f"第 {page} 页：保留图表（{len(bullets)} 个数据点）{suffix}")
-        elif table is not None:
-            subtitle, bullets = table
-            slides.append(
-                SlideSpec(
-                    layout=LAYOUT_COMPARISON,
-                    title=title,
-                    subtitle=subtitle,
-                    bullets=_cap(LAYOUT_COMPARISON, bullets),
-                    note=note,
-                )
-            )
-            lines.append(f"第 {page} 页：保留表格 → 对比矩阵{suffix}")
-        elif image:
+            stats.kept["文本"] += 1
+            stats.kept["图表"] += 1
+        elif tables:
+            pages, merged = _table_slides(title, tables, note)
+            slides.extend(pages)
+            stats.kept["文本"] += 1
+            stats.kept["表格"] += len(tables)
+            if len(tables) == 1:
+                lines.append(f"第 {page} 页：保留表格 → 对比矩阵{suffix}")
+            else:
+                mode = "合并" if merged else f"拆 {len(pages)} 页"
+                lines.append(f"第 {page} 页：保留 {len(tables)} 个表格 → 对比矩阵（{mode}）{suffix}")
+        elif extracted:
             kept = _cap(LAYOUT_IMAGE, tuple(rest))
-            slides.append(
-                SlideSpec(
-                    layout=LAYOUT_IMAGE,
-                    title=title,
-                    subtitle=" ".join(rest[:1]),
-                    bullets=kept,
-                    image=image,
-                    image_alt=image_alt,
-                    note=note,
-                )
-            )
+            if len(pictures) > 1 and len(extracted) == len(pictures) and _same_size(pictures):
+                plan = _image_plan(len(extracted))
+            else:
+                largest = max(range(len(extracted)), key=lambda item: pictures[item].width * pictures[item].height)
+                extracted = [extracted[largest]]
+                plan = [("", 1)]
+            slides.extend(_grid_slides(title, " ".join(rest[:1]), kept, extracted, plan, note))
+            stats.kept["文本"] += min(len(texts), 1 + len(kept))
+            stats.kept["图片"] += len(extracted)
             dropped = len(rest) - len(kept)
             detail = f"，{dropped} 条文本降级丢弃" if dropped > 0 else ""
-            lines.append(f"第 {page} 页：保留图片 → 图片版式{detail}{suffix}")
+            extra = f"，多图拆 {len(plan)} 页" if len(plan) > 1 else ""
+            lines.append(f"第 {page} 页：保留图片 → 图片版式{extra}{detail}{suffix}")
         else:
             bullets = _cap(LAYOUT_BULLETS, tuple(rest or texts))
             slides.append(SlideSpec(layout=LAYOUT_BULLETS, title=title, bullets=bullets, note=note))
+            stats.kept["文本"] += min(len(texts), 1 + len(bullets))
             lines.append(f"第 {page} 页：降级为要点（{len(bullets)} 条）{suffix}")
+    if report is not None:
+        lines.append("")
+        lines.append(stats.summary())
     theme = Theme(
         style=STYLE_CUSTOM,
         palette=palette,
@@ -330,7 +530,7 @@ def import_pptx(path: Path, *, assets_dir: Path | None = None, report: list[str]
         body_font=body_font,
         decor=DECOR_ORBS,
     )
-    return TemplateSpec(
+    spec = TemplateSpec(
         name=path.stem,
         description=f"从 {path.name} 导入",
         author="",
@@ -338,3 +538,6 @@ def import_pptx(path: Path, *, assets_dir: Path | None = None, report: list[str]
         theme=theme,
         slides=tuple(slides),
     )
+    # 导入产物直接过一遍机械修复（截断超限文案、补图片替代文本），保证 validate 干净。
+    fixed, _notes = fix_template(spec)
+    return fixed
