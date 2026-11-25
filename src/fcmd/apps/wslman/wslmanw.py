@@ -306,7 +306,7 @@ class WslmanwSettings:
     distro_init_tasks: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     """按实例名保存的初始化勾选；未记录时按探测结果默认勾选。"""
     distro_package_mirrors: Mapping[str, str] = field(default_factory=dict)
-    """按实例名保存的「软件包源」：独立于 APT / YUM 系统镜像源，只影响 pip / uv。"""
+    """按实例名保存的「软件包源」：决定 pip / uv 索引，也决定 APT / YUM 换源用哪家。"""
     ide_openers: tuple[_open.Opener, ...] = field(default_factory=lambda: _open.default_openers(_open.KIND_IDE))
     """IDE 打开方式条目；默认是内置的 VSCode / Trae / Qoder / WorkBuddy。"""
     agent_openers: tuple[_open.Opener, ...] = field(default_factory=lambda: _open.default_openers(_open.KIND_AGENT))
@@ -978,7 +978,7 @@ def _package_mirrors(value: Any) -> dict[str, str]:
 
 
 def package_mirror_for(settings: WslmanwSettings, name: str) -> str:
-    """返回实例的「软件包源」；未配置时 ``auto``（跟随系统镜像源）。"""
+    """返回实例的「软件包源」；未配置时 ``auto``（pip / uv 跟随系统镜像源、换源用阿里云）。"""
     key = name.strip().casefold()
     for saved, mirror in settings.distro_package_mirrors.items():
         if saved.strip().casefold() == key:

@@ -550,7 +550,7 @@ class DistrosMixin:
         self.settings = _owner.w.with_init_task_keys(self.settings, name, keys)
 
     def _save_package_mirror(self, name: str, mirror: str) -> None:
-        """保存实例的软件包源（独立于系统镜像源）。"""
+        """保存实例的软件包源（pip / uv 索引 + APT / YUM 换源域名）。"""
         self.settings = _owner.w.with_package_mirror(self.settings, name, mirror)
         self._persist_settings(self.geometry_text())
 

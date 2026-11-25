@@ -36,6 +36,8 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         """上次保存的勾选（``None`` 表示未保存过，按默认勾选）。"""
         self._on_detected = on_detected
         self._on_package_mirror_changed = on_package_mirror_changed
+        self._initial_package_mirror = _owner._initenv.normalize_package_mirror(package_mirror)
+        """构造时的软件包源：勾选框渲染早于下拉框，首次默认勾选要用它。"""
         self.setToolTip(_owner._INIT_ENV_HINT)
         self._status: _owner._initenv.EnvStatus | None = None
         self._done: set[str] = set()
@@ -150,7 +152,8 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self.body.addWidget(self.details)
         self.details.setVisible(False)
 
-        # 软件包源独立于系统镜像源：只影响 pip / uv，可选跟随系统源或指定源。
+        # 软件包源：同时决定 APT / YUM 系统源与 pip / uv 索引
+        # （未显式选择时系统源用阿里云，pip / uv 跟随当前系统源）。
         source_row = _owner.QHBoxLayout()
         source_row.setContentsMargins(0, 0, 0, 0)
         source_row.setSpacing(6)
@@ -161,14 +164,18 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         selected_mirror = _owner._initenv.normalize_package_mirror(package_mirror)
         self.package_mirror.setCurrentIndex(max(self.package_mirror.findData(selected_mirror), 0))
         self.package_mirror.setToolTip(
-            "独立于系统镜像源（APT / YUM），只影响 pip / uv 的索引；"
-            "「自动」表示跟随当前系统镜像源。npm / bun 仍使用 npmmirror。"
+            "同时决定 APT / YUM 系统源与 pip / uv 索引：指定镜像时两者都用这一家，"
+            "免得选了中科大却还用阿里云换源；「自动」＝系统源用阿里云、pip / uv 跟随当前系统源；"
+            "「官方 PyPI」只影响 pip / uv，系统源仍用阿里云。npm / bun 仍使用 npmmirror。"
         )
         self.package_mirror.currentIndexChanged.connect(self._on_package_mirror_index_changed)
         source_row.addWidget(self.package_mirror)
-        note = _owner.ElidedLabel("独立于系统镜像源；仅影响 pip / uv，npm / bun 仍用 npmmirror。", parent=self)
+        note = _owner.ElidedLabel("同时用于 APT / YUM 系统源与 pip / uv 索引；npm / bun 仍用 npmmirror。", parent=self)
         note.setObjectName("Hint")
-        note.setToolTip("独立于系统镜像源（APT / YUM），只影响 pip / uv 的索引；npm / bun 仍使用 npmmirror。")
+        note.setToolTip(
+            "指定镜像时，APT / YUM 换源与 pip / uv 索引用同一家；“自动”时系统源用阿里云，"
+            "pip / uv 跟随当前系统源。npm / bun 仍使用 npmmirror。"
+        )
         source_row.addWidget(note, 1)
         self.body.addLayout(source_row)
 
@@ -274,7 +281,9 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         """首次渲染的勾选：有保存值用保存值，否则按「未完成就勾选」默认。"""
         if self._selected is not None:
             return key in self._selected
-        return _owner._initenv.default_checked(key, _owner._initenv.EnvStatus())
+        return _owner._initenv.default_checked(
+            key, _owner._initenv.EnvStatus(), package_mirror=self._initial_package_mirror
+        )
 
     def package_mirror_key(self) -> str:
         """当前选择的软件包源 key。"""
@@ -285,7 +294,20 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self._package_mirror_dirty = True
         if callable(self._on_package_mirror_changed):
             self._on_package_mirror_changed(self.package_mirror_key())
+        # 系统源与软件包源不一致时「国内源配置」要重新可勾选，否则换了中科大
+        # 也只能继续走旧的阿里云（只有 pip / uv 会被同步）。
+        self._sync_done()
         self._sync_check_states()
+
+    def _sync_done(self) -> None:
+        """按当前软件包源重算已就绪项（``mirror`` 依赖软件包源，其余只看探测值）。"""
+        if self._status is None:
+            return
+        self._done = {
+            key
+            for key in self.checks
+            if _owner._initenv.present(key, self._status, package_mirror=self.package_mirror_key())
+        }
 
     def _package_mirror_pending(self, status: _owner._initenv.EnvStatus) -> bool:
         """显式软件包源与实例里的 pip / uv 索引不一致时，视为待同步。"""
@@ -338,7 +360,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         """回填详情；已就绪的项目勾选 + 禁用 + 绿色标签，其余按「尚未完成」默认勾选。"""
         self._status = status
         self._package_mirror_dirty = self._package_mirror_pending(status)
-        self._done = {key for key in self.checks if _owner._initenv.present(key, status)}
+        self._sync_done()
         summary = _owner._initenv.summary_text(status)
         self.summary.setText(summary)
         # 摘要行会自动省略，完整文案放 tooltip。
@@ -349,7 +371,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             elif self._selected is not None:
                 box.setChecked(key in self._selected)
             else:
-                box.setChecked(_owner._initenv.default_checked(key, status))
+                box.setChecked(_owner._initenv.default_checked(key, status, package_mirror=self.package_mirror_key()))
         for label, value, _ok in _owner._initenv.status_rows(status):
             widget = self._status_values.get(label)
             if widget is not None:

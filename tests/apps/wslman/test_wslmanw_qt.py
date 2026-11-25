@@ -2800,7 +2800,7 @@ def test_init_env_section_run_skips_ready_items(home: Path, monkeypatch: pytest.
 
 
 def test_init_env_package_mirror_selection_reaches_run_steps(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """软件包源独立于系统镜像源：选择后初始化步骤直接使用指定 PyPI。"""
+    """软件包源选择后初始化步骤直接使用指定 PyPI，APT 换源也用同一家镜像。"""
     owner = QWidget()
     saved: list[str] = []
     section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"), on_package_mirror_changed=saved.append)
@@ -2851,7 +2851,7 @@ def test_init_env_package_mirror_mismatch_reruns_config_only(home: Path, monkeyp
     try:
         section._apply_status(
             _initenv.EnvStatus(
-                mirror="mirrors.aliyun.com",
+                mirror="mirrors.ustc.edu.cn",
                 ssh_public_key="ssh-ed25519 AAAA",
                 python="3.12.3",
                 uv="0.5.14",
@@ -2890,6 +2890,57 @@ def test_init_env_package_mirror_mismatch_reruns_config_only(home: Path, monkeyp
         assert seen == [("配置软件包镜像",)]
         assert section._package_mirror_dirty is False
         assert section.run_button.isEnabled() is False
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
+def test_init_env_package_mirror_change_reruns_system_source(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """系统源还是阿里云、软件包源改成中科大时：镜像项重新可勾选，初始化先换源。"""
+    owner = QWidget()
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"))
+    try:
+        section._apply_status(
+            _initenv.EnvStatus(
+                mirror="mirrors.aliyun.com",
+                ssh_public_key="ssh-ed25519 AAAA",
+                python="3.12.3",
+                uv="0.5.14",
+                auto_uv_env="1.1.5",
+                node="20.11.0",
+                nvm="yes",
+                bun="1.2.0",
+                rust="1.80.0",
+                gui_libs="ok",
+                cjk_font="Noto Sans CJK SC",
+                noto_cjk="yes",
+                emoji_font="yes",
+            )
+        )
+        # 自动：系统源已有国内镜像，镜像项已就绪，不可再勾。
+        assert section.checks["mirror"].isEnabled() is False
+
+        index = section.package_mirror.findData("mirrors.ustc.edu.cn")
+        assert index >= 0
+        section.package_mirror.setCurrentIndex(index)
+        # 换成中科大后旧阿里云源不再算就绪：勾上并允许重新执行。
+        assert section.checks["mirror"].isChecked() is True
+
+        seen: list[tuple[str, ...]] = []
+
+        def fake_submit(fn: Any, *, on_done: Any = None, on_error: Any = None, on_finished: Any = None) -> None:
+            if on_done is not None:
+                on_done(fn())
+            if on_finished is not None:
+                on_finished()
+
+        monkeypatch.setattr(_wslmanw_qt, "submit_daemon", fake_submit)
+        monkeypatch.setattr(section, "refresh_status", lambda: None)
+        monkeypatch.setattr(
+            section, "_execute", lambda steps: seen.append(tuple(step.label for step in steps)) or "初始化完成"
+        )
+        section._run_selected()
+        assert seen == [("配置软件包镜像", "配置系统镜像源")]
     finally:
         section.deleteLater()
         owner.deleteLater()

@@ -1,7 +1,8 @@
 """初始化环境的「软件包源」：pip / uv 的 PyPI 索引与 uv.toml 写入。
 
-这部分与系统镜像源（APT / YUM）解耦：``auto`` 时按当前系统源映射，显式选择时
-直接使用对应 PyPI。脚本拼装只生成 shell 文本，不依赖 Qt / 外部命令，便于单测。
+这部分只负责 PyPI 索引：``auto`` 时按当前系统源映射，显式选择时直接使用对应 PyPI。
+系统源（APT / YUM）换源用哪个域名由 :func:`fcmd.apps.wslman._initenv.system_mirror_source`
+从同一个软件包源推出来，不再固定阿里云。脚本拼装只生成 shell 文本，不依赖 Qt / 外部命令。
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ __all__ = [
     "uv_script",
 ]
 
-PACKAGE_MIRROR_AUTO = "auto"  # 软件包源：跟随系统镜像源（兼容旧行为）。
+PACKAGE_MIRROR_AUTO = "auto"  # 软件包源：pip / uv 跟随系统镜像源（兼容旧行为）。
 PACKAGE_MIRROR_OFFICIAL = "official"  # 软件包源：官方 PyPI。
 PACKAGE_MIRROR_CHOICES: tuple[tuple[str, str], ...] = (
     (PACKAGE_MIRROR_AUTO, "自动（跟随系统镜像源）"),
@@ -33,7 +34,7 @@ PACKAGE_MIRROR_CHOICES: tuple[tuple[str, str], ...] = (
     ("mirrors.huaweicloud.com", "华为云"),
     (PACKAGE_MIRROR_OFFICIAL, "官方 PyPI"),
 )
-"""初始化环境的「软件包源」选项：独立于系统镜像源，只影响 pip / uv。"""
+"""初始化环境的「软件包源」选项：pip / uv 索引按它配置，APT / YUM 换源也用同一家。"""
 
 _PACKAGE_MIRROR_KEYS = frozenset(key for key, _label in PACKAGE_MIRROR_CHOICES)
 

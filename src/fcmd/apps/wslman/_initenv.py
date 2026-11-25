@@ -12,7 +12,8 @@ linuxmirrors，pip / uv / npm / bun / cargo 走国内镜像），但这里通过
 - APT：先跑 linuxmirrors 换系统源再装包；已装的包直接跳过，apt 索引 1 小时内
   有效则不再 ``apt-get update``，并统一 ``--no-install-recommends`` + 重试；
 - Python / uv：pip 索引与 uv 默认索引**跟随系统镜像源**（中科大 / 阿里 / 腾讯 /
-  华为 / 清华等各自映射到对应 PyPI 镜像；识别不到时回退清华），uv 直接用 pip 装
+  华为 / 清华等各自映射到对应 PyPI 镜像；识别不到时回退清华），所选软件包源同时
+  决定 linuxmirrors 用哪家换系统源，uv 直接用 pip 装
   （不走 astral.sh / GitHub），uv 的 Python 下载走 npmmirror 的 python-build-standalone；
 - Node.js：nvm 源码走 gitee 镜像、node 二进制走 npmmirror 的 node 镜像，不再用
   apt 里那个版本很老的 ``nodejs``；
@@ -64,6 +65,7 @@ __all__ = [
     "InitStep",
     "InitTask",
     "default_checked",
+    "mirror_steps",
     "normalize_package_mirror",
     "package_source_steps",
     "parse_status",
@@ -78,6 +80,7 @@ __all__ = [
     "status_to_mapping",
     "steps_for",
     "summary_text",
+    "system_mirror_source",
     "tail_lines",
     "task_by_key",
     "task_keys",
@@ -86,6 +89,18 @@ __all__ = [
 
 _MIRROR_URL = "https://linuxmirrors.cn/main.sh"
 _MIRROR_SOURCE = "mirrors.aliyun.com"
+_SYSTEM_MIRROR_BY_PACKAGE_MIRROR: dict[str, str] = {
+    "mirrors.tuna.tsinghua.edu.cn": "mirrors.tuna.tsinghua.edu.cn",
+    "mirrors.ustc.edu.cn": "mirrors.ustc.edu.cn",
+    "mirrors.aliyun.com": "mirrors.aliyun.com",
+    "mirrors.tencent.com": "mirrors.cloud.tencent.com",
+    "mirrors.huaweicloud.com": "mirrors.huaweicloud.com",
+}
+"""软件包源 → linuxmirrors 的 ``--source`` 域名：指定镜像时 APT / YUM 用同一家。
+
+``auto`` / ``official`` 不在表里，回退 :data:`_MIRROR_SOURCE`（阿里云）：自动时
+没有可跟随的显式镜像，官方 PyPI 只是不换 PyPI，系统源仍吃国内镜像。
+"""
 _NPM_REGISTRY = "https://registry.npmmirror.com"
 _NODE_MIRROR = "https://npmmirror.com/mirrors/node"
 _NVM_GIT = "https://gitee.com/mirrors/nvm.git"
@@ -179,7 +194,12 @@ def _apt_script(*packages: str) -> str:
     )
 
 
-def _mirror_script() -> str:
+def system_mirror_source(package_mirror: str = PACKAGE_MIRROR_AUTO) -> str:
+    """软件包源 → APT / YUM 的系统源域名；``auto`` / ``official`` 回退阿里云。"""
+    return _SYSTEM_MIRROR_BY_PACKAGE_MIRROR.get(normalize_package_mirror(package_mirror), _MIRROR_SOURCE)
+
+
+def _mirror_script(source: str = _MIRROR_SOURCE) -> str:
     """系统镜像源：按 linuxmirrors 的非交互参数执行，避免 GUI 里卡在菜单。"""
     return "\n".join(
         (
@@ -189,7 +209,7 @@ def _mirror_script() -> str:
             "    apt-get install -y curl",
             "fi",
             f"bash <(curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 {_MIRROR_URL}) "
-            f"--source {_MIRROR_SOURCE} --use-intranet-source false --protocol https "
+            f"--source {source} --use-intranet-source false --protocol https "
             "--backup true --install-epel false --upgrade-software false --clean-cache true --ignore-backup-tips",
             'echo "系统镜像源配置完成"',
         )
@@ -407,8 +427,8 @@ TASKS: tuple[InitTask, ...] = (
     InitTask(
         "mirror",
         "运行国内源配置脚本",
-        f"通过 linuxmirrors 把 APT / YUM 系统源切换到国内镜像（默认 {_MIRROR_SOURCE}），"
-        "以 root 执行；已配置时重复执行也是安全的。",
+        f"通过 linuxmirrors 把 APT / YUM 系统源切换到国内镜像（默认 {_MIRROR_SOURCE}；"
+        "选择了指定软件包源时改用同一家镜像），以 root 执行；已配置时重复执行也是安全的。",
         (InitStep("配置系统镜像源", _mirror_script(), root=True, timeout_s=900.0),),
     ),
     InitTask(
@@ -512,11 +532,18 @@ def package_source_steps(package_mirror: str = PACKAGE_MIRROR_AUTO) -> tuple[Ini
     return (InitStep("配置软件包镜像", package_source_script(mirror)),)
 
 
+def mirror_steps(package_mirror: str = PACKAGE_MIRROR_AUTO) -> tuple[InitStep, ...]:
+    """换系统源步骤；``--source`` 由软件包源决定，避免选了中科大却用阿里云换源。"""
+    return (
+        InitStep("配置系统镜像源", _mirror_script(system_mirror_source(package_mirror)), root=True, timeout_s=900.0),
+    )
+
+
 def steps_for(keys: Sequence[str], *, package_mirror: str = PACKAGE_MIRROR_AUTO) -> tuple[InitStep, ...]:
     """按 :data:`TASKS` 的固定顺序展开勾选项对应的执行步骤。
 
-    ``package_mirror`` 只影响 pip / uv 的源，与系统镜像源（APT / YUM）互相独立；
-    任务列表与顺序仍以 :data:`TASKS` 为准。
+    ``package_mirror`` 决定 pip / uv 的索引，也决定 APT / YUM 换源用哪家镜像
+    （``auto`` / ``official`` 用默认阿里云，与 :data:`TASKS` 里的口径一致）。
     """
     selected = set(keys)
     mirror = normalize_package_mirror(package_mirror)
@@ -524,7 +551,9 @@ def steps_for(keys: Sequence[str], *, package_mirror: str = PACKAGE_MIRROR_AUTO)
     for task in TASKS:
         if task.key not in selected:
             continue
-        if task.key == "python":
+        if task.key == "mirror":
+            steps.extend(mirror_steps(mirror))
+        elif task.key == "python":
             steps.extend((task.steps[0], InitStep("配置 pip 镜像", pip_script(mirror))))
         elif task.key == "uv":
             steps.extend((task.steps[0], InitStep("安装 uv 并配置镜像", uv_script(mirror))))
@@ -676,15 +705,22 @@ def status_from_mapping(raw: object) -> EnvStatus | None:
     return EnvStatus(**{name: value.strip() if isinstance(value, str) else "" for name, value in values.items()})
 
 
-def present(key: str, status: EnvStatus) -> bool:  # noqa: PLR0911 - 每个初始化项目独立判定，扁平分支最直观
+def present(key: str, status: EnvStatus, package_mirror: str = PACKAGE_MIRROR_AUTO) -> bool:  # noqa: PLR0911 - 每个初始化项目独立判定，扁平分支最直观
     """判断某个初始化项目是否已就绪。
 
     每个项目只看自己那个工具：Python 已经有 python3 就算就绪（Kali / Ubuntu 这类
     发行版自带 python3，不应因为没装 uv 就显示未初始化）；uv / Bun / Node.js 各自
     独立成项，没装就单独出现在待初始化列表里。
+
+    ``mirror`` 额外看软件包源：显式选了镜像时，系统源必须是同一家才算就绪，
+    否则改了软件包源也不会重新换源（用户看到的「选了中科大却还走阿里云」）。
     """
     if key == "mirror":
-        return bool(status.mirror)
+        if not status.mirror:
+            return False
+        if normalize_package_mirror(package_mirror) == PACKAGE_MIRROR_AUTO:
+            return True
+        return system_mirror_source(package_mirror) in status.mirror.casefold()
     if key == "ssh":
         return status.ssh_ready
     if key == "python":
@@ -703,14 +739,14 @@ def present(key: str, status: EnvStatus) -> bool:  # noqa: PLR0911 - 每个初�
     return display if display is not None else False
 
 
-def default_checked(key: str, status: EnvStatus) -> bool:
+def default_checked(key: str, status: EnvStatus, package_mirror: str = PACKAGE_MIRROR_AUTO) -> bool:
     """默认勾选尚未完成的项目；探测失败（全空）时等于全选。
 
     ``noto`` / ``emoji`` 是可选大包，即使未安装也默认不勾，避免首跑多下载几十 MB。
     """
     if key in OPTIONAL_KEYS:
         return False
-    return not present(key, status)
+    return not present(key, status, package_mirror)
 
 
 def ssh_key_short(public_key: str) -> str:

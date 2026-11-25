@@ -147,7 +147,7 @@ def test_pypi_index_follows_system_mirror() -> None:
     assert _initenv.pypi_index_for_mirror("example.com") == "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 
-def test_package_mirror_is_independent_from_system_mirror() -> None:
+def test_package_mirror_fixes_pypi_index_without_detection() -> None:
     """软件包源可单独指定：不选自动时 pip / uv 用指定 PyPI，不再读系统源。"""
     template = _initenv.steps_for(["uv"], package_mirror="mirrors.ustc.edu.cn")
     script = template[1].script
@@ -166,6 +166,38 @@ def test_package_mirror_is_independent_from_system_mirror() -> None:
     assert _initenv.pypi_index_for_package_mirror("mirrors.ustc.edu.cn") == ("https://mirrors.ustc.edu.cn/pypi/simple")
     assert _initenv.pypi_index_for_package_mirror("bogus") == ""
     assert _initenv.normalize_package_mirror("bogus") == _initenv.PACKAGE_MIRROR_AUTO
+
+
+def test_mirror_script_uses_selected_package_mirror() -> None:
+    """选了指定软件包源，APT / YUM 也要换到同一家：不能再固定走阿里云。"""
+    assert _initenv.system_mirror_source("mirrors.ustc.edu.cn") == "mirrors.ustc.edu.cn"
+    assert _initenv.system_mirror_source("mirrors.tuna.tsinghua.edu.cn") == "mirrors.tuna.tsinghua.edu.cn"
+    assert _initenv.system_mirror_source("mirrors.tencent.com") == "mirrors.cloud.tencent.com"
+    assert _initenv.system_mirror_source("mirrors.huaweicloud.com") == "mirrors.huaweicloud.com"
+    # 自动 / 官方 PyPI / 非法值都回退阿里云，旧行为不变。
+    for value in ("auto", "official", "bogus", ""):
+        assert _initenv.system_mirror_source(value) == "mirrors.aliyun.com"
+
+    ustc = _initenv.steps_for(["mirror"], package_mirror="mirrors.ustc.edu.cn")
+    assert [step.label for step in ustc] == ["配置系统镜像源"]
+    assert "--source mirrors.ustc.edu.cn" in ustc[0].script
+    assert ustc[0].root is True
+    assert "--source mirrors.aliyun.com" in _initenv.steps_for(["mirror"])[0].script
+    assert "--source mirrors.aliyun.com" in _initenv.steps_for(["mirror"], package_mirror="official")[0].script
+
+
+def test_present_mirror_tracks_selected_package_mirror() -> None:
+    """系统源与选定的软件包源不是同一家时，镜像项视为未就绪（要点才会重新换源）。"""
+    aliyun = _initenv.EnvStatus(mirror="mirrors.aliyun.com")
+    ustc = _initenv.EnvStatus(mirror="mirrors.ustc.edu.cn")
+    assert _initenv.present("mirror", aliyun) is True
+    # 自动：任一国内源都算就绪。
+    assert _initenv.present("mirror", ustc) is True
+    assert _initenv.present("mirror", aliyun, package_mirror="mirrors.ustc.edu.cn") is False
+    assert _initenv.present("mirror", ustc, package_mirror="mirrors.ustc.edu.cn") is True
+    assert _initenv.default_checked("mirror", aliyun, package_mirror="mirrors.ustc.edu.cn") is True
+    assert _initenv.default_checked("mirror", aliyun, package_mirror="auto") is False
+    assert _initenv.present("mirror", _initenv.EnvStatus(), package_mirror="mirrors.ustc.edu.cn") is False
 
 
 def test_package_source_steps_update_runtime_without_reinstalling() -> None:
