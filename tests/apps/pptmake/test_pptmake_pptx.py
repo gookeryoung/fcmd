@@ -468,6 +468,29 @@ def test_import_reads_text_inside_group_shape(tmp_path: Path) -> None:
     assert template.slides[1].bullets == ("分组说明",)
 
 
+def test_import_restores_typography_from_source_fonts(tmp_path: Path) -> None:
+    api = _pptx._api()
+    presentation = api.Presentation()
+    cover = presentation.slides.add_slide(presentation.slide_layouts[6])
+    heading = cover.shapes.add_textbox(0, 0, 400, 80).text_frame.paragraphs[0]
+    heading_run = heading.add_run()
+    heading_run.text = "字号还原"
+    heading_run.font.size = api.Pt(40)
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    for text in ("第一段", "第二段", "第三段"):
+        paragraph = slide.shapes.add_textbox(0, 0, 400, 60).text_frame.paragraphs[0]
+        run = paragraph.add_run()
+        run.text = text
+        run.font.size = api.Pt(18)
+        paragraph.line_spacing = 1.5
+    source = tmp_path / "typography.pptx"
+    presentation.save(str(source))
+    template = _pptx.import_pptx(source)
+    assert template.theme.tokens.type_scale.body == 24.0
+    assert template.theme.tokens.type_scale.title == pytest.approx(53.3)
+    assert template.theme.tokens.spacing.line_body == 1.5
+
+
 def test_smartart_texts_follow_node_order() -> None:
     blob = (
         '<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" '

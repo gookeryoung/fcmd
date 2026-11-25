@@ -9,11 +9,13 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from statistics import median
 from typing import Any
 from xml.etree import ElementTree
 
+from fcmd.apps.pptmake import _tokens as tokens
 from fcmd.apps.pptmake._core import (
     ASPECT_4_3,
     ASPECT_16_9,
@@ -33,6 +35,7 @@ from fcmd.apps.pptmake._core import (
     LAYOUT_IMAGE,
     LAYOUT_PHOTO_COVER,
     STYLE_CUSTOM,
+    DesignTokens,
     Palette,
     SlideSpec,
     TemplateError,
@@ -54,6 +57,11 @@ _DGM_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
 _PICTURE_MIN_AREA = 0.12
 _PICTURE_SAME_TOLERANCE = 0.05
 _REPORT_KINDS = ("文本", "图片", "表格", "图表", "备注")
+_UNITS_PER_POINT = 4 / 3
+_BODY_POINTS = 18.0
+_TITLE_POINT_CAP = 100.0
+_MIN_TOKEN_SIZE = 16.0
+_MAX_TOKEN_SIZE = 300.0
 
 
 @dataclass
@@ -366,6 +374,48 @@ def _cap(layout: str, bullets: tuple[str, ...]) -> tuple[str, ...]:
     return bullets[: rule_for(layout).max_bullets]
 
 
+def _collect_typography(slide: Any, font_sizes: list[float], line_spacings: list[float]) -> None:
+    """收集一页的字号（pt）与倍数行距，供导入后还原字号阶梯。"""
+    for shape in _iter_shapes(slide.shapes):
+        if not getattr(shape, "has_text_frame", False):
+            continue
+        for paragraph in shape.text_frame.paragraphs:
+            spacing = paragraph.line_spacing
+            if isinstance(spacing, float):
+                line_spacings.append(spacing)
+            for run in paragraph.runs:
+                size = run.font.size
+                if size is None:
+                    continue
+                with contextlib.suppress(Exception):
+                    font_sizes.append(float(size.pt))
+
+
+def _clamp_size(value: float) -> float:
+    """把设计单位字号收进令牌允许区间，并保留一位小数。"""
+    return round(min(_MAX_TOKEN_SIZE, max(_MIN_TOKEN_SIZE, value)), 1)
+
+
+def _typography_tokens(base: DesignTokens, sizes: list[float], spacings: list[float]) -> DesignTokens:
+    """按源稿字号与行距中位数还原字号阶梯与正文行距。
+
+    以正文中位数字号相对默认 18pt 的比例整体缩放令牌；标题另取不超过
+    100pt 的最大字号换算设计单位，避免封面大字或章节编号把阶梯拉到上限。
+    """
+    body_pt = median(sizes) if sizes else _BODY_POINTS
+    ratio = body_pt / _BODY_POINTS
+    scaled = {name: _clamp_size(getattr(base.type_scale, name) * ratio) for name in tokens.TYPE_FIELDS}
+    headlines = [size for size in sizes if size <= _TITLE_POINT_CAP]
+    if headlines:
+        title = _clamp_size(max(headlines) * _UNITS_PER_POINT)
+        scaled["title"] = title
+        scaled["display"] = _clamp_size(max(title * 1.3, scaled["display"]))
+    spacing = base.spacing
+    if spacings:
+        spacing = replace(spacing, line_body=round(min(2.5, max(0.8, median(spacings))), 2))
+    return replace(base, type_scale=replace(base.type_scale, **scaled), spacing=spacing)
+
+
 def _grid_slides(  # noqa: PLR0913, PLR0917 - 页面字段与栅格计划一一对应
     title: str,
     subtitle: str,
@@ -419,6 +469,8 @@ def import_pptx(  # noqa: PLR0912 - 按内容类型分派，分支数随支持�
     lines = report if report is not None else []
     slides: list[SlideSpec] = []
     stats = ImportStats()
+    font_sizes: list[float] = []
+    line_spacings: list[float] = []
     for index, slide in enumerate(slides_raw):
         page = index + 1
         texts = _slide_texts(slide)
@@ -440,6 +492,7 @@ def import_pptx(  # noqa: PLR0912 - 按内容类型分派，分支数随支持�
         stats.found["图表"] += 1 if chart is not None else 0
         stats.found["备注"] += 1 if note else 0
         stats.kept["备注"] += 1 if note else 0
+        _collect_typography(slide, font_sizes, line_spacings)
         if not texts:
             suffix = "；备注保留" if note else ""
             if extracted:
@@ -529,6 +582,7 @@ def import_pptx(  # noqa: PLR0912 - 按内容类型分派，分支数随支持�
         heading_font=heading_font,
         body_font=body_font,
         decor=DECOR_ORBS,
+        tokens=_typography_tokens(DesignTokens(), font_sizes, line_spacings),
     )
     spec = TemplateSpec(
         name=path.stem,
