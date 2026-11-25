@@ -13,6 +13,7 @@ from typing import Any, Final
 
 __all__ = [
     "ASPECT_TYPE_SCALE",
+    "CHART_PALETTE_DEFAULT",
     "DEFAULT_FONT_FALLBACK",
     "DENSITIES",
     "DENSITY_COMFORTABLE",
@@ -56,6 +57,16 @@ DEFAULT_FONT_FALLBACK: Final[tuple[str, ...]] = (
 )
 
 _HEX_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
+
+# 图表系列色：深色底上对比清晰，且与极光蓝主色不冲突。
+CHART_PALETTE_DEFAULT: Final[tuple[str, ...]] = (
+    "#5B8CFF",
+    "#8B5CF6",
+    "#22D3EE",
+    "#34D399",
+    "#FBBF24",
+    "#F472B6",
+)
 
 _TYPE_FIELDS: Final[tuple[str, ...]] = (
     "display",
@@ -235,6 +246,7 @@ class DesignTokens:
     density: str = DENSITY_COMFORTABLE
     decor_intensity: float = 1.0
     font_fallback: tuple[str, ...] = DEFAULT_FONT_FALLBACK
+    chart_palette: tuple[str, ...] = CHART_PALETTE_DEFAULT
     semantic: SemanticColors = field(default_factory=SemanticColors)
 
     @property
@@ -405,6 +417,15 @@ def _font_fallback(raw: object, *, base: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _chart_palette(raw: object, *, base: tuple[str, ...]) -> tuple[str, ...]:
+    """解析图表系列色：2–8 个 ``#RRGGBB``；``None`` 沿用 ``base``。"""
+    if raw is None:
+        return base
+    if not isinstance(raw, (list, tuple)) or not 2 <= len(raw) <= 8:
+        raise TokenError("theme.tokens.chart_palette 需为 2–8 个颜色")
+    return tuple(_hex_color(item, path=f"theme.tokens.chart_palette[{index}]") for index, item in enumerate(raw))
+
+
 def _semantic(raw: object, *, base: SemanticColors) -> SemanticColors:
     """解析语义色；缺失字段沿用 ``base``。"""
     section = _section(raw, path="theme.tokens.semantic")
@@ -442,6 +463,7 @@ def tokens_from_mapping(raw: object, *, base: DesignTokens | None = None) -> Des
             default=fallback.decor_intensity,
         ),
         font_fallback=_font_fallback(raw.get("font_fallback"), base=fallback.font_fallback),
+        chart_palette=_chart_palette(raw.get("chart_palette"), base=fallback.chart_palette),
         semantic=_semantic(raw.get("semantic"), base=fallback.semantic),
     )
 
@@ -465,5 +487,6 @@ def tokens_to_mapping(tokens: DesignTokens) -> dict[str, Any]:
             "char": tokens.bullet.char,
         },
         "font_fallback": list(tokens.font_fallback),
+        "chart_palette": list(tokens.chart_palette),
         "semantic": {name: getattr(tokens.semantic, name) for name in _SEMANTIC_FIELDS},
     }

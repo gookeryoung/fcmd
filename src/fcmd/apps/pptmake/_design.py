@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from fcmd.apps.pptmake._bullets import split_bullet
 from fcmd.apps.pptmake._core import (
     ASPECT_DESIGN,
+    CHART_PIE,
     DECOR_FRAME,
     DECOR_GRID,
     DECOR_MINIMAL,
@@ -42,11 +43,15 @@ from fcmd.apps.pptmake._core import (
 from fcmd.apps.pptmake._tokens import RadiusScale, SpacingScale, TypeScale
 
 __all__ = [
+    "Chart",
+    "ChartSeries",
     "Line",
     "Oval",
     "Picture",
     "Primitive",
     "Rect",
+    "Table",
+    "TableCell",
     "Text",
     "build_draw_list",
     "design_size",
@@ -134,7 +139,79 @@ class Text:
     field_suffix: str = ""
 
 
-Primitive = Rect | Oval | Line | Picture | Text
+@dataclass(frozen=True, slots=True)
+class TableCell:
+    """表格单元格：文本、对齐与强调样式。"""
+
+    text: str
+    align: str = ALIGN_LEFT
+    bold: bool = False
+    color: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Table:
+    """原生表格图元：列宽与行高由版式算好，预览与导出共用同一几何。
+
+    ``w`` / ``h`` 始终等于 ``col_widths`` / ``row_heights`` 之和，导出的
+    ``add_table`` 与预览都按这两个数组逐格定位，保证几何差为 0。
+    """
+
+    x: float
+    y: float
+    w: float
+    h: float
+    col_widths: tuple[float, ...]
+    row_heights: tuple[float, ...]
+    rows: tuple[tuple[TableCell, ...], ...]
+    header: bool = True
+    header_fill: str = ""
+    band_fill: str = ""
+    row_fill: str = ""
+    line_color: str = ""
+    line_width: float = 1.0
+    font: str = ""
+    text_color: str = ""
+    header_size: float = 16.0
+    body_size: float = 16.0
+    pad_x: float = 12.0
+    pad_y: float = 6.0
+
+
+@dataclass(frozen=True, slots=True)
+class ChartSeries:
+    """一个数据系列：名称、数值与系列色。"""
+
+    name: str
+    values: tuple[float, ...]
+    color: str
+
+
+@dataclass(frozen=True, slots=True)
+class Chart:
+    """原生图表图元：预览近似绘制，导出写 ``add_chart``。"""
+
+    x: float
+    y: float
+    w: float
+    h: float
+    categories: tuple[str, ...]
+    series: tuple[ChartSeries, ...]
+    kind: str = "bar"
+    unit: str = ""
+    value_format: str = ""
+    show_labels: bool = True
+    legend: bool = True
+    colors: tuple[str, ...] = ()
+    font: str = ""
+    size: float = 16.0
+    axis_color: str = ""
+    grid_color: str = ""
+    text_color: str = ""
+    muted_color: str = ""
+
+
+Primitive = Rect | Oval | Line | Picture | Text | Table | Chart
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +357,34 @@ def _parse_number(text: str) -> float:
     """从 ``42`` / ``+12%`` / ``3.5 万`` 中提取数值，失败返回 0。"""
     match = re.search(r"-?\d+(?:\.\d+)?", text.replace(",", ""))
     return float(match.group(0)) if match else 0.0
+
+
+_LITERAL_NUMBER = re.compile(r"-?\d+(?:\.\d+)?%?")
+
+
+def _has_number(text: str) -> bool:
+    """判断文本里是否含有数字（用于区分数值列与说明文字）。"""
+    return re.search(r"\d", text) is not None
+
+
+def _format_number(text: str, *, unit: str = "", value_format: str = "") -> str:
+    """按 ``value_format``（``0.0`` / ``#,###`` / ``0%``）与单位格式化数值。
+
+    非数值文本原样返回；没有 ``value_format`` 时只补单位，避免改写用户输入。
+    """
+    raw = text.strip()
+    if not raw:
+        return "—"
+    if not _has_number(raw):
+        return raw
+    fmt = value_format.strip()
+    if not fmt:
+        return raw + unit if unit and unit not in raw else raw
+    decimals = sum(1 for char in fmt.split(".", 1)[1] if char in "0#") if "." in fmt else 0
+    body = format(_parse_number(raw), ("," if "," in fmt else "") + f".{decimals}f")
+    if fmt.endswith("%"):
+        return body + "%"
+    return body + unit if unit and unit not in raw else body
 
 
 # ---------------------------------------------------------------------- #
@@ -775,19 +880,23 @@ def _render_quote(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
 
 
 def _render_metrics(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """数据：三张指标卡，要点写成 ``值|说明``。"""
+    """数据：三张指标卡，要点写成 ``值|说明|趋势``；趋势按正负取语义色。"""
     palette = ctx.palette
     scale = ctx.type_scale
+    semantic = ctx.tokens.semantic
     _paint_heading(out, ctx, slide)
-    raw = slide.bullets or ("98%|交付准时率", "4.9|客户满意度", "120+|覆盖项目")
-    items = [_parse_pair(item) for item in raw][:3]
+    raw = slide.bullets or ("98%|交付准时率|+3pt", "4.9|客户满意度|+0.2", "120+|覆盖项目")
+    items = [_split_parts(item) for item in raw][:3]
     while len(items) < 3:
         items.append(("—", "待补充"))
     gap = ctx.spacing.gap
     card_width = (ctx.width - ctx.margin * 2 - gap * 2) / 3
     card_top = ctx.height * 0.36
     card_height = ctx.height * 0.32
-    for index, (value, label) in enumerate(items):
+    for index, parts in enumerate(items):
+        value = _format_number(parts[0], unit=slide.unit, value_format=slide.value_format)
+        label = parts[1] if len(parts) > 1 and parts[1] else "待补充"
+        trend = parts[2] if len(parts) > 2 else ""
         x = ctx.margin + index * (card_width + gap)
         accent = (ctx.accent, palette.secondary, palette.accent)[index % 3]
         out.append(
@@ -806,9 +915,9 @@ def _render_metrics(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
         out.append(
             _text(
                 x + 26,
-                card_top + 54,
+                card_top + 46,
                 card_width - 52,
-                card_height * 0.42,
+                round(card_height * 0.34),
                 value,
                 scale.stat,
                 accent,
@@ -816,10 +925,26 @@ def _render_metrics(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 bold=True,
             )
         )
+        if trend:
+            sign = trend.lstrip()[:1]
+            trend_color = semantic.success if sign == "+" else semantic.danger if sign == "-" else palette.muted
+            out.append(
+                _text(
+                    x + 26,
+                    card_top + 46 + round(card_height * 0.34),
+                    card_width - 52,
+                    round(scale.small * 1.4),
+                    trend,
+                    scale.small,
+                    trend_color,
+                    ctx.theme.heading_font,
+                    bold=True,
+                )
+            )
         out.append(
             _text(
                 x + 26,
-                card_top + card_height - 62,
+                card_top + card_height - 58,
                 card_width - 52,
                 36,
                 label,
@@ -1083,159 +1208,132 @@ def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
 
 
 def _render_comparison(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """对比矩阵：``维度|方案A|方案B``，右列用强调色标出推荐项。"""
+    """对比矩阵：``维度|方案A|方案B``，输出原生表格（2–4 个方案列）。"""
     palette = ctx.palette
     scale = ctx.type_scale
-    spacing = ctx.spacing
     margin = ctx.margin
     top = _paint_heading(out, ctx, slide)
-    headers = _split_parts(slide.subtitle) if slide.subtitle.strip() else ()
-    left_header = headers[0] if headers and headers[0] else "方案 A"
-    right_header = headers[1] if len(headers) > 1 and headers[1] else "方案 B"
+    declared = list(_split_parts(slide.subtitle)) if slide.subtitle.strip() else []
+    options = [name or f"方案 {chr(65 + index)}" for index, name in enumerate(declared[:4])]
+    while len(options) < 2:
+        options.append(f"方案 {chr(65 + len(options))}")
     raw = slide.bullets or ("响应速度|小时级|分钟级", "维护成本|较高|更低", "扩展能力|受限于插件|开放接口")
-    rows: list[tuple[str, str, str]] = []
+    rows: list[tuple[str, ...]] = []
     for item in raw[:4]:
         parts = _split_parts(item)
-        label = parts[0] or "对比维度"
-        left = parts[1] if len(parts) > 1 and parts[1] else "—"
-        right = parts[2] if len(parts) > 2 and parts[2] else "—"
-        rows.append((label, left, right))
+        values = [
+            parts[index + 1] if index + 1 < len(parts) and parts[index + 1] else "—" for index in range(len(options))
+        ]
+        rows.append((parts[0] or "对比维度", *values))
+    table_width = ctx.width - margin * 2
     table_top = top + round(scale.body)
-    header_height = round(scale.body * 2.2)
-    label_width = (ctx.width - margin * 2) * 0.3
-    option_width = (ctx.width - margin * 2 - label_width - spacing.gap * 2) / 2
-    left_x = margin + label_width + spacing.gap
-    right_x = left_x + option_width + spacing.gap
+    label_width = round(table_width * 0.28)
+    option_width = (table_width - label_width) / len(options)
+    col_widths = (float(label_width), *(option_width for _ in options))
+    header_height = round(scale.body * 2.1)
+    spare = ctx.height - table_top - round(scale.body * 3.2) - header_height
+    body_height = max(round(scale.body * 1.9), min(round(scale.body * 2.6), spare / max(len(rows), 1)))
+    row_heights = (float(header_height), *(float(body_height) for _ in rows))
+    numeric = [
+        all(_LITERAL_NUMBER.fullmatch(row[index + 1].replace(",", "")) for row in rows) for index in range(len(options))
+    ]
+    last = len(options) - 1
+    header_cells = (
+        TableCell("对比维度", ALIGN_LEFT, True, palette.muted),
+        *tuple(
+            TableCell(
+                name,
+                ALIGN_RIGHT if numeric[index] else ALIGN_CENTER,
+                True,
+                ctx.accent if index == last else palette.text,
+            )
+            for index, name in enumerate(options)
+        ),
+    )
+    cells: list[tuple[TableCell, ...]] = [header_cells]
+    for row in rows:
+        body = [TableCell(row[0], ALIGN_LEFT, False, palette.muted)]
+        for index in range(len(options)):
+            body.append(
+                TableCell(
+                    row[index + 1],
+                    ALIGN_RIGHT if numeric[index] else ALIGN_CENTER,
+                    index == last,
+                    ctx.accent if index == last else palette.text,
+                )
+            )
+        cells.append(tuple(body))
     out.append(
-        Rect(
-            margin,
-            table_top,
-            ctx.width - margin * 2,
-            header_height,
-            fill=mix_hex(palette.background, ctx.accent, 0.16),
-            radius=round(ctx.radius.small),
+        Table(
+            x=margin,
+            y=table_top,
+            w=table_width,
+            h=sum(row_heights),
+            col_widths=col_widths,
+            row_heights=row_heights,
+            rows=tuple(cells),
+            header=True,
+            header_fill=mix_hex(palette.background, ctx.accent, 0.16),
+            band_fill=mix_hex(palette.surface, ctx.accent, 0.1),
+            row_fill=palette.surface,
+            line_color=ctx.divider,
+            line_width=ctx.stroke_width,
+            font=ctx.theme.body_font,
+            text_color=palette.text,
+            header_size=scale.small,
+            body_size=scale.small,
+            pad_x=round(scale.small * 0.7),
+            pad_y=round(scale.small * 0.3),
         )
     )
-    out.append(
-        _text(
-            margin + spacing.gap,
-            table_top,
-            label_width - spacing.gap,
-            header_height,
-            "对比维度",
-            scale.small,
-            palette.muted,
-            ctx.theme.body_font,
-            anchor=ANCHOR_MIDDLE,
-        )
-    )
-    out.append(
-        _text(
-            left_x,
-            table_top,
-            option_width,
-            header_height,
-            left_header,
-            scale.body,
-            palette.text,
-            ctx.theme.heading_font,
-            bold=True,
-            align=ALIGN_CENTER,
-            anchor=ANCHOR_MIDDLE,
-        )
-    )
-    out.append(
-        _text(
-            right_x,
-            table_top,
-            option_width,
-            header_height,
-            right_header,
-            scale.body,
-            ctx.accent,
-            ctx.theme.heading_font,
-            bold=True,
-            align=ALIGN_CENTER,
-            anchor=ANCHOR_MIDDLE,
-        )
-    )
-    available = ctx.height - table_top - header_height - round(scale.body * 3)
-    row_height = min(round(scale.body * 3), available / max(len(rows), 1))
-    for index, (label, left, right) in enumerate(rows):
-        y = table_top + header_height + index * row_height
-        out.append(
-            Rect(
-                right_x - spacing.gap / 2,
-                y + 4,
-                option_width + spacing.gap,
-                row_height - 8,
-                fill=mix_hex(palette.surface, ctx.accent, 0.1),
-                radius=round(ctx.radius.small),
-            )
-        )
-        if index:
-            out.append(Line(margin, y, ctx.width - margin, y, ctx.divider, ctx.stroke_width))
-        out.append(
-            _text(
-                margin + spacing.gap,
-                y,
-                label_width - spacing.gap,
-                row_height,
-                label,
-                scale.small,
-                palette.muted,
-                ctx.theme.body_font,
-                anchor=ANCHOR_MIDDLE,
-            )
-        )
-        out.append(
-            _text(
-                left_x,
-                y,
-                option_width,
-                row_height,
-                left,
-                scale.small,
-                palette.text,
-                ctx.theme.body_font,
-                align=ALIGN_CENTER,
-                anchor=ANCHOR_MIDDLE,
-            )
-        )
-        out.append(
-            _text(
-                right_x,
-                y,
-                option_width,
-                row_height,
-                right,
-                scale.small,
-                ctx.accent,
-                ctx.theme.body_font,
-                bold=True,
-                align=ALIGN_CENTER,
-                anchor=ANCHOR_MIDDLE,
-            )
-        )
 
 
 def _render_chart(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """图表占位：按 ``标签|数值`` 画柱状图，导出后可替换为真实图表。"""
+    """图表：按 ``标签|数值`` 写原生图表，类型由 ``chart_type`` 决定。"""
     palette = ctx.palette
     scale = ctx.type_scale
     margin = ctx.margin
     top = _paint_heading(out, ctx, slide)
     raw = slide.bullets or ("Q1|42", "Q2|68", "Q3|54", "Q4|86")
-    points: list[tuple[str, float]] = []
-    for item in raw[:5]:
+    categories: list[str] = []
+    values: list[float] = []
+    for item in raw[:6]:
         label, value = _parse_pair(item)
-        points.append((label or f"项{len(points) + 1}", _parse_number(value)))
-    if not points:
-        points = [("A", 1.0)]
-    max_value = max((value for _label, value in points), default=0.0) or 1.0
+        if not _has_number(value):
+            continue
+        categories.append(label or f"项{len(categories) + 1}")
+        values.append(_parse_number(value))
     card_top = top + round(scale.body)
     card_height = ctx.height - card_top - round(scale.body * 4)
     card_width = ctx.width - margin * 2
+    colors = tuple(ctx.tokens.chart_palette) or (ctx.accent, palette.secondary)
+    kind = slide.chart_type
+    if kind == CHART_PIE and any(value < 0 for value in values):
+        kind = "bar"
+    if categories:
+        out.append(
+            Chart(
+                x=margin,
+                y=card_top,
+                w=card_width,
+                h=card_height,
+                categories=tuple(categories),
+                series=(ChartSeries("数值", tuple(values), colors[0]),),
+                kind=kind,
+                unit=slide.unit,
+                value_format=slide.value_format,
+                show_labels=slide.show_labels,
+                legend=slide.legend,
+                colors=tuple(colors[index % len(colors)] for index in range(len(categories))),
+                font=ctx.theme.body_font,
+                size=scale.caption,
+                axis_color=ctx.divider,
+                grid_color=mix_hex(palette.surface, palette.muted, 0.25),
+                text_color=palette.text,
+                muted_color=palette.muted,
+            )
+        )
+        return
     out.append(
         Rect(
             margin,
@@ -1248,72 +1346,20 @@ def _render_chart(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             radius=round(ctx.radius.card),
         )
     )
-    plot_x = margin + round(scale.body * 2.2)
-    plot_y = card_top + round(scale.body * 1.8)
-    plot_width = card_width - round(scale.body * 4.4)
-    plot_height = card_height - round(scale.body * 6)
-    for step in range(5):
-        y = plot_y + plot_height * step / 4
-        out.append(Line(plot_x, y, plot_x + plot_width, y, mix_hex(palette.surface, palette.muted, 0.2), 1))
     out.append(
-        Line(
-            plot_x,
-            plot_y,
-            plot_x,
-            plot_y + plot_height,
-            ctx.divider,
-            2,
+        _text(
+            margin,
+            card_top + card_height / 2 - round(scale.body),
+            card_width,
+            round(scale.body * 2),
+            "暂无数据",
+            scale.body,
+            palette.muted,
+            ctx.theme.body_font,
+            align=ALIGN_CENTER,
+            anchor=ANCHOR_MIDDLE,
         )
     )
-    slot = plot_width / len(points)
-    bar_width = slot * 0.44
-    for index, (label, value) in enumerate(points):
-        bar_height = max(plot_height * value / max_value, 2)
-        x = plot_x + slot * index + (slot - bar_width) / 2
-        y = plot_y + plot_height - bar_height
-        color = ctx.accent if index < len(points) - 1 else palette.secondary
-        out.append(Rect(x, y, bar_width, bar_height, fill=color, radius=round(ctx.radius.small / 2)))
-        out.append(
-            _text(
-                x - 20,
-                y - round(scale.small * 1.9),
-                bar_width + 40,
-                round(scale.small * 1.6),
-                f"{value:g}",
-                scale.caption,
-                palette.text,
-                ctx.theme.heading_font,
-                bold=True,
-                align=ALIGN_CENTER,
-            )
-        )
-        out.append(
-            _text(
-                x - 20,
-                plot_y + plot_height + 8,
-                bar_width + 40,
-                round(scale.small * 1.6),
-                label,
-                scale.caption,
-                palette.muted,
-                ctx.theme.body_font,
-                align=ALIGN_CENTER,
-            )
-        )
-    if ctx.hints:
-        out.append(
-            _text(
-                margin,
-                card_top + card_height - round(scale.body * 1.9),
-                card_width,
-                round(scale.small * 1.6),
-                "图表占位 · 导出后可在 PowerPoint 中替换为真实图表",
-                scale.caption,
-                palette.muted,
-                ctx.theme.body_font,
-                align=ALIGN_CENTER,
-            )
-        )
 
 
 def _render_contact(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:

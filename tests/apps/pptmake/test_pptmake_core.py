@@ -150,6 +150,59 @@ def test_invalid_image_fit_rejected() -> None:
         core.template_from_mapping({"slides": [{"layout": "image", "image": "a.png", "image_fit": "stretch"}]})
 
 
+def test_chart_options_roundtrip_and_defaults() -> None:
+    template = core.template_from_mapping(
+        {
+            "slides": [
+                {
+                    "layout": "chart",
+                    "chart_type": "pie",
+                    "unit": "%",
+                    "value_format": "0.0",
+                    "show_labels": False,
+                    "legend": "false",
+                }
+            ]
+        }
+    )
+    slide = template.slides[0]
+    assert (slide.chart_type, slide.unit, slide.value_format) == ("pie", "%", "0.0")
+    assert slide.show_labels is False
+    assert slide.legend is False
+    raw = core.template_to_mapping(template)
+    assert raw["slides"][0]["chart_type"] == "pie"
+    assert raw["slides"][0]["legend"] is False
+    default = core.default_template().slides[0]
+    assert default.chart_type == core.CHART_BAR
+    assert default.show_labels is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ({"chart_type": "radar"}, "chart_type"),
+        ({"show_labels": "maybe"}, "show_labels"),
+        ({"legend": "maybe"}, "legend"),
+    ],
+)
+def test_invalid_chart_options_rejected(raw: dict[str, object], message: str) -> None:
+    with pytest.raises(core.TemplateError, match=message):
+        core.template_from_mapping({"slides": [{"layout": "chart", **raw}]})
+
+
+def test_chart_palette_roundtrip_and_validation() -> None:
+    template = core.template_from_mapping(
+        {"version": 2, "theme": {"tokens": {"chart_palette": ["#112233", "#445566", "#778899"]}}}
+    )
+    assert template.theme.tokens.chart_palette == ("#112233", "#445566", "#778899")
+    raw = core.template_to_mapping(template)
+    assert raw["theme"]["tokens"]["chart_palette"] == ["#112233", "#445566", "#778899"]
+    with pytest.raises(core.TemplateError, match="chart_palette"):
+        core.template_from_mapping({"version": 2, "theme": {"tokens": {"chart_palette": ["#112233"]}}})
+    with pytest.raises(core.TemplateError, match="chart_palette"):
+        core.template_from_mapping({"version": 2, "theme": {"tokens": {"chart_palette": ["bad", "#445566"]}}})
+
+
 def test_mapping_tolerates_missing_optional_fields() -> None:
     template = core.template_from_mapping(
         {

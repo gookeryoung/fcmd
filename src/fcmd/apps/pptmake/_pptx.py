@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -29,134 +28,34 @@ from fcmd.apps.pptmake._core import (
     normalize_hex,
     relative_luminance,
 )
-from fcmd.apps.pptmake._design import Line, Oval, Picture, Primitive, Rect, Text, build_draw_list
+from fcmd.apps.pptmake._design import (
+    Chart,
+    Line,
+    Oval,
+    Picture,
+    Primitive,
+    Rect,
+    Table,
+    TableCell,
+    Text,
+    build_draw_list,
+)
+from fcmd.apps.pptmake._pptx_util import (
+    _POINTS_PER_UNIT,
+    _Api,
+    _api,
+    _apply_color,
+    _emu,
+    _scheme_map,
+    _set_east_asian_font,
+    _set_fill_and_line,
+)
 
 __all__ = ["export_pptx", "import_pptx", "pptx_slide_count"]
 
-_DESIGN_UNITS_PER_INCH = 96.0
-_POINTS_PER_UNIT = 72.0 / _DESIGN_UNITS_PER_INCH
 _NAMESPACE = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
-
-
-@dataclass(frozen=True, slots=True)
-class _Api:
-    """python-pptx 常用符号集合，避免在各处重复导入。"""
-
-    Presentation: Any
-    RGBColor: Any
-    MSO_SHAPE: Any
-    MSO_CONNECTOR: Any
-    MSO_ANCHOR: Any
-    MSO_AUTO_SIZE: Any
-    MSO_THEME_COLOR: Any
-    PP_ALIGN: Any
-    Inches: Any
-    Pt: Any
-
-
-def _api() -> _Api:
-    """延迟导入 python-pptx；缺失时给出可操作的安装提示。"""
-    try:
-        from pptx import Presentation
-        from pptx.dml.color import RGBColor
-        from pptx.enum.dml import MSO_THEME_COLOR
-        from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
-        from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
-        from pptx.util import Inches, Pt
-    except ImportError as exc:  # pragma: no cover - 依赖缺失时的兜底
-        raise TemplateError("生成 PPTX 需要 python-pptx，请安装：uv sync --extra ppt") from exc
-    return _Api(
-        Presentation=Presentation,
-        RGBColor=RGBColor,
-        MSO_SHAPE=MSO_SHAPE,
-        MSO_CONNECTOR=MSO_CONNECTOR,
-        MSO_ANCHOR=MSO_ANCHOR,
-        MSO_AUTO_SIZE=MSO_AUTO_SIZE,
-        MSO_THEME_COLOR=MSO_THEME_COLOR,
-        PP_ALIGN=PP_ALIGN,
-        Inches=Inches,
-        Pt=Pt,
-    )
-
-
-def _emu(value: float, api: _Api) -> Any:
-    """设计坐标（96 单位 / 英寸）转 EMU。"""
-    return api.Inches(value / _DESIGN_UNITS_PER_INCH)
-
-
-def _color(value: str, api: _Api) -> Any:
-    """颜色字符串转 python-pptx RGBColor。"""
-    return api.RGBColor.from_string(normalize_hex(value)[1:])
-
-
-# 调色板槽位 → python-pptx 主题色枚举名；改主题色时整稿联动。
-_THEME_TOKENS: dict[str, str] = {
-    "tx1": "TEXT_1",
-    "bg1": "BACKGROUND_1",
-    "tx2": "TEXT_2",
-    "bg2": "BACKGROUND_2",
-    "accent1": "ACCENT_1",
-    "accent2": "ACCENT_2",
-}
-
-
-def _scheme_map(theme: Theme) -> dict[str, str]:
-    """调色板 hex → 主题槽位；不在调色板内的颜色仍写 ``srgbClr``。"""
-    palette = theme.palette
-    pairs = (
-        (palette.text, "tx1"),
-        (palette.background, "bg1"),
-        (palette.muted, "tx2"),
-        (palette.surface, "bg2"),
-        (palette.accent, "accent1"),
-        (palette.secondary, "accent2"),
-    )
-    return {normalize_hex(color): token for color, token in pairs}
-
-
-def _apply_color(color: Any, value: str, scheme: dict[str, str], api: _Api) -> None:
-    """优先写主题色，保证 PowerPoint 里换主题后整稿联动。"""
-    token = scheme.get(normalize_hex(value))
-    if token is None:
-        color.rgb = _color(value, api)
-        return
-    color.theme_color = getattr(api.MSO_THEME_COLOR, _THEME_TOKENS[token])
-
-
-def _set_fill_and_line(  # noqa: PLR0913, PLR0917 - 形状样式工厂
-    shape: Any,
-    fill: str,
-    line: str,
-    line_width: float,
-    api: _Api,
-    scheme: dict[str, str],
-) -> None:
-    """设置形状填充与描边；``line`` 为空时去掉描边。"""
-    shape.shadow.inherit = False
-    if fill:
-        shape.fill.solid()
-        _apply_color(shape.fill.fore_color, fill, scheme, api)
-    else:
-        shape.fill.background()
-    if line:
-        _apply_color(shape.line.color, line, scheme, api)
-        shape.line.width = api.Pt(max(line_width * _POINTS_PER_UNIT, 0.75))
-    else:
-        shape.line.fill.background()
-
-
-def _set_east_asian_font(run: Any, font_name: str) -> None:
-    """同时设置东亚字体，保证中文按模板字体渲染。"""
-    try:
-        from lxml import etree
-        from pptx.oxml.ns import qn
-    except ImportError:  # pragma: no cover - lxml 随 python-pptx 安装
-        return
-    rpr = run._r.get_or_add_rPr()
-    element = rpr.find(qn("a:ea"))
-    if element is None:
-        element = etree.SubElement(rpr, qn("a:ea"))
-    element.set("typeface", font_name)
+# 「Medium Style 2 - Accent 1」：首行强调 + 斑马纹，与版式的自绘底色一致。
+_TABLE_STYLE_ID = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"
 
 
 def _style_run(run: Any, primitive: Text, api: _Api, scheme: dict[str, str]) -> None:
@@ -312,6 +211,164 @@ def _draw_picture(slide: Any, primitive: Picture, api: _Api) -> None:
         picture.crop_bottom = excess / 2
 
 
+def _set_table_style(table: Any, style_id: str) -> None:
+    """写入内置表格样式 GUID；python-pptx 未暴露该属性，直接补 OOXML。"""
+    try:
+        from lxml import etree
+        from pptx.oxml.ns import qn
+    except ImportError:  # pragma: no cover - lxml 随 python-pptx 安装
+        return
+    props = table._tbl.tblPr
+    if props is None:  # pragma: no cover - python-pptx 总会生成 tblPr
+        return
+    existing = props.find(qn("a:tableStyleId"))
+    if existing is not None:
+        props.remove(existing)
+    etree.SubElement(props, qn("a:tableStyleId")).text = style_id
+
+
+def _draw_table(slide: Any, primitive: Table, api: _Api, *, scheme: dict[str, str]) -> None:
+    """写入原生表格：行列尺寸与 draw list 完全一致，双击即可增删行。"""
+    columns = len(primitive.col_widths)
+    rows = len(primitive.rows)
+    if rows == 0 or columns == 0 or primitive.w <= 0 or primitive.h <= 0:
+        return
+    frame = slide.shapes.add_table(
+        rows,
+        columns,
+        _emu(primitive.x, api),
+        _emu(primitive.y, api),
+        _emu(primitive.w, api),
+        _emu(primitive.h, api),
+    )
+    table = frame.table
+    for index, width in enumerate(primitive.col_widths):
+        table.columns[index].width = _emu(width, api)
+    for index, height in enumerate(primitive.row_heights):
+        table.rows[index].height = _emu(height, api)
+    table.first_row = primitive.header
+    table.horz_banding = True
+    _set_table_style(table, _TABLE_STYLE_ID)
+    alignments = {
+        "left": api.PP_ALIGN.LEFT,
+        "center": api.PP_ALIGN.CENTER,
+        "right": api.PP_ALIGN.RIGHT,
+    }
+    for row_index in range(rows):
+        for column_index in range(columns):
+            row = primitive.rows[row_index]
+            cell_spec = row[column_index] if column_index < len(row) else TableCell("")
+            cell = table.cell(row_index, column_index)
+            fill = primitive.row_fill
+            if primitive.header and row_index == 0:
+                fill = primitive.header_fill
+            elif row_index % 2 == 0:
+                fill = primitive.band_fill
+            if fill:
+                cell.fill.solid()
+                _apply_color(cell.fill.fore_color, fill, scheme, api)
+            else:  # pragma: no cover - 版式总会给出底色
+                cell.fill.background()
+            cell.margin_left = _emu(primitive.pad_x, api)
+            cell.margin_right = _emu(primitive.pad_x, api)
+            cell.margin_top = _emu(primitive.pad_y, api)
+            cell.margin_bottom = _emu(primitive.pad_y, api)
+            cell.vertical_anchor = api.MSO_ANCHOR.MIDDLE
+            frame_text = cell.text_frame
+            frame_text.word_wrap = True
+            paragraph = frame_text.paragraphs[0]
+            paragraph.alignment = alignments.get(cell_spec.align, api.PP_ALIGN.LEFT)
+            run = paragraph.add_run()
+            run.text = cell_spec.text
+            font = run.font
+            size = primitive.header_size if row_index == 0 else primitive.body_size
+            font.size = api.Pt(max(size * _POINTS_PER_UNIT, 1.0))
+            font.bold = cell_spec.bold or (primitive.header and row_index == 0)
+            font.name = primitive.font or DEFAULT_BODY_FONT
+            _set_east_asian_font(run, primitive.font or DEFAULT_BODY_FONT)
+            if cell_spec.color:
+                _apply_color(font.color, cell_spec.color, scheme, api)
+
+
+_CHART_KINDS: dict[str, str] = {
+    "bar": "COLUMN_CLUSTERED",
+    "line": "LINE_MARKERS",
+    "pie": "PIE",
+}
+
+
+def _draw_chart(  # noqa: PLR0912 - 图表类型/轴/标签的分支集中在一处
+    slide: Any,
+    primitive: Chart,
+    api: _Api,
+    *,
+    scheme: dict[str, str],
+) -> None:
+    """写入原生图表：真实数据、系列色、轴标题与数据标签，双击可编辑数据。"""
+    if primitive.w <= 0 or primitive.h <= 0 or not primitive.categories:
+        return
+    data = api.CategoryChartData()
+    data.categories = list(primitive.categories)
+    for series in primitive.series:
+        data.add_series(series.name, list(series.values))
+    kind = getattr(api.XL_CHART_TYPE, _CHART_KINDS.get(primitive.kind, "COLUMN_CLUSTERED"))
+    frame = slide.shapes.add_chart(
+        kind,
+        _emu(primitive.x, api),
+        _emu(primitive.y, api),
+        _emu(primitive.w, api),
+        _emu(primitive.h, api),
+        data,
+    )
+    chart = frame.chart
+    chart.has_title = False
+    chart.font.size = api.Pt(max(primitive.size * _POINTS_PER_UNIT, 8.0))
+    chart.font.name = primitive.font or DEFAULT_BODY_FONT
+    chart.has_legend = primitive.legend
+    if primitive.legend:
+        chart.legend.position = api.XL_LEGEND_POSITION.BOTTOM
+        chart.legend.include_in_layout = False
+    plot = chart.plots[0]
+    plot.vary_by_categories = primitive.kind == "pie"
+    if primitive.kind == "bar":
+        plot.gap_width = 55
+    fmt = primitive.value_format
+    if primitive.show_labels:
+        plot.has_data_labels = True
+        labels = plot.data_labels
+        if fmt:
+            labels.number_format = fmt
+            labels.number_format_is_linked = False
+        if primitive.kind == "bar":
+            labels.position = api.XL_LABEL_POSITION.OUTSIDE_END
+        elif primitive.kind == "pie":
+            labels.position = api.XL_LABEL_POSITION.BEST_FIT
+    for index, series in enumerate(primitive.series):
+        target = chart.series[index]
+        if primitive.kind == "line":
+            target.smooth = False
+            target.format.line.width = api.Pt(2.0)
+            _apply_color(target.format.line.color, series.color, scheme, api)
+        else:
+            target.format.fill.solid()
+            _apply_color(target.format.fill.fore_color, series.color, scheme, api)
+    if primitive.kind == "pie" and primitive.colors:
+        points = chart.series[0].points
+        for index, color in enumerate(primitive.colors[: len(primitive.categories)]):
+            points[index].format.fill.solid()
+            _apply_color(points[index].format.fill.fore_color, color, scheme, api)
+    if primitive.kind != "pie":
+        value_axis = chart.value_axis
+        value_axis.has_major_gridlines = True
+        if fmt:
+            value_axis.tick_labels.number_format = fmt
+            value_axis.tick_labels.number_format_is_linked = False
+        if primitive.unit:
+            value_axis.has_title = True
+            value_axis.axis_title.text_frame.text = primitive.unit
+        chart.category_axis.has_major_gridlines = False
+
+
 def _draw_primitive(  # noqa: PLR0911, PLR0913 - 图元分派
     slide: Any,
     primitive: Primitive,
@@ -351,6 +408,12 @@ def _draw_primitive(  # noqa: PLR0911, PLR0913 - 图元分派
         return
     if isinstance(primitive, Picture):
         _draw_picture(slide, primitive, api)
+        return
+    if isinstance(primitive, Table):
+        _draw_table(slide, primitive, api, scheme=scheme)
+        return
+    if isinstance(primitive, Chart):
+        _draw_chart(slide, primitive, api, scheme=scheme)
         return
     if isinstance(primitive, Line):
         if primitive.x1 == primitive.x2 and primitive.y1 == primitive.y2:

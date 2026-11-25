@@ -211,6 +211,35 @@ def test_metrics_with_plain_values_and_padding() -> None:
     assert "待补充" in text
 
 
+def test_metrics_trend_semantics_and_number_format() -> None:
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_METRICS,
+        title="指标",
+        bullets=("1200|覆盖项目|+12%", "8|缺陷数|-3"),
+        unit="个",
+        value_format="#,###",
+    )
+    primitives = design.build_draw_list(slide, template)
+    texts = [item for item in primitives if isinstance(item, design.Text)]
+    content = "\n".join(line for item in texts for line in item.paragraphs)
+    assert "1,200个" in content
+    assert "+12%" in content
+    assert "-3" in content
+    semantic = template.theme.tokens.semantic
+    trend_colors = {line: item.color for item in texts for line in item.paragraphs if line in {"+12%", "-3"}}
+    assert trend_colors["+12%"] == semantic.success
+    assert trend_colors["-3"] == semantic.danger
+
+
+def test_format_number_variants() -> None:
+    assert design._format_number("1234.6", value_format="#,###") == "1,235"
+    assert design._format_number("42", value_format="0%") == "42%"
+    assert design._format_number("42", unit="%") == "42%"
+    assert design._format_number("暂无") == "暂无"
+    assert design._format_number("", unit="个") == "—"
+
+
 def test_timeline_with_single_item() -> None:
     template = _template()
     slide = core.SlideSpec(layout=core.LAYOUT_TIMELINE, title="单节点", bullets=("01|启动",))
@@ -375,14 +404,24 @@ def test_comparison_parses_dimension_and_two_options() -> None:
         bullets=("响应速度|小时级|分钟级", "维护成本|较高|更低"),
     )
     primitives = design.build_draw_list(slide, template)
-    texts = [item for item in primitives if isinstance(item, design.Text)]
-    content = "\n".join(line for item in texts for line in item.paragraphs)
-    for expected in ("对比维度", "自建", "采购", "响应速度", "小时级", "分钟级", "维护成本", "较高", "更低"):
-        assert expected in content
-    right_cells = [item for item in texts if item.paragraphs == ("分钟级",)]
-    assert right_cells
-    assert right_cells[0].color == template.theme.palette.accent
-    assert right_cells[0].bold is True
+    tables = [item for item in primitives if isinstance(item, design.Table)]
+    assert len(tables) == 1
+    table = tables[0]
+    assert len(table.col_widths) == 3
+    assert len(table.row_heights) == 3
+    assert table.w == pytest.approx(sum(table.col_widths))
+    assert table.h == pytest.approx(sum(table.row_heights))
+    cells = [[cell.text for cell in row] for row in table.rows]
+    assert cells == [
+        ["对比维度", "自建", "采购"],
+        ["响应速度", "小时级", "分钟级"],
+        ["维护成本", "较高", "更低"],
+    ]
+    right = table.rows[1][2]
+    assert right.color == template.theme.palette.accent
+    assert right.bold is True
+    content = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
+    assert "分钟级" not in content
 
 
 def test_comparison_pads_missing_fields_and_caps_rows() -> None:
@@ -391,46 +430,79 @@ def test_comparison_pads_missing_fields_and_caps_rows() -> None:
         layout=core.LAYOUT_COMPARISON,
         bullets=("只有维度", "维度|仅左", "甲|一|二", "乙|一|二", "丙|一|二"),
     )
-    primitives = design.build_draw_list(slide, template)
-    content = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
-    assert "只有维度" in content
-    assert content.count("—") >= 2
-    assert "丙" not in content
+    table = next(item for item in design.build_draw_list(slide, template) if isinstance(item, design.Table))
+    assert len(table.row_heights) == 5
+    labels = [row[0].text for row in table.rows]
+    assert labels == ["对比维度", "只有维度", "维度", "甲", "乙"]
+    assert table.rows[1][1].text == "—"
+    assert table.rows[1][2].text == "—"
+    assert "丙" not in labels
 
 
-def test_chart_bar_heights_follow_values() -> None:
+def test_comparison_aligns_numeric_columns_right() -> None:
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_COMPARISON,
+        subtitle="方案 A|方案 B|方案 C|方案 D",
+        bullets=("销量|1,200|980|1,500|1,300", "成本|300|280|260|240"),
+    )
+    table = next(item for item in design.build_draw_list(slide, template) if isinstance(item, design.Table))
+    assert len(table.col_widths) == 5
+    assert all(cell.align == design.ALIGN_RIGHT for cell in table.rows[1][1:])
+    assert table.rows[1][0].align == design.ALIGN_LEFT
+
+
+def test_chart_emits_editable_chart_with_values() -> None:
     template = _template()
     slide = core.SlideSpec(layout=core.LAYOUT_CHART, title="季度", bullets=("Q1|50", "Q2|100"))
     primitives = design.build_draw_list(slide, template)
-    bars = [
-        item
-        for item in primitives
-        if isinstance(item, design.Rect) and item.radius == core.DesignTokens().radius.small / 2 and item.w > 100
-    ]
-    assert len(bars) == 2
-    assert bars[0].h == pytest.approx(bars[1].h / 2)
-    assert bars[0].fill == template.theme.palette.accent
-    assert bars[1].fill == template.theme.palette.secondary
+    charts = [item for item in primitives if isinstance(item, design.Chart)]
+    assert len(charts) == 1
+    chart = charts[0]
+    assert chart.categories == ("Q1", "Q2")
+    assert chart.series[0].values == (50.0, 100.0)
+    assert chart.kind == "bar"
+    assert chart.colors[0] == template.theme.tokens.chart_palette[0]
     labels = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
-    assert "50" in labels
-    assert "100" in labels
     assert "图表占位" not in "\n".join(labels)
     hinted = design.build_draw_list(slide, template, hints=True)
-    hinted_labels = [line for item in hinted if isinstance(item, design.Text) for line in item.paragraphs]
-    assert "图表占位 · 导出后可在 PowerPoint 中替换为真实图表" in hinted_labels
+    assert not any("图表占位" in line for item in hinted if isinstance(item, design.Text) for line in item.paragraphs)
 
 
-def test_chart_handles_non_numeric_values() -> None:
+def test_chart_options_pie_line_and_negative_fallback() -> None:
+    template = _template()
+    pie = core.SlideSpec(
+        layout=core.LAYOUT_CHART,
+        bullets=("A|1", "B|3"),
+        chart_type=core.CHART_PIE,
+        unit="%",
+        show_labels=False,
+        legend=False,
+    )
+    chart = next(item for item in design.build_draw_list(pie, template) if isinstance(item, design.Chart))
+    assert chart.kind == "pie"
+    assert chart.unit == "%"
+    assert chart.show_labels is False
+    assert chart.legend is False
+    assert len(chart.colors) == 2
+    line = replace(pie, chart_type=core.CHART_LINE)
+    assert (
+        next(item for item in design.build_draw_list(line, template) if isinstance(item, design.Chart)).kind == "line"
+    )
+    negative = replace(pie, bullets=("A|-5", "B|10"))
+    assert (
+        next(item for item in design.build_draw_list(negative, template) if isinstance(item, design.Chart)).kind
+        == "bar"
+    )
+
+
+def test_chart_without_numbers_shows_empty_state() -> None:
     template = _template()
     slide = core.SlideSpec(layout=core.LAYOUT_CHART, title="空数据", bullets=("无|暂无",))
     primitives = design.build_draw_list(slide, template)
-    bars = [
-        item
-        for item in primitives
-        if isinstance(item, design.Rect) and item.radius == core.DesignTokens().radius.small / 2 and item.w > 100
-    ]
-    assert len(bars) == 1
-    assert bars[0].h == 2
+    assert not any(isinstance(item, design.Chart) for item in primitives)
+    content = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
+    assert "暂无数据" in content
 
 
 def test_contact_defaults_and_qr_placeholder() -> None:

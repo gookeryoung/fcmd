@@ -127,6 +127,69 @@ def test_cover_fit_crops_image_both_ratios(tmp_path: Path) -> None:
         assert any(name.startswith("ppt/media/") for name in archive.namelist())
 
 
+_EMU_PER_UNIT = 9525
+
+
+def test_export_writes_native_table_with_matching_geometry(tmp_path: Path) -> None:
+    template = core.default_template()
+    target = tmp_path / "table.pptx"
+    assert _pptx.export_pptx(template, target) == 13
+    presentation = _pptx._api().Presentation(str(target))
+    frame = next(shape for shape in list(presentation.slides)[10].shapes if shape.has_table)
+    table = frame.table
+    primitive = next(
+        item for item in design.build_draw_list(template.slides[10], template) if isinstance(item, design.Table)
+    )
+    assert len(table.columns) == len(primitive.col_widths)
+    assert len(table.rows) == len(primitive.row_heights)
+    for index, width in enumerate(primitive.col_widths):
+        assert table.columns[index].width / _EMU_PER_UNIT == pytest.approx(width, abs=1.0)
+    for index, height in enumerate(primitive.row_heights):
+        assert table.rows[index].height / _EMU_PER_UNIT == pytest.approx(height, abs=1.0)
+    assert frame.width / _EMU_PER_UNIT == pytest.approx(primitive.w, abs=1.0)
+    assert frame.height / _EMU_PER_UNIT == pytest.approx(primitive.h, abs=1.0)
+    assert table.first_row is True
+    assert table.horz_banding is True
+    assert table.cell(0, 0).text == "对比维度"
+
+
+def test_export_writes_editable_chart_with_data(tmp_path: Path) -> None:
+    template = core.default_template()
+    target = tmp_path / "chart.pptx"
+    _pptx.export_pptx(template, target)
+    presentation = _pptx._api().Presentation(str(target))
+    frame = next(shape for shape in list(presentation.slides)[11].shapes if shape.has_chart)
+    chart = frame.chart
+    plot = chart.plots[0]
+    assert list(plot.categories) == ["Q1", "Q2", "Q3", "Q4"]
+    assert list(chart.series[0].values) == [42, 68, 54, 86]
+    assert chart.has_legend is True
+    assert plot.has_data_labels is True
+    primitive = next(
+        item for item in design.build_draw_list(template.slides[11], template) if isinstance(item, design.Chart)
+    )
+    assert frame.width / _EMU_PER_UNIT == pytest.approx(primitive.w, abs=1.0)
+    assert frame.height / _EMU_PER_UNIT == pytest.approx(primitive.h, abs=1.0)
+
+
+def test_export_chart_types_and_negative_values(tmp_path: Path) -> None:
+    template = core.new_template(
+        slides=(
+            core.SlideSpec(layout=core.LAYOUT_CHART, bullets=("A|1", "B|3"), chart_type=core.CHART_PIE),
+            core.SlideSpec(layout=core.LAYOUT_CHART, bullets=("A|1", "B|3"), chart_type=core.CHART_LINE),
+            core.SlideSpec(layout=core.LAYOUT_CHART, bullets=("A|-4", "B|2"), value_format="0"),
+            core.SlideSpec(layout=core.LAYOUT_CHART, bullets=("无|暂无",)),
+        )
+    )
+    target = tmp_path / "charts.pptx"
+    _pptx.export_pptx(template, target)
+    presentation = _pptx._api().Presentation(str(target))
+    charts = [shape.chart for slide in presentation.slides for shape in slide.shapes if shape.has_chart]
+    assert len(charts) == 3
+    assert list(charts[2].series[0].values) == [-4, 2]
+    assert charts[0].plots[0].categories is not None
+
+
 def test_export_embeds_picture_and_paragraph_levels(tmp_path: Path) -> None:
     pytest.importorskip("PIL.Image")
     from PIL import Image

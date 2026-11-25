@@ -21,6 +21,7 @@ import tempfile
 import time
 import webbrowser
 from dataclasses import replace
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +58,7 @@ from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _office
 from fcmd.apps.pptmake import _preview as preview
 from fcmd.apps.pptmake import _tokens as tokens
-from fcmd.apps.pptmake._design import Line, Oval, Picture, Rect, Text, build_draw_list
+from fcmd.apps.pptmake._design import Chart, Line, Oval, Picture, Rect, Table, Text, build_draw_list
 from fcmd.apps.pptmake._history import TemplateHistory
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.apps.pptmake.pptmakew import (
@@ -185,7 +186,194 @@ def _paint_picture(painter: QPainter, primitive: Picture, view: preview.Viewport
     painter.restore()
 
 
-def _paint_primitive(painter: QPainter, primitive: Any, view: preview.Viewport, ui: Any) -> None:
+def _paint_table(painter: QPainter, primitive: Table, view: preview.Viewport) -> None:
+    """按 draw list 的行列几何绘制表格，与导出共用同一组尺寸。"""
+    scale = view.scale
+    x0, y0 = view.to_canvas(primitive.x, primitive.y)
+    aligns = {
+        "left": Qt.AlignmentFlag.AlignLeft,
+        "center": Qt.AlignmentFlag.AlignHCenter,
+        "right": Qt.AlignmentFlag.AlignRight,
+    }
+    y = y0
+    for row_index, height in enumerate(primitive.row_heights):
+        row = primitive.rows[row_index] if row_index < len(primitive.rows) else ()
+        fill = primitive.row_fill
+        if primitive.header and row_index == 0:
+            fill = primitive.header_fill
+        elif row_index % 2 == 0:
+            fill = primitive.band_fill
+        x = x0
+        for column_index, width in enumerate(primitive.col_widths):
+            cell = row[column_index] if column_index < len(row) else None
+            rect = QRectF(x, y, width * scale, height * scale)
+            if fill:
+                painter.fillRect(rect, QColor(fill))
+            if cell is not None and cell.text:
+                size = primitive.header_size if row_index == 0 else primitive.body_size
+                font = QFont(primitive.font or QApplication.font().family())
+                font.setPixelSize(max(round(size * scale), 1))
+                font.setBold(cell.bold or (primitive.header and row_index == 0))
+                painter.setFont(font)
+                painter.setPen(QPen(QColor(cell.color or primitive.text_color)))
+                flags = int(aligns.get(cell.align, Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter)
+                inset = primitive.pad_x * scale
+                painter.drawText(rect.adjusted(inset, 0, -inset, 0), flags, cell.text)
+            x += width * scale
+        y += height * scale
+        painter.setPen(_pen(primitive.line_color, primitive.line_width * scale))
+        painter.drawLine(QPointF(x0, y), QPointF(x0 + primitive.w * scale, y))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(_pen(primitive.line_color, primitive.line_width * scale))
+    painter.drawRect(QRectF(x0, y0, primitive.w * scale, primitive.h * scale))
+
+
+def _chart_values(primitive: Chart) -> list[float]:
+    """图表所有系列的数值，供预览计算刻度。"""
+    return [value for series in primitive.series for value in series.values]
+
+
+def _paint_chart_legend(  # noqa: PLR0913, PLR0917 - 图例需要图元、区域与缩放
+    painter: QPainter, primitive: Chart, x: float, y: float, width: float, height: float, scale: float
+) -> None:
+    """底部图例：柱/折线按系列，饼图按类别。"""
+    if height <= 0:
+        return
+    colors = primitive.colors or tuple(series.color for series in primitive.series)
+    entries = (
+        [(series.name, series.color) for series in primitive.series]
+        if primitive.kind != "pie"
+        else [(name, colors[index % len(colors)] if colors else "") for index, name in enumerate(primitive.categories)]
+    )
+    cursor = x
+    for name, color in entries:
+        painter.setPen(QPen(Qt.PenStyle.NoPen))
+        painter.setBrush(_brush(color))
+        painter.drawRect(QRectF(cursor, y + height * 0.3, height * 0.4, height * 0.4))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(primitive.muted_color)))
+        text_width = preview.measure_text(name, primitive.size) * scale
+        painter.drawText(
+            QRectF(cursor + height * 0.6, y, text_width + 8, height),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            name,
+        )
+        cursor += height * 0.6 + text_width + 20
+        if cursor > x + width:
+            break
+
+
+def _paint_chart(painter: QPainter, primitive: Chart, view: preview.Viewport) -> None:
+    """近似绘制图表：柱/折线含 0 轴，饼图按占比分片；导出仍是原生图表。"""
+    scale = view.scale
+    x, y = view.to_canvas(primitive.x, primitive.y)
+    width = primitive.w * scale
+    height = primitive.h * scale
+    if width <= 0 or height <= 0 or not primitive.categories:
+        return
+    font = QFont(primitive.font or QApplication.font().family())
+    font.setPixelSize(max(round(primitive.size * scale), 6))
+    painter.setFont(font)
+    legend_height = round(primitive.size * 2.0 * scale) if primitive.legend else 0.0
+    if primitive.kind == "pie":
+        _paint_pie_chart(painter, primitive, QRectF(x, y, width, height - legend_height))
+    else:
+        _paint_axis_chart(painter, primitive, QRectF(x, y, width, height - legend_height), scale)
+    if legend_height > 0:
+        _paint_chart_legend(painter, primitive, x, y + height - legend_height, width, legend_height, scale)
+
+
+def _paint_axis_chart(painter: QPainter, primitive: Chart, rect: QRectF, scale: float) -> None:
+    """柱状图 / 折线图：网格、刻度、0 轴、柱与数据标签。"""
+    plot = QRectF(
+        rect.x() + 48 * scale,
+        rect.y() + 16 * scale,
+        max(rect.width() - 64 * scale, 10.0),
+        max(rect.height() - 52 * scale, 10.0),
+    )
+    values = _chart_values(primitive)
+    low = min([*values, 0.0])
+    high = max([*values, 0.0])
+    span = (high - low) or 1.0
+
+    def to_y(value: float) -> float:
+        return plot.bottom() - (value - low) / span * plot.height()
+
+    ticks = 4
+    for step in range(ticks + 1):
+        value = low + span * step / ticks
+        gy = to_y(value)
+        painter.setPen(_pen(primitive.grid_color, 1))
+        painter.drawLine(QPointF(plot.left(), gy), QPointF(plot.right(), gy))
+        painter.setPen(QPen(QColor(primitive.muted_color)))
+        painter.drawText(
+            QRectF(rect.x(), gy - 10 * scale, 42 * scale, 20 * scale),
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            f"{value:g}",
+        )
+    zero_y = to_y(0.0)
+    painter.setPen(_pen(primitive.axis_color, 2))
+    painter.drawLine(QPointF(plot.left(), zero_y), QPointF(plot.right(), zero_y))
+    count = len(primitive.categories)
+    slot = plot.width() / max(count, 1)
+    series_count = max(len(primitive.series), 1)
+    bar_width = slot * 0.62 / series_count
+    for series_index, series in enumerate(primitive.series):
+        points: list[QPointF] = []
+        for index, value in enumerate(series.values[:count]):
+            center = plot.left() + slot * (index + 0.5)
+            top = to_y(value)
+            if primitive.kind == "line":
+                points.append(QPointF(center, top))
+                painter.setPen(QPen(QColor(series.color), max(2.0, 2 * scale)))
+                painter.setBrush(QColor(series.color))
+                painter.drawEllipse(QRectF(center - 3 * scale, top - 3 * scale, 6 * scale, 6 * scale))
+            else:
+                left = center - slot * 0.31 + series_index * bar_width
+                painter.setPen(QPen(Qt.PenStyle.NoPen))
+                painter.setBrush(QColor(series.color))
+                painter.drawRect(QRectF(left, min(top, zero_y), bar_width * 0.9, abs(zero_y - top)))
+            if primitive.show_labels:
+                painter.setPen(QPen(QColor(primitive.text_color)))
+                painter.drawText(
+                    QRectF(center - slot / 2, min(top, zero_y) - 18 * scale, slot, 16 * scale),
+                    int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom),
+                    f"{value:g}",
+                )
+        if primitive.kind == "line" and len(points) > 1:
+            painter.setPen(QPen(QColor(series.color), max(2.0, 2 * scale)))
+            for start, end in pairwise(points):
+                painter.drawLine(start, end)
+    painter.setPen(QPen(QColor(primitive.muted_color)))
+    for index, name in enumerate(primitive.categories):
+        center = plot.left() + slot * (index + 0.5)
+        painter.drawText(
+            QRectF(center - slot / 2, plot.bottom() + 6 * scale, slot, 20 * scale),
+            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
+            name,
+        )
+
+
+def _paint_pie_chart(painter: QPainter, primitive: Chart, rect: QRectF) -> None:
+    """饼图：按正数占比分片，颜色取 ``Chart.colors``。"""
+    values = [max(value, 0.0) for value in _chart_values(primitive)[: len(primitive.categories)]]
+    total = sum(values) or 1.0
+    side = min(rect.width(), rect.height()) * 0.86
+    box = QRectF(rect.center().x() - side / 2, rect.center().y() - side / 2, side, side)
+    start = 90.0
+    painter.setPen(QPen(Qt.PenStyle.NoPen))
+    for index, value in enumerate(values):
+        span = value / total * 360.0
+        color = primitive.colors[index % len(primitive.colors)] if primitive.colors else primitive.axis_color
+        painter.setBrush(_brush(color))
+        painter.drawPie(box, round(start * 16), round(span * 16))
+        start += span
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+
+def _paint_primitive(  # noqa: PLR0911 - 图元分派按类型逐条返回
+    painter: QPainter, primitive: Any, view: preview.Viewport, ui: Any
+) -> None:
     """把一个设计图元画到画布坐标；几何与既有换算口径一致。"""
     scale = view.scale
     if isinstance(primitive, Rect):
@@ -214,6 +402,12 @@ def _paint_primitive(painter: QPainter, primitive: Any, view: preview.Viewport, 
         return
     if isinstance(primitive, Picture):
         _paint_picture(painter, primitive, view, ui)
+        return
+    if isinstance(primitive, Table):
+        _paint_table(painter, primitive, view)
+        return
+    if isinstance(primitive, Chart):
+        _paint_chart(painter, primitive, view)
         return
     if isinstance(primitive, Line):
         x1, y1 = view.to_canvas(primitive.x1, primitive.y1)

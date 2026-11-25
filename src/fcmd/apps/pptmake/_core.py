@@ -20,6 +20,14 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 
+from fcmd.apps.pptmake._charts import (
+    CHART_BAR,
+    CHART_LINE,
+    CHART_PIE,
+    CHART_TYPE_TEXT,
+    CHART_TYPES,
+    chart_options,
+)
 from fcmd.apps.pptmake._palette import (
     DEFAULT_BODY_FONT,
     DEFAULT_HEADING_FONT,
@@ -47,6 +55,11 @@ __all__ = [
     "ASPECT_DESIGN",
     "ASPECT_INCHES",
     "ASPECT_TEXT",
+    "CHART_BAR",
+    "CHART_LINE",
+    "CHART_PIE",
+    "CHART_TYPES",
+    "CHART_TYPE_TEXT",
     "DECORS",
     "DECOR_FRAME",
     "DECOR_GRID",
@@ -246,6 +259,11 @@ class SlideSpec:
     accent: str = ""
     image: str = ""
     image_fit: str = IMAGE_FIT_COVER
+    chart_type: str = CHART_BAR
+    unit: str = ""
+    value_format: str = ""
+    show_labels: bool = True
+    legend: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,7 +424,7 @@ def new_slide(layout: str) -> SlideSpec:
         LAYOUT_METRICS: SlideSpec(
             kind,
             title="用数据说话",
-            bullets=("98%|交付准时率", "4.9|客户满意度", "120+|覆盖项目"),
+            bullets=("98%|交付准时率|+3pt", "4.9|客户满意度|+0.2", "120+|覆盖项目"),
         ),
         LAYOUT_TIMELINE: SlideSpec(
             kind,
@@ -434,6 +452,7 @@ def new_slide(layout: str) -> SlideSpec:
             kind,
             title="关键指标走势",
             bullets=("Q1|42", "Q2|68", "Q3|54", "Q4|86"),
+            unit="%",
         ),
         LAYOUT_CONTACT: SlideSpec(
             kind,
@@ -529,6 +548,11 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
                 "accent": slide.accent,
                 "image": slide.image,
                 "image_fit": slide.image_fit,
+                "chart_type": slide.chart_type,
+                "unit": slide.unit,
+                "value_format": slide.value_format,
+                "show_labels": slide.show_labels,
+                "legend": slide.legend,
             }
             for slide in template.slides
         ],
@@ -572,6 +596,10 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         image_fit = normalize_image_fit(raw.get("image_fit", IMAGE_FIT_COVER))
     except ValueError as exc:
         raise TemplateError(str(exc)) from exc
+    try:
+        charts = chart_options(raw, source=f"slides[{index}]")
+    except ValueError as exc:
+        raise TemplateError(str(exc)) from exc
     return SlideSpec(
         layout=layout,
         title=str(raw.get("title", "")),
@@ -581,6 +609,11 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         accent=accent,
         image=image,
         image_fit=image_fit,
+        chart_type=charts.chart_type,
+        unit=charts.unit,
+        value_format=charts.value_format,
+        show_labels=charts.show_labels,
+        legend=charts.legend,
     )
 
 
