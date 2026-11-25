@@ -418,7 +418,7 @@ def _contrast(color: str, other: str) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
-def readable_on(color: str, surface: str, fallback: str, *, minimum: float = 3.0) -> str:
+def readable_on(color: str, surface: str, fallback: str, *, minimum: float = 4.5) -> str:
     """把 ``color`` 逐级向 ``fallback``（正文色）混合，直到与 ``surface`` 达标。
 
     用于「强调色文字画在强调色浅底上」这类场景：浅色主题向深色正文靠拢、
@@ -433,6 +433,23 @@ def readable_on(color: str, surface: str, fallback: str, *, minimum: float = 3.0
     return fallback
 
 
+def ink_on_fill(fill: str, palette: Palette, *, minimum: float = 4.5) -> tuple[str, str]:
+    """返回（文字色, 填充色）：在填充上选更易读的深浅色，都不达标时压暗填充。
+
+    用于「编号节点」这类小字号文字直接压在强调色实心块上的场景：正文口径
+    要求 4.5:1，单靠换文字色不够时，把填充向黑色方向压暗。
+    """
+    candidates = (palette.background, palette.text, "#FFFFFF", "#0B1020")
+    best = max(candidates, key=lambda color: _contrast(color, fill))
+    if _contrast(best, fill) >= minimum:
+        return best, fill
+    for step in range(1, 21):
+        darkened = mix_hex(fill, "#000000", step / 20)
+        if _contrast("#FFFFFF", darkened) >= minimum:
+            return "#FFFFFF", darkened
+    return "#FFFFFF", "#000000"
+
+
 _LIGHT_BACKGROUND = "#F5F7FA"
 _LIGHT_SURFACE = "#FFFFFF"
 _LIGHT_TEXT = "#0B1020"
@@ -440,7 +457,7 @@ _LIGHT_MUTED = "#5A6473"
 _DARK_BACKGROUND = "#0B1020"
 _DARK_SURFACE = "#151C33"
 _DARK_TEXT = "#F4F6FB"
-_DARK_MUTED = "#9AA4BF"
+_DARK_MUTED = "#A7AFC7"
 
 
 def _page_palette(template: TemplateSpec, slide: SlideSpec) -> Palette:
@@ -1131,7 +1148,7 @@ def _render_timeline(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 36,
                 phase,
                 scale.small,
-                ctx.accent,
+                readable_on(ctx.accent, palette.background, palette.text),
                 ctx.theme.heading_font,
                 bold=True,
                 align=ALIGN_CENTER,
@@ -1225,7 +1242,7 @@ def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             round(scale.small * 2),
             "VISUAL STORY",
             scale.caption,
-            ctx.accent,
+            readable_on(ctx.accent, palette.background, palette.text),
             ctx.theme.heading_font,
             bold=True,
         )
@@ -1865,7 +1882,7 @@ def _render_cards(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 x + spacing.block,
                 card_top + spacing.block + badge + spacing.gap,
                 card_width - spacing.block * 2,
-                round(scale.heading * 2.4),
+                round(scale.heading * 2.7),
                 title,
                 scale.heading,
                 palette.text,
@@ -1880,7 +1897,7 @@ def _render_cards(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                     x + spacing.block,
                     card_top + spacing.block + badge + spacing.gap * 3,
                     card_width - spacing.block * 2,
-                    card_height - spacing.block * 2 - badge - spacing.gap * 3,
+                    card_height - spacing.block - badge - spacing.gap * 3,
                     body,
                     scale.body,
                     palette.muted,
@@ -1914,7 +1931,8 @@ def _render_process(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
         body = parts[2] if len(parts) > 2 else ""
         center = margin + step_width * index + step_width / 2
         node = round(scale.heading * 1.6)
-        out.append(Oval(center - node / 2, axis_y - node / 2, node, node, fill=ctx.accent))
+        node_text, node_fill = ink_on_fill(ctx.accent, palette)
+        out.append(Oval(center - node / 2, axis_y - node / 2, node, node, fill=node_fill))
         out.append(
             _text(
                 center - node / 2,
@@ -1923,7 +1941,7 @@ def _render_process(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 node,
                 number,
                 round(scale.small * 0.85),
-                palette.background,
+                node_text,
                 ctx.theme.heading_font,
                 bold=True,
                 align=ALIGN_CENTER,
@@ -2178,7 +2196,7 @@ def _render_team(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 round(scale.body * 1.6),
                 role,
                 scale.body,
-                ctx.accent,
+                readable_on(ctx.accent, palette.background, palette.text),
                 ctx.theme.body_font,
                 align=ALIGN_CENTER,
             )
@@ -2392,7 +2410,7 @@ def _render_appendix(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 row_height,
                 f"{index + 1:02d}",
                 round(scale.body * 0.9),
-                ctx.accent,
+                readable_on(ctx.accent, palette.background, palette.text),
                 ctx.theme.heading_font,
                 bold=True,
                 anchor=ANCHOR_MIDDLE,

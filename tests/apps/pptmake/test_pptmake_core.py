@@ -57,7 +57,7 @@ def test_palette_and_labels() -> None:
         accent="#1F8A7A",
         secondary="#D97757",
         text="#1D2A2A",
-        muted="#6B7A78",
+        muted="#61706E",
     )
     assert core.palette_for_style("missing") == core.palette_for_style(core.STYLE_AURORA)
     assert core.style_label(core.STYLE_AURORA) == core.STYLE_TEXT[core.STYLE_AURORA]

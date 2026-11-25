@@ -90,7 +90,7 @@ PALETTES: Final[dict[str, Palette]] = {
         accent="#1F8A7A",
         secondary="#D97757",
         text="#1D2A2A",
-        muted="#6B7A78",
+        muted="#61706E",
     ),
     STYLE_GRAPHITE: Palette(
         background="#17181C",
@@ -106,6 +106,6 @@ PALETTES: Final[dict[str, Palette]] = {
         accent="#E4572E",
         secondary="#2A6F97",
         text="#2B211D",
-        muted="#8A746B",
+        muted="#806C63",
     ),
 }

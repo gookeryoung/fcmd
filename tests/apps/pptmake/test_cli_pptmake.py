@@ -11,7 +11,7 @@ from typing import cast
 import pytest
 
 from fcmd.apps.pptmake import _core as core
-from fcmd.apps.pptmake import pptmake
+from fcmd.apps.pptmake import _quality, pptmake
 from fcmd.apps.pptmake._pptx import pptx_slide_count
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
@@ -352,6 +352,6 @@ def test_quality_reports_unlabeled_image(tmp_path: Path) -> None:
     image = tmp_path / "hero.png"
     image.write_bytes(b"not-a-real-png")
     template = core.new_template(slides=(core.SlideSpec(layout=core.LAYOUT_IMAGE, title="图片", image=str(image)),))
-    report = pptmake._quality_issues(template, verbose=False)
+    report = _quality.quality_issues(template, verbose=False)
     assert report.unlabeled == 1
     assert report.missing == 0

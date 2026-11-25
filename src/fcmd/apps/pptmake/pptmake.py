@@ -19,9 +19,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal
+from typing import Literal
 
 import fcmd
 from fcmd.apps.pptmake import _office
@@ -37,7 +36,6 @@ from fcmd.apps.pptmake._core import (
     STYLES,
     TEMPLATE_SUFFIX,
     TemplateError,
-    TemplateSpec,
     default_pptx_path,
     default_template_path,
     load_template,
@@ -48,10 +46,9 @@ from fcmd.apps.pptmake._core import (
     template_from_mapping,
     template_to_mapping,
 )
-from fcmd.apps.pptmake._design import Oval, Picture, Primitive, Rect, Text, build_draw_list
 from fcmd.apps.pptmake._library import build_sample
 from fcmd.apps.pptmake._pptx import export_potx, export_pptx, import_pptx
-from fcmd.apps.pptmake._preview import contrast_ratio, overflow_issues
+from fcmd.apps.pptmake._quality import BODY_CONTRAST, MIN_FONT_PT, quality_issues
 from fcmd.apps.pptmake._rules import check_template
 from fcmd.console import print_error
 
@@ -195,113 +192,18 @@ def validate_command(template: Path) -> None:
     except TemplateError as exc:
         _print_error(str(exc))
         return
-    report = _quality_issues(spec, verbose=True, base_dir=template.parent)
+    report = quality_issues(spec, verbose=True, base_dir=template.parent)
     rules = check_template(spec)
     for page, issue in rules:
         print(issue.describe(page))
     if report.total or rules:
         print(
-            f"共有 {report.overflow} 处文本溢出、{report.missing} 个缺失图片、{report.small} 处小于 {_MIN_FONT_PT:g}pt 的文字、"
-            f"{report.unlabeled} 张图片缺少替代文本、{report.contrast} 处对比度低于 {_MIN_CONTRAST:g}:1、"
+            f"共有 {report.overflow} 处文本溢出、{report.missing} 个缺失图片、{report.small} 处小于 {MIN_FONT_PT:g}pt 的文字、"
+            f"{report.unlabeled} 张图片缺少替代文本、{report.contrast} 处对比度低于 {BODY_CONTRAST:g}:1（正文）、"
             f"{len(rules)} 处超出内容容量；建议在 pptmakew 中精简文字 / 补齐替代文本 / 修正路径。"
         )
         return
     print(f"校验通过：{len(spec.slides)} 页，未发现文本溢出、缺失图片、过小字号、低对比度或超限内容。")
-
-
-_MIN_FONT_PT: Final[float] = 12.0
-# 设计坐标 96 单位 / 英寸，1 单位 = 0.75pt。
-_MIN_FONT_UNITS: Final[float] = _MIN_FONT_PT * 96 / 72
-_MIN_CONTRAST: Final[float] = 3.0
-
-
-@dataclass(frozen=True, slots=True)
-class _Quality:
-    """一页或整份模板的质量检查结果。"""
-
-    overflow: int = 0
-    missing: int = 0
-    small: int = 0
-    unlabeled: int = 0
-    contrast: int = 0
-
-    @property
-    def total(self) -> int:
-        return self.overflow + self.missing + self.small + self.unlabeled + self.contrast
-
-
-def _backdrop_of(primitives: tuple[Primitive, ...], text: Text, default: str) -> str:
-    """取文字下方最近的实心矩形 / 椭圆颜色，找不到时用页面底色。
-
-    背景光斑、边框等标记为 ``decorative`` 的图元不参与判断：它们只是页面
-    底色的浅淡变体，文字可读性以内容卡片与页面底色为准。
-    """
-    center_x = text.x + text.w / 2
-    center_y = text.y + text.h / 2
-    backdrop = default
-    for item in primitives:
-        if item is text:
-            break
-        if isinstance(item, Rect) and item.fill and not item.decorative:
-            if item.x <= center_x <= item.x + item.w and item.y <= center_y <= item.y + item.h:
-                backdrop = item.fill
-        elif isinstance(item, Oval) and item.fill and not item.decorative:
-            radius_x = item.w / 2
-            radius_y = item.h / 2
-            if radius_x <= 0 or radius_y <= 0:
-                continue
-            dx = (center_x - item.x - radius_x) / radius_x
-            dy = (center_y - item.y - radius_y) / radius_y
-            if dx * dx + dy * dy <= 1:
-                backdrop = item.fill
-    return backdrop
-
-
-def _quality_issues(spec: TemplateSpec, *, verbose: bool, base_dir: Path | None = None) -> _Quality:
-    """汇总（溢出, 缺失图片, 过小字号, 缺替代文本, 对比度不足）；``verbose`` 时逐页打印。"""
-    counts = _Quality()
-    for index, slide in enumerate(spec.slides, start=1):
-        image = Path(slide.image)
-        if slide.image and not image.is_absolute() and base_dir is not None:
-            image = base_dir / image
-        missing = 1 if slide.image and not image.is_file() else 0
-        if missing and verbose:
-            _print_error(f"第 {index} 页图片不存在：{slide.image}")
-        primitives = build_draw_list(slide, spec, page_number=index, page_total=len(spec.slides))
-        issues = overflow_issues(primitives)
-        if issues and verbose:
-            print(f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{len(issues)} 处可能溢出")
-            for issue in issues[:3]:
-                print(f"  - {issue.message}")
-        tiny = sum(1 for primitive in primitives if isinstance(primitive, Text) and primitive.size < _MIN_FONT_UNITS)
-        if tiny and verbose:
-            print(
-                f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{tiny} 处字号小于 {_MIN_FONT_PT:g}pt"
-            )
-        page_background = next((item.fill for item in primitives if isinstance(item, Rect) and item.fill), "#FFFFFF")
-        unlabeled = sum(1 for item in primitives if isinstance(item, Picture) and item.path and not item.alt)
-        if unlabeled and verbose:
-            print(f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{unlabeled} 张图片缺少替代文本")
-        low = sum(
-            1
-            for item in primitives
-            if isinstance(item, Text)
-            and item.size >= _MIN_FONT_UNITS
-            and not item.decorative
-            and contrast_ratio(item.color, _backdrop_of(primitives, item, page_background)) < _MIN_CONTRAST
-        )
-        if low and verbose:
-            print(
-                f"第 {index} 页（{LAYOUT_TEXT.get(slide.layout, slide.layout)}）：{low} 处文字对比度低于 {_MIN_CONTRAST:g}:1"
-            )
-        counts = _Quality(
-            overflow=counts.overflow + len(issues),
-            missing=counts.missing + missing,
-            small=counts.small + tiny,
-            unlabeled=counts.unlabeled + unlabeled,
-            contrast=counts.contrast + low,
-        )
-    return counts
 
 
 @fcmd.tool("pptmake", subcommand="doctor", help="检查 PPTX / PDF 依赖与运行环境", description=_DESCRIPTION)
@@ -362,7 +264,7 @@ def export_command(  # noqa: PLR0913, PLR0917 - CLI 参数即命令开关
     except TemplateError as exc:
         _print_error(str(exc))
         return
-    report = _quality_issues(spec, verbose=not force, base_dir=template.parent)
+    report = quality_issues(spec, verbose=not force, base_dir=template.parent)
     if report.total and not force:
         print(
             f"导出已取消：{report.overflow} 处文本溢出、{report.missing} 个缺失图片、{report.small} 处过小字号、"
@@ -439,7 +341,7 @@ def build_command(  # noqa: PLR0911 - 每个失败分支给出具体原因并直
         _print_error(str(exc))
         return
     base_dir = template.parent if template is not None else data.parent
-    report = _quality_issues(spec, verbose=not force, base_dir=base_dir)
+    report = quality_issues(spec, verbose=not force, base_dir=base_dir)
     if report.total and not force:
         print(
             f"导出已取消：{report.overflow} 处文本溢出、{report.missing} 个缺失图片、{report.small} 处过小字号、"
