@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,7 @@ from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QListView, QWidget
 
 from fcmd.apps.pptmake import _core as core
-from fcmd.apps.pptmake import _pptmakew_qt
+from fcmd.apps.pptmake import _pptmakew_qt, _pptmakew_tokens, _tokens
 from fcmd.apps.pptmake._pptmakew_qt import PptmakeQtWindow, _paint_slide
 from fcmd.apps.pptmake.pptmakew import LAYOUT_OPTIONS
 from fcmd.gui import style as _qt_theme
@@ -453,6 +454,38 @@ def test_persist_writes_style_aspect_and_geometry(window: Any, tmp_path: Path) -
     settings = _pptmakew_qt.load_settings(tmp_path / "ui" / "pptmakew.json")
     assert settings.style == core.STYLE_GRAPHITE
     assert settings.geometry == "1200x760+10+20"
+
+
+def test_token_dialog_edits_tokens_and_rejects_bad_color(window: Any) -> None:
+    dialog = _pptmakew_tokens.TokenDialog(window._template.theme.tokens, window)
+    dialog._type_spins["body"].setValue(30)
+    dialog._spacing_spins["line_body"].setValue(1.6)
+    dialog._radius_spins["card"].setValue(24)
+    dialog._color_edits["chart.0"].setText("#112233")
+    dialog._color_edits["semantic.info"].setText("#00A3FF")
+    dialog._bullet_char.setText("·")
+    edited = dialog.values()
+    assert edited.type_scale.body == 30
+    assert edited.spacing.line_body == 1.6
+    assert edited.radius.card == 24
+    assert edited.chart_palette[0] == "#112233"
+    assert edited.semantic.info == "#00A3FF"
+    assert edited.bullet.char == "·"
+    assert dialog.result_tokens() is None
+    dialog._color_edits["chart.1"].setText("不是颜色")
+    with pytest.raises(_tokens.TokenError):
+        dialog.values()
+    dialog.close()
+
+
+def test_apply_tokens_commits_undoable_change(window: Any) -> None:
+    new_tokens = replace(
+        window._template.theme.tokens,
+        type_scale=replace(window._template.theme.tokens.type_scale, body=30),
+    )
+    window._apply_tokens(new_tokens)
+    assert window._template.theme.tokens.type_scale.body == 30
+    assert window._history.undo_label() == "调整设计令牌"
 
 
 def test_layout_survives_tiny_window(window: Any) -> None:

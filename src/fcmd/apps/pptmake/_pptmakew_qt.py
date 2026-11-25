@@ -84,6 +84,7 @@ from fcmd.apps.pptmake._design import (
     picture_crop,
 )
 from fcmd.apps.pptmake._history import TemplateHistory
+from fcmd.apps.pptmake._pptmakew_tokens import TokenDialog
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.apps.pptmake._rules import rule_for
 from fcmd.apps.pptmake.pptmakew import (
@@ -1123,6 +1124,14 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
         controls.body.addLayout(grid)
+        token_row = QHBoxLayout()
+        token_row.setContentsMargins(0, 0, 0, 0)
+        token_button = button("设计令牌…")
+        token_button.setToolTip("调整字号阶梯、间距、圆角、描边、项目符号、图表色与图片压暗")
+        token_button.clicked.connect(self._edit_tokens)
+        token_row.addWidget(token_button)
+        token_row.addStretch(1)
+        controls.body.addLayout(token_row)
         left_layout.addWidget(controls)
 
         colors = Card("配色（点击修改）", left)
@@ -2022,6 +2031,26 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._refresh_slides()
         self._refresh_canvases()
         self.set_status(f"装饰强度：{intensity * 100:.0f}%")
+
+    def _edit_tokens(self) -> None:
+        """打开设计令牌对话框；确定后写回模板并立即重绘。"""
+        dialog = TokenDialog(self._template.theme.tokens, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        updated = dialog.result_tokens()
+        if updated is not None:
+            self._apply_tokens(updated)
+
+    def _apply_tokens(self, new_tokens: tokens.DesignTokens) -> None:
+        """把新令牌写入主题并记录一次可撤销的变更。"""
+        theme = replace(self._template.theme, tokens=new_tokens)
+        if not self._commit(replace(self._template, theme=theme), "调整设计令牌"):
+            return
+        self._refresh_style_controls()
+        self._refresh_layout_icons()
+        self._refresh_slides()
+        self._refresh_canvases()
+        self.set_status("已更新设计令牌")
 
     def _on_slide_selected(self, index: int) -> None:
         if self._syncing_thumb or index < 0:

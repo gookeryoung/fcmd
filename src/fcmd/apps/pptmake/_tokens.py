@@ -21,6 +21,13 @@ __all__ = [
     "DENSITY_SPACIOUS",
     "DENSITY_TEXT",
     "DISPLAY_TYPE_FIELDS",
+    "RADIUS_LABELS",
+    "SEMANTIC_FIELDS",
+    "SEMANTIC_LABELS",
+    "SPACING_BOUNDS",
+    "SPACING_LABELS",
+    "TYPE_FIELDS",
+    "TYPE_LABELS",
     "BulletScale",
     "DesignTokens",
     "RadiusScale",
@@ -136,6 +143,14 @@ _SEMANTIC_LABELS: Final[dict[str, str]] = {
     "danger": "危险",
     "info": "提示",
 }
+# 对外别名：GUI 令牌编辑器按标签构建设置项。
+TYPE_FIELDS: Final[tuple[str, ...]] = _TYPE_FIELDS
+TYPE_LABELS: Final[dict[str, str]] = _TYPE_LABELS
+SPACING_BOUNDS: Final[dict[str, tuple[float, float]]] = _SPACING_BOUNDS
+SPACING_LABELS: Final[dict[str, str]] = _SPACING_LABELS
+RADIUS_LABELS: Final[dict[str, str]] = _RADIUS_LABELS
+SEMANTIC_FIELDS: Final[tuple[str, ...]] = _SEMANTIC_FIELDS
+SEMANTIC_LABELS: Final[dict[str, str]] = _SEMANTIC_LABELS
 
 
 class TokenError(ValueError):
