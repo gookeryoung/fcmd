@@ -9,9 +9,11 @@ from xml.etree import ElementTree
 
 import pytest
 
+from fcmd.apps.pptmake import _base, _base_asset, _pptx
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _design as design
-from fcmd.apps.pptmake import _pptx
+
+_NS_P = {"p": "http://schemas.openxmlformats.org/presentationml/2006/main"}
 
 
 def test_draw_edge_primitives_and_save(tmp_path: Path) -> None:
@@ -334,3 +336,86 @@ def test_read_theme_falls_back_for_missing_or_broken_package(tmp_path: Path) -> 
     broken = tmp_path / "broken.pptx"
     broken.write_text("x", encoding="utf-8")
     assert _pptx._read_theme(broken) == (core.Palette(), core.DEFAULT_HEADING_FONT, core.DEFAULT_BODY_FONT)
+
+
+def test_base_asset_layouts_placeholders_and_size() -> None:
+    path = _base.base_path(core.ASPECT_16_9)
+    assert path is not None and path.is_file()
+    assert _base.base_path(core.ASPECT_4_3) is None
+    presentation = _pptx._api().Presentation(str(path))
+    assert (presentation.slide_width, presentation.slide_height) == (12192000, 6858000)
+    assert [layout.name for layout in presentation.slide_layouts] == [core.LAYOUT_TEXT[key] for key in core.LAYOUTS]
+    for layout in presentation.slide_layouts:
+        indices = {placeholder.placeholder_format.idx for placeholder in layout.placeholders}
+        assert indices == {0, 1}
+    quote_layout = _base.layout_for(presentation, core.LAYOUT_QUOTE)
+    assert quote_layout is not None
+    assert quote_layout.name == core.LAYOUT_TEXT[core.LAYOUT_QUOTE]
+    assert _base.layout_for(presentation, "unknown") is None
+    with zipfile.ZipFile(path) as archive:
+        master = ElementTree.fromstring(archive.read("ppt/slideMasters/slideMaster1.xml"))
+        theme = archive.read("ppt/theme/theme1.xml").decode("utf-8")
+    assert len(master.findall(".//p:sldLayoutIdLst/p:sldLayoutId", _NS_P)) == len(core.LAYOUTS)
+    assert core.default_template().theme.palette.accent[1:] in theme
+
+
+def test_base_asset_builder_regenerates_valid_package(tmp_path: Path) -> None:
+    target = tmp_path / "base.pptx"
+    assert _base_asset.build(target) == len(core.LAYOUTS)
+    presentation = _pptx._api().Presentation(str(target))
+    assert len(presentation.slide_layouts) == len(core.LAYOUTS)
+    assert (presentation.slide_width, presentation.slide_height) == (12192000, 6858000)
+
+
+def test_native_export_writes_titles_into_layout_placeholders(tmp_path: Path) -> None:
+    template = core.default_template()
+    target = tmp_path / "native-base.pptx"
+    assert _pptx.export_pptx(template, target) == len(template.slides)
+    presentation = _pptx._api().Presentation(str(target))
+    assert len(presentation.slide_layouts) == len(core.LAYOUTS)
+    assert (presentation.slide_width, presentation.slide_height) == (12192000, 6858000)
+    for spec, slide in zip(template.slides, presentation.slides, strict=True):
+        heading = _base._heading(spec, template)
+        assert slide.shapes.title is not None
+        assert slide.shapes.title.text == heading.title
+        subtitles = [ph.text for ph in slide.placeholders if ph.placeholder_format.idx == 1]
+        assert subtitles == [heading.subtitle]
+
+
+def test_native_export_draws_nothing_twice_for_headings(tmp_path: Path) -> None:
+    template = core.new_template(slides=(core.SlideSpec(layout=core.LAYOUT_COVER, title="只出现一次"),))
+    target = tmp_path / "once.pptx"
+    _pptx.export_pptx(template, target)
+    presentation = _pptx._api().Presentation(str(target))
+    slide = next(iter(presentation.slides))
+    texts = [shape.text_frame.text for shape in slide.shapes if shape.has_text_frame]
+    assert texts.count("只出现一次") == 1
+
+
+def test_flat_export_keeps_blank_layout_without_placeholders(tmp_path: Path) -> None:
+    target = tmp_path / "flat-base.pptx"
+    _pptx.export_pptx(core.default_template(), target, native=False)
+    presentation = _pptx._api().Presentation(str(target))
+    for slide in presentation.slides:
+        assert slide.shapes.title is None
+        assert len(slide.placeholders) == 0
+
+
+def test_export_unknown_layout_falls_back_to_floating_text(tmp_path: Path) -> None:
+    template = core.new_template(slides=(core.SlideSpec(layout="unknown", title="未知版式回退"),))
+    target = tmp_path / "unknown.pptx"
+    _pptx.export_pptx(template, target)
+    slide = next(iter(_pptx._api().Presentation(str(target)).slides))
+    assert slide.shapes.title is None
+    texts = [shape.text_frame.text for shape in slide.shapes if shape.has_text_frame]
+    assert "未知版式回退" in texts
+
+
+def test_native_roundtrip_keeps_title_as_first_text(tmp_path: Path) -> None:
+    template = core.new_template(
+        slides=(core.SlideSpec(layout=core.LAYOUT_BULLETS, title="回环标题", bullets=("要点一",)),)
+    )
+    target = tmp_path / "roundtrip.pptx"
+    _pptx.export_pptx(template, target)
+    imported = _pptx.import_pptx(target)
+    assert imported.slides[0].title == "回环标题"

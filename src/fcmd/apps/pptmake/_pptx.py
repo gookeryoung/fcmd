@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from fcmd.apps.pptmake._base import base_path, drop_placeholders, layout_for, raise_placeholders, write_heading
 from fcmd.apps.pptmake._core import (
     ASPECT_4_3,
     ASPECT_16_9,
@@ -503,27 +504,45 @@ def _apply_theme_package(path: Path, template: TemplateSpec) -> None:
 def export_pptx(template: TemplateSpec, path: Path, *, native: bool = True) -> int:
     """按模板渲染 ``.pptx``，返回写入的页数。
 
-    ``native`` 为真（默认）时写入主题色/主题字体与 ``slidenum`` 字段；
-    ``--flat`` 会关闭这些后处理，保留纯 ``srgbClr`` + 静态页码的旧行为。
+    ``native`` 为真（默认）时优先打开随包基础模板：按 ``slide.layout`` 取
+    对应版式，把标题 / 副标题写进原生占位符，主题色 / 主题字体与
+    ``slidenum`` 字段照常后处理；缺少基础模板或 ``--flat`` 时退回
+    「空白版式 + 浮动文本框」路径，行为与旧版一致。
     """
     api = _api()
+    base = base_path(template.aspect) if native else None
     try:
-        presentation = api.Presentation()
+        presentation = api.Presentation(str(base)) if base is not None else api.Presentation()
     except Exception as exc:  # pragma: no cover - 默认模板损坏属于环境问题
         raise TemplateError(f"创建 PPTX 失败：{exc}") from exc
     width_inches, height_inches = ASPECT_INCHES.get(template.aspect, ASPECT_INCHES[ASPECT_16_9])
-    presentation.slide_width = api.Inches(width_inches)
-    presentation.slide_height = api.Inches(height_inches)
+    if base is None:
+        presentation.slide_width = api.Inches(width_inches)
+        presentation.slide_height = api.Inches(height_inches)
     scheme = _scheme_map(template.theme) if native else {}
     blank_layout = presentation.slide_layouts[6]
     total = len(template.slides)
     for index, slide_spec in enumerate(template.slides, start=1):
-        slide = presentation.slides.add_slide(blank_layout)
-        primitives = build_draw_list(slide_spec, template, page_number=index, page_total=total)
+        layout = layout_for(presentation, slide_spec.layout) if base is not None else None
+        use_placeholders = layout is not None
+        slide = presentation.slides.add_slide(layout if layout is not None else blank_layout)
+        if use_placeholders:
+            write_heading(slide, slide_spec, template, api)
+        elif base is not None:
+            drop_placeholders(slide)
+        primitives = build_draw_list(
+            slide_spec,
+            template,
+            page_number=index,
+            page_total=total,
+            headings=not use_placeholders,
+        )
         for primitive in primitives:
             _draw_primitive(slide, primitive, api, theme=template.theme, scheme=scheme, native=native)
         if slide_spec.note.strip():
             slide.notes_slide.notes_text_frame.text = slide_spec.note
+        if use_placeholders:
+            raise_placeholders(slide)
     properties = presentation.core_properties
     properties.title = template.name
     properties.author = template.author
@@ -639,6 +658,11 @@ def import_pptx(path: Path) -> TemplateSpec:
     slides: list[SlideSpec] = []
     for index, slide in enumerate(slides_raw):
         texts = _slide_texts(slide)
+        title_shape = slide.shapes.title
+        title_text = title_shape.text.strip() if title_shape is not None else ""
+        if title_text and title_text in texts:
+            texts.remove(title_text)
+            texts.insert(0, title_text)
         if not texts:
             slides.append(SlideSpec(layout=LAYOUT_BULLETS))
             continue

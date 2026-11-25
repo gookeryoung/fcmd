@@ -534,3 +534,20 @@ def test_contact_uses_provided_rows() -> None:
     assert "随时沟通" in content
     assert "官网" in content
     assert "fcmd.dev" in content
+
+
+@pytest.mark.parametrize("layout", core.LAYOUTS)
+def test_headings_flag_skips_title_text_but_keeps_decoration(layout: str) -> None:
+    template = _template()
+    slide = core.SlideSpec(layout=layout, title="标题占位", subtitle="副标题占位", bullets=("要点",))
+    with_headings = design.build_draw_list(slide, template)
+    without = design.build_draw_list(slide, template, headings=False)
+    assert len(without) < len(with_headings)
+    assert all(
+        isinstance(
+            item, (design.Rect, design.Oval, design.Line, design.Picture, design.Table, design.Chart, design.Text)
+        )
+        for item in without
+    )
+    assert not any("标题占位" in item.paragraphs for item in without if isinstance(item, design.Text))
+    assert any(isinstance(item, (design.Rect, design.Oval, design.Line)) for item in without)
