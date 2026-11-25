@@ -73,13 +73,22 @@ class ImportStats:
     kept: dict[str, int] = field(default_factory=lambda: dict.fromkeys(_REPORT_KINDS, 0))
 
     def summary(self) -> str:
-        """格式化为 ``保留率：文本 98.0%（49/50） · …``；总量为 0 时按 100% 计。"""
+        """格式化为 ``保留率：文本 98.0%（49/50） · …``；总量为 0 时按 100% 计。
+
+        任一类保留率低于 95% 时在末尾追加告警，提示用户人工核对丢失内容。
+        """
         parts: list[str] = []
+        low: list[str] = []
         for kind in _REPORT_KINDS:
             total, kept = self.found[kind], self.kept[kind]
             rate = 100.0 if total == 0 else kept / total * 100
             parts.append(f"{kind} {rate:.1f}%（{kept}/{total}）")
-        return "保留率：" + " · ".join(parts)
+            if rate < 95.0:
+                low.append(kind)
+        text = "保留率：" + " · ".join(parts)
+        if low:
+            text += "；低于 95%：" + "、".join(low)
+        return text
 
 
 def _theme_color(colors: ElementTree.Element | None, tag: str) -> str | None:
