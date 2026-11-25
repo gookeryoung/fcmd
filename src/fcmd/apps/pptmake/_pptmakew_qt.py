@@ -32,6 +32,7 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QFontMetricsF,
     QIcon,
     QPainter,
     QPainterPath,
@@ -758,6 +759,23 @@ class _PreviewCanvas(QWidget):  # pragma: no cover - Qt 控件
             _paint_message(painter, width, height, f"预览失败\n{exc}", ui.muted)
 
 
+_METRICS_REFERENCE_PT = 100.0
+
+
+def _qt_text_width(text: str, size: float, bold: bool) -> float:
+    """用 ``QFontMetricsF`` 量文本宽度，折算回设计单位（1 单位 = 0.75pt）。
+
+    在固定 100pt 下取「宽度 / 字号」得到相对字宽，再乘目标字号，避免依赖
+    当前屏幕 DPI；结果交给 :func:`~fcmd.apps.pptmake._preview.set_text_metrics`
+    替换纯逻辑侧的 em 估算。
+    """
+    font = QFont()
+    font.setBold(bold)
+    font.setPointSizeF(_METRICS_REFERENCE_PT)
+    advance = QFontMetricsF(font).horizontalAdvance(text)
+    return (advance / _METRICS_REFERENCE_PT) * size
+
+
 class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """侧边栏设计器：设计（页面 / 预览 / 设置）+ 样式（模板与配色 + 实时预览）。"""
 
@@ -792,6 +810,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             settings_path=settings_path,
             theme_app="pptmakew",
         )
+        preview.set_text_metrics(_qt_text_width)
         self._base_title = self.windowTitle()
         self._draft_path = self.settings_path.parent / "pptmakew-draft.pptmtpl.json"
         self._apply_timer = QTimer(self)

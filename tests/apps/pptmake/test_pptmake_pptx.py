@@ -558,3 +558,30 @@ def test_native_roundtrip_keeps_title_as_first_text(tmp_path: Path) -> None:
     _pptx.export_pptx(template, target)
     imported = _pptx.import_pptx(target)
     assert imported.slides[0].title == "回环标题"
+
+
+def test_flat_export_geometry_matches_draw_list(tmp_path: Path) -> None:
+    """golden：导出后的文本框几何与预览绘制列表一致（阈值 1 设计单位）。"""
+    slide_spec = core.SlideSpec(
+        layout=core.LAYOUT_CARDS,
+        title="几何一致性",
+        bullets=("成本|下降一成", "交付|提前两周", "质量|零缺陷"),
+    )
+    template = core.new_template(slides=(slide_spec,))
+    target = tmp_path / "geometry.pptx"
+    _pptx.export_pptx(template, target, native=False)
+
+    primitives = design.build_draw_list(slide_spec, template, page_number=1, page_total=1, headings=True)
+    expected = [item for item in primitives if isinstance(item, design.Text) and item.w > 0 and item.h > 0]
+    shapes = pytest.importorskip("pptx.enum.shapes")
+    api = _pptx._api()
+    slide = api.Presentation(str(target)).slides[0]
+    boxes = [shape for shape in slide.shapes if shape.shape_type == shapes.MSO_SHAPE_TYPE.TEXT_BOX]
+    assert len(boxes) == len(expected)
+    # 1 设计单位 = 1/96 英寸 = 9525 EMU。
+    emu_per_unit = api.Inches(1) / 96
+    for box, item in zip(boxes, expected, strict=True):
+        assert abs(box.left / emu_per_unit - item.x) <= 1
+        assert abs(box.top / emu_per_unit - item.y) <= 1
+        assert abs(box.width / emu_per_unit - item.w) <= 1
+        assert abs(box.height / emu_per_unit - item.h) <= 1
