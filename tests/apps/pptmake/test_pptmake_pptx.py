@@ -623,3 +623,58 @@ def test_image_ratio_geometry_matches_draw_list(tmp_path: Path, ratio: str, aspe
         assert abs(shape.top / emu_per_unit - item.y) <= 1
         assert abs(shape.width / emu_per_unit - item.w) <= 1
         assert abs(shape.height / emu_per_unit - item.h) <= 1
+
+
+@pytest.mark.parametrize("layout", core.LAYOUTS)
+def test_all_layouts_43_text_geometry_matches_draw_list(tmp_path: Path, layout: str) -> None:
+    """golden：24 个版式在 4:3 下导出的文本框几何与绘制列表一致（阈值 1 单位）。"""
+    slide_spec = core.SlideSpec(layout=layout, title="四三画幅", bullets=("一", "二", "三"))
+    template = core.new_template(slides=(slide_spec,), aspect=core.ASPECT_4_3)
+    target = tmp_path / f"43-{layout}.pptx"
+    _pptx.export_pptx(template, target, native=False)
+
+    primitives = design.build_draw_list(slide_spec, template, page_number=1, page_total=1, headings=True)
+    expected = [item for item in primitives if isinstance(item, design.Text) and item.w > 0 and item.h > 0]
+    shapes = pytest.importorskip("pptx.enum.shapes")
+    api = _pptx._api()
+    slide = api.Presentation(str(target)).slides[0]
+    boxes = [shape for shape in slide.shapes if shape.shape_type == shapes.MSO_SHAPE_TYPE.TEXT_BOX]
+    assert len(boxes) == len(expected)
+    emu_per_unit = api.Inches(1) / 96
+    for box, item in zip(boxes, expected, strict=True):
+        assert abs(box.left / emu_per_unit - item.x) <= 1
+        assert abs(box.top / emu_per_unit - item.y) <= 1
+        assert abs(box.width / emu_per_unit - item.w) <= 1
+        assert abs(box.height / emu_per_unit - item.h) <= 1
+
+
+def test_native_43_table_and_chart_geometry(tmp_path: Path) -> None:
+    """golden：4:3 原生导出时表格 / 图表框架几何与绘制列表一致。"""
+    template = core.default_template(aspect=core.ASPECT_4_3)
+    target = tmp_path / "native-43.pptx"
+    assert _pptx.export_pptx(template, target) == len(template.slides)
+    api = _pptx._api()
+    presentation = api.Presentation(str(target))
+    slides = list(presentation.slides)
+    found = 0
+    for index, slide_spec in enumerate(template.slides):
+        primitives = design.build_draw_list(
+            slide_spec, template, page_number=index + 1, page_total=len(template.slides)
+        )
+        table = next((item for item in primitives if isinstance(item, design.Table)), None)
+        chart = next((item for item in primitives if isinstance(item, design.Chart)), None)
+        if table is not None:
+            frame = next(shape for shape in slides[index].shapes if shape.has_table)
+            assert frame.width / _EMU_PER_UNIT == pytest.approx(table.w, abs=1.0)
+            assert frame.height / _EMU_PER_UNIT == pytest.approx(table.h, abs=1.0)
+            for column, width in zip(frame.table.columns, table.col_widths, strict=True):
+                assert column.width / _EMU_PER_UNIT == pytest.approx(width, abs=1.0)
+            for row, height in zip(frame.table.rows, table.row_heights, strict=True):
+                assert row.height / _EMU_PER_UNIT == pytest.approx(height, abs=1.0)
+            found += 1
+        if chart is not None:
+            frame = next(shape for shape in slides[index].shapes if shape.has_chart)
+            assert frame.width / _EMU_PER_UNIT == pytest.approx(chart.w, abs=1.0)
+            assert frame.height / _EMU_PER_UNIT == pytest.approx(chart.h, abs=1.0)
+            found += 1
+    assert found >= 2
