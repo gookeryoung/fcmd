@@ -437,6 +437,11 @@ def readable_on(color: str, surface: str, fallback: str, *, minimum: float = 4.5
     return fallback
 
 
+def _best_ink(surface: str, *candidates: str) -> str:
+    """在候选文字色中选与 ``surface`` 对比度最高的一个。"""
+    return max(candidates, key=lambda color: _contrast(color, surface))
+
+
 def ink_on_fill(fill: str, palette: Palette, *, minimum: float = 4.5) -> tuple[str, str]:
     """返回（文字色, 填充色）：在填充上选更易读的深浅色，都不达标时压暗填充。
 
@@ -762,7 +767,7 @@ def _render_cover(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
 
 
 def _render_agenda(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """目录：单列或双列编号列表。"""
+    """目录：大号编号 + 标题 + 分隔线，按可用高度均分，超过 4 项分两列。"""
     palette = ctx.palette
     scale = ctx.type_scale
     spacing = ctx.spacing
@@ -770,44 +775,62 @@ def _render_agenda(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
     items = slide.bullets or ("项目背景与目标", "现状与挑战", "方案与亮点", "计划与下一步")
     columns = 2 if len(items) > 4 else 1
     per_column = (len(items) + columns - 1) // columns
-    gap = spacing.gap
+    gap = round(ctx.width * 0.06)
     column_width = (ctx.width - ctx.margin * 2 - gap * (columns - 1)) / columns
-    marker = round(scale.body * 1.5)
+    row_gap = spacing.gap
+    row_height = (ctx.height - ctx.margin - top - row_gap * (per_column - 1)) / per_column
+    marker = round(scale.heading * 1.6)
+    label_size = round(scale.heading * 1.15)
     for index, item in enumerate(items):
         column = index // per_column
         row = index % per_column
         x = ctx.margin + column * (column_width + gap)
-        y = top + round(scale.small) + row * (spacing.section + spacing.gap)
-        marker_fill = mix_hex(palette.background, ctx.accent, 0.22)
-        out.append(Rect(x, y, marker, marker, fill=marker_fill, radius=marker / 2))
+        y = top + row * (row_height + row_gap)
+        marker_fill = ctx.accent if index == 0 else mix_hex(palette.background, ctx.accent, 0.18)
+        center = y + (row_height - marker) / 2
+        out.append(Rect(x, center, marker, marker, fill=marker_fill, radius=marker / 2))
         out.append(
             _text(
                 x,
-                y,
+                center,
                 marker,
                 marker,
                 f"{index + 1:02d}",
-                scale.caption,
-                readable_on(ctx.accent, marker_fill, palette.text),
+                round(scale.heading * 0.72),
+                _best_ink(marker_fill, palette.text, palette.background, "#000000", "#FFFFFF"),
                 ctx.theme.heading_font,
                 bold=True,
                 align=ALIGN_CENTER,
                 anchor=ANCHOR_MIDDLE,
             )
         )
+        text_x = x + round(marker * 1.45)
         out.append(
             _text(
-                x + round(marker * 1.47),
-                y - 2,
-                column_width - round(marker * 1.47),
-                round(scale.body * 1.9),
+                text_x,
+                y,
+                column_width - round(marker * 1.45),
+                row_height,
                 item,
-                scale.body,
+                label_size,
                 palette.text,
-                ctx.theme.body_font,
+                ctx.theme.heading_font,
+                bold=index == 0,
                 anchor=ANCHOR_MIDDLE,
             )
         )
+        if row < per_column - 1:
+            divider_y = y + row_height + row_gap / 2
+            out.append(
+                Line(
+                    text_x,
+                    divider_y,
+                    x + column_width,
+                    divider_y,
+                    ctx.divider,
+                    max(round(ctx.stroke_width), 1),
+                )
+            )
 
 
 def _render_section(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
@@ -2611,13 +2634,15 @@ def _render_appendix(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
 
 
 def _render_agenda_pages(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """目录页码：编号 + 标题 + 引导线 + 页码。"""
+    """目录页码：大号编号 + 标题 + 引导线 + 页码，按可用高度均分。"""
     palette = ctx.palette
     scale = ctx.type_scale
     margin = ctx.margin
     top = _paint_heading(out, ctx, slide)
     items = slide.bullets[:6] or ("项目背景与目标|03", "现状与挑战|06", "方案与亮点|09", "落地计划|12")
-    row_height = min(round(scale.heading * 2.6), (ctx.height - top - round(scale.body * 4)) / len(items))
+    row_height = (ctx.height - margin - top) / len(items)
+    label_size = round(scale.heading * 1.15)
+    number_width = round(scale.heading * 2.2)
     page_width = round(scale.display * 1.4)
     for index, item in enumerate(items):
         parts = _split_parts(item)
@@ -2629,25 +2654,25 @@ def _render_agenda_pages(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> N
             _text(
                 margin,
                 y,
-                round(scale.heading * 1.8),
+                number_width,
                 row_height,
                 f"{index + 1:02d}",
-                scale.heading,
+                round(scale.heading * 1.1),
                 ctx.accent if index == 0 else palette.muted,
                 ctx.theme.heading_font,
                 bold=True,
                 anchor=ANCHOR_MIDDLE,
             )
         )
-        title_width = ctx.width - margin * 2 - round(scale.heading * 1.8) - page_width
+        title_width = ctx.width - margin * 2 - number_width - page_width
         out.append(
             _text(
-                margin + round(scale.heading * 2),
+                margin + number_width,
                 y,
                 title_width,
                 row_height,
                 title,
-                scale.heading,
+                label_size,
                 palette.text,
                 ctx.theme.heading_font,
                 bold=index == 0,
@@ -2662,7 +2687,7 @@ def _render_agenda_pages(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> N
                     page_width,
                     row_height,
                     page,
-                    scale.heading,
+                    label_size,
                     accent,
                     ctx.theme.heading_font,
                     bold=True,
@@ -2676,7 +2701,7 @@ def _render_agenda_pages(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> N
                     margin,
                     y + row_height,
                     ctx.width - margin * 2,
-                    1,
+                    max(round(ctx.stroke_width), 1),
                     fill=ctx.divider,
                 )
             )

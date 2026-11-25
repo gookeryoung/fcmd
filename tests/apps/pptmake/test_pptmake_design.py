@@ -167,6 +167,21 @@ def test_agenda_two_columns_for_many_items() -> None:
     assert len(texts) >= 8
 
 
+def test_agenda_uses_large_numbers_and_fills_height() -> None:
+    """目录编号与标题按标题级字号绘制，行距撑满正文区。"""
+    template = _template()
+    slide = core.SlideSpec(layout=core.LAYOUT_AGENDA, title="目录", bullets=("甲", "乙", "丙", "丁"))
+    primitives = design.build_draw_list(slide, template)
+    texts = [item for item in primitives if isinstance(item, design.Text)]
+    labels = [item for item in texts if item.paragraphs and item.paragraphs[0] in ("甲", "乙", "丙", "丁")]
+    numbers = [item for item in texts if item.paragraphs and item.paragraphs[0].isdigit()]
+    heading = template.theme.tokens.type_scale.heading
+    assert labels and numbers
+    assert all(item.size >= heading for item in labels)
+    assert all(item.size >= heading * 0.7 for item in numbers)
+    assert max(item.y + item.h for item in labels) >= design.design_size(template.aspect)[1] * 0.85
+
+
 def test_cover_long_title_uses_smaller_font() -> None:
     template = _template()
     short = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_COVER, title="短标题"), template)
