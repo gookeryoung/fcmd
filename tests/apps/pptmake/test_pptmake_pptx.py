@@ -9,7 +9,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from fcmd.apps.pptmake import _base, _base_asset, _pptx, _pptx_import
+from fcmd.apps.pptmake import _base, _base_asset, _library, _pptx, _pptx_import, _quality
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _design as design
 
@@ -678,3 +678,17 @@ def test_native_43_table_and_chart_geometry(tmp_path: Path) -> None:
             assert frame.height / _EMU_PER_UNIT == pytest.approx(chart.h, abs=1.0)
             found += 1
     assert found >= 2
+
+
+@pytest.mark.parametrize("aspect", core.ASPECTS)
+@pytest.mark.parametrize("scene", tuple(_library.SCENES))
+@pytest.mark.parametrize("style", core.STYLES)
+def test_scene_style_aspect_matrix_smoke(tmp_path: Path, style: str, scene: str, aspect: str) -> None:
+    """全矩阵冒烟：4 风格 × 3 场景 × 2 画幅，校验零问题、导出成功、页数一致。"""
+    spec = _library.build_sample(scene, style=style, aspect=aspect)
+    report = _quality.quality_issues(spec, verbose=False)
+    assert report.total == 0
+    target = tmp_path / f"{style}-{scene}-{aspect.replace(':', 'x')}.pptx"
+    assert _pptx.export_pptx(spec, target) == len(spec.slides)
+    slides = list(_pptx._api().Presentation(str(target)).slides)
+    assert len(slides) == len(spec.slides)
