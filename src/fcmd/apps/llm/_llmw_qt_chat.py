@@ -112,6 +112,18 @@ def service_labels(states: list[ServeState]) -> list[tuple[str, ServeState]]:
     return options
 
 
+def _read_service_states() -> list[ServeState]:
+    """读取已登记服务清单；读失败按「没有服务」处理（与下拉的兜底口径一致）。
+
+    要扫进程（psutil），放在 GUI 线程上约 0.1 s；由 :meth:`ChatPage.refresh_services_async`
+    投到线程池。
+    """
+    try:
+        return llmenv.list_states()
+    except ServeError:
+        return []
+
+
 def endpoint_from_form(base_url: str, api_key: str, model: str) -> Endpoint:
     """把表单里的连接参数转成 :class:`Endpoint`（去掉多余的 ``/v1`` 后缀）。"""
     url = base_url.strip().rstrip("/")
@@ -254,6 +266,8 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         service_row.setSpacing(8)
         owner.service_combo = QComboBox(self)
         owner.service_combo.setEditable(False)
+        # 先放「自定义」：服务清单在后台读，结果回来前下拉不是空白的。
+        owner.service_combo.addItem(_CUSTOM)
         service_row.addWidget(owner.service_combo, 1)
         owner.service_tag = StatusTag("未连接", tone="muted", parent=self)
         service_row.addWidget(owner.service_tag)
@@ -343,7 +357,9 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         self._bridge.failed.connect(self._on_failed)
         self._build()
         self.state.servicesChanged.connect(lambda _states: self.refresh_services())
-        self.refresh_services()
+        # 首次填充走后台：``list_states`` 要扫进程（~0.1 s），不占首屏；读回前下拉
+        # 只有「自定义」项，结果回来后自动选中第一个可用服务。
+        self.refresh_services_async()
         self._restore_session_form()
 
     # ------------------------------------------------------------------ #
@@ -526,11 +542,24 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         self.status(text)
 
     def refresh_services(self) -> None:
-        """按最新状态刷新服务下拉项，默认选中第一个可用服务并刷新状态提示。"""
-        try:
-            states = llmenv.list_states()
-        except ServeError:
-            states = []
+        """按最新状态刷新服务下拉项（同步读；按钮 / 服务信号回调用）。"""
+        self._apply_services(_read_service_states())
+
+    def refresh_services_async(self) -> None:
+        """后台读服务状态再回填下拉：不阻塞首屏与切页（~0.1 s）。"""
+        submit(
+            _read_service_states,
+            on_done=self._apply_services,
+            on_error=self._services_failed,
+        )
+
+    def _services_failed(self, message: str) -> None:
+        """读状态失败：按「没有服务」渲染，状态栏说明原因，不弹窗。"""
+        self._apply_services([])
+        self._set_status(f"读取服务状态失败：{message}")
+
+    def _apply_services(self, states: list[ServeState]) -> None:
+        """按给定快照重建服务下拉项，默认选中第一个可用服务并刷新状态提示。"""
         current = self.service_combo.currentText()
         self.service_combo.blockSignals(True)
         self.service_combo.clear()

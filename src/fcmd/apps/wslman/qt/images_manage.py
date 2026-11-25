@@ -67,7 +67,10 @@ class ImagesManageMixin:
         """工作线程安装本地包：tar / wsl / vhdx / 压缩包都走同一套替换与目录预检。"""
 
         def work(_cancel: threading.Event) -> str:  # noqa: PLR0912 - 替换 / 目录 / vhdx / tar 分支
-            payload = _owner._install.prepare_payload(archive, target.parent)
+            # 安装才需要 ``_install``（连带 ``archivex``），不在首屏导入。
+            from fcmd.apps.wslman import _install
+
+            payload = _install.prepare_payload(archive, target.parent)
             try:
                 env = _owner.cli._build_environment()
                 existing = _owner.cli._view(env).find(name)
@@ -243,11 +246,13 @@ class ImagesManageMixin:
         arch = download.arch if download is not None else "x86_64"
 
         def work(cancel: threading.Event) -> str:
+            from fcmd.apps.wslman import _source, _wslui
+
             env = _owner.cli._build_environment()
             auto = policy == _owner._mirrors.AUTO
             # WSLUI 的 lxc rootfs 与官方 .wsl 不是同一份字节：用户显式给了 sha256 时
             # 只走可校验的官方 / 国内镜像，避免把未校验的字节当成校验通过。
-            wslui = _owner._wslui.wslui_candidates(entry, wslui_catalog, arch=arch) if auto and expected is None else ()
+            wslui = _wslui.wslui_candidates(entry, wslui_catalog, arch=arch) if auto and expected is None else ()
             if download is not None:
                 filename = _owner.w.image_filename(entry.name, download)
                 digest = expected or download.sha256
@@ -279,8 +284,6 @@ class ImagesManageMixin:
             check = _owner.cli._preflight_for(env, primary, None, estimated=True)
             if not check.ok:
                 raise _owner.runtime_error(f"目标卷空间不足：{check.detail}", hint="换一个目录")
-
-            from fcmd.apps.wslman import _source
 
             result_data = _source.download_mirrored(
                 primary,

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
-from fcmd.apps.llm import llmbase, llmengine, llmenv, llmserve
+from fcmd.apps.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.llm._llmgguf import GgufPrecision
 from fcmd.apps.llm._llmw_hardware import (
     HardwareSnapshot,
@@ -83,6 +83,8 @@ def gpu_usage(runner: llmbase.Runner = llmbase.run_command) -> tuple[int, int] |
 def scan_models(port: int | None = None) -> _ScanOutcome:
     """扫描全部模型目录并收集引擎 / GPU / 默认端口状态（阻塞，供线程池调用）。"""
     roots = llmenv.models_dirs()
+    # 界面要的是「现在」的目录内容：先清掉进程内扫描缓存再走一遍。
+    llmmodel.clear_scan_cache()
     entries: list[ModelEntry] = []
     issues: list[str] = []
     seen: set[str] = set()

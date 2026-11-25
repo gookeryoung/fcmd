@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from fcmd.apps.wslman._errors import invalid_argument, runtime_error
+from fcmd.apps.wslman._images import ARCHIVE_SUFFIXES, INSTALL_SUFFIXES, TAR_SUFFIXES, VHDX_SUFFIXES
 from fcmd.tools.archive.archivex import extract_archive
 
 __all__ = [
@@ -24,15 +25,6 @@ __all__ = [
     "InstallPayload",
     "prepare_payload",
 ]
-
-VHDX_SUFFIXES: tuple[str, ...] = (".vhdx",)
-TAR_SUFFIXES: tuple[str, ...] = (".tar", ".tar.gz", ".tgz", ".wsl")
-"""WSL ``--import`` 可直接吃的 tar / gzip tar / 官方 ``.wsl``。"""
-COMPRESSED_TAR_SUFFIXES: tuple[str, ...] = (".tar.bz2", ".tbz", ".tbz2", ".tar.xz", ".txz")
-"""bz2 / xz 压缩 tar：先解成普通 tar 再导入，兼容性最稳。"""
-ARCHIVE_SUFFIXES: tuple[str, ...] = (*COMPRESSED_TAR_SUFFIXES, ".zip", ".7z", ".rar", ".gz", ".bz2", ".xz")
-INSTALL_SUFFIXES: tuple[str, ...] = (*TAR_SUFFIXES, *VHDX_SUFFIXES, *ARCHIVE_SUFFIXES)
-"""可安装后缀：长后缀在前，``.tar.gz`` 不会被误认成 ``.gz``。"""
 
 
 @dataclass(frozen=True, slots=True)

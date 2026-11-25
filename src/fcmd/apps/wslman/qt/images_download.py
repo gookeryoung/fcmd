@@ -47,19 +47,31 @@ class ImagesDownloadMixin:
         self._pump_downloads()
 
     def _restore_images_cache(self) -> Any:
-        """把上次落盘的镜像清单直接铺到列表上（不等网络），返回命中的缓存。"""
+        """把上次落盘的镜像清单直接铺到列表上（不等网络），返回命中的缓存。
+
+        行卡渲染与实例页的「镜像 xxx」标注推到首帧之后：二十多个镜像 × 上百个
+        图标位图（SVG 渲染）约 100 ms，直接顶慢首屏；列表先给状态行提示，
+        下一轮事件循环就填满（:meth:`_render_images` 是清空重建，幂等）。
+        """
         cache = _owner._images.load_cache()
         if cache is None or not cache.entries:
             return None
         self.image_entries = cache.entries
         self._images_from_cache = True
         self._images_note = f"本地缓存 · 更新于 {_owner._images_stamp(cache.fetched_at)}"
-        self._render_images()
-        self._refresh_distro_images()
+        self.images_status.setText("正在载入本地缓存…")
+        _owner.QTimer.singleShot(0, self._fill_cached_images)
         self._log(
             f"[镜像列表] 已载入本地缓存：{len(cache.entries)} 个，更新于 {_owner._images_stamp(cache.fetched_at)}"
         )
         return cache
+
+    def _fill_cached_images(self) -> None:
+        """首帧后填充缓存行卡：入口可能在切页 / 闭窗后才触发，先把状态看一遍。"""
+        if self._closing or not self.image_entries:
+            return
+        self._render_images()
+        self._refresh_distro_images()
 
     def _refresh_image_states(self) -> None:
         """重扫本地状态并重绘行（不重新拉在线清单）。
@@ -144,8 +156,16 @@ class ImagesDownloadMixin:
 
     def _load_wslui_catalog(self, force: bool) -> None:
         """后台加载 WSLUI 镜像源；到货后再重绘一次行卡（不阻塞镜像清单）。"""
+
+        def worker() -> Any:
+            # 导入放在后台函数里：``_wslui`` 连带 ``urllib`` / ``ssl`` / ``email``，
+            # 不进首屏（镜像源本来就不参与首屏渲染）。
+            from fcmd.apps.wslman import _wslui
+
+            return _wslui.load_catalog(force=force)
+
         _owner.submit_daemon(
-            lambda: _owner._wslui.load_catalog(force=force),
+            worker,
             on_done=self._apply_wslui_catalog,
             on_error=lambda message: self._log(f"[镜像源] {message}"),
         )
@@ -222,7 +242,9 @@ class ImagesDownloadMixin:
         与 ``_wslui.wslui_candidates`` 同口径，但不构造下载候选：这里只用于展示，
         折叠行给数量，展开区与 tooltip 给明细。
         """
-        return _owner.w.mirror_sources(entry, _owner._wslui.match_sources(self._wslui_catalog, entry))
+        from fcmd.apps.wslman import _wslui
+
+        return _owner.w.mirror_sources(entry, _wslui.match_sources(self._wslui_catalog, entry))
 
     def _mirror_note(self, entry: ImageEntry) -> tuple[str, str]:
         """镜像行副标题后的「镜像源」文案与 tooltip。

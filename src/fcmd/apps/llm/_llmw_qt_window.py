@@ -27,7 +27,7 @@ from fcmd.apps.llm._llmw_qt_state import SERVICE_WATCH_MS, LlmState
 from fcmd.gui import style as _qt_theme
 from fcmd.gui.page import PageSpec
 from fcmd.gui.window import QtMainWindow
-from fcmd.gui.workers import periodic
+from fcmd.gui.workers import periodic, submit
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -110,7 +110,9 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
 
         self.set_status("正在读取服务与模型目录…")
-        self.state.refresh_services()
+        # 读状态文件 + 进程存活检查（psutil）在主线程要 0.2 s 左右：后台读回后再经
+        # ``servicesChanged`` 通知概览 / 运行页 / 对话页，首屏不等它。
+        submit(self.state.refresh_services, on_error=self.state.log)
         # 服务看护：外部（CLI / 其他终端）启停或进程意外退出时，概览「运行中的模型」、
         # 运行页下拉的「✓ 已启动」、模型页「已启动」按钮都要自己跟上，不能等用户操作。
         self._services_watch = periodic(self.state, SERVICE_WATCH_MS, self.state.watch_services)
@@ -245,7 +247,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if self._settings_page is not None:
             self._settings_page.refresh()
         if self._chat_page is not None:
-            self._chat_page.refresh_services()
+            self._chat_page.refresh_services_async()
         self.run_page.refresh_paint_assets()
 
     def show_page(self, key: str) -> None:

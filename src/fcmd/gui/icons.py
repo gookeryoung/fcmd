@@ -439,24 +439,44 @@ def svg(name: str, *, color: str | None = None) -> str:
     return _SVG_TEMPLATE.format(color=color or default_color(), body=body)
 
 
+def _device_ratio() -> float:
+    """屏幕缩放比；没有 ``QApplication`` 时按 1.0（测试 / 早期构造）。"""
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError:  # pragma: no cover - 无 QtWidgets
+        return 1.0
+    app = QApplication.instance()
+    if app is None:
+        return 1.0
+    screen = app.primaryScreen()
+    return max(1.0, float(screen.devicePixelRatio())) if screen is not None else 1.0
+
+
+_PIXMAP_CACHE: dict[tuple[str, int, str, float], QPixmap] = {}
+"""已渲染的位图：``(图标名, 尺寸, 颜色, 缩放比)`` → pixmap。
+
+``set_icon`` 在行卡重建、主题重绘、页面重切时会反复要同一张图；SVG 渲染 +
+高 DPI 拷贝是构造期的可观开销（wslmanw 首屏 109 次）。主题切换会换颜色，
+键随之变化，无需手动失效；上限只防止长期运行后无界增长（颜色 x 图标）。
+位图只在 GUI 线程创建与使用（``QPixmap`` 不能跨线程共享）。
+"""
+
+_PIXMAP_CACHE_MAX = 256
+
+
 def pixmap(name: str, *, size: int = ICON_SIZE, color: str | None = None) -> QPixmap:
     """把图标渲染成透明底 ``QPixmap``；按屏幕缩放比生成高 DPI 位图。"""
     from PySide6.QtCore import QByteArray, QRectF, Qt
     from PySide6.QtGui import QPainter, QPixmap
     from PySide6.QtSvg import QSvgRenderer
 
-    renderer = QSvgRenderer(QByteArray(svg(name, color=color).encode("utf-8")))
-    ratio = 1.0
-    try:
-        from PySide6.QtWidgets import QApplication
-
-        app = QApplication.instance()
-        if app is not None:
-            screen = app.primaryScreen()
-            if screen is not None:
-                ratio = max(1.0, float(screen.devicePixelRatio()))
-    except ImportError:  # pragma: no cover - 无 QtWidgets
-        ratio = 1.0
+    resolved = color or default_color()
+    ratio = _device_ratio()
+    key = (name, int(size), resolved, ratio)
+    cached = _PIXMAP_CACHE.get(key)
+    if cached is not None:
+        return cached
+    renderer = QSvgRenderer(QByteArray(svg(name, color=resolved).encode("utf-8")))
     canvas = QPixmap(round(size * ratio), round(size * ratio))
     canvas.setDevicePixelRatio(ratio)
     canvas.fill(Qt.GlobalColor.transparent)
@@ -467,6 +487,10 @@ def pixmap(name: str, *, size: int = ICON_SIZE, color: str | None = None) -> QPi
         renderer.render(painter, QRectF(0, 0, size, size))
     finally:
         painter.end()
+    _PIXMAP_CACHE[key] = canvas
+    for stale in list(_PIXMAP_CACHE)[: max(len(_PIXMAP_CACHE) - _PIXMAP_CACHE_MAX, 0)]:
+        # 控件持有的 QIcon 自带一份引用，丢掉缓存键不会让已显示的图标失效。
+        del _PIXMAP_CACHE[stale]
     return canvas
 
 

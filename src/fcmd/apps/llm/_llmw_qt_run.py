@@ -96,7 +96,10 @@ from fcmd.gui.workers import submit, submit_daemon
 from .qt.run_actions import RunActionsMixin
 from .qt.run_models import RunModelsMixin
 from .qt.run_paint import RunPaintMixin
-from .qt.run_params import RunParamsMixin
+from .qt.run_params import RunParamsMixin, strip_form_owned_args
+from .qt.run_platform import PLATFORM_PENDING as _PLATFORM_PENDING
+from .qt.run_platform import RunPlatformMixin
+from .qt.run_platform import infer_engine_options as _infer_engine_options
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -117,6 +120,7 @@ __all__ = [
     "plan_lines",
     "sanitize_custom_args",
     "startup_args_tail",
+    "strip_form_owned_args",
 ]
 
 _PAINT_TAB = 1
@@ -464,18 +468,6 @@ def _mode_options() -> list[tuple[str, str, str]]:
     return [(key, _MODE_TITLES[key], _MODE_NOTES[key]) for key in _MODE_PROFILE]
 
 
-def _infer_engine_options(platform: _llmvllm.VllmPlatform) -> list[tuple[str, str, str]]:
-    """文本页的引擎族选项：llama.cpp（GGUF）与 vLLM（HF safetensors）。"""
-    if platform.supported:
-        note = "HF safetensors · WSL2 / Linux"
-    else:
-        note = "当前系统不可用"
-    return [
-        ("llama.cpp", "llama.cpp", "GGUF · 现有引擎，通用"),
-        ("vllm", "vLLM", note),
-    ]
-
-
 def _hf_context(path: Path | None, fallback: int = 32768) -> int:
     """从 HF ``config.json`` 读取最大位置数作为 vLLM 默认上下文。"""
     if path is None:
@@ -524,6 +516,7 @@ def _mode_for_profile(profile: str) -> str:
 class RunPage(
     RunPaintMixin,
     RunParamsMixin,
+    RunPlatformMixin,
     RunModelsMixin,
     RunActionsMixin,
     AppPage,
@@ -541,7 +534,9 @@ class RunPage(
         self._active_param_key: str | None = None
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
         self._usage = "text"
-        self._vllm_platform = _llmvllm.detect_platform()
+        # 平台探测要跑 WSL 子进程（单个发行版约 1 s），不能占首屏：先用占位平台
+        # （vLLM 不可用 ⇒ 引擎回退 llama.cpp），页面建完再后台探测，回来后校正。
+        self._vllm_platform = _llmvllm.VllmPlatform("none", False, _PLATFORM_PENDING)
         self._hf_models: list[_llmvllm.HfModel] = []
         self._running_counts: dict[str, int] = dict.fromkeys(_llmw_models.USAGE_KEYS, 0)
         self._paint_busy = False
@@ -568,6 +563,7 @@ class RunPage(
         self._paint_watch_timer.setInterval(5000)
         self._paint_watch_timer.timeout.connect(self._watch_paint)
         self._paint_watch_timer.start()
+        self._detect_platform_async()
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -609,8 +605,7 @@ class RunPage(
             tones={"vllm": "accent"},
             parent=self.model_card,
         )
-        if not self._vllm_platform.supported:
-            self.engine_choice.set_option_enabled("vllm", False, f"vLLM 不可用：{self._vllm_platform.reason}")
+        self._sync_engine_platform()
         self.engine_choice.changed.connect(self._on_engine_changed)
         engine_box.addWidget(self.engine_choice)
         self.model_card.body.addLayout(engine_box)

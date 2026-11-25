@@ -29,10 +29,14 @@ from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.shared.paths import cache_path as _cache_path
 
 __all__ = [
+    "ARCHIVE_SUFFIXES",
     "CACHE_TTL_SECONDS",
+    "INSTALL_SUFFIXES",
     "MANIFEST_TIMEOUT_S",
     "MANIFEST_URL",
     "ONLINE_LIST_TIMEOUT_S",
+    "TAR_SUFFIXES",
+    "VHDX_SUFFIXES",
     "ImageCache",
     "ImageCatalog",
     "ImageDownload",
@@ -45,6 +49,17 @@ __all__ = [
     "parse_distribution_info",
     "save_cache",
 ]
+
+# 可安装后缀表放在这里而不是 ``_install``：GUI 首屏要按后缀筛下载目录，而 ``_install``
+# 会连带拉起 ``archivex``（约 53 ms）；``_install`` 反向从本模块导入，语义仍归安装侧。
+VHDX_SUFFIXES: tuple[str, ...] = (".vhdx",)
+TAR_SUFFIXES: tuple[str, ...] = (".tar", ".tar.gz", ".tgz", ".wsl")
+"""WSL ``--import`` 可直接吃的 tar / gzip tar / 官方 ``.wsl``。"""
+COMPRESSED_TAR_SUFFIXES: tuple[str, ...] = (".tar.bz2", ".tbz", ".tbz2", ".tar.xz", ".txz")
+"""bz2 / xz 压缩 tar：先解成普通 tar 再导入，兼容性最稳。"""
+ARCHIVE_SUFFIXES: tuple[str, ...] = (*COMPRESSED_TAR_SUFFIXES, ".zip", ".7z", ".rar", ".gz", ".bz2", ".xz")
+INSTALL_SUFFIXES: tuple[str, ...] = (*TAR_SUFFIXES, *VHDX_SUFFIXES, *ARCHIVE_SUFFIXES)
+"""可安装后缀：长后缀在前，``.tar.gz`` 不会被误认成 ``.gz``。"""
 
 MANIFEST_URL = "https://raw.githubusercontent.com/microsoft/WSL/master/distributions/DistributionInfo.json"
 """微软官方发行版清单（ModernDistributions + 旧版 Distributions），只走官方来源。"""

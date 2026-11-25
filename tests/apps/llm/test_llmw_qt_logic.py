@@ -64,6 +64,7 @@ from fcmd.apps.llm._llmw_qt_run import (
     plan_lines,
     sanitize_custom_args,
     startup_args_tail,
+    strip_form_owned_args,
 )
 from fcmd.apps.llm._llmw_qt_settings import engine_rows_values
 from fcmd.apps.llm._llmw_recommend import Recommendation
@@ -175,6 +176,20 @@ def test_startup_args_tail_drops_executable_and_model() -> None:
         "65536",
     ]
     assert startup_args_tail(argv) == ("-ngl", "99", "-c", "65536")
+
+
+def test_strip_form_owned_args_drops_stale_snapshot_flags() -> None:
+    """「填入参数」留下的旧快照不能覆盖表单里的监听地址与端口。"""
+    generated = ("-ngl", "99", "-c", "65536", "--host", "0.0.0.0", "--port", "8080", "--api-key", "sk-test")
+    custom = ("-ngl", "99", "-c", "65536", "--host", "127.0.0.1", "--port", "8080", "--api-key", "sk-test")
+    assert strip_form_owned_args(custom, generated) == ("-ngl", "99")
+
+
+def test_strip_form_owned_args_keeps_extras_and_unsupported_flags() -> None:
+    """表单没生成的开关与自定义扩展参数原样保留，``--flag=value`` 也能识别。"""
+    generated = ("--host", "0.0.0.0", "--port", "8080")
+    custom = ("--host=127.0.0.1", "--no-mmap", "--threads-http", "8", "--flash-attn", "off")
+    assert strip_form_owned_args(custom, generated) == ("--no-mmap", "--threads-http", "8", "--flash-attn", "off")
 
 
 def test_parse_custom_args_splits_shell_like_text() -> None:

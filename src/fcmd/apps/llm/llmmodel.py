@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import contextlib
 import re
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 import fcmd
 from fcmd.apps.llm import llmenv
@@ -35,6 +37,7 @@ __all__ = [
     "MmprojCandidate",
     "ModelTag",
     "VramFit",
+    "clear_scan_cache",
     "detect_model_tags",
     "estimate_vram",
     "find_mmproj",
@@ -195,10 +198,52 @@ def scan_models(
 
     ``root`` 显式指定时只扫该目录；否则遍历配置的全部模型目录，按真实路径去重，
     每条结果的 ``root`` 记录它实际来自哪个模型目录。不存在 / 不可读的目录跳过。
+    同一组根目录的结果在 :data:`_SCAN_TTL` 秒内复用（返回副本，调用方可随意改），
+    需要立即看到磁盘变化时先调 :func:`clear_scan_cache`。
     """
+    roots = [root.expanduser()] if root is not None else llmenv.models_dirs(home=home)
+    return list(_scan_roots(roots))
+
+
+_SCAN_TTL: Final[float] = 5.0
+"""扫描缓存有效期（秒）：兜住 mtime 不可靠的情况（网络盘 / 时钟回拨）。"""
+_SCAN_CACHE_MAX: Final[int] = 8
+"""缓存条目上限：键里带 mtime，目录一变旧键就失效，只留最近几组。"""
+_SCAN_CACHE: dict[tuple[tuple[str, int], ...], tuple[float, tuple[ModelEntry, ...]]] = {}
+"""模型扫描缓存：键 = 各根目录的（路径, ``st_mtime_ns``）。"""
+
+
+def clear_scan_cache() -> None:
+    """清空扫描缓存：下载 / 导入完成后或用户点「更新模型」时强制重扫。"""
+    _SCAN_CACHE.clear()
+
+
+def _dir_mtime_ns(path: Path) -> int:
+    """目录 mtime（纳秒）；不存在 / 不可读时用 -1，建目录后 key 自然变化。"""
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return -1
+
+
+def _scan_roots(roots: Sequence[Path]) -> tuple[ModelEntry, ...]:
+    """扫描给定根目录（带进程内缓存）：``find_model`` 与各页面复用同一份结果。"""
+    key = tuple((llmenv.path_key(path), _dir_mtime_ns(path)) for path in roots)
+    now = time.monotonic()
+    cached = _SCAN_CACHE.get(key)
+    if cached is not None and now - cached[0] < _SCAN_TTL:
+        return cached[1]
+    entries = tuple(_scan_uncached(roots))
+    _SCAN_CACHE[key] = (now, entries)
+    for stale in list(_SCAN_CACHE)[: max(len(_SCAN_CACHE) - _SCAN_CACHE_MAX, 0)]:
+        del _SCAN_CACHE[stale]
+    return entries
+
+
+def _scan_uncached(roots: Sequence[Path]) -> list[ModelEntry]:
+    """实际递归扫盘：返回按大小降序、按真实路径去重的 GGUF 清单。"""
     entries: list[ModelEntry] = []
     seen: set[str] = set()
-    roots = [root.expanduser()] if root is not None else llmenv.models_dirs(home=home)
     for resolved_root in roots:
         if not resolved_root.is_dir():
             continue
@@ -258,9 +303,7 @@ def find_model(
                 f"--quant {quant} --dest {llmenv.models_dir(models_root, home)}"
             )
 
-    entries: list[ModelEntry] = []
-    for directory in roots:
-        entries.extend(scan_models(directory))
+    entries: list[ModelEntry] = list(_scan_roots(roots))
     matched = [entry for entry in entries if matches_profile(entry.path, quant)]
     if not matched:
         available = sorted({entry.path.name for entry in entries})[:5]

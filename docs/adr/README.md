@@ -61,3 +61,4 @@
 | [0054](0054-quiet-splitter.md) | 公共分栏手柄 `QuietSplitter`：透明 4px handle + hover 强调色，`make_splitter` 默认使用，llmw 与应用分栏统一 | 已落地 |
 | [0055](0055-pptmake-editing-experience.md) | pptmake 布局设计与编辑体验升级：缩略图排序器 / 撤销 / 内容模型 v3 / 导出生态（S0–S3） | S0 已落地，S1–S3 待办 |
 | [0056](0056-help-doc-rendering.md) | 帮助文档渲染层 `gui/docview`：markdown-it-py + Pygments 代码高亮 / 复制、HelpView 搜索与定位，`help.py` 只留窗口编排 | 已落地（P0 / P1） |
+| [0057](0057-llmw-wslmanw-startup-fast.md) | llmw / wslmanw 冷启动：平台探测后台化 + 合并探测子进程、模型扫描缓存、入口导入瘦身、镜像渲染延后、图标位图缓存 | 已落地 |

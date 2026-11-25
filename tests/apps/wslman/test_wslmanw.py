@@ -377,6 +377,7 @@ def test_mirror_sources_drop_other_arch(monkeypatch: pytest.MonkeyPatch) -> None
     )
 
     monkeypatch.setattr(wslmanw.platform, "machine", lambda: "AMD64")
+    wslmanw.local_arch.cache_clear()
     assert [url for _label, url in wslmanw.mirror_sources(entry, wslui)] == [
         "https://mirrors.nju.edu.cn/lxc-images/amd64/rootfs.tar.xz",
         "https://mirrors.nju.edu.cn/no-arch/rootfs.tar.xz",
@@ -385,6 +386,7 @@ def test_mirror_sources_drop_other_arch(monkeypatch: pytest.MonkeyPatch) -> None
 
     # ARM 机器上反过来：WSLUI 的 amd64 rootfs 装了也跑不了，官方只留 aarch64。
     monkeypatch.setattr(wslmanw.platform, "machine", lambda: "ARM64")
+    wslmanw.local_arch.cache_clear()
     assert [url for _label, url in wslmanw.mirror_sources(entry, wslui)] == [
         "https://mirrors.nju.edu.cn/lxc-images/arm64/rootfs.tar.xz",
         "https://mirrors.nju.edu.cn/no-arch/rootfs.tar.xz",
@@ -395,6 +397,7 @@ def test_mirror_sources_drop_other_arch(monkeypatch: pytest.MonkeyPatch) -> None
 def test_mirror_sources_keep_official_when_arch_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     """官方条目只有别的架构时不清空列表（宁可展示不可用的源，也不变成 0 个）。"""
     monkeypatch.setattr(wslmanw.platform, "machine", lambda: "AMD64")
+    wslmanw.local_arch.cache_clear()
     arm = "https://e/ubuntu-arm64.wsl"
     entry = wslmanw._images.ImageEntry("Ubuntu", "", ("manifest",), (wslmanw._images.ImageDownload("aarch64", arm),))
     assert wslmanw.mirror_sources(entry) == (("官方源", arm),)
@@ -638,14 +641,17 @@ def test_pick_download_prefers_matching_arch(monkeypatch: pytest.MonkeyPatch) ->
         ),
     )
     monkeypatch.setattr(wslmanw.platform, "machine", lambda: "AMD64")
+    wslmanw.local_arch.cache_clear()
     assert wslmanw.pick_download(entry).arch == "x86_64"
     monkeypatch.setattr(wslmanw.platform, "machine", lambda: "ARM64")
+    wslmanw.local_arch.cache_clear()
     assert wslmanw.pick_download(entry).arch == "aarch64"
 
     only_arm = wslmanw._images.ImageEntry(
         name="X", friendly_name="", sources=("manifest",), downloads=(entry.downloads[1],)
     )
     monkeypatch.setattr(wslmanw.platform, "machine", lambda: "AMD64")
+    wslmanw.local_arch.cache_clear()
     assert wslmanw.pick_download(only_arm).arch == "aarch64"
 
 

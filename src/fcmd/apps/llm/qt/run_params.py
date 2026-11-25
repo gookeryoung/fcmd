@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import fcmd.apps.llm._llmw_qt_run as _owner
 
 from .run_compat import (
@@ -11,6 +13,53 @@ from .run_compat import (
     QWidget,
     llmbase,
 )
+
+_FORM_OWNED_FLAGS = frozenset(
+    {
+        "--host",
+        "--port",
+        "--alias",
+        "--api-key",
+        "-c",
+        "--ctx-size",
+        "-np",
+        "--parallel",
+        "--threads-http",
+        "-t",
+        "--threads",
+        "-ub",
+        "--ubatch-size",
+    }
+)
+"""运行页表单已有控件的开关；自定义参数里的同名项以表单值为准。"""
+
+
+def strip_form_owned_args(
+    custom: Sequence[str],
+    generated: Sequence[str],
+) -> tuple[str, ...]:
+    """丢弃自定义参数里与表单重复的开关及其值，其余原样保留。
+
+    「填入当前启动参数」会把整段启动参数写进自定义参数框。之后若修改监听地址、
+    端口等字段，旧值仍排在命令行末尾，llama.cpp 采用后出现的值，表单设置就
+    会被静默覆盖。这里只清理表单已有控件、且当前计划确实会生成的开关；自定义
+    参数独有或表单留空未生成的开关（如 ``--no-mmap``）保持不动。
+    """
+    owned = {token.split("=", 1)[0] for token in generated if token.startswith("-")}
+    owned &= _FORM_OWNED_FLAGS
+    kept: list[str] = []
+    index = 0
+    while index < len(custom):
+        token = custom[index]
+        name = token.split("=", 1)[0] if token.startswith("-") else ""
+        if name in owned:
+            index += 1
+            if "=" not in token and index < len(custom) and not custom[index].startswith("-"):
+                index += 1
+            continue
+        kept.append(token)
+        index += 1
+    return tuple(kept)
 
 
 class RunParamsMixin:
@@ -24,6 +73,7 @@ class RunParamsMixin:
         form_layout.setSpacing(6)
         form = _owner.FormGrid(form_root)
         self.host_edit = _owner.QLineEdit(_owner.DEFAULT_HOST, form_root)
+        self.host_edit.setToolTip("127.0.0.1 仅本机可访问；填 0.0.0.0 允许局域网其他机器访问")
         self.port_edit = _owner.QLineEdit(str(_owner.DEFAULT_PORT), form_root)
         form.add_pair("监听地址", self.host_edit, "端口", self.port_edit)
         self.threads_edit = _owner.QLineEdit(str(_owner.DEFAULT_THREADS), form_root)
@@ -387,6 +437,26 @@ class RunParamsMixin:
         self.status("已填入当前启动参数")
 
     def _refresh_command_preview(self) -> None:
+        """重建命令预览：同一轮事件循环内的重复请求合并成一次。
+
+        构造页面与逐字段编辑会连续触发很多次（每个 textChanged / 选项卡切换），
+        每次都要扫模型目录拼启动计划；用页面自己的单次定时器延到下一个事件循环，
+        只算最后一次。定时器以页面为父控件，页面销毁时随之释放。
+        """
+        timer = getattr(self, "_preview_timer", None)
+        if timer is None:
+            timer = _owner.QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(0)
+            timer.timeout.connect(self._flush_command_preview)
+            self._preview_timer = timer
+        # 已经有待触发的重建就不再重启：刷新时现读控件，后到的修改不会丢，
+        # 重启反而会把它一直推到下一轮（后台探测回调就可能连续触发）。
+        if not timer.isActive():
+            timer.start()
+
+    def _flush_command_preview(self) -> None:
+        """真正构造启动计划并写入预览框（控件值在 GUI 线程现读，保证是最新值）。"""
         try:
             plan = self.build_plan()
         except _owner.ServeError as exc:
@@ -395,14 +465,27 @@ class RunParamsMixin:
         self.command_preview.setPlainText(_owner.format_command(plan.argv()))
 
     def build_plan(self) -> LaunchPlan:
-        """按当前表单构造启动计划；重复填入的参数不二次追加。"""
+        """按当前表单构造启动计划；重复填入的参数不二次追加。
+
+        自定义参数为空时只构造一次（原先先算 base 再重建，白白多扫一遍模型）；
+        只有填了自定义参数、需要判断「是否与自动生成的一致」时才走两段。
+        """
         if self._vllm_mode():
             return self._build_vllm_plan()
-        base = _owner.build_plan_from(self._workflow(extra_args=""))
         custom = self._custom_args()
-        if custom and custom == _owner.startup_args_tail(base.argv()):
+        if not custom:
+            return _owner.build_plan_from(self._workflow())
+        base = _owner.build_plan_from(self._workflow(extra_args=""))
+        tail = _owner.startup_args_tail(base.argv())
+        if custom == tail:
             return base
-        return _owner.build_plan_from(self._workflow())
+        # 「填入当前启动参数」会把整段参数写进自定义框；之后改监听地址等字段，
+        # 旧值排在新值之后会被 llama.cpp 采用，导致表单设置不生效。表单有控件的
+        # 开关一律以表单为准，自定义参数只补表单没有的参数。
+        merged = strip_form_owned_args(custom, tail)
+        if not merged:
+            return base
+        return _owner.build_plan_from(self._workflow(extra_args=_owner.shlex.join(merged)))
 
     def _build_vllm_plan(self) -> LaunchPlan:
         """vLLM 启动计划：模型目录 + 服务字段 + vLLM 专用参数。"""

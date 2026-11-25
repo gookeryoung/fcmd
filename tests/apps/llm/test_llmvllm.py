@@ -276,8 +276,26 @@ def test_engine_options_reflect_platform() -> None:
     assert unsupported[1][2] == "当前系统不可用"
 
 
+def test_parse_probe_reads_prefixed_sections() -> None:
+    """合并探测脚本的输出按前缀还原；缺项为空串，值里的冒号只按首个切分。"""
+    text = "HOME:/home/t\nPY:/usr/bin/python3.12\nVER:3.12.3\nGPU:NVIDIA GeForce RTX 4090\n"
+    assert _llmvllm.parse_probe(text) == (
+        "/home/t",
+        "/usr/bin/python3.12",
+        "3.12.3",
+        "NVIDIA GeForce RTX 4090",
+    )
+    # WSL 输出可能夹 x00 与 CRLF；没找到 GPU 时该行为空值，不是缺行
+    assert _llmvllm.parse_probe("GPU:\r\nHOME:\r\nPY:\r\nVER:\r\n") == ("", "", "", "")
+    assert _llmvllm.parse_probe("GPU:NVIDIA: RTX 4090\n")[3] == "NVIDIA: RTX 4090"
+
+
 def _wsl_rows(listing: str) -> Any:
-    """构造一个只回 `wsl -l -v` 列表的假执行器，记录被探测的发行版。"""
+    """构造一个只回 `wsl -l -v` 列表的假执行器，记录被探测的发行版。
+
+    `wsl -d` 的探测已合并成一次 ``sh -lc``（前缀标记输出），所以每次探测
+    只回一条带 ``HOME:`` / ``PY:`` / ``VER:`` / ``GPU:`` 的多行结果。
+    """
     probed: list[str] = []
     from fcmd.apps.llm.llmbase import CommandResult as _Result
 
@@ -286,15 +304,12 @@ def _wsl_rows(listing: str) -> Any:
             return _Result(0, listing, "")
         if cmd[:2] == ["wsl.exe", "-d"]:
             distro = cmd[2]
-            if distro not in probed:
-                probed.append(distro)
-            script = cmd[-1]
-            if 'printf %s "$HOME"' in script:
-                return _Result(0, f"/home/{distro}", "")
-            if "command -v python3" in script:
-                return _Result(0, "/usr/bin/python3", "")
-            if "sys.version_info" in script:
-                return _Result(0, "3.12.3", "")
+            probed.append(distro)
+            return _Result(
+                0,
+                f"HOME:/home/{distro}\nPY:/usr/bin/python3.12\nVER:3.12.3\nGPU:NVIDIA GeForce RTX 4090\n",
+                "",
+            )
         return _Result(1, "", "nope")
 
     return fake_run, probed
@@ -329,6 +344,7 @@ def test_detect_platform_skips_stopped_distros_by_default(monkeypatch: pytest.Mo
     assert probed == ["Ubuntu"]
     assert platform.ready is True
     assert platform.primary is not None and platform.primary.distro == "Ubuntu"
+    assert platform.primary.gpu == "NVIDIA GeForce RTX 4090"
     assert platform.stopped == ("kali-linux",)
     assert "kali-linux" in platform.reason
 

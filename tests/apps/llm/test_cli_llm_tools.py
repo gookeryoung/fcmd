@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -312,6 +313,63 @@ def test_scan_models_deduplicates_resolved_paths(tmp_path: Path, monkeypatch: py
     )
 
     assert len(llmmodel.scan_models(tmp_path)) == 1
+
+
+def test_scan_models_cache_reuses_and_invalidates(tmp_path: Path) -> None:
+    """扫描结果按（根目录, mtime）复用；目录变化或手动清缓存后重新扫盘。"""
+    (tmp_path / "a.gguf").write_bytes(b"x")
+    llmmodel.clear_scan_cache()
+    first = llmmodel.scan_models(tmp_path)
+    # 命中缓存：返回的是副本，目录没变就不重新扫盘
+    second = llmmodel.scan_models(tmp_path)
+    assert [entry.path for entry in second] == [entry.path for entry in first]
+    second.clear()
+    assert len(llmmodel.scan_models(tmp_path)) == 1
+    # 根目录 mtime 变（新文件落在根下）→ 缓存失效
+    stamp = tmp_path.stat().st_mtime_ns
+    (tmp_path / "b.gguf").write_bytes(b"y")
+    os.utime(tmp_path, ns=(stamp + 1_000_000_000, stamp + 1_000_000_000))
+    assert len(llmmodel.scan_models(tmp_path)) == 2
+
+
+def test_scan_models_cache_needs_manual_clear_for_nested_changes(tmp_path: Path) -> None:
+    """新文件落在子目录里不改根目录 mtime：下载 / 导入完成后靠 ``clear_scan_cache``。"""
+    sub = tmp_path / "repo"
+    sub.mkdir()
+    stamp = tmp_path.stat().st_mtime_ns
+    llmmodel.clear_scan_cache()
+    assert llmmodel.scan_models(tmp_path) == []
+    (sub / "model.gguf").write_bytes(b"x")
+    os.utime(tmp_path, ns=(stamp, stamp))  # 根目录 mtime 不动：变化只发生在子目录
+    assert llmmodel.scan_models(tmp_path) == []  # TTL 内仍命中缓存（口径已文档化）
+    llmmodel.clear_scan_cache()
+    assert len(llmmodel.scan_models(tmp_path)) == 1
+
+
+def test_find_model_scans_all_roots_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``find_model`` 一次扫描全部根目录并复用缓存，不再逐目录重扫。"""
+    first = tmp_path / "one"
+    second = tmp_path / "two"
+    first.mkdir()
+    second.mkdir()
+    target = second / "qwen3-8b-Q4_K_M.gguf"
+    target.write_bytes(b"x" * 32)
+    calls: list[Path] = []
+    original = llmmodel._scan_uncached
+
+    def counting(roots: Any) -> Any:
+        calls.append(Path(roots[0]))
+        return original(roots)
+
+    monkeypatch.setattr(llmmodel, "_scan_uncached", counting)
+    monkeypatch.setattr(llmmodel.llmenv, "models_dirs", lambda models_root=None, home=None: [first, second])
+    llmmodel.clear_scan_cache()
+    found = llmmodel.find_model("Q4_K_M")
+    assert found == target.resolve()
+    assert calls == [first]  # 一次扫盘覆盖两个根目录
+    # 紧接着再定位一次（预览 / 启动计划重复构造）命中缓存，不再扫盘
+    assert llmmodel.find_model("Q4_K_M") == found
+    assert calls == [first]
 
 
 def test_pair_score_without_name_features(tmp_path: Path) -> None:

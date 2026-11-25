@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import functools
 import ntpath
 import os
 import platform
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.apps.wslman import _configfiles, _images, _initenv, _install, _mirrors, _open
+from fcmd.apps.wslman import _configfiles, _images, _initenv, _mirrors, _open
 from fcmd.apps.wslman._config import work_root
 from fcmd.apps.wslman._disk import format_bytes
 from fcmd.apps.wslman._distro import Distro, DistroView, state_label
@@ -1277,8 +1278,13 @@ def _progress_text(prefix: str, name: str, done: int, total: int | None, speed: 
     return " · ".join(parts)
 
 
+@functools.lru_cache(maxsize=1)
 def local_arch() -> str:
-    """本机架构口径（与官方清单的 ``arch`` 字段一致）：``aarch64`` / ``x86_64``。"""
+    """本机架构口径（与官方清单的 ``arch`` 字段一致）：``aarch64`` / ``x86_64``。
+
+    ``platform.machine()`` 在 Windows 上每次都要起一次系统调用（:func:`platform.uname`），
+    镜像列表逐行判定架构时会调上百次；本机架构在进程内不会变，直接缓存。
+    """
     return "aarch64" if "arm" in platform.machine().casefold() else "x86_64"
 
 
@@ -1388,7 +1394,7 @@ def image_filename(name: str, download: _images.ImageDownload) -> str:
     return f"{name}-{download.arch}.tar"
 
 
-_ARCHIVE_SUFFIXES: tuple[str, ...] = _install.INSTALL_SUFFIXES
+_ARCHIVE_SUFFIXES: tuple[str, ...] = _images.INSTALL_SUFFIXES
 """可安装的本地镜像包后缀：tar / wsl / vhdx / zip / 7z / rar / gz / bz2 / xz。"""
 
 
@@ -1534,9 +1540,9 @@ def inspect_archive(path: Path, entries: Sequence[_images.ImageEntry]) -> LocalA
     matched = match_archive(path, entries)
     if matched is None:
         lowered = path.name.casefold()
-        if lowered.endswith(_install.VHDX_SUFFIXES):
+        if lowered.endswith(_images.VHDX_SUFFIXES):
             source = "本地磁盘（vhdx，原地注册）"
-        elif lowered.endswith(_install.ARCHIVE_SUFFIXES):
+        elif lowered.endswith(_images.ARCHIVE_SUFFIXES):
             source = "本地压缩包（解压后安装）"
         else:
             source = "本地文件（未匹配官方清单）"

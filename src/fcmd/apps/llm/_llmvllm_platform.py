@@ -3,8 +3,9 @@
 ``wsl -d <名称>`` 会把已停止的发行版拉起来，所以这里的默认口径是**只探
 运行中的实例**：``allow_start`` 为假时把其余实例名放进 ``VllmPlatform.stopped``
 交给界面提示，只有用户显式确认（安装 vLLM）时才连已停止实例一起探。打开
-llmw（``RunPage`` 构造即调用 :func:`detect_platform`）或跑测试都不会隐式
-启动 Ubuntu。
+llmw（``RunPage`` 在首帧后于后台线程调用 :func:`detect_platform`）或跑测试
+都不会隐式启动 Ubuntu；单个发行版的信息（``$HOME`` / Python / 版本 / GPU）
+合并成一次 ``sh -lc`` 往返，避免四次子进程开销。
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ __all__ = [
     "VllmInterpreter",
     "VllmPlatform",
     "detect_platform",
+    "parse_probe",
     "parse_wsl_distros",
     "parse_wsl_rows",
     "python_supported",
@@ -147,38 +149,43 @@ def _clean(text: str) -> str:
     return text.replace("\x00", "").strip()
 
 
+# WSL 内一次性取 ``$HOME`` / Python 路径 / 版本 / GPU 的脚本。四个值以前分四次
+# ``wsl.exe ... sh -lc``（每次都有 WSL 会话建立开销），合并成一次往返后用
+# ``HOME:`` / ``PY:`` / ``VER:`` / ``GPU:`` 前缀标记，由 :func:`parse_probe`
+# 还原；GPU 缺失时该行输出空值而不是省略，解析端不必猜。
+_PROBE_SCRIPT: Final[str] = r"""printf 'HOME:%s\n' "$HOME"
+py=$(command -v python3.12 || command -v python3.11 || command -v python3.10 || command -v python3)
+printf 'PY:%s\n' "$py"
+ver=""
+if [ -n "$py" ]; then ver=$("$py" -c 'import sys;print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null); fi
+printf 'VER:%s\n' "$ver"
+printf 'GPU:%s\n' "$(/usr/lib/wsl/lib/nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+"""
+
+_PROBE_KEYS: Final[tuple[str, ...]] = ("HOME", "PY", "VER", "GPU")
+
+
+def parse_probe(text: str) -> tuple[str, str, str, str]:
+    """解析 :data:`_PROBE_SCRIPT` 的输出：``(home, python, version, gpu)``。
+
+    只按首个冒号切分（值里可能带冒号），缺项返回空串；同一前缀重复出现时
+    取第一次的值，避免发行版的 shell rc 往 stdout 里写东西时覆盖真实结果。
+    """
+    found: dict[str, str] = dict.fromkeys(_PROBE_KEYS, "")
+    for line in _clean(text).splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key in found and not found[key]:
+            found[key] = value.strip()
+    return found["HOME"], found["PY"], found["VER"], found["GPU"]
+
+
 def _probe_wsl(runner: Runner, distro: str) -> VllmInterpreter | None:
-    """探测单个 WSL 发行版：``$HOME`` / Python / GPU。"""
-    home = _clean(runner([_WSL_EXE, "-d", distro, "--", "sh", "-lc", 'printf %s "$HOME"'], 10.0).stdout)
-    if not home:
+    """探测单个 WSL 发行版：一次 ``sh -lc`` 取 ``$HOME`` / Python / 版本 / GPU。"""
+    text = runner([_WSL_EXE, "-d", distro, "--", "sh", "-lc", _PROBE_SCRIPT], 20.0).stdout
+    home, python, version, gpu = parse_probe(text)
+    if not home or not python or not python_supported(version):
         return None
-    which = "command -v python3.12 || command -v python3.11 || command -v python3.10 || command -v python3"
-    python = _clean(runner([_WSL_EXE, "-d", distro, "--", "sh", "-lc", which], 15.0).stdout)
-    if not python:
-        return None
-    version = _clean(
-        runner(
-            [_WSL_EXE, "-d", distro, "--", python, "-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])"],
-            15.0,
-        ).stdout
-    )
-    if not python_supported(version):
-        return None
-    gpu = _clean(
-        runner(
-            [
-                _WSL_EXE,
-                "-d",
-                distro,
-                "--",
-                "sh",
-                "-lc",
-                "/usr/lib/wsl/lib/nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1",
-            ],
-            15.0,
-        ).stdout
-    ).splitlines()
-    return VllmInterpreter(python=python, version=version, distro=distro, home=home, gpu=gpu[0] if gpu else "")
+    return VllmInterpreter(python=python, version=version, distro=distro, home=home, gpu=gpu)
 
 
 def _probe_linux(runner: Runner) -> VllmInterpreter | None:
@@ -239,7 +246,7 @@ def _detect_platform_uncached(  # noqa: PLR0911 - 按平台 / 有无解释器分
     """未缓存的平台探测；``allow_start`` 决定是否连已停止的 WSL 实例一起探。
 
     ``wsl -d <名称> -- sh -lc ...`` 会把发行版拉起来，所以默认只探运行中的实例：
-    打开 llmw（``RunPage`` 构造即调用）或跑测试都不该顺手启动 Ubuntu。
+    打开 llmw（``RunPage`` 后台线程探测）或跑测试都不该顺手启动 Ubuntu。
     """
     del home
     if os.name == "nt":

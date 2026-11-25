@@ -23,7 +23,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
-from fcmd.apps.wslman import _configfiles, _initenv, _open, _wslmanw_qt, wslmanw
+from fcmd.apps.wslman import _configfiles, _initenv, _open, _wslmanw_qt, _wslui, wslmanw
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman._config import WslmanConfig, default_path
 from fcmd.apps.wslman._distro import Distro, DistroView
@@ -530,16 +530,12 @@ def test_image_row_shows_wslui_mirror_sources(home: Path, monkeypatch: pytest.Mo
     try:
         _wait_idle(window)
         entry = _image_entry("Ubuntu-24.04")
-        catalog = _wslmanw_qt._wslui.WsluiCatalog(
+        catalog = _wslui.WsluiCatalog(
             (
-                _wslmanw_qt._wslui.WsluiDistro(
+                _wslui.WsluiDistro(
                     "Ubuntu",
                     "24.04",
-                    (
-                        _wslmanw_qt._wslui.WsluiSource(
-                            "https://mirrors.ustc.edu.cn/ubuntu/rootfs.tar.xz", "ustc", "tar.xz"
-                        ),
-                    ),
+                    (_wslui.WsluiSource("https://mirrors.ustc.edu.cn/ubuntu/rootfs.tar.xz", "ustc", "tar.xz"),),
                 ),
             )
         )
@@ -580,7 +576,7 @@ def test_images_worker_does_not_wait_for_wslui_catalog(home: Path, monkeypatch: 
         monkeypatch.setattr(_wslmanw_qt._images, "collect_images", lambda **_kwargs: _catalog((entry,)))
         monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_mark_local", lambda self, entries, env: entries)
         monkeypatch.setattr(
-            _wslmanw_qt._wslui,
+            _wslui,
             "load_catalog",
             lambda **_kwargs: pytest.fail("镜像清单链路不应再等 WSLUI 镜像源"),
         )
@@ -611,16 +607,12 @@ def test_wslui_catalog_lands_after_image_list(home: Path, monkeypatch: pytest.Mo
             original()
 
         monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_render_images", lambda self: counting_render())
-        catalog = _wslmanw_qt._wslui.WsluiCatalog(
+        catalog = _wslui.WsluiCatalog(
             (
-                _wslmanw_qt._wslui.WsluiDistro(
+                _wslui.WsluiDistro(
                     "Ubuntu",
                     "24.04",
-                    (
-                        _wslmanw_qt._wslui.WsluiSource(
-                            "https://mirrors.ustc.edu.cn/ubuntu/rootfs.tar.xz", "ustc", "tar.xz"
-                        ),
-                    ),
+                    (_wslui.WsluiSource("https://mirrors.ustc.edu.cn/ubuntu/rootfs.tar.xz", "ustc", "tar.xz"),),
                 ),
             ),
             warnings=("镜像源清单暂不可用（已离线）",),
@@ -653,9 +645,9 @@ def test_auto_download_uses_fastest_wslui_source(home: Path, monkeypatch: pytest
     try:
         _wait_idle(window)
         entry = _image_entry("Ubuntu-24.04")
-        slow = _wslmanw_qt._wslui.WsluiSource("https://slow/rootfs.tar.xz", "slow", "tar.xz")
-        fast = _wslmanw_qt._wslui.WsluiSource("https://fast/rootfs.tar.xz", "fast", "tar.xz")
-        catalog = _wslmanw_qt._wslui.WsluiCatalog((_wslmanw_qt._wslui.WsluiDistro("Ubuntu", "24.04", (slow, fast)),))
+        slow = _wslui.WsluiSource("https://slow/rootfs.tar.xz", "slow", "tar.xz")
+        fast = _wslui.WsluiSource("https://fast/rootfs.tar.xz", "fast", "tar.xz")
+        catalog = _wslui.WsluiCatalog((_wslui.WsluiDistro("Ubuntu", "24.04", (slow, fast)),))
         window._apply_images((_catalog((entry,)), (entry,), catalog))
 
         def fake_rank(candidates: Any, **_kwargs: Any) -> Any:
@@ -1166,6 +1158,28 @@ def test_instance_toolbar_opens_ide_at_default_cwd(home: Path, monkeypatch: pyte
         _wait_idle(window)
         assert spawned == [("code", "--remote", "wsl+Ubuntu", "/home/me/proj")]
         assert "用 VSCode 打开完成" in window.page_status("distros")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_images_cache_render_waits_for_first_frame(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """缓存回显只写数据与提示，行卡渲染推到首帧之后（不让 SVG 图标顶慢首屏）。"""
+    from fcmd.apps.wslman import _images
+
+    _images.save_cache((_image_entry("Ubuntu"), _image_entry("Debian")), time.time())
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    rendered: list[int] = []
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_render_images", lambda self: rendered.append(1))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        # 构造期：清单数据已就位、状态行先报「正在载入」，但一张行卡都还没建。
+        assert len(window.image_entries) == 2
+        assert rendered == []
+        assert "正在载入本地缓存" in window.images_status.fullText()
+        QTest.qWait(1)  # 让 0 ms 定时器触发（等价首帧之后的下一轮事件循环）
+        assert rendered == [1]
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

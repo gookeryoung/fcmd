@@ -167,12 +167,16 @@ class ChoiceCard(ButtonStateMixin, ToneLabelMixin, QPushButton):  # pragma: no c
         title_label = QLabel(title, self)
         title_label.setObjectName("ChoiceTitle")
         title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        desc_label = QLabel(description, self)
-        desc_label.setObjectName("ChoiceHint")
-        desc_label.setWordWrap(True)
-        desc_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.desc_label = QLabel(description, self)
+        self.desc_label.setObjectName("ChoiceHint")
+        self.desc_label.setWordWrap(True)
+        self.desc_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(title_label)
-        layout.addWidget(desc_label)
+        layout.addWidget(self.desc_label)
+
+    def set_description(self, text: str) -> None:
+        """更新方块下方的说明文字（如后台探测完成后把「检测中」换成结果）。"""
+        self.desc_label.setText(text)
 
 
 class ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
@@ -213,13 +217,21 @@ class ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
         return self._current
 
     def set_option_enabled(self, key: str, enabled: bool, tooltip: str = "") -> None:
-        """单独禁用某项（如当前平台不支持的引擎），并补充说明。"""
+        """单独禁用某项（如当前平台不支持的引擎），并补充说明。
+
+        重新启用时传空 ``tooltip`` 会清掉之前的不可用提示。
+        """
         card = self._buttons.get(key)
         if card is None:
             return
         card.setEnabled(enabled)
-        if tooltip:
-            card.setToolTip(tooltip)
+        card.setToolTip(tooltip)
+
+    def set_option_note(self, key: str, note: str) -> None:
+        """更新某项的说明文字（方块下方的摘要）。"""
+        card = self._buttons.get(key)
+        if card is not None:
+            card.set_description(note)
 
     def set_key(self, key: str, *, emit: bool = False) -> None:
         card = self._buttons.get(key)

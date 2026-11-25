@@ -173,6 +173,8 @@ def test_vllm_mode_lists_hf_models_and_builds_wsl_plan(
 
     # 窗口可能已缓存不支持平台时构建的运行页；这里按当前桩重新构建一页。
     run = RunPage(window.state)
+    # 平台探测已是后台任务：等线程池落地后再看引擎与模型候选。
+    drain_background_tasks()
     assert run.engine_choice.key() == "vllm"
     assert [entry.path for entry in run._usage_models()] == [model_dir]
     plan = run.build_plan()
@@ -209,6 +211,8 @@ def test_status_reflects_scan_result(window: Any) -> None:
 def test_status_bar_follows_current_page(window: Any) -> None:
     """状态栏按页面隔离：切页显示该页自己的状态，切回时恢复。"""
     window.show_page("chat")
+    # 服务清单在后台读回后才写状态栏，等它落地再断言。
+    drain_background_tasks()
     chat_status = window.status_text()
     assert "没有已登记的服务" in chat_status
     window.set_status("已复制当前对话内容")
@@ -231,6 +235,8 @@ def test_window_builds_all_pages(window: Any) -> None:
 def test_chat_paint_toggle_and_missing_model(window: Any) -> None:
     """对话页「画图」模式胶囊：选中即按画图配置出图，缺模型时只报错不派后台任务。"""
     window.show_page("chat")
+    # 先把后台读的服务清单落地：它的状态文字晚到会盖掉下面这步的提示。
+    drain_background_tasks()
     page = window.page("chat")
     assert page.chat_toggle.isChecked()
     assert not page.paint_toggle.isChecked()
@@ -352,6 +358,8 @@ def test_running_models_show_count_badges(window: Any) -> None:
             started_at="",
         )
 
+    # 构造期的服务刷新已后台化：先等它落地，否则晚到的真实服务列表会覆盖下面手工造的状态。
+    drain_background_tasks()
     window.state.alive_states = [
         serve_state("/models/Qwen3-Coder-30B.gguf", 8081),
         serve_state("/models/Qwen3-8B-Instruct.gguf", 8082),
@@ -1972,6 +1980,8 @@ def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     window.state.models_root = tmp_path
     run.on_models_changed()
     run._refresh_command_preview()
+    # 预览构建已合并到下一轮事件循环（避免连续编辑重复扫模型），这里手动排空。
+    QApplication.processEvents()
     command = run.command_preview.toPlainText()
     assert "demo-Q4_K_XL.gguf" in command
     assert "--model" in command or "-m" in command
@@ -1981,7 +1991,29 @@ def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     assert "demo-Q4_K_XL.gguf" not in custom
     assert "--alias" in custom and "--host 127.0.0.1" in custom
     # 与预览一致：填入完整参数后不会在命令里重复追加一遍
+    QApplication.processEvents()
     assert run.command_preview.toPlainText().count("-ngl") == 1
+
+
+def test_run_page_form_overrides_filled_custom_args(window: Any, tmp_path: Path) -> None:
+    """「填入当前启动参数」后再改监听地址，旧快照不能覆盖表单值。"""
+    from fcmd.apps.llm.llmbase import ModelEntry
+
+    model_file = tmp_path / "demo-Q4_K_XL.gguf"
+    model_file.write_bytes(b"\0" * 64)
+    window.state.models = [ModelEntry(root=tmp_path, path=model_file, size=64, profiles=("balanced",), tags=("对话",))]
+    window.state.models_root = tmp_path
+    run = window.run_page
+    run.on_models_changed()
+    run._fill_params()
+    assert "--host 127.0.0.1" in run.extra_args_edit.toPlainText()
+    run.host_edit.setText("0.0.0.0")
+    QApplication.processEvents()
+    command = run.command_preview.toPlainText()
+    assert "--host 0.0.0.0" in command
+    assert "--host 127.0.0.1" not in command
+    assert command.count("--port") == 1
+    assert run.build_plan().host == "0.0.0.0"
 
 
 def test_run_page_restores_last_model_and_per_model_params(window: Any, tmp_path: Path) -> None:
