@@ -359,10 +359,13 @@ def test_narrow_window_auto_collapses_inspector(window: Any) -> None:
     create_application("pptmakew-test").processEvents()
     assert window._inspector_visible is True
     assert window._inspector_pane.isVisible() is False
+    assert window.nav.is_collapsed() is True
+    assert window._settings.sidebar_collapsed is False
 
     window.resize(_pptmakew_qt.NARROW_WIDTH + 200, 800)
     create_application("pptmakew-test").processEvents()
     assert window._inspector_pane.isVisible() is True
+    assert window.nav.is_collapsed() is False
 
     window.resize(_pptmakew_qt.NARROW_WIDTH - 60, 720)
     create_application("pptmakew-test").processEvents()
@@ -405,6 +408,25 @@ def test_import_pptx_writes_report_and_base_dir(window: Any, tmp_path: Path, mon
     window._import_file()
     assert window._base_dir == source.parent
     assert shown and "第 1 页" in shown[0] and "保留率" in shown[0]
+
+
+def test_export_template_packs_assets(window: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """导出模板时把图片复制进 <模板名>.assets/ 并把 JSON 里写成相对路径。"""
+    image = tmp_path / "hero.png"
+    image.write_bytes(b"png-bytes")
+    template = core.new_template(
+        slides=(core.SlideSpec(layout=core.LAYOUT_IMAGE, title="图文", image=str(image)),),
+    )
+    window._set_template(template, base_dir=tmp_path)
+    target = tmp_path / "out" / "演示.pptmtpl.json"
+    target.parent.mkdir()
+    monkeypatch.setattr(_pptmakew_qt.QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(target), ""))
+
+    assert window._export_template() is True
+    saved = core.load_template(target)
+    assert saved.slides[0].image.startswith("演示.assets/hero-")
+    assert (target.parent / saved.slides[0].image).is_file()
+    assert window._base_dir == target.parent
 
 
 def test_autosave_and_recover_draft(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:

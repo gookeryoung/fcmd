@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -41,8 +42,10 @@ __all__ = [
     "MIN_WIDTH",
     "PAGE_KEYS",
     "PptmakeSettings",
+    "asset_dir",
     "config_path",
     "load_settings",
+    "pack_assets",
     "remember_path",
     "resolve_geometry",
     "safe_filename",
@@ -142,7 +145,9 @@ HELP_TEXT = """1. 侧边栏「设计」页：左侧「页面」选择要编辑�
 13. 有未保存改动时标题栏带 ``*``，每 60 秒自动写草稿；异常退出后下次启动可恢复。
 14. 「文件 → 导出 PPTX」可选页码范围并同时导出 PDF；``F5`` 从当前页全屏放映；
     「文件 → 从示例模板新建」提供四套内置示例。
-15. ``Alt+1`` / ``Alt+2`` 在设计页与样式页之间切换。"""
+15. ``Alt+1`` / ``Alt+2`` 在设计页与样式页之间切换。
+16. 导入 PPTX 会显示逐页「保留 / 降级」报告；导出模板时自动把图片按内容哈希打包进
+    ``<模板名>.assets/`` 并写成相对路径。窗口窄于 1200 时自动收起页面设置与侧边栏。"""
 
 
 @dataclass(slots=True)
@@ -263,6 +268,69 @@ def safe_filename(name: str, fallback: str = "template") -> str:
     """把模板名转成可用的文件名（去掉 Windows 非法字符）。"""
     cleaned = _FILENAME_RE.sub("_", name).strip().strip(".")
     return cleaned or fallback
+
+
+def asset_dir(target: Path) -> Path:
+    """模板文件旁的 ``<模板名>.assets/`` 目录。"""
+    suffix = core.TEMPLATE_SUFFIX
+    stem = target.name[: -len(suffix)] if target.name.endswith(suffix) else target.stem
+    return target.parent / f"{stem}.assets"
+
+
+def _image_refs(template: core.TemplateSpec) -> tuple[str, ...]:
+    """模板里所有图片引用（Logo、单图、多图），按出现顺序去重。"""
+    refs: list[str] = []
+    if template.theme.logo:
+        refs.append(template.theme.logo)
+    for slide in template.slides:
+        if slide.image:
+            refs.append(slide.image)
+        refs.extend(slide.images)
+    return tuple(dict.fromkeys(refs))
+
+
+def pack_assets(
+    template: core.TemplateSpec, target: Path, *, base_dir: Path | None = None
+) -> tuple[core.TemplateSpec, tuple[str, ...]]:
+    """把模板引用的图片按内容哈希复制进 ``<模板名>.assets/``，并改写为相对路径。
+
+    返回（改写后的模板, 缺失文件列表）。相对路径按 ``base_dir`` 解析；已经位于
+    目标资产目录内的图片会原地复用，缺失文件只记录不改写。
+    """
+    assets = asset_dir(target)
+    mapping: dict[str, str] = {}
+    missing: list[str] = []
+    for ref in _image_refs(template):
+        path = Path(ref)
+        source = path if path.is_absolute() else (base_dir / path if base_dir is not None else path)
+        if not source.is_file():
+            missing.append(ref)
+            continue
+        digest = hashlib.sha1(source.read_bytes()).hexdigest()[:8]
+        name = f"{safe_filename(source.stem, fallback='image')}-{digest}{source.suffix.lower()}"
+        dest = assets / name
+        assets.mkdir(parents=True, exist_ok=True)
+        if not dest.is_file():
+            dest.write_bytes(source.read_bytes())
+        mapping[ref] = f"{assets.name}/{name}"
+    if not mapping:
+        return template, tuple(missing)
+
+    def rewrite(value: str) -> str:
+        return mapping.get(value, value)
+
+    theme = template.theme
+    if theme.logo:
+        theme = replace(theme, logo=rewrite(theme.logo))
+    slides = tuple(
+        replace(
+            slide,
+            image=rewrite(slide.image),
+            images=tuple(rewrite(item) for item in slide.images),
+        )
+        for slide in template.slides
+    )
+    return replace(template, theme=theme, slides=slides), tuple(missing)
 
 
 def slide_label(index: int, slide: core.SlideSpec) -> str:

@@ -265,3 +265,16 @@
 落地状态：已交付（提交 `d1fc81b`）。门禁 `make flow` 全绿；`make cov` 覆盖率 95.09%，
 唯一失败为既有计时抖动用例 `test_uistate.py::test_debounced_saver_flushes_once_and_flush_is_immediate`（单独重跑通过）。
 
+---
+
+## 14. M7 收口（图片资产打包 + 侧边栏断点）
+
+| 批次 | 内容 | 主要落点 | 验收 |
+|---|---|---|---|
+| M7-1 | 导出模板时图片按内容哈希打包 | `pptmakew.pack_assets` / `asset_dir`；`_export_template` 改写相对路径，缺失文件弹窗列出 | 导出 JSON 存 `<模板名>.assets/xxx-<hash>.png`，重复引用只存一份；缺失文件保持原路径 |
+| M7-2 | 窄屏断点同时收起侧边栏 | `_sync_narrow_layout` + `_auto_sidebar` 守卫 | 窄屏自动收起、变宽恢复；自动收起不写入设置，手动切换后不再自动恢复 |
+| M7-3 | 帮助文本与 ADR 同步 | `pptmakew.HELP_TEXT`、ADR 0055、`_manifest_data.py` 快照 | 帮助快照一致，文档口径与实现一致 |
+
+落地状态：已交付。`make flow` 全绿；PPTX 导入仍按源文件名建 `<源名>.assets/`，导出模板时再统一打包为 `<模板名>.assets/`。
+
+

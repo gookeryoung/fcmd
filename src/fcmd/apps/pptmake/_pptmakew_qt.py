@@ -22,7 +22,7 @@ import time
 import webbrowser
 from dataclasses import replace
 from itertools import pairwise
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
@@ -100,6 +100,7 @@ from fcmd.apps.pptmake.pptmakew import (
     STYLE_OPTIONS,
     PptmakeSettings,
     load_settings,
+    pack_assets,
     remember_path,
     safe_filename,
     save_settings,
@@ -206,7 +207,9 @@ def _picture_file(primitive: Picture, base_dir: Path | None) -> str:
     if not primitive.path:
         return ""
     path = Path(primitive.path)
-    if not path.is_absolute() and base_dir is not None:
+    # 盘符/UNC 形式的 Windows 绝对路径在 Linux 下 Path.is_absolute() 为假，需按 Windows 语义补充判定。
+    absolute = path.is_absolute() or PureWindowsPath(primitive.path).is_absolute()
+    if not absolute and base_dir is not None:
         path = base_dir / path
     return str(path)
 
@@ -848,6 +851,8 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._base_dir: Path | None = None
         self._narrow = False
         self._narrow_restore_inspector = False
+        self._narrow_restore_sidebar = False
+        self._auto_sidebar = False
         super().__init__(
             title=f"pptmake - PPT 模板设计器 v{__version__}",
             config_name="pptmakew",
@@ -1950,13 +1955,27 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._narrow = narrow
         if narrow:
             self._narrow_restore_inspector = self._inspector_visible
-            if self._inspector_visible:
-                self._inspector_pane.setVisible(False)
-                self.set_status("窗口较窄，已自动收起页面设置")
-        elif self._narrow_restore_inspector:
+            self._inspector_pane.setVisible(False)
+            if not self.nav.is_collapsed():
+                self._narrow_restore_sidebar = True
+                self._auto_sidebar = True
+                self.nav.set_collapsed(True)
+                self._auto_sidebar = False
+            self.set_status("窗口较窄，已自动收起页面设置与侧边栏")
+            return
+        restored = False
+        if self._narrow_restore_inspector:
             self._narrow_restore_inspector = False
             self._inspector_pane.setVisible(self._inspector_visible)
-            self.set_status("窗口已放宽，已恢复页面设置")
+            restored = True
+        if self._narrow_restore_sidebar:
+            self._narrow_restore_sidebar = False
+            self._auto_sidebar = True
+            self.nav.set_collapsed(False)
+            self._auto_sidebar = False
+            restored = True
+        if restored:
+            self.set_status("窗口已放宽，已恢复页面设置与侧边栏")
 
     def _slide_overflow_count(self, index: int) -> int:
         """当前模板第 ``index`` 页的预计溢出文本框数量（构建失败时记 0）。"""
@@ -2442,8 +2461,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             return False
         target = Path(path)
         try:
-            core.save_template(self._template, target)
-        except core.TemplateError as exc:
+            packed, missing = pack_assets(self._template, target, base_dir=self._base_dir)
+            core.save_template(packed, target)
+        except (OSError, core.TemplateError) as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
             return False
         self._settings.last_dir = str(target.parent)
@@ -2452,6 +2472,12 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._mark_dirty(False)
         self._discard_draft()
         self.set_status(f"模板已导出：{target}")
+        if missing:
+            QMessageBox.warning(
+                self,
+                "图片未打包",
+                "以下图片未找到，模板中仍保留原路径：\n" + "\n".join(missing[:8]),
+            )
         return True
 
     def _export_pptx(self) -> None:
@@ -2596,6 +2622,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _persist_sidebar_collapsed(self, collapsed: bool) -> None:
         """侧边栏折叠状态随窗口设置落盘（与其它侧边栏窗口同一口径）。"""
+        if self._auto_sidebar:
+            return
+        self._narrow_restore_sidebar = False
         self._settings = replace(self._settings, sidebar_collapsed=collapsed)
         self._persist_settings(self.geometry_text())
 

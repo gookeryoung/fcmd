@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import types
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -231,3 +232,47 @@ def test_launch_cmd_calls_run_gui(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pptmakew, "run_gui", lambda: called.append(True))
     pptmakew.launch_cmd()
     assert called == [True]
+
+
+def test_pack_assets_copies_images_and_rewrites_paths(tmp_path: Path) -> None:
+    """图片按内容哈希复制进 <模板名>.assets/，重复引用只存一份。"""
+    pictures = tmp_path / "pics"
+    pictures.mkdir()
+    logo = pictures / "品牌 Logo.png"
+    hero = pictures / "hero.jpg"
+    logo.write_bytes(b"logo-bytes")
+    hero.write_bytes(b"hero-bytes")
+    template = replace(
+        core.new_template(
+            slides=(
+                core.SlideSpec(layout=core.LAYOUT_IMAGE, title="图文", image=str(hero), images=(str(hero),)),
+                core.SlideSpec(layout=core.LAYOUT_BULLETS, title="要点"),
+            ),
+        ),
+        theme=replace(core.Theme(), logo=str(logo)),
+    )
+    target = tmp_path / "out" / "品牌模板.pptmtpl.json"
+    target.parent.mkdir()
+
+    packed, missing = pptmakew.pack_assets(template, target, base_dir=tmp_path)
+
+    assert missing == ()
+    assets = pptmakew.asset_dir(target)
+    assert assets == target.parent / "品牌模板.assets"
+    assert len(list(assets.iterdir())) == 2
+    slide = packed.slides[0]
+    assert slide.image.startswith("品牌模板.assets/hero-")
+    assert slide.image.endswith(".jpg")
+    assert slide.images == (slide.image,)
+    assert packed.theme.logo.startswith("品牌模板.assets/品牌 Logo-")
+
+
+def test_pack_assets_reports_missing_files(tmp_path: Path) -> None:
+    """缺失图片只记录不改写，避免模板指向不存在的资产。"""
+    missing_path = str(tmp_path / "nope.png")
+    template = core.new_template(slides=(core.SlideSpec(layout=core.LAYOUT_IMAGE, image=missing_path),))
+
+    packed, missing = pptmakew.pack_assets(template, tmp_path / "demo.pptmtpl.json")
+
+    assert missing == (missing_path,)
+    assert packed.slides[0].image == missing_path
