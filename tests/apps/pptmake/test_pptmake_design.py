@@ -386,6 +386,21 @@ def test_image_layout_grid_splits_panel_into_rows(ratio: str, cells: int) -> Non
     assert (picture.x, picture.y, picture.w, picture.h) == (panels[0].x, panels[0].y, panels[0].w, panels[0].h)
 
 
+def test_image_layout_renders_caption_below_panel() -> None:
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_IMAGE,
+        title="带图注",
+        image="assets/hero.png",
+        image_caption="产品主视觉",
+    )
+    primitives = design.build_draw_list(slide, template)
+    caption = next(item for item in primitives if isinstance(item, design.Text) and item.paragraphs == ("产品主视觉",))
+    picture = next(item for item in primitives if isinstance(item, design.Picture))
+    assert caption.y >= picture.y + picture.h
+    assert caption.color == template.theme.palette.muted
+
+
 def test_image_layout_numeric_ratio_moves_split() -> None:
     template = _template()
     narrow = design.build_draw_list(

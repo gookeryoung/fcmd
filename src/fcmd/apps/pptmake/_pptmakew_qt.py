@@ -38,6 +38,8 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QStandardItem,
+    QStandardItemModel,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -83,11 +85,13 @@ from fcmd.apps.pptmake._design import (
 )
 from fcmd.apps.pptmake._history import TemplateHistory
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
+from fcmd.apps.pptmake._rules import rule_for
 from fcmd.apps.pptmake.pptmakew import (
     ASPECT_OPTIONS,
     DECOR_OPTIONS,
     DENSITY_OPTIONS,
     HELP_TEXT,
+    LAYOUT_GROUPS,
     LAYOUT_OPTIONS,
     MIN_HEIGHT,
     MIN_WIDTH,
@@ -140,6 +144,25 @@ _LAYOUT_HINTS: dict[str, str] = {
     core.LAYOUT_CONTACT: "联系页要点写成「邮箱|hello@example.com」，每行一个渠道。",
 }
 _LAYOUT_HINT_DEFAULT = "切换布局后会保留标题、要点与备注内容；格式提示按布局变化。"
+
+
+def _fill_layout_combo(combo: QComboBox) -> None:
+    """按「封面 / 结构 / 内容 / 数据 / 图文 / 结束」分组填充版式下拉。
+
+    分组标题是禁用的普通项，不参与选择；24 个版式全部有归属（
+    :data:`fcmd.apps.pptmake.pptmakew.LAYOUT_GROUPS` 处有断言兜底）。
+    """
+    model = QStandardItemModel(combo)
+    for group, layouts in LAYOUT_GROUPS:
+        header = QStandardItem(f"— {group} —")
+        header.setFlags(Qt.ItemFlag.NoItemFlags)
+        model.appendRow(header)
+        for layout in layouts:
+            item = QStandardItem(core.LAYOUT_TEXT[layout])
+            item.setData(layout, Qt.ItemDataRole.UserRole)
+            model.appendRow(item)
+    combo.setModel(model)
+    combo.setCurrentIndex(1)
 
 
 def _action_button(icon_name: str, tooltip: str, *, text: str = "") -> QWidget:
@@ -1227,9 +1250,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
         form_card = Card("页面设置", panel)
         self._layout_combo = QComboBox(form_card)
-        for text, value in LAYOUT_OPTIONS:
-            self._layout_combo.addItem(text, value)
+        _fill_layout_combo(self._layout_combo)
         self._layout_combo.currentIndexChanged.connect(lambda _index: self._schedule_apply())
+        self._layout_combo.currentIndexChanged.connect(lambda _index: self._refresh_layout_hint())
         self._title_edit = QLineEdit(form_card)
         self._title_edit.textChanged.connect(lambda _text: self._schedule_apply())
         self._subtitle_edit = QLineEdit(form_card)
@@ -1298,6 +1321,53 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         layout_grid.addWidget(QLabel("填充", layout_tab), 3, 0)
         layout_grid.addWidget(self._image_fit_combo, 3, 1)
 
+        self._image_focus_combo = QComboBox(layout_tab)
+        for value in core.IMAGE_FOCUSES:
+            self._image_focus_combo.addItem(core.IMAGE_FOCUS_TEXT[value], value)
+        self._image_focus_combo.currentIndexChanged.connect(lambda _index: self._schedule_apply())
+        layout_grid.addWidget(QLabel("焦点", layout_tab), 4, 0)
+        layout_grid.addWidget(self._image_focus_combo, 4, 1)
+
+        self._image_ratio_combo = QComboBox(layout_tab)
+        self._image_ratio_combo.addItem("按版式默认", "")
+        for value in core.IMAGE_RATIOS:
+            self._image_ratio_combo.addItem(core.IMAGE_RATIO_TEXT[value], value)
+        self._image_ratio_combo.addItem("自定义数值", "custom")
+        self._image_ratio_combo.currentIndexChanged.connect(lambda _index: self._on_ratio_preset_changed())
+        self._image_ratio_spin = QSpinBox(layout_tab)
+        self._image_ratio_spin.setRange(20, 80)
+        self._image_ratio_spin.setSingleStep(5)
+        self._image_ratio_spin.setSuffix("%")
+        self._image_ratio_spin.setValue(60)
+        self._image_ratio_spin.setToolTip("图片占内容宽度的比例；改动后切到「自定义数值」")
+        self._image_ratio_spin.valueChanged.connect(lambda _value: self._on_ratio_spin_changed())
+        ratio_row = QHBoxLayout()
+        ratio_row.setContentsMargins(0, 0, 0, 0)
+        ratio_row.setSpacing(4)
+        ratio_row.addWidget(self._image_ratio_combo, 1)
+        ratio_row.addWidget(self._image_ratio_spin)
+        layout_grid.addWidget(QLabel("图文", layout_tab), 5, 0)
+        layout_grid.addLayout(ratio_row, 5, 1)
+
+        self._image_alt_edit = QLineEdit(layout_tab)
+        self._image_alt_edit.setPlaceholderText("替代文本（读屏器与无障碍检查使用）")
+        self._image_alt_edit.textChanged.connect(lambda _text: self._schedule_apply())
+        layout_grid.addWidget(QLabel("替代文本", layout_tab), 6, 0)
+        layout_grid.addWidget(self._image_alt_edit, 6, 1)
+
+        self._image_caption_edit = QLineEdit(layout_tab)
+        self._image_caption_edit.setPlaceholderText("图注（显示在图片下方）")
+        self._image_caption_edit.textChanged.connect(lambda _text: self._schedule_apply())
+        layout_grid.addWidget(QLabel("图注", layout_tab), 7, 0)
+        layout_grid.addWidget(self._image_caption_edit, 7, 1)
+
+        self._background_combo = QComboBox(layout_tab)
+        for value in core.BACKGROUNDS:
+            self._background_combo.addItem(core.BACKGROUND_TEXT[value], value)
+        self._background_combo.currentIndexChanged.connect(lambda _index: self._schedule_apply())
+        layout_grid.addWidget(QLabel("底色", layout_tab), 8, 0)
+        layout_grid.addWidget(self._background_combo, 8, 1)
+
         self._accent_value = ""
         self._accent_button = button("本页强调色")
         self._accent_button.setMinimumWidth(120)
@@ -1310,9 +1380,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         accent_row.addWidget(self._accent_button)
         accent_row.addWidget(accent_clear)
         accent_row.addStretch(1)
-        layout_grid.addWidget(QLabel("强调色", layout_tab), 4, 0)
-        layout_grid.addLayout(accent_row, 4, 1)
-        layout_grid.setRowStretch(5, 1)
+        layout_grid.addWidget(QLabel("强调色", layout_tab), 9, 0)
+        layout_grid.addLayout(accent_row, 9, 1)
+        layout_grid.setRowStretch(10, 1)
         self._inspector_tabs.addTab(layout_tab, "版式")
 
         notes_tab = QWidget(self._inspector_tabs)
@@ -1583,8 +1653,13 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                 self._subtitle_edit.clear()
                 self._bullets_text.clear()
                 self._note_text.clear()
-                self._layout_hint.setText("")
+                self._refresh_layout_hint()
                 self._image_edit.clear()
+                self._image_alt_edit.clear()
+                self._image_caption_edit.clear()
+                self._select_value(self._image_focus_combo, core.IMAGE_FOCUS_CENTER)
+                self._select_value(self._background_combo, core.BACKGROUND_INHERIT)
+                self._refresh_ratio_controls("")
                 self._accent_value = ""
                 self._refresh_accent_button()
                 return
@@ -1594,13 +1669,96 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._subtitle_edit.setText(slide.subtitle)
             self._bullets_text.setPlainText("\n".join(slide.bullets))
             self._note_text.setPlainText(slide.note)
-            self._layout_hint.setText(_LAYOUT_HINTS.get(slide.layout, _LAYOUT_HINT_DEFAULT))
+            self._refresh_layout_hint()
             self._image_edit.setText(slide.image)
             self._select_value(self._image_fit_combo, slide.image_fit)
+            self._select_value(self._image_focus_combo, slide.image_focus)
+            self._image_alt_edit.setText(slide.image_alt)
+            self._image_caption_edit.setText(slide.image_caption)
+            self._select_value(self._background_combo, slide.background)
+            self._refresh_ratio_controls(slide.image_ratio)
             self._accent_value = slide.accent
             self._refresh_accent_button()
         finally:
             self._loading = False
+
+    def _refresh_layout_hint(self) -> None:
+        """版式提示：手工格式提示 + ``rule_for`` 容量，24 个版式全覆盖。"""
+        value = self._layout_combo.currentData()
+        if not isinstance(value, str) or not value:
+            self._layout_hint.setText("")
+        else:
+            rule = rule_for(value)
+            base = _LAYOUT_HINTS.get(value, _LAYOUT_HINT_DEFAULT)
+            self._layout_hint.setText(
+                f"{base}容量：标题 ≤ {rule.max_title} 字，要点 ≤ {rule.max_bullets} 条，单条 ≤ {rule.max_chars} 字。"
+            )
+        self._sync_ratio_enabled()
+
+    @staticmethod
+    def _ratio_is_numeric(value: str) -> bool:
+        """``image_ratio`` 是否为数值微调（预设名与空串都不算）。"""
+        if not value:
+            return False
+        try:
+            float(value)
+        except ValueError:
+            return False
+        return True
+
+    def _refresh_ratio_controls(self, value: str) -> None:
+        """把 ``image_ratio`` 同步到预设下拉与百分比微调框。"""
+        self._loading = True
+        try:
+            if self._ratio_is_numeric(value):
+                self._select_value(self._image_ratio_combo, "custom")
+            else:
+                self._select_value(self._image_ratio_combo, value)
+            self._image_ratio_spin.setValue(round(core.image_ratio_share(value) * 100))
+        finally:
+            self._loading = False
+        self._sync_ratio_enabled()
+
+    def _sync_ratio_enabled(self) -> None:
+        """图文比例只对图片版式生效；全出血与栅格预设不需要数值微调。"""
+        editable = self._layout_combo.currentData() == core.LAYOUT_IMAGE
+        selected = str(self._image_ratio_combo.currentData() or "")
+        self._image_ratio_combo.setEnabled(editable)
+        adjustable = editable and selected not in (
+            core.IMAGE_RATIO_FULL,
+            core.IMAGE_RATIO_GRID_2,
+            core.IMAGE_RATIO_GRID_3,
+        )
+        self._image_ratio_spin.setEnabled(adjustable)
+
+    def _on_ratio_preset_changed(self) -> None:
+        if self._loading:
+            return
+        selected = str(self._image_ratio_combo.currentData() or "")
+        if selected in ("", "custom"):
+            self._sync_ratio_enabled()
+            self._schedule_apply()
+            return
+        if selected not in (core.IMAGE_RATIO_FULL, core.IMAGE_RATIO_GRID_2, core.IMAGE_RATIO_GRID_3):
+            self._loading = True
+            try:
+                self._image_ratio_spin.setValue(round(core.image_ratio_share(selected) * 100))
+            finally:
+                self._loading = False
+        self._sync_ratio_enabled()
+        self._schedule_apply()
+
+    def _on_ratio_spin_changed(self) -> None:
+        if self._loading:
+            return
+        if self._image_ratio_combo.currentData() != "custom":
+            self._loading = True
+            try:
+                self._select_value(self._image_ratio_combo, "custom")
+            finally:
+                self._loading = False
+            self._sync_ratio_enabled()
+        self._schedule_apply()
 
     def _refresh_color_buttons(self) -> None:
         palette = self._template.theme.palette
@@ -1897,6 +2055,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         slide = self._template.slides[self.selected]
         bullets = tuple(line.strip() for line in self._bullets_text.toPlainText().splitlines() if line.strip())
+        ratio = str(self._image_ratio_combo.currentData() or "")
+        if ratio == "custom":
+            ratio = f"{self._image_ratio_spin.value() / 100:.2f}"
         updated = replace(
             slide,
             layout=str(self._layout_combo.currentData()),
@@ -1906,6 +2067,11 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             note=self._note_text.toPlainText(),
             image=self._image_edit.text().strip(),
             image_fit=str(self._image_fit_combo.currentData()),
+            image_focus=str(self._image_focus_combo.currentData()),
+            image_alt=self._image_alt_edit.text().strip(),
+            image_caption=self._image_caption_edit.text().strip(),
+            image_ratio=ratio,
+            background=str(self._background_combo.currentData()),
             accent=self._accent_value,
         )
         self._commit(

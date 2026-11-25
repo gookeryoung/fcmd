@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_GEOMETRY",
     "HELP_TEXT",
+    "LAYOUT_GROUPS",
     "MAX_RECENT",
     "MIN_HEIGHT",
     "MIN_WIDTH",
@@ -73,6 +74,41 @@ ASPECT_OPTIONS: tuple[tuple[str, str], ...] = tuple((core.ASPECT_TEXT[item], ite
 DECOR_OPTIONS: tuple[tuple[str, str], ...] = tuple((core.DECOR_TEXT[item], item) for item in core.DECORS)
 DENSITY_OPTIONS: tuple[tuple[str, str], ...] = tuple((tokens.DENSITY_TEXT[item], item) for item in tokens.DENSITIES)
 LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = tuple((core.LAYOUT_TEXT[item], item) for item in core.LAYOUTS)
+
+LAYOUT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("封面", (core.LAYOUT_COVER, core.LAYOUT_PHOTO_COVER)),
+    (
+        "结构",
+        (
+            core.LAYOUT_AGENDA,
+            core.LAYOUT_AGENDA_PAGES,
+            core.LAYOUT_SECTION,
+            core.LAYOUT_PHOTO_SECTION,
+            core.LAYOUT_APPENDIX,
+        ),
+    ),
+    (
+        "内容",
+        (
+            core.LAYOUT_BULLETS,
+            core.LAYOUT_CARDS,
+            core.LAYOUT_TWO_COLUMN,
+            core.LAYOUT_COMPARISON,
+            core.LAYOUT_PROBLEM_SOLUTION,
+            core.LAYOUT_PROCESS,
+            core.LAYOUT_TIMELINE,
+            core.LAYOUT_CODE,
+            core.LAYOUT_QUOTE,
+            core.LAYOUT_TESTIMONIAL,
+        ),
+    ),
+    ("数据", (core.LAYOUT_METRICS, core.LAYOUT_CHART, core.LAYOUT_CHART_CONCLUSION)),
+    ("图文", (core.LAYOUT_IMAGE,)),
+    ("结束", (core.LAYOUT_TEAM, core.LAYOUT_CONTACT, core.LAYOUT_CLOSING)),
+)
+"""版式下拉的分组顺序：封面 / 结构 / 内容 / 数据 / 图文 / 结束，覆盖全部 24 个版式。"""
+
+assert {layout for _group, items in LAYOUT_GROUPS for layout in items} == set(core.LAYOUTS)
 
 PAGE_KEYS: tuple[str, ...] = ("design", "style")
 """侧边栏页面 key（顺序与 :data:`fcmd.apps.pptmake._pptmakew_qt.PAGES` 一致）。"""

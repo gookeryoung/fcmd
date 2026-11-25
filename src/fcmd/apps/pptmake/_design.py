@@ -1465,6 +1465,23 @@ def _render_image_full(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> Non
             )
         )
     _paint_image_copy(out, ctx, slide, round(ctx.width * 0.5))
+    caption = slide.image_caption.strip()
+    if caption:
+        caption_width = round(ctx.width * 0.45)
+        caption_height = round(ctx.type_scale.small * 1.8)
+        out.append(
+            _text(
+                ctx.width - ctx.margin - caption_width,
+                ctx.height - ctx.margin - caption_height,
+                caption_width,
+                caption_height,
+                caption,
+                ctx.type_scale.small,
+                palette.muted,
+                ctx.theme.body_font,
+                align=ALIGN_RIGHT,
+            )
+        )
 
 
 def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
@@ -1477,12 +1494,29 @@ def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
     _paint_image_copy(out, ctx, slide, text_width)
     panel_x = ctx.margin + text_width + ctx.spacing.section
     panel_y = ctx.top
-    panel_height = ctx.height - ctx.top - round(ctx.type_scale.body * 3)
+    caption = slide.image_caption.strip()
+    caption_height = round(ctx.type_scale.small * 1.8) if caption else 0
+    caption_gap = ctx.spacing.gap if caption else 0
+    panel_height = ctx.height - ctx.top - round(ctx.type_scale.body * 3) - caption_height - caption_gap
     cells = image_ratio_cells(ratio)
     if cells:
         _paint_image_cells(out, ctx, slide, panel_x, panel_y, image_width, panel_height, cells)
     else:
         _paint_image_panel(out, ctx, slide, panel_x, panel_y, image_width, panel_height)
+    if caption:
+        out.append(
+            _text(
+                panel_x,
+                panel_y + panel_height + caption_gap,
+                image_width,
+                caption_height,
+                caption,
+                ctx.type_scale.small,
+                ctx.palette.muted,
+                ctx.theme.body_font,
+                align=ALIGN_RIGHT,
+            )
+        )
 
 
 def _render_comparison(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:

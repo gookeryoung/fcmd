@@ -96,6 +96,60 @@ def test_style_page_has_live_preview_and_controls(window: Any) -> None:
     assert window.current_page() == "design"
 
 
+def test_layout_combo_groups_and_capacity_hint(window: Any) -> None:
+    """版式下拉按 6 组分类，提示同时带格式建议与 ``rule_for`` 容量。"""
+    combo = window._layout_combo
+    headers = [combo.itemText(index) for index in range(combo.count()) if combo.itemData(index) is None]
+    assert headers == ["— 封面 —", "— 结构 —", "— 内容 —", "— 数据 —", "— 图文 —", "— 结束 —"]
+    values = [combo.itemData(index) for index in range(combo.count()) if combo.itemData(index)]
+    assert set(values) == set(core.LAYOUTS)
+
+    window._layout_combo.setCurrentIndex(combo.findData(core.LAYOUT_IMAGE))
+    assert "容量" in window._layout_hint.text()
+    assert "要点 ≤ 4 条" in window._layout_hint.text()
+    assert window._image_ratio_combo.isEnabled()
+    window._layout_combo.setCurrentIndex(combo.findData(core.LAYOUT_BULLETS))
+    assert not window._image_ratio_combo.isEnabled()
+
+
+def test_image_detail_controls_roundtrip(window: Any) -> None:
+    """焦点 / 替代文本 / 图注 / 底色 / 图文比例写回当前页。"""
+    window._slides_list.setCurrentRow(0)
+    window._layout_combo.setCurrentIndex(window._layout_combo.findData(core.LAYOUT_IMAGE))
+    window._image_edit.setText("assets/hero.png")
+    window._image_focus_combo.setCurrentIndex(window._image_focus_combo.findData(core.IMAGE_FOCUS_TOP))
+    window._image_alt_edit.setText("主视觉")
+    window._image_caption_edit.setText("产品主视觉")
+    window._background_combo.setCurrentIndex(window._background_combo.findData(core.BACKGROUND_DARK))
+    window._image_ratio_combo.setCurrentIndex(window._image_ratio_combo.findData(core.IMAGE_RATIO_GRID_2))
+    window._apply_form()
+
+    slide = window._template.slides[0]
+    assert slide.layout == core.LAYOUT_IMAGE
+    assert slide.image_focus == core.IMAGE_FOCUS_TOP
+    assert slide.image_alt == "主视觉"
+    assert slide.image_caption == "产品主视觉"
+    assert slide.background == core.BACKGROUND_DARK
+    assert slide.image_ratio == core.IMAGE_RATIO_GRID_2
+
+
+def test_image_ratio_numeric_fine_tune(window: Any) -> None:
+    """选中预设后拖动数值微调，落盘为 clamp 后的数值字符串。"""
+    window._slides_list.setCurrentRow(0)
+    window._layout_combo.setCurrentIndex(window._layout_combo.findData(core.LAYOUT_IMAGE))
+    window._image_ratio_combo.setCurrentIndex(window._image_ratio_combo.findData(core.IMAGE_RATIO_50_50))
+    assert window._image_ratio_spin.value() == 50
+    window._image_ratio_spin.setValue(35)
+    assert window._image_ratio_combo.currentData() == "custom"
+    window._apply_form()
+    slide = window._template.slides[0]
+    assert slide.image_ratio == "0.35"
+
+    window._refresh_form()
+    assert window._image_ratio_combo.currentData() == "custom"
+    assert window._image_ratio_spin.value() == 35
+
+
 def test_overflow_badge_and_status_detail(window: Any) -> None:
     """溢出页在缩略图与状态栏使用同一计数（角标数据源）。"""
     window._slides_list.setCurrentRow(0)
