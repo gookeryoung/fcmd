@@ -16,12 +16,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from fcmd.apps.pptmake import _tokens as tokens
+from fcmd.gui.widgets import tab_widget
 
 __all__ = ["TokenDialog"]
 
@@ -41,7 +41,7 @@ class TokenDialog(QDialog):
         self._result: tokens.DesignTokens | None = None
 
         layout = QVBoxLayout(self)
-        tabs = QTabWidget(self)
+        tabs = tab_widget(self)
         tabs.addTab(self._build_type_tab(), "字号")
         tabs.addTab(self._build_spacing_tab(), "间距")
         tabs.addTab(self._build_shape_tab(), "形状与符号")
