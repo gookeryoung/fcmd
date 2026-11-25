@@ -377,6 +377,37 @@ def test_import_upgrades_picture_table_chart_and_notes(tmp_path: Path) -> None:
     assert "图片" in report[1]
 
 
+def test_import_maps_picture_crop_to_image_focus(tmp_path: Path) -> None:
+    """源稿裁掉右侧时，导入后按「靠左」还原焦点。"""
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    api = _pptx._api()
+    presentation = api.Presentation()
+    image_path = tmp_path / "wide.png"
+    Image.new("RGB", (640, 360), "#3366FF").save(image_path)
+    width = presentation.slide_width
+    height = presentation.slide_height
+    cover = presentation.slides.add_slide(presentation.slide_layouts[6])
+    cover.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "裁剪导入"
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    slide.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "焦点还原"
+    picture = slide.shapes.add_picture(
+        str(image_path),
+        round(width * 0.02),
+        round(height * 0.2),
+        round(width * 0.24),
+        round(height * 0.55),
+    )
+    picture.crop_right = 0.3
+    source = tmp_path / "crop.pptx"
+    presentation.save(str(source))
+    assets = tmp_path / "crop.assets"
+    template = _pptx.import_pptx(source, assets_dir=assets)
+    image_slides = [spec for spec in template.slides if spec.layout == core.LAYOUT_IMAGE]
+    assert image_slides and image_slides[0].image_focus == "left"
+
+
 def test_import_multi_picture_maps_to_grid_and_splits(tmp_path: Path) -> None:
     """同尺寸并排图：2 张 → 单页 grid-2；4 张 → 两页 grid-2。"""
     pytest.importorskip("PIL.Image")

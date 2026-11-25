@@ -25,6 +25,7 @@ from fcmd.apps.pptmake._core import (
     DECOR_ORBS,
     DEFAULT_BODY_FONT,
     DEFAULT_HEADING_FONT,
+    IMAGE_FOCUS_CENTER,
     IMAGE_RATIO_GRID_2,
     IMAGE_RATIO_GRID_3,
     LAYOUT_BULLETS,
@@ -255,13 +256,33 @@ def _image_plan(count: int) -> list[tuple[str, int]]:
     return plan
 
 
-def _extract_pictures(pictures: list[Any], assets_dir: Path, stem: str) -> list[tuple[str, str]]:
-    """逐张抽取图片到资产目录，返回 ``(相对路径, 替代文本)``；失败项跳过。"""
-    extracted: list[tuple[str, str]] = []
+def _picture_focus(picture: Any) -> str:
+    """由源稿裁剪比例反推焦点：裁掉右侧即靠左，裁掉上方即靠下。"""
+    with contextlib.suppress(Exception):
+        left = float(picture.crop_left or 0)
+        right = float(picture.crop_right or 0)
+        top = float(picture.crop_top or 0)
+        bottom = float(picture.crop_bottom or 0)
+        if abs(left - right) >= abs(top - bottom):
+            if right - left > 0.01:
+                return "left"
+            if left - right > 0.01:
+                return "right"
+        else:
+            if bottom - top > 0.01:
+                return "top"
+            if top - bottom > 0.01:
+                return "bottom"
+    return "center"
+
+
+def _extract_pictures(pictures: list[Any], assets_dir: Path, stem: str) -> list[tuple[str, str, str]]:
+    """逐张抽取图片到资产目录，返回 ``(相对路径, 替代文本, 焦点)``；失败项跳过。"""
+    extracted: list[tuple[str, str, str]] = []
     for picture in pictures:
         with contextlib.suppress(Exception):
             alt = picture._element.nvPicPr.cNvPr.get("descr", "") or ""
-            extracted.append((_extract_image(picture, assets_dir, stem), alt))
+            extracted.append((_extract_image(picture, assets_dir, stem), alt, _picture_focus(picture)))
     return extracted
 
 
@@ -420,7 +441,7 @@ def _grid_slides(  # noqa: PLR0913, PLR0917 - 页面字段与栅格计划一一�
     title: str,
     subtitle: str,
     bullets: tuple[str, ...],
-    images: list[tuple[str, str]],
+    images: list[tuple[str, str, str]],
     plan: list[tuple[str, int]],
     note: str = "",
 ) -> list[SlideSpec]:
@@ -430,7 +451,7 @@ def _grid_slides(  # noqa: PLR0913, PLR0917 - 页面字段与栅格计划一一�
     for order, (ratio, count) in enumerate(plan):
         chunk = images[offset : offset + count]
         offset += count
-        paths = tuple(path for path, _alt in chunk)
+        paths = tuple(path for path, _alt, _focus in chunk)
         pages.append(
             SlideSpec(
                 layout=LAYOUT_IMAGE,
@@ -440,6 +461,7 @@ def _grid_slides(  # noqa: PLR0913, PLR0917 - 页面字段与栅格计划一一�
                 image=paths[0] if paths else "",
                 images=paths if ratio else (),
                 image_alt=chunk[0][1] if chunk else "",
+                image_focus=chunk[0][2] if chunk else IMAGE_FOCUS_CENTER,
                 image_ratio=ratio,
                 note=note if order == 0 else "",
             )
@@ -486,6 +508,7 @@ def import_pptx(  # noqa: PLR0912 - 按内容类型分派，分支数随支持�
         extracted = _extract_pictures(pictures, assets_dir, stem) if assets_dir is not None else []
         image = extracted[0][0] if extracted else ""
         image_alt = extracted[0][1] if extracted else ""
+        image_focus = extracted[0][2] if extracted else IMAGE_FOCUS_CENTER
         stats.found["文本"] += len(texts)
         stats.found["图片"] += len(pictures)
         stats.found["表格"] += len(tables)
@@ -516,6 +539,7 @@ def import_pptx(  # noqa: PLR0912 - 按内容类型分派，分支数随支持�
                     subtitle=" ".join(rest[:2]),
                     image=image,
                     image_alt=image_alt,
+                    image_focus=image_focus,
                     note=note,
                 )
             )
