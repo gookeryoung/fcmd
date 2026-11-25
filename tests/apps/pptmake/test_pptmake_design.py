@@ -617,3 +617,36 @@ def test_background_image_fills_page_with_scrim() -> None:
     assert picture.alt == "主视觉"
     assert picture.focus == "top"
     assert picture.overlay == pytest.approx(core.DesignTokens().image_scrim)
+
+
+def test_readable_on_raises_accent_on_tinted_surface() -> None:
+    palette = core.palette_for_style(core.STYLE_CORAL)
+    tint = core.mix_hex(palette.background, palette.accent, 0.22)
+    assert design._contrast(palette.accent, tint) < 3.0
+    adjusted = design.readable_on(palette.accent, tint, palette.text)
+    assert design._contrast(adjusted, tint) >= 3.0
+    # 已经达标的颜色原样返回。
+    assert design.readable_on(palette.text, palette.background, palette.accent) == palette.text
+
+
+def test_photo_layout_uses_dark_palette_for_light_style() -> None:
+    template = _template(style=core.STYLE_PORCELAIN)
+    slide = core.SlideSpec(layout=core.LAYOUT_PHOTO_COVER, title="图片封面")
+    primitives = design.build_draw_list(slide, template)
+    title = next(item for item in primitives if isinstance(item, design.Text) and item.paragraphs == ("图片封面",))
+    assert design._contrast(title.color, design._DARK_BACKGROUND) >= 3.0
+
+
+def test_background_decor_primitives_marked_decorative() -> None:
+    primitives = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_BULLETS), _template())
+    marks = [bool(getattr(item, "decorative", False)) for item in primitives]
+    assert any(marks)
+    assert not all(marks)
+
+
+def test_section_watermark_number_is_decorative() -> None:
+    slide = core.SlideSpec(layout=core.LAYOUT_SECTION, subtitle="03", title="章节标题")
+    primitives = design.build_draw_list(slide, _template())
+    numbers = [item for item in primitives if isinstance(item, design.Text) and item.paragraphs == ("03",)]
+    assert numbers
+    assert all(item.decorative for item in numbers)

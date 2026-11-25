@@ -9,7 +9,7 @@ from xml.etree import ElementTree
 
 import pytest
 
-from fcmd.apps.pptmake import _base, _base_asset, _pptx
+from fcmd.apps.pptmake import _base, _base_asset, _pptx, _pptx_import
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _design as design
 
@@ -312,6 +312,88 @@ def test_import_empty_and_closing_slides(tmp_path: Path) -> None:
     assert template.name == "mixed"
 
 
+def test_import_upgrades_picture_table_chart_and_notes(tmp_path: Path) -> None:
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+    from pptx.chart.data import CategoryChartData
+
+    api = _pptx._api()
+    presentation = api.Presentation()
+    cover = presentation.slides.add_slide(presentation.slide_layouts[6])
+    cover.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "年度汇报"
+    image_path = tmp_path / "pic.png"
+    Image.new("RGB", (600, 400), "#3366FF").save(image_path)
+    image_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    image_slide.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "主视觉"
+    image_slide.shapes.add_picture(str(image_path), 0, 100, presentation.slide_width, presentation.slide_height)
+    image_slide.notes_slide.notes_text_frame.text = "备注：替换为品牌主图"
+    table_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    table_slide.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "方案对比"
+    table = table_slide.shapes.add_table(3, 3, 0, 100, presentation.slide_width, 2000000).table
+    rows = (("指标", "现状", "目标"), ("速度", "小时级", "分钟级"), ("成本", "较高", "更低"))
+    for row_index, row in enumerate(rows):
+        for column_index, value in enumerate(row):
+            table.cell(row_index, column_index).text = value
+    chart_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    chart_slide.shapes.add_textbox(0, 0, 400, 60).text_frame.text = "增长趋势"
+    data = CategoryChartData()
+    data.categories = ["Q1", "Q2", "Q3"]
+    data.add_series("收入", (42, 68, 54))
+    chart_slide.shapes.add_chart(
+        api.XL_CHART_TYPE.COLUMN_CLUSTERED,
+        0,
+        100,
+        presentation.slide_width,
+        3000000,
+        data,
+    )
+    source = tmp_path / "rich.pptx"
+    presentation.save(str(source))
+    assets = tmp_path / "rich.assets"
+    report: list[str] = []
+    template = _pptx.import_pptx(source, assets_dir=assets, report=report)
+    assert [slide.layout for slide in template.slides] == [
+        core.LAYOUT_COVER,
+        core.LAYOUT_IMAGE,
+        core.LAYOUT_COMPARISON,
+        core.LAYOUT_CHART,
+    ]
+    image_spec = template.slides[1]
+    assert image_spec.image.startswith("rich.assets/")
+    assert (assets / image_spec.image.split("/", 1)[1]).is_file()
+    assert image_spec.note == "备注：替换为品牌主图"
+    assert template.slides[2].subtitle == "现状|目标"
+    assert template.slides[2].bullets[0] == "速度|小时级|分钟级"
+    assert template.slides[3].bullets == ("Q1|42", "Q2|68", "Q3|54")
+    assert len(report) == 4
+    assert "图片" in report[1]
+
+
+def test_export_potx_marks_template_content_type(tmp_path: Path) -> None:
+    target = tmp_path / "brand.potx"
+    assert _pptx.export_potx(core.default_template(), target) == len(core.LAYOUTS)
+    with zipfile.ZipFile(target) as archive:
+        content_types = archive.read("[Content_Types].xml").decode("utf-8")
+    assert "presentationml.template.main+xml" in content_types
+    assert "presentationml.presentation.main+xml" not in content_types
+
+
+def test_export_resolves_relative_images_from_base_dir(tmp_path: Path) -> None:
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    assets = tmp_path / "deck.assets"
+    assets.mkdir()
+    Image.new("RGB", (320, 160), "#0B1020").save(assets / "hero.png")
+    template = core.new_template(
+        slides=(core.SlideSpec(layout=core.LAYOUT_IMAGE, title="图", image="deck.assets/hero.png"),),
+    )
+    target = tmp_path / "out.pptx"
+    assert _pptx.export_pptx(template, target, base_dir=tmp_path) == 1
+    with zipfile.ZipFile(target) as archive:
+        assert any(name.startswith("ppt/media/") for name in archive.namelist())
+
+
 @pytest.mark.parametrize("suffix", [".pptx", ".txt"])
 def test_import_and_count_report_invalid_file(tmp_path: Path, suffix: str) -> None:
     broken = tmp_path / f"broken{suffix}"
@@ -323,7 +405,7 @@ def test_import_and_count_report_invalid_file(tmp_path: Path, suffix: str) -> No
 
 
 def test_theme_color_helpers() -> None:
-    assert _pptx._theme_color(None, "lt1") is None
+    assert _pptx_import._theme_color(None, "lt1") is None
     root = ElementTree.fromstring(
         '<a:clrScheme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
         '<a:lt1><a:srgbClr val="FFFFFF"/></a:lt1>'
@@ -331,27 +413,27 @@ def test_theme_color_helpers() -> None:
         '<a:accent1><a:sysClr val="x"/></a:accent1>'
         "</a:clrScheme>"
     )
-    assert _pptx._theme_color(root, "lt1") == "#FFFFFF"
-    assert _pptx._theme_color(root, "dk1") == "#101010"
-    assert _pptx._theme_color(root, "accent1") is None
-    assert _pptx._theme_color(root, "missing") is None
+    assert _pptx_import._theme_color(root, "lt1") == "#FFFFFF"
+    assert _pptx_import._theme_color(root, "dk1") == "#101010"
+    assert _pptx_import._theme_color(root, "accent1") is None
+    assert _pptx_import._theme_color(root, "missing") is None
 
-    assert _pptx._first_typeface(None) == ""
+    assert _pptx_import._first_typeface(None) == ""
     fonts = ElementTree.fromstring(
         '<a:majorFont xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
         '<a:latin typeface=""/><a:ea typeface="标题字体"/></a:majorFont>'
     )
-    assert _pptx._first_typeface(fonts) == "标题字体"
+    assert _pptx_import._first_typeface(fonts) == "标题字体"
     empty_fonts = ElementTree.fromstring(
         '<a:majorFont xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:latin typeface=""/></a:majorFont>'
     )
-    assert _pptx._first_typeface(empty_fonts) == ""
+    assert _pptx_import._first_typeface(empty_fonts) == ""
 
 
 def test_safe_color() -> None:
-    assert _pptx._safe_color(None, "#123456") == "#123456"
-    assert _pptx._safe_color("bad", "#123456") == "#123456"
-    assert _pptx._safe_color("aabbcc", "#123456") == "#AABBCC"
+    assert _pptx_import._safe_color(None, "#123456") == "#123456"
+    assert _pptx_import._safe_color("bad", "#123456") == "#123456"
+    assert _pptx_import._safe_color("aabbcc", "#123456") == "#AABBCC"
 
 
 def test_read_theme_from_custom_package(tmp_path: Path) -> None:
@@ -374,7 +456,7 @@ def test_read_theme_from_custom_package(tmp_path: Path) -> None:
     )
     with zipfile.ZipFile(package, "w") as archive:
         archive.writestr("ppt/theme/theme1.xml", theme_xml)
-    palette, heading_font, body_font = _pptx._read_theme(package)
+    palette, heading_font, body_font = _pptx_import._read_theme(package)
     assert palette.background == "#FAFAFA"
     assert palette.text == "#101010"
     assert palette.accent == "#112233"
@@ -388,11 +470,11 @@ def test_read_theme_falls_back_for_missing_or_broken_package(tmp_path: Path) -> 
     empty_zip = tmp_path / "empty.zip"
     with zipfile.ZipFile(empty_zip, "w") as archive:
         archive.writestr("ppt/presentation.xml", "<x/>")
-    assert _pptx._read_theme(empty_zip) == (core.Palette(), core.DEFAULT_HEADING_FONT, core.DEFAULT_BODY_FONT)
+    assert _pptx_import._read_theme(empty_zip) == (core.Palette(), core.DEFAULT_HEADING_FONT, core.DEFAULT_BODY_FONT)
     # 不是 zip
     broken = tmp_path / "broken.pptx"
     broken.write_text("x", encoding="utf-8")
-    assert _pptx._read_theme(broken) == (core.Palette(), core.DEFAULT_HEADING_FONT, core.DEFAULT_BODY_FONT)
+    assert _pptx_import._read_theme(broken) == (core.Palette(), core.DEFAULT_HEADING_FONT, core.DEFAULT_BODY_FONT)
 
 
 def test_base_asset_layouts_placeholders_and_size() -> None:

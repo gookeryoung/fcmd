@@ -319,3 +319,39 @@ def test_cli_entry_flow(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     capsys.readouterr()
     assert run_tool("pptmake", ["export", str(template_path), "--output", str(output_path)]) == 0
     assert output_path.is_file()
+
+
+def test_init_scene_writes_scene_template(tmp_path: Path) -> None:
+    from fcmd.apps.pptmake import _library
+
+    target = tmp_path / "launch.pptmtpl.json"
+    pptmake.init_command(target, scene="launch", style="coral")
+    template = core.load_template(target)
+    assert [slide.layout for slide in template.slides] == list(_library.SCENES["launch"])
+    assert template.theme.style == core.STYLE_CORAL
+
+
+def test_init_rejects_unknown_scene(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "bad.pptmtpl.json"
+    pptmake.init_command(target, scene="unknown")
+    captured = capsys.readouterr()
+    assert "未知场景" in captured.out + captured.err
+    assert not target.exists()
+
+
+def test_export_potx_defaults_to_potx_suffix(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    template_path = tmp_path / "brand.pptmtpl.json"
+    core.save_template(core.new_template(), template_path)
+    pptmake.export_command(template_path, potx=True)
+    target = tmp_path / "brand.potx"
+    assert target.is_file()
+    assert ".potx" in capsys.readouterr().out
+
+
+def test_quality_reports_unlabeled_image(tmp_path: Path) -> None:
+    image = tmp_path / "hero.png"
+    image.write_bytes(b"not-a-real-png")
+    template = core.new_template(slides=(core.SlideSpec(layout=core.LAYOUT_IMAGE, title="图片", image=str(image)),))
+    report = pptmake._quality_issues(template, verbose=False)
+    assert report.unlabeled == 1
+    assert report.missing == 0

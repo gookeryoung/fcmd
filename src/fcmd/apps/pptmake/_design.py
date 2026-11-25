@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from fcmd.apps.pptmake._bullets import split_bullet
 from fcmd.apps.pptmake._core import (
@@ -53,6 +53,7 @@ from fcmd.apps.pptmake._core import (
     Theme,
     mix_hex,
     normalize_hex,
+    relative_luminance,
 )
 from fcmd.apps.pptmake._tokens import RadiusScale, SpacingScale, TypeScale
 
@@ -81,7 +82,11 @@ ANCHOR_MIDDLE = "middle"
 
 @dataclass(frozen=True, slots=True)
 class Rect:
-    """矩形图元；``radius`` > 0 时渲染为圆角矩形。"""
+    """矩形图元；``radius`` > 0 时渲染为圆角矩形。
+
+    ``decorative`` 标记纯装饰底色（背景光斑、边框等），对比度检查不把它
+    当作文字的实际底色。
+    """
 
     x: float
     y: float
@@ -91,11 +96,12 @@ class Rect:
     line: str = ""
     line_width: float = 0.0
     radius: float = 0.0
+    decorative: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class Oval:
-    """椭圆图元。"""
+    """椭圆图元；``decorative`` 含义同 :class:`Rect`。"""
 
     x: float
     y: float
@@ -104,6 +110,7 @@ class Oval:
     fill: str = ""
     line: str = ""
     line_width: float = 0.0
+    decorative: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +123,7 @@ class Line:
     y2: float
     color: str
     width: float = 1.0
+    decorative: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +178,11 @@ def picture_crop(focus: str, image_ratio: float, box_ratio: float) -> tuple[floa
 
 @dataclass(frozen=True, slots=True)
 class Text:
-    """文本框图元；``paragraphs`` 的每一项是一段。"""
+    """文本框图元；``paragraphs`` 的每一项是一段。
+
+    ``decorative`` 标记纯装饰文字（章节水印编号、引号等），这类文字不传达
+    信息，对比度检查按 WCAG 的「装饰性内容」豁免，不做门槛判定。
+    """
 
     x: float
     y: float
@@ -190,6 +202,7 @@ class Text:
     indent: float = 0.0
     field: str = ""
     field_suffix: str = ""
+    decorative: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +370,7 @@ def _text(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与 Text 字段一�
     indent: float = 0.0,
     field: str = "",
     field_suffix: str = "",
+    decorative: bool = False,
 ) -> Text:
     """创建文本框；``content`` 中的换行拆成多段。"""
     paragraphs = tuple(content.split("\n")) if content else ("",)
@@ -379,6 +393,7 @@ def _text(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与 Text 字段一�
         indent=indent,
         field=field,
         field_suffix=field_suffix,
+        decorative=decorative,
     )
 
 
@@ -390,6 +405,32 @@ def _slide_accent(slide: SlideSpec, palette: Palette) -> str:
         except ValueError:
             return palette.accent
     return palette.accent
+
+
+def _contrast(color: str, other: str) -> float:
+    """WCAG 对比度；颜色非法时返回 21（不误报）。"""
+    try:
+        first = relative_luminance(color)
+        second = relative_luminance(other)
+    except ValueError:
+        return 21.0
+    high, low = max(first, second), min(first, second)
+    return (high + 0.05) / (low + 0.05)
+
+
+def readable_on(color: str, surface: str, fallback: str, *, minimum: float = 3.0) -> str:
+    """把 ``color`` 逐级向 ``fallback``（正文色）混合，直到与 ``surface`` 达标。
+
+    用于「强调色文字画在强调色浅底上」这类场景：浅色主题向深色正文靠拢、
+    深色主题向浅色正文靠拢，两个方向都只会增加对比度。
+    """
+    if _contrast(color, surface) >= minimum:
+        return color
+    for step in range(1, 11):
+        candidate = mix_hex(color, fallback, step / 10)
+        if _contrast(candidate, surface) >= minimum:
+            return candidate
+    return fallback
 
 
 _LIGHT_BACKGROUND = "#F5F7FA"
@@ -405,6 +446,16 @@ _DARK_MUTED = "#9AA4BF"
 def _page_palette(template: TemplateSpec, slide: SlideSpec) -> Palette:
     """按 ``slide.background`` 覆盖底板与文字色；强调色保持主题口径。"""
     palette = template.theme.palette
+    if slide.layout in (LAYOUT_PHOTO_COVER, LAYOUT_PHOTO_SECTION):
+        # 图片页恒用深色底板 + 浅色文字：压暗层之上只有浅色文字才稳定可读。
+        return Palette(
+            background=_DARK_BACKGROUND,
+            surface=_DARK_SURFACE,
+            accent=palette.accent,
+            secondary=palette.secondary,
+            text=_DARK_TEXT,
+            muted=_DARK_MUTED,
+        )
     if slide.background == BACKGROUND_LIGHT:
         return Palette(
             background=_LIGHT_BACKGROUND,
@@ -704,7 +755,8 @@ def _render_agenda(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
         row = index % per_column
         x = ctx.margin + column * (column_width + gap)
         y = top + round(scale.small) + row * (spacing.section + spacing.gap)
-        out.append(Rect(x, y, marker, marker, fill=mix_hex(palette.background, ctx.accent, 0.22), radius=marker / 2))
+        marker_fill = mix_hex(palette.background, ctx.accent, 0.22)
+        out.append(Rect(x, y, marker, marker, fill=marker_fill, radius=marker / 2))
         out.append(
             _text(
                 x,
@@ -713,7 +765,7 @@ def _render_agenda(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 marker,
                 f"{index + 1:02d}",
                 scale.caption,
-                ctx.accent,
+                readable_on(ctx.accent, marker_fill, palette.text),
                 ctx.theme.heading_font,
                 bold=True,
                 align=ALIGN_CENTER,
@@ -752,6 +804,7 @@ def _render_section(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             mix_hex(palette.background, ctx.accent, 0.45),
             ctx.theme.heading_font,
             bold=True,
+            decorative=True,
         )
     )
     out.append(
@@ -944,6 +997,7 @@ def _render_quote(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
             ctx.theme.heading_font,
             bold=True,
             line_spacing=1.0,
+            decorative=True,
         )
     )
     if ctx.headings:
@@ -1017,7 +1071,7 @@ def _render_metrics(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 round(card_height * 0.34),
                 value,
                 scale.stat,
-                accent,
+                readable_on(accent, palette.surface, palette.text),
                 ctx.theme.heading_font,
                 bold=True,
             )
@@ -1033,7 +1087,7 @@ def _render_metrics(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                     round(scale.small * 1.4),
                     trend,
                     scale.small,
-                    trend_color,
+                    readable_on(trend_color, palette.surface, palette.text),
                     ctx.theme.heading_font,
                     bold=True,
                 )
@@ -1712,6 +1766,7 @@ def _render_photo_section(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> 
             ctx.theme.heading_font,
             bold=True,
             line_spacing=1.0,
+            decorative=True,
         )
     )
     if ctx.headings:
@@ -1780,13 +1835,14 @@ def _render_cards(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
         )
         out.append(Rect(x, card_top, card_width, 6, fill=ctx.accent, radius=round(ctx.radius.small)))
         badge = round(scale.heading * 1.4)
+        badge_fill = mix_hex(palette.surface, ctx.accent, 0.22)
         out.append(
             Oval(
                 x + spacing.block,
                 card_top + spacing.block,
                 badge,
                 badge,
-                fill=mix_hex(palette.surface, ctx.accent, 0.22),
+                fill=badge_fill,
             )
         )
         out.append(
@@ -1797,7 +1853,7 @@ def _render_cards(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 badge,
                 f"{index + 1:02d}",
                 round(scale.small * 0.9),
-                ctx.accent,
+                readable_on(ctx.accent, badge_fill, palette.text),
                 ctx.theme.heading_font,
                 bold=True,
                 align=ALIGN_CENTER,
@@ -2083,7 +2139,8 @@ def _render_team(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
         role = parts[1] if len(parts) > 1 else "职位"
         bio = parts[2] if len(parts) > 2 else ""
         center = margin + column_width * index + column_width / 2
-        out.append(Oval(center - avatar / 2, avatar_y, avatar, avatar, fill=mix_hex(palette.surface, ctx.accent, 0.2)))
+        avatar_fill = mix_hex(palette.surface, ctx.accent, 0.2)
+        out.append(Oval(center - avatar / 2, avatar_y, avatar, avatar, fill=avatar_fill))
         out.append(
             _text(
                 center - avatar / 2,
@@ -2092,7 +2149,7 @@ def _render_team(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 avatar,
                 name[:1],
                 round(scale.display * 0.6),
-                ctx.accent,
+                readable_on(ctx.accent, avatar_fill, palette.text),
                 ctx.theme.heading_font,
                 bold=True,
                 align=ALIGN_CENTER,
@@ -2161,6 +2218,7 @@ def _render_testimonial(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> No
             ctx.theme.heading_font,
             bold=True,
             line_spacing=1.0,
+            decorative=True,
         )
     )
     quote = slide.title.strip() or "它把我们最费时的排版，变成了一次点击。"
@@ -2209,7 +2267,8 @@ def _render_testimonial(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> No
             )
         )
     else:
-        out.append(Oval(avatar_x, avatar_y, avatar, avatar, fill=mix_hex(palette.surface, ctx.accent, 0.2)))
+        avatar_fill = mix_hex(palette.surface, ctx.accent, 0.2)
+        out.append(Oval(avatar_x, avatar_y, avatar, avatar, fill=avatar_fill))
         out.append(
             _text(
                 avatar_x,
@@ -2218,7 +2277,7 @@ def _render_testimonial(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> No
                 avatar,
                 "客户",
                 scale.small,
-                ctx.accent,
+                readable_on(ctx.accent, avatar_fill, palette.text),
                 ctx.theme.heading_font,
                 bold=True,
                 align=ALIGN_CENTER,
@@ -2229,7 +2288,6 @@ def _render_testimonial(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> No
 
 def _render_code(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
     """代码 / 终端：深色面板 + 行号 + 等宽字体。"""
-    palette = ctx.palette
     scale = ctx.type_scale
     spacing = ctx.spacing
     margin = ctx.margin
@@ -2237,7 +2295,8 @@ def _render_code(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
     panel_top = top + round(scale.body)
     panel_height = ctx.height - panel_top - round(scale.body * 4)
     panel_width = ctx.width - margin * 2
-    panel_fill = mix_hex(palette.background, "#000000", 0.35)
+    # 代码面板固定深色底 + 浅色文字：浅色主题下也保持终端观感与可读性。
+    panel_fill = mix_hex(_DARK_BACKGROUND, "#05070F", 0.6)
     out.append(
         Rect(
             margin,
@@ -2263,7 +2322,7 @@ def _render_code(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 24,
                 language,
                 scale.caption,
-                palette.muted,
+                _DARK_MUTED,
                 "Cascadia Mono",
                 align=ALIGN_RIGHT,
             )
@@ -2284,7 +2343,7 @@ def _render_code(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 line_height,
                 f"{index + 1:02d}",
                 round(scale.body * 0.86),
-                mix_hex(panel_fill, palette.muted, 0.6),
+                _DARK_MUTED,
                 "Cascadia Mono",
                 align=ALIGN_RIGHT,
             )
@@ -2297,7 +2356,7 @@ def _render_code(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 line_height,
                 line,
                 round(scale.body * 0.92),
-                palette.text,
+                _DARK_TEXT,
                 "Cascadia Mono",
                 line_spacing=1.1,
             )
@@ -2394,7 +2453,7 @@ def _render_agenda_pages(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> N
         title = parts[0] or f"章节 {index + 1}"
         page = parts[1] if len(parts) > 1 else ""
         y = top + index * row_height
-        accent = ctx.accent if index == 0 else mix_hex(palette.background, palette.muted, 0.6)
+        accent = ctx.accent if index == 0 else palette.muted
         out.append(
             _text(
                 margin,
@@ -2599,7 +2658,11 @@ def build_draw_list(  # noqa: PLR0913 - 版式入口需要页码 / 画布尺寸�
             )
         )
     else:
+        mark = len(out)
         _paint_decor(out, ctx)
+        out[mark:] = [
+            replace(item, decorative=True) if isinstance(item, (Rect, Oval, Line)) else item for item in out[mark:]
+        ]
     renderer = _RENDERERS.get(slide.layout, _render_bullets)
     renderer(out, ctx, slide)
     _paint_logo(out, ctx)

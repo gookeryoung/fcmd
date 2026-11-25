@@ -10,24 +10,13 @@ from xml.etree import ElementTree
 
 from fcmd.apps.pptmake._base import base_path, drop_placeholders, layout_for, raise_placeholders, write_heading
 from fcmd.apps.pptmake._core import (
-    ASPECT_4_3,
     ASPECT_16_9,
     ASPECT_INCHES,
-    DECOR_ORBS,
     DEFAULT_BODY_FONT,
-    DEFAULT_HEADING_FONT,
-    LAYOUT_BULLETS,
-    LAYOUT_CLOSING,
-    LAYOUT_COVER,
-    STYLE_CUSTOM,
-    Palette,
-    SlideSpec,
     TemplateError,
     TemplateSpec,
     Theme,
-    mix_hex,
     normalize_hex,
-    relative_luminance,
 )
 from fcmd.apps.pptmake._design import (
     Chart,
@@ -42,6 +31,7 @@ from fcmd.apps.pptmake._design import (
     build_draw_list,
     picture_crop,
 )
+from fcmd.apps.pptmake._pptx_import import import_pptx
 from fcmd.apps.pptmake._pptx_util import (
     _POINTS_PER_UNIT,
     _Api,
@@ -53,7 +43,7 @@ from fcmd.apps.pptmake._pptx_util import (
     _set_fill_and_line,
 )
 
-__all__ = ["export_pptx", "import_pptx", "pptx_slide_count"]
+__all__ = ["export_potx", "export_pptx", "import_pptx", "pptx_slide_count"]
 
 _NAMESPACE = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
 # 「Medium Style 2 - Accent 1」：首行强调 + 斑马纹，与版式的自绘底色一致。
@@ -210,11 +200,15 @@ def _add_scrim(slide: Any, primitive: Picture, api: _Api, scheme: dict[str, str]
     alpha.set("val", str(round(min(max(primitive.overlay, 0.0), 1.0) * 100000)))
 
 
-def _draw_picture(slide: Any, primitive: Picture, api: _Api, *, scheme: dict[str, str]) -> None:
+def _draw_picture(
+    slide: Any, primitive: Picture, api: _Api, *, scheme: dict[str, str], base_dir: Path | None = None
+) -> None:
     """把本地图片写入幻灯片；cover 按焦点裁剪填满，contain 按比例居中。"""
     if primitive.w <= 0 or primitive.h <= 0 or not primitive.path:
         return
     path = Path(primitive.path)
+    if not path.is_absolute() and base_dir is not None:
+        path = base_dir / path
     if not path.is_file():
         raise TemplateError(f"图片不存在：{path}")
     try:
@@ -427,6 +421,7 @@ def _draw_primitive(  # noqa: PLR0911, PLR0913 - 图元分派
     theme: Theme,
     scheme: dict[str, str],
     native: bool,
+    base_dir: Path | None = None,
 ) -> None:
     """把一个绘制图元写入幻灯片。"""
     if isinstance(primitive, Rect):
@@ -457,7 +452,7 @@ def _draw_primitive(  # noqa: PLR0911, PLR0913 - 图元分派
         _set_fill_and_line(shape, primitive.fill, primitive.line, primitive.line_width, api, scheme)
         return
     if isinstance(primitive, Picture):
-        _draw_picture(slide, primitive, api, scheme=scheme)
+        _draw_picture(slide, primitive, api, scheme=scheme, base_dir=base_dir)
         return
     if isinstance(primitive, Table):
         _draw_table(slide, primitive, api, scheme=scheme)
@@ -550,13 +545,14 @@ def _apply_theme_package(path: Path, template: TemplateSpec) -> None:
         return
 
 
-def export_pptx(template: TemplateSpec, path: Path, *, native: bool = True) -> int:
+def export_pptx(template: TemplateSpec, path: Path, *, native: bool = True, base_dir: Path | None = None) -> int:
     """按模板渲染 ``.pptx``，返回写入的页数。
 
     ``native`` 为真（默认）时优先打开随包基础模板：按 ``slide.layout`` 取
     对应版式，把标题 / 副标题写进原生占位符，主题色 / 主题字体与
     ``slidenum`` 字段照常后处理；缺少基础模板或 ``--flat`` 时退回
-    「空白版式 + 浮动文本框」路径，行为与旧版一致。
+    「空白版式 + 浮动文本框」路径，行为与旧版一致。``base_dir`` 用于解析
+    模板里的相对图片路径（``*.assets/`` 目录）。
     """
     api = _api()
     base = base_path(template.aspect) if native else None
@@ -587,7 +583,9 @@ def export_pptx(template: TemplateSpec, path: Path, *, native: bool = True) -> i
             headings=not use_placeholders,
         )
         for primitive in primitives:
-            _draw_primitive(slide, primitive, api, theme=template.theme, scheme=scheme, native=native)
+            _draw_primitive(
+                slide, primitive, api, theme=template.theme, scheme=scheme, native=native, base_dir=base_dir
+            )
         if slide_spec.note.strip():
             slide.notes_slide.notes_text_frame.text = slide_spec.note
         if use_placeholders:
@@ -607,137 +605,25 @@ def export_pptx(template: TemplateSpec, path: Path, *, native: bool = True) -> i
     return len(template.slides)
 
 
-def _theme_color(colors: ElementTree.Element | None, tag: str) -> str | None:
-    """从 ``a:clrScheme`` 中读取颜色，支持 srgbClr / sysClr。"""
-    if colors is None:
-        return None
-    node = colors.find(f"a:{tag}", _NAMESPACE)
-    if node is None:
-        return None
-    srgb = node.find("a:srgbClr", _NAMESPACE)
-    if srgb is not None and srgb.get("val"):
-        return f"#{srgb.get('val')}"
-    system = node.find("a:sysClr", _NAMESPACE)
-    if system is not None and system.get("lastClr"):
-        return f"#{system.get('lastClr')}"
-    return None
+_POTX_MAIN = "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"
+_POTX_TEMPLATE = "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml"
 
 
-def _first_typeface(node: ElementTree.Element | None) -> str:
-    """读取字体方案中的 latin / ea 字体名。"""
-    if node is None:
-        return ""
-    for tag in ("latin", "ea", "cs"):
-        child = node.find(f"a:{tag}", _NAMESPACE)
-        if child is not None and child.get("typeface"):
-            return str(child.get("typeface"))
-    return ""
-
-
-def _safe_color(value: str | None, fallback: str) -> str:
-    """主题颜色非法时回落到默认值。"""
-    if value is None:
-        return fallback
+def export_potx(template: TemplateSpec, path: Path, *, base_dir: Path | None = None) -> int:
+    """导出 PowerPoint 模板（``.potx``）：先生成 PPTX 包，再把主内容类型改为 template。"""
+    count = export_pptx(template, path, base_dir=base_dir)
     try:
-        return normalize_hex(value)
-    except ValueError:
-        return fallback
-
-
-def _read_theme(path: Path) -> tuple[Palette, str, str]:
-    """从 PPTX 包的 ``theme1.xml`` 中提取配色与字体。"""
-    default = Palette()
-    try:
-        with zipfile.ZipFile(path) as archive:
-            themes = sorted(
-                name for name in archive.namelist() if name.startswith("ppt/theme/theme") and name.endswith(".xml")
-            )
-            if not themes:
-                return default, DEFAULT_HEADING_FONT, DEFAULT_BODY_FONT
-            root = ElementTree.fromstring(archive.read(themes[0]))
-    except (OSError, KeyError, zipfile.BadZipFile, ElementTree.ParseError):
-        return default, DEFAULT_HEADING_FONT, DEFAULT_BODY_FONT
-
-    colors = root.find(".//a:clrScheme", _NAMESPACE)
-    light = _safe_color(_theme_color(colors, "lt1"), "#FFFFFF")
-    dark = _safe_color(_theme_color(colors, "dk1"), "#000000")
-    background, text = (light, dark) if relative_luminance(light) >= relative_luminance(dark) else (dark, light)
-    accent = _safe_color(_theme_color(colors, "accent1"), default.accent)
-    secondary = _safe_color(_theme_color(colors, "accent2"), default.secondary)
-    surface_mix = 0.05 if relative_luminance(background) >= 0.5 else 0.10
-    palette = Palette(
-        background=background,
-        surface=mix_hex(background, text, surface_mix),
-        accent=accent,
-        secondary=secondary,
-        text=text,
-        muted=mix_hex(background, text, 0.45),
-    )
-    heading_font = _first_typeface(root.find(".//a:fontScheme/a:majorFont", _NAMESPACE)) or DEFAULT_HEADING_FONT
-    body_font = _first_typeface(root.find(".//a:fontScheme/a:minorFont", _NAMESPACE)) or DEFAULT_BODY_FONT
-    return palette, heading_font, body_font
-
-
-def _slide_texts(slide: Any) -> list[str]:
-    """按段落提取一页中的所有非空文本。"""
-    texts: list[str] = []
-    for shape in slide.shapes:
-        if not getattr(shape, "has_text_frame", False):
-            continue
-        for paragraph in shape.text_frame.paragraphs:
-            text = "".join(run.text for run in paragraph.runs).strip()
-            if not text:
-                text = paragraph.text.strip()
-            if text:
-                texts.append(text)
-    return texts
-
-
-def import_pptx(path: Path) -> TemplateSpec:
-    """把现有 PPTX 尽力转换为模板：封面 + 内容页，并复用主题配色与字体。"""
-    api = _api()
-    try:
-        presentation = api.Presentation(str(path))
-    except Exception as exc:
-        raise TemplateError(f"读取 PPTX 失败：{path}：{exc}") from exc
-    palette, heading_font, body_font = _read_theme(path)
-    ratio = presentation.slide_width / max(presentation.slide_height, 1)
-    aspect = ASPECT_16_9 if ratio >= 1.5 else ASPECT_4_3
-    slides_raw = list(presentation.slides)
-    slides: list[SlideSpec] = []
-    for index, slide in enumerate(slides_raw):
-        texts = _slide_texts(slide)
-        title_shape = slide.shapes.title
-        title_text = title_shape.text.strip() if title_shape is not None else ""
-        if title_text and title_text in texts:
-            texts.remove(title_text)
-            texts.insert(0, title_text)
-        if not texts:
-            slides.append(SlideSpec(layout=LAYOUT_BULLETS))
-            continue
-        title = texts[0]
-        rest = texts[1:]
-        if index == 0:
-            slides.append(SlideSpec(layout=LAYOUT_COVER, title=title, subtitle=" ".join(rest[:2])))
-        elif index == len(slides_raw) - 1 and any(word in title.lower() for word in ("thank", "谢谢", "感谢")):
-            slides.append(SlideSpec(layout=LAYOUT_CLOSING, title=title, subtitle=" ".join(rest[:2])))
-        else:
-            slides.append(SlideSpec(layout=LAYOUT_BULLETS, title=title, bullets=tuple(rest or texts)))
-    theme = Theme(
-        style=STYLE_CUSTOM,
-        palette=palette,
-        heading_font=heading_font,
-        body_font=body_font,
-        decor=DECOR_ORBS,
-    )
-    return TemplateSpec(
-        name=path.stem,
-        description=f"从 {path.name} 导入",
-        author="",
-        aspect=aspect,
-        theme=theme,
-        slides=tuple(slides),
-    )
+        with zipfile.ZipFile(path) as source:
+            items = [(info, source.read(info.filename)) for info in source.infolist()]
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as target:
+            for info, payload in items:
+                contents = payload
+                if info.filename == "[Content_Types].xml":
+                    contents = payload.decode("utf-8").replace(_POTX_MAIN, _POTX_TEMPLATE).encode("utf-8")
+                target.writestr(info, contents)
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        raise TemplateError(f"写入 POTX 失败：{path}：{exc}") from exc
+    return count
 
 
 def pptx_slide_count(path: Path) -> int:

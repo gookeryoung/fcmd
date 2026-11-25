@@ -15,19 +15,23 @@ Qt 预览与 PPTX 共享同一份绘制列表，但控件尺寸、字号像素�
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
+from fcmd.apps.pptmake._core import relative_luminance
 from fcmd.apps.pptmake._design import Primitive, Text
 
 __all__ = [
     "OverflowIssue",
     "Viewport",
     "char_em",
+    "contrast_ratio",
     "estimate_text_height",
     "fit_viewport",
     "measure_text",
     "overflow_issues",
+    "set_text_metrics",
     "text_overflow",
     "wrap_text",
 ]
@@ -151,8 +155,35 @@ def char_em(char: str, *, bold: bool = False) -> float:
 
 
 def measure_text(text: str, size: float, *, bold: bool = False) -> float:
-    """估算单行文本宽度（设计单位）；换行符按空格处理。"""
+    """估算单行文本宽度（设计单位）；换行符按空格处理。
+
+    默认按字符类别估算，保证无字体环境与测试可复现；Qt 预览可通过
+    :func:`set_text_metrics` 注入真实 ``QFontMetricsF`` 度量。
+    """
+    if _TEXT_METRICS is not None:
+        return _TEXT_METRICS(text, size, bold)
     return sum(char_em(char, bold=bold) for char in text.replace("\n", " ")) * size
+
+
+_TextMetrics = Callable[[str, float, bool], float]
+_TEXT_METRICS: _TextMetrics | None = None
+
+
+def set_text_metrics(measurer: _TextMetrics | None) -> None:
+    """注入 / 清除文本度量函数；签名 ``(text, size, bold) -> width``。"""
+    global _TEXT_METRICS  # noqa: PLW0603 - 模块级可替换度量，供 Qt 预览注入
+    _TEXT_METRICS = measurer
+
+
+def contrast_ratio(foreground: str, background: str) -> float:
+    """WCAG 对比度（1–21）；颜色非法时返回 21，避免误报。"""
+    try:
+        first = relative_luminance(foreground)
+        second = relative_luminance(background)
+    except ValueError:
+        return 21.0
+    high, low = max(first, second), min(first, second)
+    return (high + 0.05) / (low + 0.05)
 
 
 def wrap_text(text: str, width: float, size: float, *, bold: bool = False) -> tuple[str, ...]:

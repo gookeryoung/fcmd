@@ -86,3 +86,20 @@ def test_overflow_issues_filters_text_only() -> None:
     assert issues[0].overflow > 0
     assert "溢出" in issues[0].message
     assert preview.overflow_issues(primitives, tolerance=10_000) == ()
+
+
+def test_set_text_metrics_injects_and_clears_measurer() -> None:
+    measured = preview.measure_text("品牌模板", 24)
+    preview.set_text_metrics(lambda text, size, bold: 12.5)
+    try:
+        assert preview.measure_text("品牌模板", 24) == 12.5
+        assert preview.measure_text("另一段文字", 12, bold=True) == 12.5
+    finally:
+        preview.set_text_metrics(None)
+    assert preview.measure_text("品牌模板", 24) == measured
+
+
+def test_contrast_ratio_extremes_and_invalid_colors() -> None:
+    assert preview.contrast_ratio("#000000", "#FFFFFF") == pytest.approx(21.0)
+    assert preview.contrast_ratio("#123456", "#123456") == pytest.approx(1.0)
+    assert preview.contrast_ratio("not-a-color", "#FFFFFF") == 21.0
