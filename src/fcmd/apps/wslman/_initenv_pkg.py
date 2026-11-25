@@ -13,6 +13,7 @@ __all__ = [
     "index_detect_lines",
     "normalize_package_mirror",
     "package_source_script",
+    "pip_config_lines",
     "pip_script",
     "pypi_index_for_mirror",
     "pypi_index_for_package_mirror",
@@ -151,13 +152,47 @@ def uv_config_lines() -> tuple[str, ...]:
     )
 
 
+def pip_config_lines() -> tuple[str, ...]:
+    """直接写 pip 用户配置（不依赖 pip 本体）。
+
+    Ubuntu / Debian 的 WSL 镜像自带 python3 却不带 pip，``python3 -m pip config
+    set`` 会直接报 ``No module named pip``。这里用 awk 在 ``[global]`` 段内就地
+    替换 ``index-url``：已有配置先备份，其它键与段落原样保留；优先复用已存在的
+    ``~/.pip/pip.conf``（envdev 的口径），否则写 XDG 的 ``~/.config/pip/pip.conf``。
+    """
+    return (
+        'pip_conf="$HOME/.config/pip/pip.conf"',
+        '[ -f "$HOME/.pip/pip.conf" ] && pip_conf="$HOME/.pip/pip.conf"',
+        'mkdir -p "$(dirname "$pip_conf")"',
+        'pip_tmp="$pip_conf.tmp"',
+        'if [ -f "$pip_conf" ]; then cp "$pip_conf" "$pip_conf.bak"; fi',
+        'awk -v idx="$index" \'',
+        "BEGIN { done = 0; inglobal = 0 }",
+        '{ sub(/\\r$/, "") }',
+        "/^\\[global\\][[:space:]]*$/ {",
+        '    print "[global]"',
+        '    if (!done) { print "index-url = " idx; done = 1 }',
+        "    inglobal = 1",
+        "    next",
+        "}",
+        "/^[[:space:]]*\\[[^]]*\\][[:space:]]*$/ { inglobal = 0 }",
+        "inglobal && /^[[:space:]]*index-url[[:space:]]*=/ { next }",
+        "{ print }",
+        "END {",
+        '    if (!done) { print "[global]"; print "index-url = " idx }',
+        "}",
+        '\' "$pip_conf" > "$pip_tmp"',
+        'mv "$pip_tmp" "$pip_conf"',
+    )
+
+
 def pip_script(package_mirror: str = PACKAGE_MIRROR_AUTO) -> str:
     """pip 索引 → 软件包源（自动时跟随系统镜像源）。"""
     return "\n".join(
         (
             "set -e",
             *index_detect_lines(package_mirror),
-            'python3 -m pip config set global.index-url "$index" >/dev/null',
+            *pip_config_lines(),
             'echo "pip 镜像已配置：$index"',
         )
     )
@@ -169,8 +204,12 @@ def uv_script(package_mirror: str = PACKAGE_MIRROR_AUTO) -> str:
         (
             "set -e",
             *index_detect_lines(package_mirror),
-            'python3 -m pip config set global.index-url "$index" >/dev/null',
+            *pip_config_lines(),
             'export PATH="$HOME/.local/bin:$PATH"',
+            "if ! python3 -m pip --version >/dev/null 2>&1; then",
+            '    echo "缺少 pip：先勾选「安装 Python 开发环境」，或在实例内执行 sudo apt-get install -y python3-pip" >&2',
+            "    exit 1",
+            "fi",
             "if command -v uv >/dev/null 2>&1; then",
             '    echo "uv 已安装：$(uv --version)"',
             "else",
@@ -193,10 +232,8 @@ def package_source_script(package_mirror: str = PACKAGE_MIRROR_AUTO) -> str:
         (
             "set -e",
             *index_detect_lines(package_mirror),
-            "if command -v python3 >/dev/null 2>&1; then",
-            '    python3 -m pip config set global.index-url "$index" >/dev/null',
-            '    echo "pip 镜像已配置：$index"',
-            "fi",
+            *pip_config_lines(),
+            'echo "pip 镜像已配置：$index"',
             *uv_config_lines(),
             'echo "软件包镜像已配置：$index"',
         )

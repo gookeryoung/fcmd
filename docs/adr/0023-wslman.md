@@ -458,6 +458,10 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   备份后重写 `index-url` / `python-install-mirror`，避免切源后仍残留旧地址；
   改了软件包源但 Python / uv 已就绪时，「开始初始化」会先跑一个只更新 pip / uv
   配置的独立步骤（不重装 uv、不碰系统源），不会因为两项已初始化就跳过源更新；
+  pip 索引**直接写入 pip 用户配置**（`~/.pip/pip.conf` 存在时复用它，否则写
+  `~/.config/pip/pip.conf`，备份后只替换 `[global]` 里的 `index-url`），不调用
+  `python3 -m pip config`：Ubuntu / Debian 的 WSL 镜像常自带 python3 却不带 pip，
+  走 pip 命令会直接报「没有 pip」导致整次初始化中断，探测也改为读同一份配置文件；
   uv 用 `pip install --user` 装
   （不走 astral.sh / GitHub Releases），其 Python 下载走 npmmirror 的
   python-build-standalone；auto-uv-env 排在 uv 之后单独成项，走官方安装脚本

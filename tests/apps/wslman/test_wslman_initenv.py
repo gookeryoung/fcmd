@@ -174,7 +174,11 @@ def test_package_source_steps_update_runtime_without_reinstalling() -> None:
     assert [step.label for step in steps] == ["配置软件包镜像"]
     script = steps[0].script
     assert "index='https://mirrors.ustc.edu.cn/pypi/simple'" in script
-    assert "python3 -m pip config set global.index-url" in script
+    # 直接写 pip 配置文件：没有 pip 的 Ubuntu 实例不该因为 `python3 -m pip` 直接报错。
+    assert "python3 -m pip" not in script
+    assert 'pip_conf="$HOME/.config/pip/pip.conf"' in script
+    assert '[ -f "$HOME/.pip/pip.conf" ]' in script
+    assert 'print "index-url = " idx' in script
     assert "uv_toml.tmp" in script
     assert 'python-install-mirror = "%s"' in script
     assert "pip install --user" not in script
@@ -184,8 +188,28 @@ def test_package_source_steps_update_runtime_without_reinstalling() -> None:
 def test_python_script_only_configures_pip_mirror() -> None:
     """Python 项只管 python3 / pip：就绪判定只看 python3（Kali 自带时就该显示已初始化）。"""
     script = _initenv.steps_for(["python"])[1].script
-    assert "pip config set global.index-url" in script
+    assert "index-url = " in script
+    assert "pip.conf" in script
+    assert "python3 -m pip config" not in script
     assert "uv" not in script
+
+
+def test_pip_config_written_without_pip_module() -> None:
+    """Ubuntu 自带 python3 但没有 pip：写配置只靠 shell，不调用 pip。"""
+    script = _initenv.steps_for(["uv"])[1].script
+    assert "python3 -m pip config" not in script
+    assert 'cp "$pip_conf" "$pip_conf.bak"' in script
+    # 装 uv 仍需要 pip，缺 pip 时给出可执行的提示而不是 `No module named pip`。
+    assert "if ! python3 -m pip --version" in script
+    assert "sudo apt-get install -y python3-pip" in script
+
+
+def test_probe_reads_pip_index_from_config_file() -> None:
+    """探测同样不依赖 pip：直接读 pip.conf（XDG / legacy / 系统级）。"""
+    script = _initenv.probe_script()
+    assert "python3 -m pip config" not in script
+    assert 'for f in /etc/pip.conf "$HOME/.pip/pip.conf" "$HOME/.config/pip/pip.conf"' in script
+    assert "s/^[[:space:]]*index-url[[:space:]]*=[[:space:]]*//p" in script
 
 
 def test_node_script_keeps_nvm_reachable_from_login_shell() -> None:
