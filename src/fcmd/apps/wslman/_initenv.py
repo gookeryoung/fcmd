@@ -188,7 +188,7 @@ def _mirror_script() -> str:
             "    apt-get update",
             "    apt-get install -y curl",
             "fi",
-            f"bash <(curl -sSL {_MIRROR_URL}) "
+            f"bash <(curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 {_MIRROR_URL}) "
             f"--source {_MIRROR_SOURCE} --use-intranet-source false --protocol https "
             "--backup true --install-epel false --upgrade-software false --clean-cache true --ignore-backup-tips",
             'echo "系统镜像源配置完成"',
@@ -409,7 +409,7 @@ TASKS: tuple[InitTask, ...] = (
         "运行国内源配置脚本",
         f"通过 linuxmirrors 把 APT / YUM 系统源切换到国内镜像（默认 {_MIRROR_SOURCE}），"
         "以 root 执行；已配置时重复执行也是安全的。",
-        (InitStep("配置系统镜像源", _mirror_script(), root=True),),
+        (InitStep("配置系统镜像源", _mirror_script(), root=True, timeout_s=900.0),),
     ),
     InitTask(
         "ssh",

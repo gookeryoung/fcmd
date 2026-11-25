@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -210,6 +211,34 @@ def test_subprocess_runner_forwards_stdin(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(_runner.subprocess, "run", fake_run)
     _runner.SubprocessRunner().run(["wsl.exe"], stdin=b"secret")
     assert seen["input"] == b"secret"
+
+
+def test_subprocess_runner_streams_lines_as_they_arrive() -> None:
+    """长命令要边跑边回显：行回调在命令结束前就能拿到输出，且 stdout 仍完整。"""
+    lines: list[str] = []
+    script = "import sys; print('first'); sys.stdout.flush(); print('second')"
+    result = _runner.SubprocessRunner().run_streaming(
+        [sys.executable, "-c", script], timeout=30.0, on_line=lines.append
+    )
+    assert result.returncode == 0
+    assert lines == ["first", "second"]
+    assert result.stdout.replace(b"\r\n", b"\n") == b"first\nsecond\n"
+    assert result.stderr == b""
+
+
+def test_subprocess_runner_streaming_merges_stderr_and_swallows_callback_errors() -> None:
+    """stderr 并入逐行回显；回调抛异常不能让管道停止排空（否则子进程卡死）。"""
+    lines: list[str] = []
+
+    def boom(text: str) -> None:
+        lines.append(text)
+        raise RuntimeError("回调层报错")
+
+    script = "import sys; print('out'); print('err', file=sys.stderr)"
+    result = _runner.SubprocessRunner().run_streaming([sys.executable, "-c", script], timeout=30.0, on_line=boom)
+    assert result.returncode == 0
+    # stdout / stderr 共用一根管道，行序不作保证，但两路都必须回显到。
+    assert sorted(lines) == ["err", "out"]
 
 
 def test_probe_without_wsl(monkeypatch: pytest.MonkeyPatch) -> None:

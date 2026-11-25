@@ -7,11 +7,13 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -29,6 +31,8 @@ __all__ = [
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _PROBE_TIMEOUT_S = 10.0
+_LINE_BREAK = re.compile(rb"\r\n|\r|\n")
+"""逐行回调时的行分隔（apt / curl 的 ``\\r`` 进度行也算一行）。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +98,91 @@ class SubprocessRunner:
             stdout=completed.stdout,
             stderr=completed.stderr,
             duration_ms=duration_ms,
+        )
+
+    def run_streaming(
+        self,
+        argv: Sequence[str],
+        *,
+        timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
+        stdin: bytes | None = None,
+        on_line: Callable[[str], None] | None = None,
+    ) -> CommandResult:
+        """同 :meth:`run`，但 stderr 并入 stdout，并逐行回调解码后的输出。
+
+        长命令（linuxmirrors 换源、apt 装包）只在结束时回显会让人以为卡死；
+        这里通过管道边读边报，``on_line`` 在后台线程按非空行调用。回调异常只
+        丢掉该行：回调层出错不能让管道停止排空，否则子进程会永久阻塞。
+        超时行为与 :meth:`run` 一致（抛 ``subprocess.TimeoutExpired``）。
+        """
+        args = [str(item) for item in argv]
+        child_env = os.environ.copy()
+        child_env["WSL_UTF8"] = "1"
+        if env:
+            child_env.update(env)
+
+        started = time.monotonic()
+        # `stdin=None` 时显式接 DEVNULL：不能继承 GUI 进程的句柄，免得脚本等输入卡住。
+        process = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+            env=child_env,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+        chunks: list[bytes] = []
+        pending = b""
+
+        def emit(raw: bytes) -> None:
+            if on_line is None:
+                return
+            for text in decode_console(raw).splitlines():
+                if not text.strip():
+                    continue
+                try:
+                    on_line(text)
+                except Exception:
+                    continue
+
+        def read_stream() -> None:
+            nonlocal pending
+            stream = process.stdout
+            if stream is None:
+                return
+            read_chunk = getattr(stream, "read1", None) or stream.read
+            while packet := read_chunk(4096):
+                chunks.append(packet)
+                pending += packet
+                parts = _LINE_BREAK.split(pending)
+                pending = parts.pop()
+                for part in parts:
+                    emit(part)
+            if pending:
+                emit(pending)
+
+        if stdin is not None and process.stdin is not None:
+            try:
+                process.stdin.write(stdin)
+                process.stdin.close()
+            except OSError:
+                pass
+        reader = threading.Thread(target=read_stream, daemon=True)
+        reader.start()
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            reader.join(timeout=5.0)
+            raise
+        reader.join(timeout=5.0)
+        return CommandResult(
+            argv=tuple(args),
+            returncode=returncode,
+            stdout=b"".join(chunks),
+            stderr=b"",
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
 
 

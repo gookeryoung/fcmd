@@ -2502,6 +2502,61 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         owner.deleteLater()
 
 
+def test_init_env_section_streams_step_output_live(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """能流式执行时边跑边写日志：长步骤（换源 / apt）不再整步静默。"""
+    owner = QWidget()
+    section = _wslmanw_qt._InitEnvSection(owner, _distro("Ubuntu"))
+    try:
+        seen: list[tuple[list[str], bytes | None]] = []
+
+        class _StreamingRunner:
+            def run_streaming(
+                self,
+                argv: Any,
+                *,
+                timeout: float | None = None,
+                env: Any = None,
+                stdin: bytes | None = None,
+                on_line: Any = None,
+            ) -> CommandResult:
+                seen.append((list(argv), stdin))
+                on_line("下载 linuxmirrors 脚本…")
+                on_line("系统镜像源配置完成")
+                return CommandResult(tuple(argv), 0, b"", b"", 1)
+
+        class _FakeEnv:
+            runner = _StreamingRunner()
+
+        monkeypatch.setattr(cli, "_build_environment", _FakeEnv)
+        monkeypatch.setattr(cli, "_require_wsl", lambda env: "wsl.exe")
+        assert section._execute(_initenv.steps_for(["mirror"])) == "初始化完成"
+        # stdin 接空字节：脚本等输入时会直接读到 EOF，不会挂住。
+        assert seen == [
+            (
+                [
+                    "wsl.exe",
+                    "-d",
+                    "Ubuntu",
+                    "-u",
+                    "root",
+                    "--exec",
+                    "bash",
+                    "-lc",
+                    _initenv.steps_for(["mirror"])[0].script,
+                ],
+                b"",
+            )
+        ]
+        log = section.log.toPlainText()
+        assert "[配置系统镜像源] 开始…" in log
+        assert "下载 linuxmirrors 脚本…" in log
+        assert log.index("下载 linuxmirrors 脚本…") < log.index("系统镜像源配置完成")
+        assert "[配置系统镜像源] 完成" in log
+    finally:
+        section.deleteLater()
+        owner.deleteLater()
+
+
 def test_init_env_section_restores_saved_selection(home: Path) -> None:
     """初始化勾选是「已设置参数」：有保存值时按保存值勾选，探测后也不被默认勾选覆盖。"""
     owner = QWidget()

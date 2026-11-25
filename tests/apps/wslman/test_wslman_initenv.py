@@ -66,7 +66,7 @@ def test_mirror_script_contains_requested_command_and_non_interactive_flags() ->
     task = _initenv.task_by_key("mirror")
     assert task is not None
     script = task.steps[0].script
-    assert "bash <(curl -sSL https://linuxmirrors.cn/main.sh)" in script
+    assert "bash <(curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 https://linuxmirrors.cn/main.sh)" in script
     assert "--source mirrors.aliyun.com" in script
     assert "--ignore-backup-tips" in script
     assert task.steps[0].root is True
@@ -179,6 +179,9 @@ def test_package_source_steps_update_runtime_without_reinstalling() -> None:
     assert 'pip_conf="$HOME/.config/pip/pip.conf"' in script
     assert '[ -f "$HOME/.pip/pip.conf" ]' in script
     assert 'print "index-url = " idx' in script
+    # 首次运行 pip.conf 还不存在：先建空文件，否则 awk 报 cannot open file。
+    assert ': > "$pip_conf"' in script
+    assert 'cp "$pip_conf" "$pip_conf.bak"' in script
     assert "uv_toml.tmp" in script
     assert 'python-install-mirror = "%s"' in script
     assert "pip install --user" not in script

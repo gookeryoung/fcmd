@@ -530,11 +530,18 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
             # 必须用 --exec：``wsl --`` 仍会经过默认 shell，脚本里的 ``$HOME`` /
             # ``$(...)`` 会被提前展开成空串。--exec 直接 exec，变量留给 bash -lc。
             argv.extend(["--exec", "bash", "-lc", step.script])
-            result = env.runner.run(argv, timeout=step.timeout_s)
-            text = _owner.decode_console(result.stdout + result.stderr).strip()
-            for line in _owner._initenv.tail_lines(text):
-                self._bridge.event.emit(line)
+            # 能流式执行就边跑边回显：linuxmirrors 换源 / apt 装包动辄几分钟，
+            # 只在结束时吐输出会让人以为卡死。--exec 下 stdin 接空，避免脚本等输入。
+            stream = getattr(env.runner, "run_streaming", None)
+            if callable(stream):
+                result = stream(argv, timeout=step.timeout_s, stdin=b"", on_line=self._bridge.event.emit)
+            else:
+                result = env.runner.run(argv, timeout=step.timeout_s, stdin=b"")
+                text = _owner.decode_console(result.stdout + result.stderr).strip()
+                for line in _owner._initenv.tail_lines(text):
+                    self._bridge.event.emit(line)
             if result.returncode != 0:
+                text = _owner.decode_console(result.stdout + result.stderr).strip()
                 tail = _owner._initenv.tail_lines(text, 3)
                 raise _owner.runtime_error(
                     f"{step.label}失败（退出码 {result.returncode}）",
