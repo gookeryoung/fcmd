@@ -123,6 +123,7 @@ from fcmd.gui.window import QtMainWindow
 __all__ = ["PAGES", "PptmakeQtWindow", "run_qt"]
 
 DEFAULT_SIZE = (1380, 860)
+NARROW_WIDTH = 1200
 NAV_TITLE = "PPT 模板"
 
 PAGES: tuple[PageSpec, ...] = (
@@ -200,7 +201,23 @@ def _picture_clip(target: QRectF, radius: float) -> QPainterPath:
     return path
 
 
-def _paint_picture(painter: QPainter, primitive: Picture, view: preview.Viewport, ui: Any) -> None:
+def _picture_file(primitive: Picture, base_dir: Path | None) -> str:
+    """把图片图元路径解析成可加载的文件名；相对路径按模板所在目录解析。"""
+    if not primitive.path:
+        return ""
+    path = Path(primitive.path)
+    if not path.is_absolute() and base_dir is not None:
+        path = base_dir / path
+    return str(path)
+
+
+def _paint_picture(
+    painter: QPainter,
+    primitive: Picture,
+    view: preview.Viewport,
+    ui: Any,
+    base_dir: Path | None = None,
+) -> None:
     """按 cover / contain 把本地图片画进图元矩形；支持焦点裁剪、圆角与压暗层。"""
     scale = view.scale
     x, y = view.to_canvas(primitive.x, primitive.y)
@@ -209,7 +226,7 @@ def _paint_picture(painter: QPainter, primitive: Picture, view: preview.Viewport
     if width <= 0 or height <= 0:
         return
     target = QRectF(x, y, width, height)
-    pixmap = QPixmap(primitive.path) if primitive.path else QPixmap()
+    pixmap = QPixmap(_picture_file(primitive, base_dir)) if primitive.path else QPixmap()
     painter.save()
     painter.setClipPath(_picture_clip(target, primitive.radius * scale))
     if pixmap.isNull():
@@ -435,7 +452,7 @@ def _paint_pie_chart(painter: QPainter, primitive: Chart, rect: QRectF) -> None:
 
 
 def _paint_primitive(  # noqa: PLR0911 - 图元分派按类型逐条返回
-    painter: QPainter, primitive: Any, view: preview.Viewport, ui: Any
+    painter: QPainter, primitive: Any, view: preview.Viewport, ui: Any, base_dir: Path | None = None
 ) -> None:
     """把一个设计图元画到画布坐标；几何与既有换算口径一致。"""
     scale = view.scale
@@ -464,7 +481,7 @@ def _paint_primitive(  # noqa: PLR0911 - 图元分派按类型逐条返回
         painter.drawEllipse(QRectF(x, y, width, height))
         return
     if isinstance(primitive, Picture):
-        _paint_picture(painter, primitive, view, ui)
+        _paint_picture(painter, primitive, view, ui, base_dir)
         return
     if isinstance(primitive, Table):
         _paint_table(painter, primitive, view)
@@ -532,6 +549,7 @@ def _paint_slide(  # noqa: PLR0913 - 画布、缩略图与错误提示共用入�
     skip_text: bool = False,
     page_number: int | None = None,
     page_total: int | None = None,
+    base_dir: Path | None = None,
 ) -> None:
     """在 ``width×height`` 画布上绘制一页；裁剪严格限制在页面矩形内。"""
     design_width, design_height = core.ASPECT_DESIGN[template.aspect]
@@ -556,7 +574,7 @@ def _paint_slide(  # noqa: PLR0913 - 画布、缩略图与错误提示共用入�
     for primitive in primitives:
         if skip_text and isinstance(primitive, Text):
             continue
-        _paint_primitive(painter, primitive, view, ui)
+        _paint_primitive(painter, primitive, view, ui, base_dir)
     painter.restore()
     painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.setPen(QPen(QColor(ui.border)))
@@ -712,6 +730,7 @@ class _PresenterWindow(QWidget):  # pragma: no cover - 需要 Qt 事件循环
             ui=ui,
             page_number=self._index + 1,
             page_total=len(template.slides),
+            base_dir=self._window.template_base_dir,
         )
 
     def keyPressEvent(self, event: Any) -> None:
@@ -781,6 +800,7 @@ class _PreviewCanvas(QWidget):  # pragma: no cover - Qt 控件
                 with_overflow_hint=True,
                 page_number=self._window.selected + 1,
                 page_total=len(template.slides),
+                base_dir=self._window.template_base_dir,
             )
         except core.TemplateError as exc:
             _paint_message(painter, width, height, f"预览失败\n{exc}", ui.muted)
@@ -825,6 +845,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._layout_icons: dict[str, QIcon] = {}
         self._sorter_view = self._settings.sorter_view
         self._inspector_visible = self._settings.inspector_visible
+        self._base_dir: Path | None = None
+        self._narrow = False
+        self._narrow_restore_inspector = False
         super().__init__(
             title=f"pptmake - PPT 模板设计器 v{__version__}",
             config_name="pptmakew",
@@ -1005,7 +1028,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             QMessageBox.critical(self, "打开失败", str(exc))
             return
         self._remember_recent(path)
-        self._set_template(template)
+        self._set_template(template, base_dir=path.parent)
 
     def _make_header_buttons(self) -> tuple[QWidget, ...]:
         """设计页标题行的快捷动作（仅图标）：新建 / 导入 / 导出模板 / 导出 PPTX。"""
@@ -1683,6 +1706,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
                             skip_text=True,
                             page_number=index + 1,
                             page_total=len(self._template.slides),
+                            base_dir=self._base_dir,
                         )
                     issues = self._slide_overflow_count(index)
                     if issues:
@@ -1897,7 +1921,9 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _toggle_inspector(self) -> None:
         """收起 / 展开右侧页面设置栏（窄窗口下把画布让出来）。"""
-        self._inspector_visible = not self._inspector_visible
+        auto_hidden = self._narrow and self._inspector_visible and not self._inspector_pane.isVisible()
+        self._inspector_visible = True if auto_hidden else not self._inspector_visible
+        self._narrow_restore_inspector = False
         self._inspector_pane.setVisible(self._inspector_visible)
         _set_icon(
             self._inspector_toggle,
@@ -1906,6 +1932,31 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         )
         self._inspector_toggle.setToolTip("收起页面设置" if self._inspector_visible else "展开页面设置")
         self.set_status("已展开页面设置" if self._inspector_visible else "已收起页面设置")
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        self._sync_narrow_layout()
+
+    def _sync_narrow_layout(self) -> None:
+        """窗口窄于断点时自动收起页面设置，变宽后按原偏好恢复。
+
+        只影响显示状态，不改 ``_inspector_visible``；用户手动切换后不再自动恢复。
+        """
+        if not hasattr(self, "_inspector_pane"):
+            return
+        narrow = self.width() < NARROW_WIDTH
+        if narrow == self._narrow:
+            return
+        self._narrow = narrow
+        if narrow:
+            self._narrow_restore_inspector = self._inspector_visible
+            if self._inspector_visible:
+                self._inspector_pane.setVisible(False)
+                self.set_status("窗口较窄，已自动收起页面设置")
+        elif self._narrow_restore_inspector:
+            self._narrow_restore_inspector = False
+            self._inspector_pane.setVisible(self._inspector_visible)
+            self.set_status("窗口已放宽，已恢复页面设置")
 
     def _slide_overflow_count(self, index: int) -> int:
         """当前模板第 ``index`` 页的预计溢出文本框数量（构建失败时记 0）。"""
@@ -2258,7 +2309,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _refresh_check_panel(self) -> None:
         """设计检查：逐页列出溢出 / 缺图 / 小字 / 替代文本 / 对比度问题。"""
-        details = _quality.quality_details(self._template)
+        details = _quality.quality_details(self._template, base_dir=self._base_dir)
         self._check_list.clear()
         for issue in details:
             item = QListWidgetItem(issue.describe())
@@ -2336,6 +2387,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             decor=self._settings.decor,
         )
         self._history.reset(self._template)
+        self._base_dir = None
         self.selected = 0
         self._mark_dirty(False)
         self._refresh_all()
@@ -2345,6 +2397,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         """按内置风格新建一份完整示例模板（覆盖封面到结尾的演示页）。"""
         self._template = core.default_template(style=style, aspect=self._template.aspect)
         self._history.reset(self._template)
+        self._base_dir = None
         self.selected = 0
         self._mark_dirty(True)
         self._refresh_all()
@@ -2360,15 +2413,21 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         if not path:
             return
         source = Path(path)
+        report: list[str] = []
         try:
-            template = import_pptx(source) if source.suffix.lower() == ".pptx" else core.load_template(source)
+            if source.suffix.lower() == ".pptx":
+                template = import_pptx(source, assets_dir=source.with_suffix(".assets"), report=report)
+            else:
+                template = core.load_template(source)
         except core.TemplateError as exc:
             QMessageBox.critical(self, "导入失败", str(exc))
             return
         self._settings.last_dir = str(source.parent)
         if source.suffix.lower() != ".pptx":
             self._remember_recent(source)
-        self._set_template(template)
+        self._set_template(template, base_dir=source.parent)
+        if report:
+            QMessageBox.information(self, "导入报告", "\n".join(report))
 
     def _export_template(self) -> bool:
         """导出模板 JSON；返回是否真正写入（关闭确认里据此决定能否关窗）。"""
@@ -2388,6 +2447,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             QMessageBox.critical(self, "导出失败", str(exc))
             return False
         self._settings.last_dir = str(target.parent)
+        self._base_dir = target.parent
         self._remember_recent(target)
         self._mark_dirty(False)
         self._discard_draft()
@@ -2413,7 +2473,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         if not path:
             return
         target = Path(path)
-        report = _quality.quality_issues(sliced, verbose=False)
+        report = _quality.quality_issues(sliced, verbose=False, base_dir=self._base_dir)
         if report.total:
             answer = QMessageBox.question(
                 self,
@@ -2426,7 +2486,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             if answer != QMessageBox.StandardButton.Yes:
                 return
         try:
-            count = export_pptx(sliced, target)
+            count = export_pptx(sliced, target, base_dir=self._base_dir)
         except core.TemplateError as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
             return
@@ -2464,7 +2524,7 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         workdir = Path(tempfile.mkdtemp(prefix="pptmake-preview-"))
         source = workdir / f"{safe_filename(self._template.name)}.pptx"
         try:
-            count = export_pptx(self._template, source)
+            count = export_pptx(self._template, source, base_dir=self._base_dir)
             pdf = _office.convert_to_pdf(source, workdir)
         except (core.TemplateError, _office.OfficeError) as exc:
             QMessageBox.critical(self, "精确预览失败", str(exc))
@@ -2472,14 +2532,20 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         webbrowser.open(pdf.as_uri())
         self.set_status(f"已生成精确预览：{pdf}（{count} 页）")
 
-    def _set_template(self, template: core.TemplateSpec) -> None:
+    def _set_template(self, template: core.TemplateSpec, *, base_dir: Path | None = None) -> None:
         self._template = template
+        self._base_dir = base_dir
         self._history.reset(template)
         self.selected = 0
         self._mark_dirty(False)
         self._refresh_all()
         self._sync_history_actions()
         self.set_status(f"已载入：{template.name}（{len(template.slides)} 页）")
+
+    @property
+    def template_base_dir(self) -> Path | None:
+        """模板中相对图片路径的解析基准（模板文件所在目录）。"""
+        return self._base_dir
 
     def _show_help(self) -> None:
         QMessageBox.information(self, "使用说明", HELP_TEXT)

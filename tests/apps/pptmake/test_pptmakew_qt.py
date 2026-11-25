@@ -351,6 +351,62 @@ def test_layout_gallery_has_thumbnails(window: Any) -> None:
     assert all(window._layout_list.item(row).icon().isNull() is False for row in range(window._layout_list.count()))
 
 
+def test_narrow_window_auto_collapses_inspector(window: Any) -> None:
+    """窄于断点时自动收起页面设置，变宽后按原偏好恢复；手动切换后不再自动恢复。"""
+    window.show()
+    window.setMinimumSize(960, 420)
+    window.resize(_pptmakew_qt.NARROW_WIDTH - 60, 720)
+    create_application("pptmakew-test").processEvents()
+    assert window._inspector_visible is True
+    assert window._inspector_pane.isVisible() is False
+
+    window.resize(_pptmakew_qt.NARROW_WIDTH + 200, 800)
+    create_application("pptmakew-test").processEvents()
+    assert window._inspector_pane.isVisible() is True
+
+    window.resize(_pptmakew_qt.NARROW_WIDTH - 60, 720)
+    create_application("pptmakew-test").processEvents()
+    assert window._inspector_pane.isVisible() is False
+    window._toggle_inspector()
+    assert window._inspector_pane.isVisible() is True
+    window.resize(_pptmakew_qt.NARROW_WIDTH + 200, 800)
+    create_application("pptmakew-test").processEvents()
+    assert window._inspector_pane.isVisible() is True
+    window.close()
+
+
+def test_picture_file_resolves_relative_to_base_dir() -> None:
+    """相对图片路径按模板所在目录解析，绝对路径保持不变。"""
+    relative = _pptmakew_qt.Picture(0, 0, 10, 10, "hero.assets/a.png")
+    absolute = _pptmakew_qt.Picture(0, 0, 10, 10, str(Path("C:/abs/b.png")))
+    base = Path("D:/deck")
+    assert Path(_pptmakew_qt._picture_file(relative, base)) == base / "hero.assets/a.png"
+    assert Path(_pptmakew_qt._picture_file(relative, None)) == Path("hero.assets/a.png")
+    assert Path(_pptmakew_qt._picture_file(absolute, base)) == Path("C:/abs/b.png")
+
+
+def test_import_pptx_writes_report_and_base_dir(window: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """GUI 导入 PPTX 后弹逐页报告并记录基准目录。"""
+    pytest.importorskip("pptx")
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    source = tmp_path / "导入演示.pptx"
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    slide.shapes.add_textbox(Inches(0), Inches(0), Inches(4), Inches(1)).text_frame.text = "季度回顾"
+    slide.shapes.add_textbox(Inches(0), Inches(1.5), Inches(4), Inches(1)).text_frame.text = "收入增长"
+    presentation.save(str(source))
+
+    shown: list[str] = []
+    monkeypatch.setattr(_pptmakew_qt.QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(source), ""))
+    monkeypatch.setattr(_pptmakew_qt.QMessageBox, "information", lambda *args, **kwargs: shown.append(args[-1]))
+
+    window._import_file()
+    assert window._base_dir == source.parent
+    assert shown and "第 1 页" in shown[0] and "保留率" in shown[0]
+
+
 def test_autosave_and_recover_draft(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     window._apply_style(core.STYLE_CORAL)
     window._autosave()
