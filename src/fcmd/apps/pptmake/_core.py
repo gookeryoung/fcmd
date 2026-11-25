@@ -28,6 +28,34 @@ from fcmd.apps.pptmake._charts import (
     CHART_TYPES,
     chart_options,
 )
+from fcmd.apps.pptmake._image import (
+    IMAGE_FIT_CONTAIN,
+    IMAGE_FIT_COVER,
+    IMAGE_FIT_TEXT,
+    IMAGE_FITS,
+    IMAGE_FOCUS_BOTTOM,
+    IMAGE_FOCUS_CENTER,
+    IMAGE_FOCUS_LEFT,
+    IMAGE_FOCUS_RIGHT,
+    IMAGE_FOCUS_TEXT,
+    IMAGE_FOCUS_TOP,
+    IMAGE_FOCUSES,
+    IMAGE_RATIO_40_60,
+    IMAGE_RATIO_50_50,
+    IMAGE_RATIO_FULL,
+    IMAGE_RATIO_GRID_2,
+    IMAGE_RATIO_GRID_3,
+    IMAGE_RATIO_MAX,
+    IMAGE_RATIO_MIN,
+    IMAGE_RATIO_TEXT,
+    IMAGE_RATIOS,
+    image_ratio_cells,
+    image_ratio_full,
+    image_ratio_share,
+    normalize_image_fit,
+    normalize_image_focus,
+    normalize_image_ratio,
+)
 from fcmd.apps.pptmake._layouts import (
     DEFAULT_PAGE_NUMBER_HIDDEN,
     LAYOUT_AGENDA,
@@ -60,10 +88,6 @@ from fcmd.apps.pptmake._layouts import (
 from fcmd.apps.pptmake._palette import (
     DEFAULT_BODY_FONT,
     DEFAULT_HEADING_FONT,
-    IMAGE_FIT_CONTAIN,
-    IMAGE_FIT_COVER,
-    IMAGE_FIT_TEXT,
-    IMAGE_FITS,
     PALETTE_FIELDS,
     PALETTES,
     STYLE_AURORA,
@@ -113,6 +137,15 @@ __all__ = [
     "IMAGE_FOCUS_RIGHT",
     "IMAGE_FOCUS_TEXT",
     "IMAGE_FOCUS_TOP",
+    "IMAGE_RATIOS",
+    "IMAGE_RATIO_40_60",
+    "IMAGE_RATIO_50_50",
+    "IMAGE_RATIO_FULL",
+    "IMAGE_RATIO_GRID_2",
+    "IMAGE_RATIO_GRID_3",
+    "IMAGE_RATIO_MAX",
+    "IMAGE_RATIO_MIN",
+    "IMAGE_RATIO_TEXT",
     "LAYOUTS",
     "LAYOUT_AGENDA",
     "LAYOUT_AGENDA_PAGES",
@@ -158,6 +191,9 @@ __all__ = [
     "default_slides",
     "default_template",
     "default_template_path",
+    "image_ratio_cells",
+    "image_ratio_full",
+    "image_ratio_share",
     "is_hex_color",
     "layout_label",
     "load_template",
@@ -170,6 +206,7 @@ __all__ = [
     "normalize_hex",
     "normalize_image_fit",
     "normalize_image_focus",
+    "normalize_image_ratio",
     "normalize_layout",
     "normalize_style",
     "palette_for_style",
@@ -262,6 +299,7 @@ class SlideSpec:
     image_alt: str = ""
     image_caption: str = ""
     image_focus: str = "center"
+    image_ratio: str = ""
     background: str = "inherit"
     chart_type: str = CHART_BAR
     unit: str = ""
@@ -348,36 +386,6 @@ def normalize_decor(value: object) -> str:
     return text if text in DECORS else DECOR_ORBS
 
 
-def normalize_image_fit(value: object) -> str:
-    """校验图片填充方式（cover / contain），缺省返回裁剪填满。"""
-    if value is None or value == "":
-        return IMAGE_FIT_COVER
-    text = str(value).strip().lower()
-    if text not in IMAGE_FITS:
-        raise ValueError(f"image_fit 需为 {IMAGE_FIT_COVER} / {IMAGE_FIT_CONTAIN}：{value!r}")
-    return text
-
-
-IMAGE_FOCUS_CENTER: Final[str] = "center"
-IMAGE_FOCUS_TOP: Final[str] = "top"
-IMAGE_FOCUS_BOTTOM: Final[str] = "bottom"
-IMAGE_FOCUS_LEFT: Final[str] = "left"
-IMAGE_FOCUS_RIGHT: Final[str] = "right"
-IMAGE_FOCUSES: Final[tuple[str, ...]] = (
-    IMAGE_FOCUS_CENTER,
-    IMAGE_FOCUS_TOP,
-    IMAGE_FOCUS_BOTTOM,
-    IMAGE_FOCUS_LEFT,
-    IMAGE_FOCUS_RIGHT,
-)
-IMAGE_FOCUS_TEXT: Final[dict[str, str]] = {
-    IMAGE_FOCUS_CENTER: "居中",
-    IMAGE_FOCUS_TOP: "靠上",
-    IMAGE_FOCUS_BOTTOM: "靠下",
-    IMAGE_FOCUS_LEFT: "靠左",
-    IMAGE_FOCUS_RIGHT: "靠右",
-}
-
 BACKGROUND_INHERIT: Final[str] = "inherit"
 BACKGROUND_DARK: Final[str] = "dark"
 BACKGROUND_LIGHT: Final[str] = "light"
@@ -394,16 +402,6 @@ BACKGROUND_TEXT: Final[dict[str, str]] = {
     BACKGROUND_LIGHT: "浅色底板",
     BACKGROUND_IMAGE: "图片铺底",
 }
-
-
-def normalize_image_focus(value: object) -> str:
-    """校验图片裁剪焦点（center / top / bottom / left / right）。"""
-    if value is None or value == "":
-        return IMAGE_FOCUS_CENTER
-    text = str(value).strip().lower()
-    if text not in IMAGE_FOCUSES:
-        raise ValueError(f"image_focus 需为 {' / '.join(IMAGE_FOCUSES)}：{value!r}")
-    return text
 
 
 def normalize_background(value: object) -> str:
@@ -540,6 +538,7 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
                 "image_alt": slide.image_alt,
                 "image_caption": slide.image_caption,
                 "image_focus": slide.image_focus,
+                "image_ratio": slide.image_ratio,
                 "background": slide.background,
                 "chart_type": slide.chart_type,
                 "unit": slide.unit,
@@ -597,6 +596,7 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         raise TemplateError(f"slides[{index}].image_caption 需为字符串")
     try:
         image_focus = normalize_image_focus(raw.get("image_focus", IMAGE_FOCUS_CENTER))
+        image_ratio = normalize_image_ratio(raw.get("image_ratio", ""))
         background = normalize_background(raw.get("background", BACKGROUND_INHERIT))
     except ValueError as exc:
         raise TemplateError(str(exc)) from exc
@@ -616,6 +616,7 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         image_alt=str(alt_raw or "").strip(),
         image_caption=str(caption_raw or "").strip(),
         image_focus=image_focus,
+        image_ratio=image_ratio,
         background=background,
         chart_type=charts.chart_type,
         unit=charts.unit,

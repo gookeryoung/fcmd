@@ -585,3 +585,41 @@ def test_flat_export_geometry_matches_draw_list(tmp_path: Path) -> None:
         assert abs(box.top / emu_per_unit - item.y) <= 1
         assert abs(box.width / emu_per_unit - item.w) <= 1
         assert abs(box.height / emu_per_unit - item.h) <= 1
+
+
+@pytest.mark.parametrize("aspect", core.ASPECTS)
+@pytest.mark.parametrize("ratio", core.IMAGE_RATIOS)
+def test_image_ratio_geometry_matches_draw_list(tmp_path: Path, ratio: str, aspect: str) -> None:
+    """golden：5 种图文比例 × 2 画幅，导出几何与预览绘制列表一致（阈值 1 单位）。"""
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    image_path = tmp_path / "hero.png"
+    Image.new("RGB", (640, 360), "#3366FF").save(image_path)
+    slide_spec = core.SlideSpec(
+        layout=core.LAYOUT_IMAGE,
+        title="比例几何",
+        image=str(image_path),
+        image_alt="主视觉",
+        image_ratio=ratio,
+    )
+    template = core.new_template(slides=(slide_spec,), aspect=aspect)
+    target = tmp_path / f"{aspect.replace(':', 'x')}-{ratio}.pptx"
+    _pptx.export_pptx(template, target, native=False)
+
+    primitives = design.build_draw_list(slide_spec, template, page_number=1, page_total=1)
+    expected_pictures = [item for item in primitives if isinstance(item, design.Picture)]
+    expected_texts = [item for item in primitives if isinstance(item, design.Text) and item.w > 0 and item.h > 0]
+    shapes = pytest.importorskip("pptx.enum.shapes")
+    api = _pptx._api()
+    slide = api.Presentation(str(target)).slides[0]
+    emu_per_unit = api.Inches(1) / 96
+    pictures = [shape for shape in slide.shapes if shape.shape_type == shapes.MSO_SHAPE_TYPE.PICTURE]
+    boxes = [shape for shape in slide.shapes if shape.shape_type == shapes.MSO_SHAPE_TYPE.TEXT_BOX]
+    assert len(pictures) == len(expected_pictures) == 1
+    assert len(boxes) == len(expected_texts)
+    for shape, item in zip((*pictures, *boxes), (*expected_pictures, *expected_texts), strict=True):
+        assert abs(shape.left / emu_per_unit - item.x) <= 1
+        assert abs(shape.top / emu_per_unit - item.y) <= 1
+        assert abs(shape.width / emu_per_unit - item.w) <= 1
+        assert abs(shape.height / emu_per_unit - item.h) <= 1

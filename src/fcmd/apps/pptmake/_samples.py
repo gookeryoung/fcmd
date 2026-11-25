@@ -95,7 +95,7 @@ def sample_slides() -> dict[str, SlideSpec]:
         LAYOUT_IMAGE: SlideSpec(
             LAYOUT_IMAGE,
             title="让主视觉先说话",
-            subtitle="右侧留出大图区域，文字保持克制，适合品牌与产品发布。",
+            subtitle="右侧留出大图区域，文字保持克制。",
             bullets=("主视觉占据右侧约一半版面", "标题与正文左对齐，层级清晰", "图文比例适合品牌与产品发布"),
         ),
         LAYOUT_COMPARISON: SlideSpec(

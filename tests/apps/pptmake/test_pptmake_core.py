@@ -150,6 +150,49 @@ def test_invalid_image_fit_rejected() -> None:
         core.template_from_mapping({"slides": [{"layout": "image", "image": "a.png", "image_fit": "stretch"}]})
 
 
+@pytest.mark.parametrize("ratio", core.IMAGE_RATIOS)
+def test_image_ratio_presets_roundtrip(ratio: str) -> None:
+    template = core.template_from_mapping({"slides": [{"layout": "image", "image_ratio": ratio}]})
+    assert template.slides[0].image_ratio == ratio
+    assert core.template_to_mapping(template)["slides"][0]["image_ratio"] == ratio
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(0.6, "0.60"), ("0.45", "0.45"), (0.95, "0.80"), (0.05, "0.20")],
+)
+def test_image_ratio_numeric_clamped(raw: object, expected: str) -> None:
+    assert core.normalize_image_ratio(raw) == expected
+    template = core.template_from_mapping({"slides": [{"layout": "image", "image_ratio": raw}]})
+    assert template.slides[0].image_ratio == expected
+
+
+def test_image_ratio_defaults_to_empty() -> None:
+    assert core.normalize_image_ratio(None) == ""
+    template = core.template_from_mapping({"slides": [{"layout": "image"}]})
+    assert template.slides[0].image_ratio == ""
+
+
+def test_invalid_image_ratio_rejected() -> None:
+    with pytest.raises(core.TemplateError, match="image_ratio"):
+        core.template_from_mapping({"slides": [{"layout": "image", "image_ratio": "wide"}]})
+    with pytest.raises(core.TemplateError, match="image_ratio"):
+        core.template_from_mapping({"slides": [{"layout": "image", "image_ratio": True}]})
+
+
+def test_image_ratio_helpers() -> None:
+    assert core.image_ratio_share(core.IMAGE_RATIO_40_60) == pytest.approx(0.6)
+    assert core.image_ratio_share(core.IMAGE_RATIO_50_50) == pytest.approx(0.5)
+    assert core.image_ratio_share(core.IMAGE_RATIO_FULL) == pytest.approx(1.0)
+    assert core.image_ratio_share("0.33") == pytest.approx(0.33)
+    assert core.image_ratio_share("bad") == pytest.approx(0.6)
+    assert core.image_ratio_cells(core.IMAGE_RATIO_GRID_2) == 2
+    assert core.image_ratio_cells(core.IMAGE_RATIO_GRID_3) == 3
+    assert core.image_ratio_cells(core.IMAGE_RATIO_50_50) == 0
+    assert core.image_ratio_full(core.IMAGE_RATIO_FULL)
+    assert not core.image_ratio_full(core.IMAGE_RATIO_40_60)
+
+
 def test_chart_options_roundtrip_and_defaults() -> None:
     template = core.template_from_mapping(
         {

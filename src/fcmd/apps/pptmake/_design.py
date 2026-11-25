@@ -21,6 +21,7 @@ from fcmd.apps.pptmake._core import (
     DECOR_FRAME,
     DECOR_GRID,
     DECOR_MINIMAL,
+    IMAGE_RATIO_40_60,
     LAYOUT_AGENDA,
     LAYOUT_AGENDA_PAGES,
     LAYOUT_APPENDIX,
@@ -51,6 +52,9 @@ from fcmd.apps.pptmake._core import (
     SlideSpec,
     TemplateSpec,
     Theme,
+    image_ratio_cells,
+    image_ratio_full,
+    image_ratio_share,
     mix_hex,
     normalize_hex,
     relative_luminance,
@@ -463,8 +467,10 @@ _DARK_MUTED = "#A7AFC7"
 def _page_palette(template: TemplateSpec, slide: SlideSpec) -> Palette:
     """按 ``slide.background`` 覆盖底板与文字色；强调色保持主题口径。"""
     palette = template.theme.palette
-    if slide.layout in (LAYOUT_PHOTO_COVER, LAYOUT_PHOTO_SECTION):
-        # 图片页恒用深色底板 + 浅色文字：压暗层之上只有浅色文字才稳定可读。
+    if slide.layout in (LAYOUT_PHOTO_COVER, LAYOUT_PHOTO_SECTION) or (
+        slide.layout == LAYOUT_IMAGE and image_ratio_full(slide.image_ratio)
+    ):
+        # 图片铺满整页时恒用深色底板 + 浅色文字：压暗层之上只有浅色文字才稳定可读。
         return Palette(
             background=_DARK_BACKGROUND,
             surface=_DARK_SURFACE,
@@ -1227,13 +1233,21 @@ def _render_closing(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
         )
 
 
-def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
-    """图片主视觉：左侧文字、右侧大图占位，导出后可替换为真实图片。"""
+def _image_columns(ctx: _Ctx, share: float) -> tuple[float, float]:
+    """按图片占比切分文字列与图片列；中间留一个 ``section`` 间距。"""
+    content = ctx.width - ctx.margin * 2
+    gap = ctx.spacing.section
+    text_width = round(content * (1 - share) - gap / 2)
+    image_width = round(content * share - gap / 2)
+    return text_width, image_width
+
+
+def _paint_image_copy(out: list[Primitive], ctx: _Ctx, slide: SlideSpec, text_width: float) -> None:
+    """图片版式的文字列：眉标、标题、强调条、副标题与要点。"""
     palette = ctx.palette
     scale = ctx.type_scale
     spacing = ctx.spacing
     margin = ctx.margin
-    text_width = (ctx.width - margin * 2) * 0.46
     out.append(
         _text(
             margin,
@@ -1305,78 +1319,170 @@ def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
                 line_spacing=spacing.line,
             )
         )
-    panel_x = margin + text_width + spacing.section
-    panel_y = ctx.top
-    panel_width = ctx.width - margin - panel_x
-    panel_height = ctx.height - ctx.top - round(scale.body * 3)
+
+
+def _paint_image_art(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几何一一对应
+    out: list[Primitive], ctx: _Ctx, x: float, y: float, w: float, h: float
+) -> None:
+    """无图片时的占位插画：太阳、山脊与地平线。"""
+    palette = ctx.palette
+    badge = min(w, h) * 0.16
+    out.append(Oval(x + w * 0.62, y + h * 0.18, badge, badge, fill=mix_hex(palette.surface, ctx.accent, 0.45)))
+    horizon = mix_hex(palette.surface, palette.muted, 0.45)
+    out.append(Line(x + w * 0.1, y + h * 0.74, x + w * 0.42, y + h * 0.42, horizon, 3))
+    out.append(Line(x + w * 0.42, y + h * 0.42, x + w * 0.74, y + h * 0.74, horizon, 3))
+    out.append(Rect(x + w * 0.1, y + h * 0.74, w * 0.8, 1, fill=horizon))
+
+
+def _paint_image_hint(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几何一一对应
+    out: list[Primitive], ctx: _Ctx, x: float, y: float, w: float, h: float
+) -> None:
+    """编辑器画布上的「导出后替换图片」提示。"""
+    if not ctx.hints:
+        return
+    scale = ctx.type_scale
+    out.append(
+        _text(
+            x,
+            y + h - round(scale.small * 2.4),
+            w,
+            round(scale.small * 1.6),
+            "图片占位 · 导出后在 PowerPoint 中替换",
+            scale.caption,
+            ctx.palette.muted,
+            ctx.theme.body_font,
+            align=ALIGN_CENTER,
+        )
+    )
+
+
+def _paint_image_panel(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几何一一对应
+    out: list[Primitive], ctx: _Ctx, slide: SlideSpec, x: float, y: float, w: float, h: float
+) -> None:
+    """单张图片区：圆角底板 + 图片或占位插画。"""
     out.append(
         Rect(
-            panel_x,
-            panel_y,
-            panel_width,
-            panel_height,
-            fill=palette.surface,
+            x,
+            y,
+            w,
+            h,
+            fill=ctx.palette.surface,
             line=ctx.border,
             line_width=ctx.stroke_width,
             radius=round(ctx.radius.card),
         )
     )
     if slide.image:
-        out.append(Picture(panel_x, panel_y, panel_width, panel_height, slide.image, slide.image_fit))
+        out.append(Picture(x, y, w, h, slide.image, slide.image_fit, alt=slide.image_alt, focus=slide.image_focus))
     else:
-        out.append(
-            Oval(
-                panel_x + panel_width * 0.62,
-                panel_y + panel_height * 0.18,
-                panel_width * 0.16,
-                panel_width * 0.16,
-                fill=mix_hex(palette.surface, ctx.accent, 0.45),
-            )
-        )
-        horizon = mix_hex(palette.surface, palette.muted, 0.45)
-        out.append(
-            Line(
-                panel_x + panel_width * 0.1,
-                panel_y + panel_height * 0.74,
-                panel_x + panel_width * 0.42,
-                panel_y + panel_height * 0.42,
-                horizon,
-                3,
-            )
-        )
-        out.append(
-            Line(
-                panel_x + panel_width * 0.42,
-                panel_y + panel_height * 0.42,
-                panel_x + panel_width * 0.74,
-                panel_y + panel_height * 0.74,
-                horizon,
-                3,
-            )
-        )
+        _paint_image_art(out, ctx, x, y, w, h)
+        _paint_image_hint(out, ctx, x, y, w, h)
+
+
+def _paint_image_cells(  # noqa: PLR0913, PLR0917 - 图元工厂，参数与几何一一对应
+    out: list[Primitive],
+    ctx: _Ctx,
+    slide: SlideSpec,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    cells: int,
+) -> None:
+    """多图栅格：等高单元格；已有图片先填第一格，其余留占位。"""
+    gap = ctx.spacing.gap
+    row_height = round((h - gap * (cells - 1)) / cells)
+    for index in range(cells):
+        cell_y = y + index * (row_height + gap)
+        cell_height = row_height if index < cells - 1 else h - index * (row_height + gap)
         out.append(
             Rect(
-                panel_x + panel_width * 0.1,
-                panel_y + panel_height * 0.74,
-                panel_width * 0.8,
-                1,
-                fill=horizon,
+                x,
+                cell_y,
+                w,
+                cell_height,
+                fill=ctx.palette.surface,
+                line=ctx.border,
+                line_width=ctx.stroke_width,
+                radius=round(ctx.radius.card),
             )
         )
-        if ctx.hints:
+        if index == 0 and slide.image:
             out.append(
-                _text(
-                    panel_x,
-                    panel_y + panel_height - round(scale.small * 2.4),
-                    panel_width,
-                    round(scale.small * 1.6),
-                    "图片占位 · 导出后在 PowerPoint 中替换",
-                    scale.caption,
-                    palette.muted,
-                    ctx.theme.body_font,
-                    align=ALIGN_CENTER,
+                Picture(
+                    x,
+                    cell_y,
+                    w,
+                    cell_height,
+                    slide.image,
+                    slide.image_fit,
+                    alt=slide.image_alt,
+                    focus=slide.image_focus,
                 )
             )
+        else:
+            _paint_image_art(out, ctx, x, cell_y, w, cell_height)
+    if not slide.image:
+        _paint_image_hint(out, ctx, x, y, w, h)
+
+
+def _render_image_full(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """全出血图片：图片铺满整页并压暗，文字压在左侧。"""
+    palette = ctx.palette
+    if slide.image:
+        out.append(
+            Picture(
+                0,
+                0,
+                ctx.width,
+                ctx.height,
+                slide.image,
+                fit="cover",
+                alt=slide.image_alt,
+                focus=slide.image_focus,
+                overlay=max(ctx.tokens.image_scrim, 0.45),
+                overlay_color="#05070F",
+            )
+        )
+    else:
+        out.append(Rect(0, 0, ctx.width, ctx.height, fill=mix_hex(palette.background, ctx.accent, 0.3)))
+        out.append(
+            Oval(
+                ctx.width * 0.52,
+                -ctx.height * 0.22,
+                ctx.width * 0.62,
+                ctx.width * 0.62,
+                fill=mix_hex(palette.background, ctx.accent, 0.45),
+            )
+        )
+        out.append(
+            Oval(
+                -ctx.width * 0.12,
+                ctx.height * 0.58,
+                ctx.width * 0.5,
+                ctx.width * 0.5,
+                fill=mix_hex(palette.background, palette.secondary, 0.3),
+            )
+        )
+    _paint_image_copy(out, ctx, slide, round(ctx.width * 0.5))
+
+
+def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """图片主视觉：按 ``image_ratio`` 切换全出血、左右分栏与多图栅格。"""
+    ratio = slide.image_ratio or IMAGE_RATIO_40_60
+    if image_ratio_full(ratio):
+        _render_image_full(out, ctx, slide)
+        return
+    text_width, image_width = _image_columns(ctx, image_ratio_share(ratio))
+    _paint_image_copy(out, ctx, slide, text_width)
+    panel_x = ctx.margin + text_width + ctx.spacing.section
+    panel_y = ctx.top
+    panel_height = ctx.height - ctx.top - round(ctx.type_scale.body * 3)
+    cells = image_ratio_cells(ratio)
+    if cells:
+        _paint_image_cells(out, ctx, slide, panel_x, panel_y, image_width, panel_height, cells)
+    else:
+        _paint_image_panel(out, ctx, slide, panel_x, panel_y, image_width, panel_height)
 
 
 def _render_comparison(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:

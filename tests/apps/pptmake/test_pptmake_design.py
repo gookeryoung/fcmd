@@ -319,7 +319,7 @@ def test_image_layout_has_placeholder_panel() -> None:
         item for item in primitives if isinstance(item, design.Rect) and item.fill == template.theme.palette.surface
     ]
     assert panels
-    assert panels[-1].x > 1280 / 2
+    assert panels[-1].x > 1280 * 0.4
     assert panels[-1].radius == core.DesignTokens().radius.card
 
 
@@ -331,6 +331,75 @@ def test_image_layout_emits_picture_when_path_set() -> None:
     assert len(pictures) == 1
     assert pictures[0].path == "assets/hero.png"
     assert pictures[0].fit == core.IMAGE_FIT_COVER
+
+
+@pytest.mark.parametrize("ratio", core.IMAGE_RATIOS)
+def test_image_layout_ratio_stays_inside_page(ratio: str) -> None:
+    template = _template()
+    slide = core.SlideSpec(layout=core.LAYOUT_IMAGE, title="比例", image="assets/hero.png", image_ratio=ratio)
+    primitives = design.build_draw_list(slide, template)
+    pictures = [item for item in primitives if isinstance(item, design.Picture)]
+    assert len(pictures) == 1
+    picture = pictures[0]
+    assert picture.x >= 0 and picture.y >= 0
+    assert picture.x + picture.w <= 1280
+    assert picture.y + picture.h <= 720
+    texts = [item for item in primitives if isinstance(item, design.Text)]
+    assert texts
+    assert all(item.x >= 0 and item.x + item.w <= 1280 for item in texts)
+
+
+def test_image_layout_full_bleeds_picture_and_switches_palette() -> None:
+    template = _template(style=core.STYLE_PORCELAIN)
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_IMAGE,
+        title="全出血",
+        image="assets/hero.png",
+        image_ratio=core.IMAGE_RATIO_FULL,
+    )
+    primitives = design.build_draw_list(slide, template)
+    picture = next(item for item in primitives if isinstance(item, design.Picture))
+    assert (picture.x, picture.y, picture.w, picture.h) == (0, 0, 1280, 720)
+    assert picture.overlay > 0
+    title = next(item for item in primitives if isinstance(item, design.Text) and item.paragraphs == ("全出血",))
+    assert title.color == design._DARK_TEXT
+
+
+@pytest.mark.parametrize(("ratio", "cells"), [(core.IMAGE_RATIO_GRID_2, 2), (core.IMAGE_RATIO_GRID_3, 3)])
+def test_image_layout_grid_splits_panel_into_rows(ratio: str, cells: int) -> None:
+    template = _template()
+    slide = core.SlideSpec(layout=core.LAYOUT_IMAGE, title="栅格", image="assets/hero.png", image_ratio=ratio)
+    primitives = design.build_draw_list(slide, template)
+    card_radius = core.DesignTokens().radius.card
+    panels = [
+        item
+        for item in primitives
+        if isinstance(item, design.Rect) and item.fill == template.theme.palette.surface and item.radius == card_radius
+    ]
+    assert len(panels) == cells
+    assert len({panel.x for panel in panels}) == 1
+    assert len({panel.w for panel in panels}) == 1
+    assert panels[-1].y + panels[-1].h == panels[0].y + sum(
+        panel.h for panel in panels
+    ) + core.DesignTokens().spacing.gap * (cells - 1)
+    picture = next(item for item in primitives if isinstance(item, design.Picture))
+    assert (picture.x, picture.y, picture.w, picture.h) == (panels[0].x, panels[0].y, panels[0].w, panels[0].h)
+
+
+def test_image_layout_numeric_ratio_moves_split() -> None:
+    template = _template()
+    narrow = design.build_draw_list(
+        core.SlideSpec(layout=core.LAYOUT_IMAGE, title="窄图", image="assets/hero.png", image_ratio="0.2"),
+        template,
+    )
+    wide = design.build_draw_list(
+        core.SlideSpec(layout=core.LAYOUT_IMAGE, title="宽图", image="assets/hero.png", image_ratio="0.8"),
+        template,
+    )
+    narrow_picture = next(item for item in narrow if isinstance(item, design.Picture))
+    wide_picture = next(item for item in wide if isinstance(item, design.Picture))
+    assert wide_picture.w > narrow_picture.w
+    assert wide_picture.x < narrow_picture.x
 
 
 def test_logo_renders_top_right() -> None:
