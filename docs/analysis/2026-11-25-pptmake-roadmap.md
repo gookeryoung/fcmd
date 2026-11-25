@@ -233,6 +233,20 @@
 
 ## 11. 总落地状态（2026-11-25）
 
-- M1 / M2 / M3 全部完成，共 9 次本地提交，未推送。
-- 门禁：`ruff check`、`ruff format --check`、`pyrefly` 全绿；`pytest -m "not slow" --cov --cov-fail-under=95` 通过（覆盖率 ≥95%）。
+- M1 / M2 / M3 / M4 / M5 全部完成，共 14 次本地提交，未推送。
+- 门禁：`ruff check`、`ruff format --check`、`pyrefly` 全绿；`pytest -m "not slow" --cov --cov-fail-under=95` 通过（覆盖率 95.10%）。
 - 遗留：真实 PPTX 样本仍需用户提供脱敏文件做人工评审；roadmap 文档保持 untracked。
+
+---
+
+## 12. M4 / M5 执行拆解（剩余已知缺口）
+
+| 批次 | 内容 | 主要落点 | 验收 |
+|---|---|---|---|
+| M4-1 | 设计令牌编辑对话框 | 新增 `_pptmakew_tokens.py`（字号 / 间距 / 形状与符号 / 颜色四页）；样式页「设计令牌…」入口；提交前走 `tokens_from_mapping` 校验，非法输入不关闭对话框；应用后可撤销 | 令牌改动生效且可撤销；非法颜色抛 `TokenError` |
+| M4-2 | 导入还原字号阶梯与行距 | `_pptx_import.py` 收集字号 / 倍数行距，按正文中位数比例缩放 10 级字号（标题取 ≤100pt 最大字号换算，clamp 16–300），行距中位数写回 `line_body` | 18pt 正文 / 40pt 标题 / 1.5 行距 → body 24、title 53.3、line_body 1.5 |
+| M5-1 | 导入图片裁剪 → 焦点还原 | 由 `crop_left/right/top/bottom` 反推 `image_focus`，写入图片页与封面 | `crop_right=0.3` → 焦点 `left` |
+| M5-2 | 五份合成样本回归 | 新增 `test_pptmake_import_samples.py`：文本 / 数据 / 图文 / 多表 / 混合+备注 | 五类保留率 ≥95%、`quality_issues().total == 0` |
+| M5-3 | 低保留率显式告警 | `ImportStats.summary()` 在任一类 <95% 时末尾追加「低于 95%：…」 | 90% 文本样本点名告警，100% 类别不出现 |
+
+落地状态：已交付。导入字号只做等比近似，多级阶梯差异与逐行行距不逐条还原（已写入 ADR 已知边界）。
