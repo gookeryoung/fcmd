@@ -491,7 +491,10 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   国内镜像源时，日志提示可能很慢、建议先跑「运行国内源配置脚本」。
   此外 `_apt_script` 先 `dpkg -s` 过滤已装包、
   apt 索引 1 小时内有效就不重复 `update`，并统一 `--no-install-recommends` + 重试，避免
-  重复初始化的绝大部分耗时。nvm 与 `~/.local/bin` 会以带标记的 rc 块写进 `~/.bashrc` /
+  重复初始化的绝大部分耗时。所有 `apt-get` 都带 `-o DPkg::Lock::Timeout=600`：首跑常撞上
+  `unattended-upgrades` / `apt-daily` 持锁，直接报 `Could not get lock`（退出码 100）会让
+  整次初始化中断；换源步骤另写 `/etc/apt/apt.conf.d/99fcmd-lock-timeout`，让 linuxmirrors
+  内部调的 `apt-get` 也排队等锁。nvm 与 `~/.local/bin` 会以带标记的 rc 块写进 `~/.bashrc` /
   `~/.profile`（幂等、不重复追加），并把 node / npm / npx / bun 软链到 `~/.local/bin`，
   保证 `bash -lc`（只读 profile）也能测到 node / bun，同时 `nvm which default` 有值时不重装。
   打开即后台探测实例环境并按探测结果回填：

@@ -47,12 +47,15 @@ from fcmd.apps.wslman._initenv_pkg import (
     PACKAGE_MIRROR_AUTO,
     PACKAGE_MIRROR_CHOICES,
     PACKAGE_MIRROR_OFFICIAL,
+    SYSTEM_MIRROR_DEFAULT,
+    mirror_script,
     normalize_package_mirror,
     package_source_script,
     pip_script,
     pypi_index_for_mirror,
     pypi_index_for_package_mirror,
     source_mirror_lines,
+    system_mirror_source,
     uv_script,
 )
 
@@ -65,7 +68,6 @@ __all__ = [
     "InitStep",
     "InitTask",
     "default_checked",
-    "mirror_steps",
     "normalize_package_mirror",
     "package_source_steps",
     "parse_status",
@@ -87,20 +89,6 @@ __all__ = [
     "task_labels",
 ]
 
-_MIRROR_URL = "https://linuxmirrors.cn/main.sh"
-_MIRROR_SOURCE = "mirrors.aliyun.com"
-_SYSTEM_MIRROR_BY_PACKAGE_MIRROR: dict[str, str] = {
-    "mirrors.tuna.tsinghua.edu.cn": "mirrors.tuna.tsinghua.edu.cn",
-    "mirrors.ustc.edu.cn": "mirrors.ustc.edu.cn",
-    "mirrors.aliyun.com": "mirrors.aliyun.com",
-    "mirrors.tencent.com": "mirrors.cloud.tencent.com",
-    "mirrors.huaweicloud.com": "mirrors.huaweicloud.com",
-}
-"""软件包源 → linuxmirrors 的 ``--source`` 域名：指定镜像时 APT / YUM 用同一家。
-
-``auto`` / ``official`` 不在表里，回退 :data:`_MIRROR_SOURCE`（阿里云）：自动时
-没有可跟随的显式镜像，官方 PyPI 只是不换 PyPI，系统源仍吃国内镜像。
-"""
 _NPM_REGISTRY = "https://registry.npmmirror.com"
 _NODE_MIRROR = "https://npmmirror.com/mirrors/node"
 _NVM_GIT = "https://gitee.com/mirrors/nvm.git"
@@ -169,8 +157,12 @@ class EnvStatus:
         return bool(self.ssh_public_key)
 
 
+_APT_LOCK_TIMEOUT = "-o DPkg::Lock::Timeout=600"
+"""等锁时长（秒）：首跑常撞上 unattended-upgrades / apt-daily 持锁，直接失败很挫。"""
+
+
 def _apt_script(*packages: str) -> str:
-    """装包但尽量少干活：已装的跳过，apt 索引新鲜时不重复 update。"""
+    """装包但尽量少干活：已装的跳过，apt 索引新鲜时不重复 update，遇锁排队等。"""
     wanted = " ".join(packages)
     return "\n".join(
         (
@@ -186,32 +178,10 @@ def _apt_script(*packages: str) -> str:
             "fi",
             'echo "需要安装：$missing"',
             "if ! find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -newermt '-1 hour' -print -quit | grep -q .; then",
-            "    apt-get update -o Acquire::Retries=3 -o Acquire::Languages=none",
+            f"    apt-get update -o Acquire::Retries=3 -o Acquire::Languages=none {_APT_LOCK_TIMEOUT}",
             "fi",
             "apt-get install -y --no-install-recommends -o Acquire::Retries=3 "
-            "-o Acquire::Languages=none -o Dpkg::Use-Pty=0 $missing",
-        )
-    )
-
-
-def system_mirror_source(package_mirror: str = PACKAGE_MIRROR_AUTO) -> str:
-    """软件包源 → APT / YUM 的系统源域名；``auto`` / ``official`` 回退阿里云。"""
-    return _SYSTEM_MIRROR_BY_PACKAGE_MIRROR.get(normalize_package_mirror(package_mirror), _MIRROR_SOURCE)
-
-
-def _mirror_script(source: str = _MIRROR_SOURCE) -> str:
-    """系统镜像源：按 linuxmirrors 的非交互参数执行，避免 GUI 里卡在菜单。"""
-    return "\n".join(
-        (
-            "set -e",
-            "if ! command -v curl >/dev/null 2>&1; then",
-            "    apt-get update",
-            "    apt-get install -y curl",
-            "fi",
-            f"bash <(curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 {_MIRROR_URL}) "
-            f"--source {source} --use-intranet-source false --protocol https "
-            "--backup true --install-epel false --upgrade-software false --clean-cache true --ignore-backup-tips",
-            'echo "系统镜像源配置完成"',
+            f"-o Acquire::Languages=none -o Dpkg::Use-Pty=0 {_APT_LOCK_TIMEOUT} $missing",
         )
     )
 
@@ -427,9 +397,9 @@ TASKS: tuple[InitTask, ...] = (
     InitTask(
         "mirror",
         "运行国内源配置脚本",
-        f"通过 linuxmirrors 把 APT / YUM 系统源切换到国内镜像（默认 {_MIRROR_SOURCE}；"
+        f"通过 linuxmirrors 把 APT / YUM 系统源切换到国内镜像（默认 {SYSTEM_MIRROR_DEFAULT}；"
         "选择了指定软件包源时改用同一家镜像），以 root 执行；已配置时重复执行也是安全的。",
-        (InitStep("配置系统镜像源", _mirror_script(), root=True, timeout_s=900.0),),
+        (InitStep("配置系统镜像源", mirror_script(), root=True, timeout_s=900.0),),
     ),
     InitTask(
         "ssh",
@@ -532,13 +502,6 @@ def package_source_steps(package_mirror: str = PACKAGE_MIRROR_AUTO) -> tuple[Ini
     return (InitStep("配置软件包镜像", package_source_script(mirror)),)
 
 
-def mirror_steps(package_mirror: str = PACKAGE_MIRROR_AUTO) -> tuple[InitStep, ...]:
-    """换系统源步骤；``--source`` 由软件包源决定，避免选了中科大却用阿里云换源。"""
-    return (
-        InitStep("配置系统镜像源", _mirror_script(system_mirror_source(package_mirror)), root=True, timeout_s=900.0),
-    )
-
-
 def steps_for(keys: Sequence[str], *, package_mirror: str = PACKAGE_MIRROR_AUTO) -> tuple[InitStep, ...]:
     """按 :data:`TASKS` 的固定顺序展开勾选项对应的执行步骤。
 
@@ -552,7 +515,10 @@ def steps_for(keys: Sequence[str], *, package_mirror: str = PACKAGE_MIRROR_AUTO)
         if task.key not in selected:
             continue
         if task.key == "mirror":
-            steps.extend(mirror_steps(mirror))
+            # 换源域名跟着软件包源走，避免选了中科大却还用阿里云换系统源。
+            steps.append(
+                InitStep("配置系统镜像源", mirror_script(system_mirror_source(mirror)), root=True, timeout_s=900.0)
+            )
         elif task.key == "python":
             steps.extend((task.steps[0], InitStep("配置 pip 镜像", pip_script(mirror))))
         elif task.key == "uv":

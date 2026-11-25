@@ -72,6 +72,18 @@ def test_mirror_script_contains_requested_command_and_non_interactive_flags() ->
     assert task.steps[0].root is True
 
 
+def test_apt_and_mirror_scripts_wait_for_apt_lock() -> None:
+    """首跑常撞上 unattended-upgrades / apt-daily 持锁：要排队等，而不是直接报 100。"""
+    apt = _initenv.steps_for(["ssh"])[0].script
+    assert apt.count("DPkg::Lock::Timeout=600") >= 2
+    mirror = _initenv.steps_for(["mirror"])[0].script
+    # linuxmirrors 内部也调 apt-get：等锁超时必须落到 apt 配置里才生效。
+    assert "/etc/apt/apt.conf.d/99fcmd-lock-timeout" in mirror
+    assert 'DPkg::Lock::Timeout "600";' in mirror
+    assert "apt-get update -o DPkg::Lock::Timeout=600" in mirror
+    assert "apt-get install -y curl -o DPkg::Lock::Timeout=600" in mirror
+
+
 def test_ssh_script_is_ed25519_and_keeps_existing_key() -> None:
     steps = _initenv.steps_for(["ssh"])
     assert steps[0].root is True

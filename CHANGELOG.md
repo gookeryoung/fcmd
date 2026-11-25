@@ -712,6 +712,10 @@ native 主题下是深色字压选中蓝底（几乎看不清），切到已启�
   阿里云换源，`apt-get update` 仍可能很慢：换源域名改为由软件包源推出（腾讯映射到
   `mirrors.cloud.tencent.com`，自动 / 官方 PyPI 仍用阿里云）；系统源与所选源不一致时
   「运行国内源配置脚本」重新变为可勾选，改源后点一次「开始初始化」即可一并换掉系统源。
+- `wslmanw` 初始化时 apt 撞上持锁进程（首跑的 `unattended-upgrades` / `apt-daily`）会直接
+  报 `E: Could not get lock /var/lib/dpkg/lock-frontend`、退出码 100：「安装 XX」步骤全部
+  `apt-get` 加 `-o DPkg::Lock::Timeout=600` 排队等锁，换源步骤再写一份
+  `/etc/apt/apt.conf.d/99fcmd-lock-timeout`，linuxmirrors 内部调的 `apt-get` 也跟着等。
 - 提升画图生成稳定性：sd-server 的 `txt2img` 在进程内串行执行，聊天 / 工作流 /
   看护不会同时向同一服务发多个生成请求；画图启动 / 出图共用操作锁，避免自动重启
   与生成互相踩踏。生成途中服务退出时自动重启并重试一次；连接重置（如

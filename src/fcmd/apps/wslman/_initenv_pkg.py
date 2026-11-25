@@ -11,7 +11,9 @@ __all__ = [
     "PACKAGE_MIRROR_AUTO",
     "PACKAGE_MIRROR_CHOICES",
     "PACKAGE_MIRROR_OFFICIAL",
+    "SYSTEM_MIRROR_DEFAULT",
     "index_detect_lines",
+    "mirror_script",
     "normalize_package_mirror",
     "package_source_script",
     "pip_config_lines",
@@ -19,9 +21,35 @@ __all__ = [
     "pypi_index_for_mirror",
     "pypi_index_for_package_mirror",
     "source_mirror_lines",
+    "system_mirror_source",
     "uv_config_lines",
     "uv_script",
 ]
+
+SYSTEM_MIRROR_DEFAULT = "mirrors.aliyun.com"
+"""默认系统镜像源：``auto`` / ``official`` 时 APT / YUM 用这家。"""
+
+MIRROR_URL = "https://linuxmirrors.cn/main.sh"
+"""linuxmirrors 换源脚本地址；非交互参数由 :func:`mirror_script` 拼好。"""
+
+_APT_LOCK_TIMEOUT = "-o DPkg::Lock::Timeout=600"
+"""apt / dpkg 等锁时长：首跑常撞上 unattended-upgrades / apt-daily 持锁。"""
+
+_APT_LOCK_CONF = "/etc/apt/apt.conf.d/99fcmd-lock-timeout"
+"""把等锁超时写进 apt 配置，linuxmirrors 内部调的 ``apt-get`` 也能拿到。"""
+
+_SYSTEM_MIRROR_BY_PACKAGE_MIRROR: dict[str, str] = {
+    "mirrors.tuna.tsinghua.edu.cn": "mirrors.tuna.tsinghua.edu.cn",
+    "mirrors.ustc.edu.cn": "mirrors.ustc.edu.cn",
+    "mirrors.aliyun.com": "mirrors.aliyun.com",
+    "mirrors.tencent.com": "mirrors.cloud.tencent.com",
+    "mirrors.huaweicloud.com": "mirrors.huaweicloud.com",
+}
+"""软件包源 → linuxmirrors 的 ``--source`` 域名：指定镜像时 APT / YUM 用同一家。
+
+``auto`` / ``official`` 不在表里，回退 :data:`SYSTEM_MIRROR_DEFAULT`（阿里云）：
+自动时没有可跟随的显式镜像，官方 PyPI 只是不换 PyPI，系统源仍吃国内镜像。
+"""
 
 PACKAGE_MIRROR_AUTO = "auto"  # 软件包源：pip / uv 跟随系统镜像源（兼容旧行为）。
 PACKAGE_MIRROR_OFFICIAL = "official"  # 软件包源：官方 PyPI。
@@ -62,6 +90,34 @@ def pypi_index_for_mirror(mirror: str) -> str:
         if domain in key:
             return index
     return _PIP_INDEX_URL
+
+
+def system_mirror_source(package_mirror: str = PACKAGE_MIRROR_AUTO) -> str:
+    """软件包源 → APT / YUM 的系统源域名；``auto`` / ``official`` 回退阿里云。"""
+    return _SYSTEM_MIRROR_BY_PACKAGE_MIRROR.get(normalize_package_mirror(package_mirror), SYSTEM_MIRROR_DEFAULT)
+
+
+def mirror_script(source: str = SYSTEM_MIRROR_DEFAULT) -> str:
+    """系统镜像源：按 linuxmirrors 的非交互参数执行，避免 GUI 里卡在菜单。
+
+    先写一份 ``99fcmd-lock-timeout``：linuxmirrors 自己也会调 ``apt-get``，
+    持锁进程（首跑的 unattended-upgrades / apt-daily）未退出时直接报错会让换源白做。
+    """
+    return "\n".join(
+        (
+            "set -e",
+            "mkdir -p /etc/apt/apt.conf.d",
+            f"printf 'DPkg::Lock::Timeout \"600\";\\n' > {_APT_LOCK_CONF}",
+            "if ! command -v curl >/dev/null 2>&1; then",
+            f"    apt-get update {_APT_LOCK_TIMEOUT}",
+            f"    apt-get install -y curl {_APT_LOCK_TIMEOUT}",
+            "fi",
+            f"bash <(curl -fsSL --connect-timeout 15 --retry 2 --retry-delay 2 {MIRROR_URL}) "
+            f"--source {source} --use-intranet-source false --protocol https "
+            "--backup true --install-epel false --upgrade-software false --clean-cache true --ignore-backup-tips",
+            'echo "系统镜像源配置完成"',
+        )
+    )
 
 
 def normalize_package_mirror(value: str) -> str:
