@@ -5,11 +5,11 @@ python-pptx 只能消费既有母版 / 版式，不能凭空创建，因此基�
 
     uv run python -m fcmd.apps.pptmake._base_asset
 
-生成口径与 :mod:`fcmd.apps.pptmake._design` 的 16:9 默认令牌一致：13 个版式
-按 ``LAYOUT_TEXT`` 命名，每个版式带 ``title`` 与 ``subTitle`` 占位符，
-页面尺寸 1280×720 设计单位（12192000×6858000 EMU），主题色由
-``default_template()`` 重写。导出时仅把标题 / 副标题写进占位符，正文与装饰
-仍由 draw list 绘制，保证预览与成品同源。
+生成口径与 :mod:`fcmd.apps.pptmake._design` 的 16:9 默认令牌一致：每个
+``LAYOUTS`` 项生成一个同名版式（中文名取 ``LAYOUT_TEXT``），版式带
+``title`` 与 ``subTitle`` 占位符，页面尺寸 1280×720 设计单位
+（12192000×6858000 EMU），主题色由 ``default_template()`` 重写。导出时仅把
+标题 / 副标题写进占位符，正文与装饰仍由 draw list 绘制，保证预览与成品同源。
 """
 
 from __future__ import annotations
@@ -105,6 +105,24 @@ _PLACEMENTS: Final[dict[str, _Placement]] = {
         subtitle=(_MARGIN, _H * 0.18 + round(64 * 2.1), _W * 0.46, round(24 * 2.4)),
         title_size=round(64 * 0.85),
         subtitle_size=24,
+    ),
+    "photo_cover": _Placement(
+        title=(_MARGIN, _H * 0.55, round(_W - _MARGIN * 2.6), round(_H * 0.20)),
+        subtitle=(_MARGIN, _H * 0.78, round(_W - _MARGIN * 2.2), round(32 * 1.6)),
+        title_size=64,
+        subtitle_size=32,
+    ),
+    "photo_section": _Placement(
+        title=(_MARGIN + 38, round(_H * 0.45), _W - _MARGIN * 2 - 38, 64),
+        subtitle=(_MARGIN + 38, round(_H * 0.56), _W - _MARGIN * 2 - 38, 80),
+        title_size=round(_TITLE * 1.1),
+        subtitle_size=24,
+    ),
+    "testimonial": _Placement(
+        title=(_MARGIN, _H * 0.26, _W - _MARGIN * 2, round(_H * 0.34)),
+        subtitle=(_MARGIN, _H * 0.72, _W - _MARGIN * 2, round(28 * 1.6)),
+        title_size=44,
+        subtitle_size=28,
     ),
 }
 

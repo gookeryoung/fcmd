@@ -106,7 +106,7 @@ def test_flat_export_keeps_srgb_and_static_numbers(tmp_path: Path) -> None:
     assert '<a:schemeClr val="bg1"/>' not in slides
     assert '<a:srgbClr val="0B1020"/>' in slides
     assert 'type="slidenum"' not in slides
-    assert "02 / 13" in slides
+    assert f"02 / {len(core.LAYOUTS)}" in slides
 
 
 def test_cover_fit_crops_image_both_ratios(tmp_path: Path) -> None:
@@ -132,10 +132,67 @@ def test_cover_fit_crops_image_both_ratios(tmp_path: Path) -> None:
 _EMU_PER_UNIT = 9525
 
 
+def test_picture_alt_focus_radius_and_scrim(tmp_path: Path) -> None:
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    path = tmp_path / "wide.png"
+    Image.new("RGB", (400, 100), "#3366FF").save(path)
+    api = _pptx._api()
+    presentation = api.Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    primitive = design.Picture(
+        96,
+        96,
+        400,
+        400,
+        str(path),
+        alt="产品主视觉",
+        focus="left",
+        radius=24,
+        overlay=0.4,
+    )
+    _pptx._draw_picture(slide, primitive, api, scheme={})
+    picture = next(shape for shape in slide.shapes if shape.shape_type == 13)
+    assert picture.crop_left == pytest.approx(0.0)
+    assert picture.crop_right > 0
+    assert picture._element.nvPicPr.cNvPr.get("descr") == "产品主视觉"
+    assert 'prst="roundRect"' in picture._element.xml
+    scrim = next(shape for shape in slide.shapes if shape.shape_type != 13)
+    assert "<a:alpha" in scrim._element.xml
+    assert 'val="40000"' in scrim._element.xml
+
+
+def test_background_image_exports_full_page_picture(tmp_path: Path) -> None:
+    pytest.importorskip("PIL.Image")
+    from PIL import Image
+
+    path = tmp_path / "hero.png"
+    Image.new("RGB", (320, 160), "#0B1020").save(path)
+    template = core.new_template(
+        slides=(
+            core.SlideSpec(
+                layout=core.LAYOUT_SECTION,
+                title="图片底板",
+                image=str(path),
+                image_alt="背景",
+                background=core.BACKGROUND_IMAGE,
+            ),
+        )
+    )
+    target = tmp_path / "background.pptx"
+    _pptx.export_pptx(template, target)
+    with zipfile.ZipFile(target) as archive:
+        assert any(name.startswith("ppt/media/") for name in archive.namelist())
+        slide_xml = archive.read("ppt/slides/slide1.xml").decode("utf-8")
+    assert 'descr="背景"' in slide_xml
+    assert "<a:alpha" in slide_xml
+
+
 def test_export_writes_native_table_with_matching_geometry(tmp_path: Path) -> None:
     template = core.default_template()
     target = tmp_path / "table.pptx"
-    assert _pptx.export_pptx(template, target) == 13
+    assert _pptx.export_pptx(template, target) == len(template.slides)
     presentation = _pptx._api().Presentation(str(target))
     frame = next(shape for shape in list(presentation.slides)[10].shapes if shape.has_table)
     table = frame.table

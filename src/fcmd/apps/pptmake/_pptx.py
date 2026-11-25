@@ -40,6 +40,7 @@ from fcmd.apps.pptmake._design import (
     TableCell,
     Text,
     build_draw_list,
+    picture_crop,
 )
 from fcmd.apps.pptmake._pptx_util import (
     _POINTS_PER_UNIT,
@@ -162,8 +163,55 @@ def _draw_text(  # noqa: PLR0913 - 需要主题/方案/native 三个导出开关
         _set_east_asian_font(run, east_asian)
 
 
-def _draw_picture(slide: Any, primitive: Picture, api: _Api) -> None:
-    """把本地图片写入幻灯片；cover 通过裁剪填满，contain 按比例居中。"""
+def _round_picture(picture: Any, primitive: Picture) -> None:
+    """把图片的几何从矩形改成圆角矩形，半径口径与版式的 ``Rect.radius`` 一致。"""
+    try:
+        from lxml import etree
+        from pptx.oxml.ns import qn
+    except ImportError:  # pragma: no cover - lxml 随 python-pptx 安装
+        return
+    geom = picture._element.spPr.find(qn("a:prstGeom"))
+    if geom is None:  # pragma: no cover - python-pptx 总会生成 prstGeom
+        return
+    geom.set("prst", "roundRect")
+    for child in list(geom):
+        geom.remove(child)
+    av = etree.SubElement(geom, qn("a:avLst"))
+    ratio = min(0.5, primitive.radius / max(min(primitive.w, primitive.h), 1.0))
+    guide = etree.SubElement(av, qn("a:gd"))
+    guide.set("name", "adj")
+    guide.set("fmla", f"val {round(ratio * 100000)}")
+
+
+def _add_scrim(slide: Any, primitive: Picture, api: _Api, scheme: dict[str, str]) -> None:
+    """在图片上叠一层半透明色，保证压在图片上的文字对比度。"""
+    if primitive.overlay <= 0:
+        return
+    shape = slide.shapes.add_shape(
+        api.MSO_SHAPE.RECTANGLE,
+        _emu(primitive.x, api),
+        _emu(primitive.y, api),
+        _emu(primitive.w, api),
+        _emu(primitive.h, api),
+    )
+    shape.shadow.inherit = False
+    shape.line.fill.background()
+    shape.fill.solid()
+    _apply_color(shape.fill.fore_color, primitive.overlay_color, scheme, api)
+    try:
+        from lxml import etree
+        from pptx.oxml.ns import qn
+    except ImportError:  # pragma: no cover - lxml 随 python-pptx 安装
+        return
+    solid = shape._element.spPr.find(qn("a:solidFill"))
+    if solid is None or not len(solid):  # pragma: no cover - 刚写入 solidFill
+        return
+    alpha = etree.SubElement(solid[0], qn("a:alpha"))
+    alpha.set("val", str(round(min(max(primitive.overlay, 0.0), 1.0) * 100000)))
+
+
+def _draw_picture(slide: Any, primitive: Picture, api: _Api, *, scheme: dict[str, str]) -> None:
+    """把本地图片写入幻灯片；cover 按焦点裁剪填满，contain 按比例居中。"""
     if primitive.w <= 0 or primitive.h <= 0 or not primitive.path:
         return
     path = Path(primitive.path)
@@ -172,14 +220,13 @@ def _draw_picture(slide: Any, primitive: Picture, api: _Api) -> None:
     try:
         from PIL import Image
     except ImportError:  # pragma: no cover - python-pptx 通常自带 Pillow
-        shape = slide.shapes.add_picture(
+        slide.shapes.add_picture(
             str(path),
             _emu(primitive.x, api),
             _emu(primitive.y, api),
             _emu(primitive.w, api),
             _emu(primitive.h, api),
         )
-        del shape
         return
     with Image.open(path) as image:
         image_width, image_height = image.size
@@ -202,14 +249,16 @@ def _draw_picture(slide: Any, primitive: Picture, api: _Api) -> None:
         _emu(primitive.w, api),
         _emu(primitive.h, api),
     )
-    if image_ratio > box_ratio:
-        excess = 1 - box_ratio / image_ratio
-        picture.crop_left = excess / 2
-        picture.crop_right = excess / 2
-    elif image_ratio < box_ratio:
-        excess = 1 - image_ratio / box_ratio
-        picture.crop_top = excess / 2
-        picture.crop_bottom = excess / 2
+    crop_left, crop_right, crop_top, crop_bottom = picture_crop(primitive.focus, image_ratio, box_ratio)
+    picture.crop_left = crop_left
+    picture.crop_right = crop_right
+    picture.crop_top = crop_top
+    picture.crop_bottom = crop_bottom
+    if primitive.radius > 0:
+        _round_picture(picture, primitive)
+    if primitive.alt:
+        picture._element.nvPicPr.cNvPr.set("descr", primitive.alt)
+    _add_scrim(slide, primitive, api, scheme)
 
 
 def _set_table_style(table: Any, style_id: str) -> None:
@@ -408,7 +457,7 @@ def _draw_primitive(  # noqa: PLR0911, PLR0913 - 图元分派
         _set_fill_and_line(shape, primitive.fill, primitive.line, primitive.line_width, api, scheme)
         return
     if isinstance(primitive, Picture):
-        _draw_picture(slide, primitive, api)
+        _draw_picture(slide, primitive, api, scheme=scheme)
         return
     if isinstance(primitive, Table):
         _draw_table(slide, primitive, api, scheme=scheme)

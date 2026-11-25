@@ -551,3 +551,69 @@ def test_headings_flag_skips_title_text_but_keeps_decoration(layout: str) -> Non
     )
     assert not any("标题占位" in item.paragraphs for item in without if isinstance(item, design.Text))
     assert any(isinstance(item, (design.Rect, design.Oval, design.Line)) for item in without)
+
+
+@pytest.mark.parametrize(
+    ("focus", "crop"),
+    [
+        ("center", (0.25, 0.25)),
+        ("left", (0.0, 0.5)),
+        ("right", (0.5, 0.0)),
+        ("top", (0.25, 0.25)),
+        ("bottom", (0.25, 0.25)),
+    ],
+)
+def test_picture_crop_horizontal_focus(focus: str, crop: tuple[float, float]) -> None:
+    left, right, top, bottom = design.picture_crop(focus, image_ratio=2.0, box_ratio=1.0)
+    assert (left, right) == pytest.approx(crop)
+    assert (top, bottom) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("focus", "crop"),
+    [("top", (0.0, 0.5)), ("bottom", (0.5, 0.0)), ("left", (0.25, 0.25)), ("center", (0.25, 0.25))],
+)
+def test_picture_crop_vertical_focus(focus: str, crop: tuple[float, float]) -> None:
+    assert design.picture_crop(focus, image_ratio=0.5, box_ratio=1.0)[2:] == pytest.approx(crop)
+
+
+def test_picture_crop_same_ratio_keeps_full_image() -> None:
+    assert design.picture_crop("left", image_ratio=1.0, box_ratio=1.0) == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_light_background_switches_to_neutral_palette() -> None:
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_BULLETS, title="浅色", bullets=("要点",), background=core.BACKGROUND_LIGHT
+    )
+    primitives = design.build_draw_list(slide, template)
+    background = next(item for item in primitives if isinstance(item, design.Rect))
+    assert background.fill == design._LIGHT_BACKGROUND
+    text = next(item for item in primitives if isinstance(item, design.Text) and item.paragraphs[0] == "浅色")
+    assert text.color == design._LIGHT_TEXT
+
+
+def test_dark_background_switches_to_neutral_palette() -> None:
+    template = _template(style=core.STYLE_PORCELAIN)
+    slide = core.SlideSpec(layout=core.LAYOUT_BULLETS, title="深色", bullets=("要点",), background=core.BACKGROUND_DARK)
+    primitives = design.build_draw_list(slide, template)
+    background = next(item for item in primitives if isinstance(item, design.Rect))
+    assert background.fill == design._DARK_BACKGROUND
+
+
+def test_background_image_fills_page_with_scrim() -> None:
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_SECTION,
+        title="图片底板",
+        image="/tmp/hero.png",
+        image_alt="主视觉",
+        image_focus="top",
+        background=core.BACKGROUND_IMAGE,
+    )
+    primitives = design.build_draw_list(slide, template)
+    picture = next(item for item in primitives if isinstance(item, design.Picture))
+    assert (picture.x, picture.y, picture.w, picture.h) == (0, 0, 1280, 720)
+    assert picture.alt == "主视觉"
+    assert picture.focus == "top"
+    assert picture.overlay == pytest.approx(core.DesignTokens().image_scrim)

@@ -14,21 +14,35 @@ from dataclasses import dataclass
 from fcmd.apps.pptmake._bullets import split_bullet
 from fcmd.apps.pptmake._core import (
     ASPECT_DESIGN,
+    BACKGROUND_DARK,
+    BACKGROUND_IMAGE,
+    BACKGROUND_LIGHT,
     CHART_PIE,
     DECOR_FRAME,
     DECOR_GRID,
     DECOR_MINIMAL,
     LAYOUT_AGENDA,
+    LAYOUT_AGENDA_PAGES,
+    LAYOUT_APPENDIX,
     LAYOUT_BULLETS,
+    LAYOUT_CARDS,
     LAYOUT_CHART,
+    LAYOUT_CHART_CONCLUSION,
     LAYOUT_CLOSING,
+    LAYOUT_CODE,
     LAYOUT_COMPARISON,
     LAYOUT_CONTACT,
     LAYOUT_COVER,
     LAYOUT_IMAGE,
     LAYOUT_METRICS,
+    LAYOUT_PHOTO_COVER,
+    LAYOUT_PHOTO_SECTION,
+    LAYOUT_PROBLEM_SOLUTION,
+    LAYOUT_PROCESS,
     LAYOUT_QUOTE,
     LAYOUT_SECTION,
+    LAYOUT_TEAM,
+    LAYOUT_TESTIMONIAL,
     LAYOUT_TEXT,
     LAYOUT_TIMELINE,
     LAYOUT_TWO_COLUMN,
@@ -55,6 +69,7 @@ __all__ = [
     "Text",
     "build_draw_list",
     "design_size",
+    "picture_crop",
 ]
 
 ALIGN_LEFT = "left"
@@ -105,7 +120,13 @@ class Line:
 
 @dataclass(frozen=True, slots=True)
 class Picture:
-    """图片图元：``path`` 指向本地图片，``fit`` 取 cover / contain。"""
+    """图片图元：``path`` 指向本地图片，``fit`` 取 cover / contain。
+
+    ``alt`` 写入替代文本；``caption`` 由版式在图片下方渲染为注释；
+    ``focus`` 控制 cover 裁剪的焦点（center/top/bottom/left/right）；
+    ``radius`` 为圆角半径；``overlay`` 为压暗强度（0–1），用于图片上的
+    文字对比度，``overlay_color`` 默认取页面底色。
+    """
 
     x: float
     y: float
@@ -113,6 +134,38 @@ class Picture:
     h: float
     path: str
     fit: str = "cover"
+    alt: str = ""
+    caption: str = ""
+    focus: str = "center"
+    radius: float = 0.0
+    overlay: float = 0.0
+    overlay_color: str = "#000000"
+
+
+def picture_crop(focus: str, image_ratio: float, box_ratio: float) -> tuple[float, float, float, float]:
+    """计算 cover 裁剪比例 ``(left, right, top, bottom)``，预览与导出共用。
+
+    图片比容器「更宽」时裁左右，``focus`` 取 left/right 决定保留哪一侧；
+    更「更高」时裁上下，取 top/bottom；其余情况按居中裁剪。
+    """
+    left = right = top = bottom = 0.0
+    if image_ratio > box_ratio:
+        excess = 1 - box_ratio / image_ratio
+        if focus == "left":
+            right = excess
+        elif focus == "right":
+            left = excess
+        else:
+            left = right = excess / 2
+    elif image_ratio < box_ratio:
+        excess = 1 - image_ratio / box_ratio
+        if focus == "top":
+            bottom = excess
+        elif focus == "bottom":
+            top = excess
+        else:
+            top = bottom = excess / 2
+    return left, right, top, bottom
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,6 +392,40 @@ def _slide_accent(slide: SlideSpec, palette: Palette) -> str:
     return palette.accent
 
 
+_LIGHT_BACKGROUND = "#F5F7FA"
+_LIGHT_SURFACE = "#FFFFFF"
+_LIGHT_TEXT = "#0B1020"
+_LIGHT_MUTED = "#5A6473"
+_DARK_BACKGROUND = "#0B1020"
+_DARK_SURFACE = "#151C33"
+_DARK_TEXT = "#F4F6FB"
+_DARK_MUTED = "#9AA4BF"
+
+
+def _page_palette(template: TemplateSpec, slide: SlideSpec) -> Palette:
+    """按 ``slide.background`` 覆盖底板与文字色；强调色保持主题口径。"""
+    palette = template.theme.palette
+    if slide.background == BACKGROUND_LIGHT:
+        return Palette(
+            background=_LIGHT_BACKGROUND,
+            surface=_LIGHT_SURFACE,
+            accent=palette.accent,
+            secondary=palette.secondary,
+            text=_LIGHT_TEXT,
+            muted=_LIGHT_MUTED,
+        )
+    if slide.background in (BACKGROUND_DARK, BACKGROUND_IMAGE):
+        return Palette(
+            background=_DARK_BACKGROUND,
+            surface=_DARK_SURFACE,
+            accent=palette.accent,
+            secondary=palette.secondary,
+            text=_DARK_TEXT,
+            muted=_DARK_MUTED,
+        )
+    return palette
+
+
 def _parse_pair(text: str) -> tuple[str, str]:
     """把 ``值|说明`` 拆成两段；没有分隔符时说明为空。"""
     left, sep, right = text.partition("|")
@@ -497,7 +584,10 @@ def _paint_heading(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> float:
                 ctx.top + round(scale.title * 2.1),
                 ctx.width - ctx.margin * 2,
                 round(scale.subtitle * 1.45),
-                slide.subtitle if slide.layout not in (LAYOUT_SECTION, LAYOUT_TWO_COLUMN) else "",
+                slide.subtitle
+                if slide.layout
+                not in (LAYOUT_SECTION, LAYOUT_TWO_COLUMN, LAYOUT_PROBLEM_SOLUTION, LAYOUT_CHART_CONCLUSION)
+                else "",
                 scale.subtitle,
                 palette.muted,
                 ctx.theme.body_font,
@@ -1492,6 +1582,876 @@ def _render_contact(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
         )
 
 
+def _paint_photo_background(out: list[Primitive], ctx: _Ctx, slide: SlideSpec, *, overlay: float) -> None:
+    """整页图片或合成渐变兜底；图片统一压暗保证文字对比度。"""
+    palette = ctx.palette
+    if slide.image:
+        out.append(
+            Picture(
+                0,
+                0,
+                ctx.width,
+                ctx.height,
+                slide.image,
+                fit="cover",
+                alt=slide.image_alt,
+                focus=slide.image_focus,
+                overlay=overlay,
+                overlay_color="#05070F",
+            )
+        )
+        return
+    out.append(Rect(0, 0, ctx.width, ctx.height, fill=mix_hex(palette.background, ctx.accent, 0.3)))
+    out.append(
+        Oval(
+            ctx.width * 0.52,
+            -ctx.height * 0.22,
+            ctx.width * 0.62,
+            ctx.width * 0.62,
+            fill=mix_hex(palette.background, ctx.accent, 0.45),
+        )
+    )
+    out.append(
+        Oval(
+            -ctx.width * 0.12,
+            ctx.height * 0.58,
+            ctx.width * 0.5,
+            ctx.width * 0.5,
+            fill=mix_hex(palette.background, palette.secondary, 0.3),
+        )
+    )
+
+
+def _render_photo_cover(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """全出血图片封面：图片铺底 + 压暗，标题落在左下。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    _paint_photo_background(out, ctx, slide, overlay=max(ctx.tokens.image_scrim, 0.35))
+    eyebrow = ctx.theme.eyebrow.strip()
+    if eyebrow:
+        out.append(
+            _text(
+                margin,
+                ctx.height * 0.10,
+                ctx.width * 0.6,
+                round(scale.small * 1.8),
+                eyebrow,
+                scale.small,
+                ctx.accent,
+                ctx.theme.heading_font,
+                bold=True,
+            )
+        )
+    out.append(Rect(margin, ctx.height * 0.50, 76, 8, fill=ctx.accent, radius=round(ctx.radius.small / 1.5)))
+    title = slide.title.strip() or "在此输入演示标题"
+    subtitle = slide.subtitle.strip() or "副标题 / 团队 / 日期"
+    if ctx.headings:
+        size = scale.display if len(title) <= 18 else round(scale.display * 0.78)
+        out.append(
+            _text(
+                margin,
+                ctx.height * 0.55,
+                ctx.width - margin * 2.6,
+                ctx.height * 0.20,
+                title,
+                size,
+                palette.text,
+                ctx.theme.heading_font,
+                bold=True,
+                line_spacing=spacing.line_display,
+            )
+        )
+        out.append(
+            _text(
+                margin,
+                ctx.height * 0.78,
+                ctx.width - margin * 2.2,
+                round(scale.heading * 1.6),
+                subtitle,
+                scale.heading,
+                palette.muted,
+                ctx.theme.body_font,
+                line_spacing=spacing.line_body,
+            )
+        )
+    credit = ctx.theme.credit.strip()
+    if credit:
+        out.append(
+            _text(
+                ctx.width - margin - ctx.width * 0.3,
+                ctx.height - 64,
+                ctx.width * 0.3,
+                24,
+                credit,
+                scale.caption,
+                palette.muted,
+                ctx.theme.body_font,
+                align=ALIGN_RIGHT,
+            )
+        )
+
+
+def _render_photo_section(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """图片章节页：大号编号 + 章节标题，图片强压暗。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    margin = ctx.margin
+    _paint_photo_background(out, ctx, slide, overlay=max(ctx.tokens.image_scrim, 0.5))
+    number = slide.subtitle.strip() or "02"
+    out.append(
+        _text(
+            margin,
+            ctx.top,
+            ctx.width * 0.5,
+            round(scale.section_number * 0.9),
+            number,
+            round(scale.section_number * 0.6),
+            mix_hex(palette.background, palette.text, 0.22),
+            ctx.theme.heading_font,
+            bold=True,
+            line_spacing=1.0,
+        )
+    )
+    if ctx.headings:
+        out.append(
+            _text(
+                margin + 38,
+                ctx.height * 0.45,
+                ctx.width - margin * 2 - 38,
+                64,
+                slide.title.strip() or "章节标题",
+                round(scale.title * 1.1),
+                palette.text,
+                ctx.theme.heading_font,
+                bold=True,
+            )
+        )
+        body = slide.bullets[0] if slide.bullets else "一句话说明本章节要讲什么。"
+        out.append(
+            _text(
+                margin + 38,
+                ctx.height * 0.56,
+                ctx.width - margin * 2 - 38,
+                80,
+                body,
+                scale.body,
+                palette.muted,
+                ctx.theme.body_font,
+                line_spacing=ctx.spacing.line_body,
+            )
+        )
+
+
+def _render_cards(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """卡片要点：3–4 张等宽卡片，编号 + 标题 + 说明。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    items = slide.bullets[:4] or (
+        "更短的路径|把关键操作前置。",
+        "更清楚的反馈|每一步都有状态。",
+        "更一致的质感|模板化排版。",
+    )
+    count = len(items)
+    gap = spacing.gap
+    card_width = (ctx.width - margin * 2 - gap * (count - 1)) / count
+    card_top = top + round(scale.body * 1.2)
+    card_height = ctx.height - card_top - round(scale.body * 4)
+    for index, item in enumerate(items):
+        parts = _split_parts(item)
+        title = parts[0] or f"要点 {index + 1}"
+        body = parts[1] if len(parts) > 1 else ""
+        x = margin + index * (card_width + gap)
+        out.append(
+            Rect(
+                x,
+                card_top,
+                card_width,
+                card_height,
+                fill=palette.surface,
+                line=ctx.border,
+                line_width=ctx.stroke_width,
+                radius=round(ctx.radius.card),
+            )
+        )
+        out.append(Rect(x, card_top, card_width, 6, fill=ctx.accent, radius=round(ctx.radius.small)))
+        badge = round(scale.heading * 1.4)
+        out.append(
+            Oval(
+                x + spacing.block,
+                card_top + spacing.block,
+                badge,
+                badge,
+                fill=mix_hex(palette.surface, ctx.accent, 0.22),
+            )
+        )
+        out.append(
+            _text(
+                x + spacing.block,
+                card_top + spacing.block,
+                badge,
+                badge,
+                f"{index + 1:02d}",
+                round(scale.small * 0.9),
+                ctx.accent,
+                ctx.theme.heading_font,
+                bold=True,
+                align=ALIGN_CENTER,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        out.append(
+            _text(
+                x + spacing.block,
+                card_top + spacing.block + badge + spacing.gap,
+                card_width - spacing.block * 2,
+                round(scale.heading * 2.4),
+                title,
+                scale.heading,
+                palette.text,
+                ctx.theme.heading_font,
+                bold=True,
+                line_spacing=spacing.line_heading,
+            )
+        )
+        if body:
+            out.append(
+                _text(
+                    x + spacing.block,
+                    card_top + spacing.block + badge + spacing.gap * 3,
+                    card_width - spacing.block * 2,
+                    card_height - spacing.block * 2 - badge - spacing.gap * 3,
+                    body,
+                    scale.body,
+                    palette.muted,
+                    ctx.theme.body_font,
+                    line_spacing=spacing.line_body,
+                )
+            )
+
+
+def _render_process(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """流程步骤：横向时间轴 + 编号节点，最多 6 步。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    steps = slide.bullets[:6] or (
+        "01|梳理|确认目标与约束",
+        "02|设计|定稿结构与视觉",
+        "03|实现|开发与联调",
+        "04|上线|灰度与复盘",
+    )
+    count = len(steps)
+    axis_y = top + round(scale.body * 3.6)
+    out.append(Line(margin + 24, axis_y, ctx.width - margin - 24, axis_y, ctx.divider, round(ctx.stroke_width * 2)))
+    step_width = (ctx.width - margin * 2) / count
+    for index, item in enumerate(steps):
+        parts = _split_parts(item)
+        number = parts[0] or f"{index + 1:02d}"
+        title = parts[1] if len(parts) > 1 else number
+        body = parts[2] if len(parts) > 2 else ""
+        center = margin + step_width * index + step_width / 2
+        node = round(scale.heading * 1.6)
+        out.append(Oval(center - node / 2, axis_y - node / 2, node, node, fill=ctx.accent))
+        out.append(
+            _text(
+                center - node / 2,
+                axis_y - node / 2,
+                node,
+                node,
+                number,
+                round(scale.small * 0.85),
+                palette.background,
+                ctx.theme.heading_font,
+                bold=True,
+                align=ALIGN_CENTER,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        out.append(
+            _text(
+                center - step_width / 2 + spacing.block,
+                axis_y + node,
+                step_width - spacing.block * 2,
+                round(scale.heading * 2.2),
+                title,
+                scale.heading,
+                palette.text,
+                ctx.theme.heading_font,
+                bold=True,
+                align=ALIGN_CENTER,
+                line_spacing=spacing.line_heading,
+            )
+        )
+        if body:
+            out.append(
+                _text(
+                    center - step_width / 2 + spacing.block,
+                    axis_y + node + round(scale.heading * 2.4),
+                    step_width - spacing.block * 2,
+                    round(scale.body * 3),
+                    body,
+                    scale.body,
+                    palette.muted,
+                    ctx.theme.body_font,
+                    align=ALIGN_CENTER,
+                    line_spacing=spacing.line_body,
+                )
+            )
+
+
+def _render_problem_solution(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """问题 / 方案对照：左列现状，右列目标，中间箭头。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    headers = _split_parts(slide.subtitle) or ("现状", "目标")
+    rows = slide.bullets[:4] or ("信息散落|统一沉淀", "重复排版|自动生成")
+    gap = spacing.gap
+    column_width = (ctx.width - margin * 2 - gap) / 2
+    header_height = round(scale.body * 2)
+    body_top = top + header_height + spacing.gap
+    row_height = min(round(scale.body * 3.4), (ctx.height - body_top - margin * 2) / len(rows))
+    danger = ctx.tokens.semantic.danger
+    success = ctx.tokens.semantic.success
+    for index, header in enumerate((headers[0] or "现状", headers[1] if len(headers) > 1 else "目标")):
+        x = margin + index * (column_width + gap)
+        fill = mix_hex(palette.background, danger if index == 0 else success, 0.18)
+        out.append(Rect(x, top, column_width, header_height, fill=fill, radius=round(ctx.radius.small)))
+        out.append(
+            _text(
+                x + spacing.block,
+                top,
+                column_width - spacing.block * 2,
+                header_height,
+                header,
+                scale.body,
+                palette.text,
+                ctx.theme.heading_font,
+                bold=True,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+    for index, row in enumerate(rows):
+        parts = _split_parts(row)
+        y = body_top + index * row_height
+        for column, text in enumerate((parts[0], parts[1] if len(parts) > 1 else "")):
+            x = margin + column * (column_width + gap)
+            out.append(
+                Rect(
+                    x,
+                    y,
+                    column_width,
+                    row_height - spacing.gap / 2,
+                    fill=palette.surface,
+                    line=ctx.border,
+                    line_width=ctx.stroke_width,
+                    radius=round(ctx.radius.small),
+                )
+            )
+            out.append(
+                _text(
+                    x + spacing.block,
+                    y,
+                    column_width - spacing.block * 2,
+                    row_height - spacing.gap / 2,
+                    text,
+                    scale.body,
+                    palette.text,
+                    ctx.theme.body_font,
+                    anchor=ANCHOR_MIDDLE,
+                    line_spacing=spacing.line_body,
+                )
+            )
+        out.append(
+            _text(
+                margin + column_width + gap / 2 - 16,
+                y,
+                32,
+                row_height - spacing.gap / 2,
+                "→",
+                scale.heading,
+                ctx.accent,
+                ctx.theme.heading_font,
+                bold=True,
+                align=ALIGN_CENTER,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+
+
+def _chart_categories(slide: SlideSpec) -> tuple[tuple[str, ...], tuple[float, ...]]:
+    """从 ``标签|数值`` 提取图表类别与数值，跳过没有数字的条目。"""
+    categories: list[str] = []
+    values: list[float] = []
+    for item in (slide.bullets or ("Q1|42", "Q2|68", "Q3|54", "Q4|86"))[:6]:
+        label, value = _parse_pair(item)
+        if not _has_number(value):
+            continue
+        categories.append(label or f"项{len(categories) + 1}")
+        values.append(_parse_number(value))
+    return tuple(categories), tuple(values)
+
+
+def _render_chart_conclusion(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """数据结论：左侧图表，右侧三条结论。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    categories, values = _chart_categories(slide)
+    gap = spacing.section
+    chart_width = (ctx.width - margin * 2) * 0.56
+    content_top = top + round(scale.body)
+    content_height = ctx.height - content_top - round(scale.body * 4)
+    colors = tuple(ctx.tokens.chart_palette) or (ctx.accent, palette.secondary)
+    if categories:
+        out.append(
+            Chart(
+                x=margin,
+                y=content_top,
+                w=chart_width,
+                h=content_height,
+                categories=categories,
+                series=(ChartSeries("数值", values, colors[0]),),
+                kind=slide.chart_type,
+                unit=slide.unit,
+                value_format=slide.value_format,
+                show_labels=True,
+                legend=False,
+                colors=tuple(colors[index % len(colors)] for index in range(len(categories))),
+                font=ctx.theme.body_font,
+                size=scale.caption,
+                axis_color=ctx.divider,
+                grid_color=mix_hex(palette.surface, palette.muted, 0.25),
+                text_color=palette.text,
+                muted_color=palette.muted,
+            )
+        )
+    conclusions = _split_parts(slide.subtitle) or (
+        "留存每提升 1pt，季度收入增加约 2.4%",
+        "老客复购贡献了 61% 的增量",
+        "下一步聚焦新手引导与召回",
+    )
+    column_x = margin + chart_width + gap
+    column_width = ctx.width - margin - column_x
+    row_height = content_height / max(len(conclusions), 1)
+    for index, text in enumerate(conclusions[:4]):
+        y = content_top + index * row_height
+        out.append(Rect(column_x, y + 8, 8, round(scale.body * 1.4), fill=ctx.accent))
+        out.append(
+            _text(
+                column_x + spacing.block,
+                y,
+                column_width - spacing.block,
+                row_height,
+                text,
+                scale.body,
+                palette.text,
+                ctx.theme.body_font,
+                anchor=ANCHOR_MIDDLE,
+                line_spacing=spacing.line_body,
+            )
+        )
+
+
+def _render_team(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """团队：头像 / 首字母 + 姓名 + 角色 + 一句话。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    members = slide.bullets[:4] or ("林岚|产品负责人|十年 B 端经验", "周野|设计负责人|专注信息设计")
+    count = len(members)
+    gap = spacing.gap
+    column_width = (ctx.width - margin * 2 - gap * (count - 1)) / count
+    avatar = round(scale.display * 1.2)
+    avatar_y = top + round(scale.body * 2)
+    for index, item in enumerate(members):
+        parts = _split_parts(item)
+        name = parts[0] or f"成员 {index + 1}"
+        role = parts[1] if len(parts) > 1 else "职位"
+        bio = parts[2] if len(parts) > 2 else ""
+        center = margin + column_width * index + column_width / 2
+        out.append(Oval(center - avatar / 2, avatar_y, avatar, avatar, fill=mix_hex(palette.surface, ctx.accent, 0.2)))
+        out.append(
+            _text(
+                center - avatar / 2,
+                avatar_y,
+                avatar,
+                avatar,
+                name[:1],
+                round(scale.display * 0.6),
+                ctx.accent,
+                ctx.theme.heading_font,
+                bold=True,
+                align=ALIGN_CENTER,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        out.append(
+            _text(
+                center - column_width / 2,
+                avatar_y + avatar + spacing.gap,
+                column_width,
+                round(scale.heading * 1.6),
+                name,
+                scale.heading,
+                palette.text,
+                ctx.theme.heading_font,
+                bold=True,
+                align=ALIGN_CENTER,
+            )
+        )
+        out.append(
+            _text(
+                center - column_width / 2,
+                avatar_y + avatar + spacing.gap + round(scale.heading * 1.7),
+                column_width,
+                round(scale.body * 1.6),
+                role,
+                scale.body,
+                ctx.accent,
+                ctx.theme.body_font,
+                align=ALIGN_CENTER,
+            )
+        )
+        if bio:
+            out.append(
+                _text(
+                    center - column_width / 2 + spacing.block,
+                    avatar_y + avatar + spacing.gap * 2 + round(scale.heading * 2.4),
+                    column_width - spacing.block * 2,
+                    round(scale.body * 3),
+                    bio,
+                    scale.body,
+                    palette.muted,
+                    ctx.theme.body_font,
+                    align=ALIGN_CENTER,
+                    line_spacing=spacing.line_body,
+                )
+            )
+
+
+def _render_testimonial(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """客户证言：大引号 + 金句 + 头像/署名。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    out.append(
+        _text(
+            margin,
+            ctx.height * 0.08,
+            ctx.width * 0.3,
+            round(scale.quote * 1.6),
+            "“",
+            round(scale.quote * 1.6),
+            mix_hex(palette.background, ctx.accent, 0.55),
+            ctx.theme.heading_font,
+            bold=True,
+            line_spacing=1.0,
+        )
+    )
+    quote = slide.title.strip() or "它把我们最费时的排版，变成了一次点击。"
+    if ctx.headings:
+        out.append(
+            _text(
+                margin,
+                ctx.height * 0.26,
+                ctx.width - margin * 2,
+                ctx.height * 0.34,
+                quote,
+                round(scale.quote * (0.9 if len(quote) > 28 else 1.0)),
+                palette.text,
+                ctx.theme.heading_font,
+                line_spacing=spacing.line_body,
+            )
+        )
+        attribution = slide.subtitle.strip() or "— 客户"
+        out.append(
+            _text(
+                margin,
+                ctx.height * 0.72,
+                ctx.width - margin * 2,
+                round(scale.subtitle * 1.6),
+                attribution,
+                scale.subtitle,
+                palette.muted,
+                ctx.theme.body_font,
+            )
+        )
+    avatar = round(scale.heading * 2.4)
+    avatar_x = ctx.width - margin - avatar
+    avatar_y = ctx.height * 0.68
+    if slide.image:
+        out.append(
+            Picture(
+                avatar_x,
+                avatar_y,
+                avatar,
+                avatar,
+                slide.image,
+                fit="cover",
+                alt=slide.image_alt or "客户头像",
+                focus=slide.image_focus,
+                radius=avatar / 2,
+            )
+        )
+    else:
+        out.append(Oval(avatar_x, avatar_y, avatar, avatar, fill=mix_hex(palette.surface, ctx.accent, 0.2)))
+        out.append(
+            _text(
+                avatar_x,
+                avatar_y,
+                avatar,
+                avatar,
+                "客户",
+                scale.small,
+                ctx.accent,
+                ctx.theme.heading_font,
+                bold=True,
+                align=ALIGN_CENTER,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+
+
+def _render_code(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """代码 / 终端：深色面板 + 行号 + 等宽字体。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    panel_top = top + round(scale.body)
+    panel_height = ctx.height - panel_top - round(scale.body * 4)
+    panel_width = ctx.width - margin * 2
+    panel_fill = mix_hex(palette.background, "#000000", 0.35)
+    out.append(
+        Rect(
+            margin,
+            panel_top,
+            panel_width,
+            panel_height,
+            fill=panel_fill,
+            line=ctx.border,
+            line_width=ctx.stroke_width,
+            radius=round(ctx.radius.card),
+        )
+    )
+    dot_y = panel_top + round(scale.body * 0.9)
+    for index, color in enumerate(("#F87171", "#FBBF24", "#34D399")):
+        out.append(Oval(margin + spacing.block + index * round(scale.small * 0.9), dot_y, 10, 10, fill=color))
+    language = slide.subtitle.strip()
+    if language:
+        out.append(
+            _text(
+                margin + panel_width - spacing.block - 140,
+                panel_top + 8,
+                140,
+                24,
+                language,
+                scale.caption,
+                palette.muted,
+                "Cascadia Mono",
+                align=ALIGN_RIGHT,
+            )
+        )
+    lines = slide.bullets[:12] or ("template: brand-2026", "aspect: 16:9", "output: dist/deck.pptx")
+    line_height = round(scale.body * 1.45)
+    code_top = panel_top + round(scale.body * 2.2)
+    number_width = round(scale.body * 1.2)
+    for index, line in enumerate(lines):
+        y = code_top + index * line_height
+        if y + line_height > panel_top + panel_height:
+            break
+        out.append(
+            _text(
+                margin + spacing.block,
+                y,
+                number_width,
+                line_height,
+                f"{index + 1:02d}",
+                round(scale.body * 0.86),
+                mix_hex(panel_fill, palette.muted, 0.6),
+                "Cascadia Mono",
+                align=ALIGN_RIGHT,
+            )
+        )
+        out.append(
+            _text(
+                margin + spacing.block + number_width + spacing.gap,
+                y,
+                panel_width - spacing.block * 2 - number_width - spacing.gap,
+                line_height,
+                line,
+                round(scale.body * 0.92),
+                palette.text,
+                "Cascadia Mono",
+                line_spacing=1.1,
+            )
+        )
+
+
+def _render_appendix(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """附录：条目 + 引导线 + 页码，超过 4 条自动分两栏。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    items = slide.bullets[:8] or ("指标定义与计算方式|12", "调研样本与访谈记录|14", "参考案例与致谢|16")
+    columns = 2 if len(items) > 4 else 1
+    per_column = (len(items) + columns - 1) // columns
+    gap = spacing.section
+    column_width = (ctx.width - margin * 2 - gap * (columns - 1)) / columns
+    row_height = min(round(scale.body * 3.2), (ctx.height - top - round(scale.body * 4)) / per_column)
+    for index, item in enumerate(items):
+        column = index // per_column
+        row = index % per_column
+        x = margin + column * (column_width + gap)
+        y = top + row * row_height
+        parts = _split_parts(item)
+        label = parts[0] or f"附录 {index + 1}"
+        page = parts[1] if len(parts) > 1 else ""
+        out.append(
+            _text(
+                x,
+                y,
+                round(scale.body * 1.4),
+                row_height,
+                f"{index + 1:02d}",
+                round(scale.body * 0.9),
+                ctx.accent,
+                ctx.theme.heading_font,
+                bold=True,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        page_width = round(scale.body * 2)
+        out.append(
+            _text(
+                x + round(scale.body * 1.6),
+                y,
+                column_width - round(scale.body * 1.6) - page_width - spacing.block,
+                row_height,
+                label,
+                scale.body,
+                palette.text,
+                ctx.theme.body_font,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        out.append(
+            Line(
+                x + round(scale.body * 1.6),
+                y + row_height - 8,
+                x + column_width - page_width - spacing.block,
+                y + row_height - 8,
+                mix_hex(palette.background, palette.muted, 0.28),
+                1,
+            )
+        )
+        if page:
+            out.append(
+                _text(
+                    x + column_width - page_width,
+                    y,
+                    page_width,
+                    row_height,
+                    page,
+                    scale.body,
+                    palette.muted,
+                    ctx.theme.body_font,
+                    align=ALIGN_RIGHT,
+                    anchor=ANCHOR_MIDDLE,
+                )
+            )
+
+
+def _render_agenda_pages(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """目录页码：编号 + 标题 + 引导线 + 页码。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    items = slide.bullets[:6] or ("项目背景与目标|03", "现状与挑战|06", "方案与亮点|09", "落地计划|12")
+    row_height = min(round(scale.heading * 2.6), (ctx.height - top - round(scale.body * 4)) / len(items))
+    page_width = round(scale.display * 1.4)
+    for index, item in enumerate(items):
+        parts = _split_parts(item)
+        title = parts[0] or f"章节 {index + 1}"
+        page = parts[1] if len(parts) > 1 else ""
+        y = top + index * row_height
+        accent = ctx.accent if index == 0 else mix_hex(palette.background, palette.muted, 0.6)
+        out.append(
+            _text(
+                margin,
+                y,
+                round(scale.heading * 1.8),
+                row_height,
+                f"{index + 1:02d}",
+                scale.heading,
+                ctx.accent if index == 0 else palette.muted,
+                ctx.theme.heading_font,
+                bold=True,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        title_width = ctx.width - margin * 2 - round(scale.heading * 1.8) - page_width
+        out.append(
+            _text(
+                margin + round(scale.heading * 2),
+                y,
+                title_width,
+                row_height,
+                title,
+                scale.heading,
+                palette.text,
+                ctx.theme.heading_font,
+                bold=index == 0,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        if page:
+            out.append(
+                _text(
+                    ctx.width - margin - page_width,
+                    y,
+                    page_width,
+                    row_height,
+                    page,
+                    scale.heading,
+                    accent,
+                    ctx.theme.heading_font,
+                    bold=True,
+                    align=ALIGN_RIGHT,
+                    anchor=ANCHOR_MIDDLE,
+                )
+            )
+        if index < len(items) - 1:
+            out.append(
+                Rect(
+                    margin,
+                    y + row_height,
+                    ctx.width - margin * 2,
+                    1,
+                    fill=ctx.divider,
+                )
+            )
+
+
 _RENDERERS = {
     LAYOUT_COVER: _render_cover,
     LAYOUT_AGENDA: _render_agenda,
@@ -1506,6 +2466,17 @@ _RENDERERS = {
     LAYOUT_COMPARISON: _render_comparison,
     LAYOUT_CHART: _render_chart,
     LAYOUT_CONTACT: _render_contact,
+    LAYOUT_PHOTO_COVER: _render_photo_cover,
+    LAYOUT_PHOTO_SECTION: _render_photo_section,
+    LAYOUT_CARDS: _render_cards,
+    LAYOUT_PROCESS: _render_process,
+    LAYOUT_PROBLEM_SOLUTION: _render_problem_solution,
+    LAYOUT_CHART_CONCLUSION: _render_chart_conclusion,
+    LAYOUT_TEAM: _render_team,
+    LAYOUT_TESTIMONIAL: _render_testimonial,
+    LAYOUT_CODE: _render_code,
+    LAYOUT_APPENDIX: _render_appendix,
+    LAYOUT_AGENDA_PAGES: _render_agenda_pages,
 }
 
 
@@ -1600,18 +2571,35 @@ def build_draw_list(  # noqa: PLR0913 - 版式入口需要页码 / 画布尺寸�
     PowerPoint 原生占位符承载，装饰与正文仍由本模块绘制。
     """
     default_width, default_height = design_size(template.aspect)
+    palette = _page_palette(template, slide)
     ctx = _Ctx(
         width=float(width or default_width),
         height=float(height or default_height),
-        palette=template.theme.palette,
+        palette=palette,
         theme=template.theme,
-        accent=_slide_accent(slide, template.theme.palette),
+        accent=_slide_accent(slide, palette),
         aspect=template.aspect,
         hints=hints,
         headings=headings,
     )
-    out: list[Primitive] = [Rect(0, 0, ctx.width, ctx.height, fill=ctx.palette.background)]
-    _paint_decor(out, ctx)
+    out: list[Primitive] = [Rect(0, 0, ctx.width, ctx.height, fill=palette.background)]
+    if slide.background == BACKGROUND_IMAGE and slide.image:
+        out.append(
+            Picture(
+                0,
+                0,
+                ctx.width,
+                ctx.height,
+                slide.image,
+                fit="cover",
+                alt=slide.image_alt,
+                focus=slide.image_focus,
+                overlay=ctx.tokens.image_scrim,
+                overlay_color=palette.background,
+            )
+        )
+    else:
+        _paint_decor(out, ctx)
     renderer = _RENDERERS.get(slide.layout, _render_bullets)
     renderer(out, ctx, slide)
     _paint_logo(out, ctx)

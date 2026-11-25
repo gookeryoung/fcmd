@@ -28,6 +28,35 @@ from fcmd.apps.pptmake._charts import (
     CHART_TYPES,
     chart_options,
 )
+from fcmd.apps.pptmake._layouts import (
+    DEFAULT_PAGE_NUMBER_HIDDEN,
+    LAYOUT_AGENDA,
+    LAYOUT_AGENDA_PAGES,
+    LAYOUT_APPENDIX,
+    LAYOUT_BULLETS,
+    LAYOUT_CARDS,
+    LAYOUT_CHART,
+    LAYOUT_CHART_CONCLUSION,
+    LAYOUT_CLOSING,
+    LAYOUT_CODE,
+    LAYOUT_COMPARISON,
+    LAYOUT_CONTACT,
+    LAYOUT_COVER,
+    LAYOUT_IMAGE,
+    LAYOUT_METRICS,
+    LAYOUT_PHOTO_COVER,
+    LAYOUT_PHOTO_SECTION,
+    LAYOUT_PROBLEM_SOLUTION,
+    LAYOUT_PROCESS,
+    LAYOUT_QUOTE,
+    LAYOUT_SECTION,
+    LAYOUT_TEAM,
+    LAYOUT_TESTIMONIAL,
+    LAYOUT_TEXT,
+    LAYOUT_TIMELINE,
+    LAYOUT_TWO_COLUMN,
+    LAYOUTS,
+)
 from fcmd.apps.pptmake._palette import (
     DEFAULT_BODY_FONT,
     DEFAULT_HEADING_FONT,
@@ -55,6 +84,12 @@ __all__ = [
     "ASPECT_DESIGN",
     "ASPECT_INCHES",
     "ASPECT_TEXT",
+    "BACKGROUNDS",
+    "BACKGROUND_DARK",
+    "BACKGROUND_IMAGE",
+    "BACKGROUND_INHERIT",
+    "BACKGROUND_LIGHT",
+    "BACKGROUND_TEXT",
     "CHART_BAR",
     "CHART_LINE",
     "CHART_PIE",
@@ -71,18 +106,36 @@ __all__ = [
     "IMAGE_FIT_CONTAIN",
     "IMAGE_FIT_COVER",
     "IMAGE_FIT_TEXT",
+    "IMAGE_FOCUSES",
+    "IMAGE_FOCUS_BOTTOM",
+    "IMAGE_FOCUS_CENTER",
+    "IMAGE_FOCUS_LEFT",
+    "IMAGE_FOCUS_RIGHT",
+    "IMAGE_FOCUS_TEXT",
+    "IMAGE_FOCUS_TOP",
     "LAYOUTS",
     "LAYOUT_AGENDA",
+    "LAYOUT_AGENDA_PAGES",
+    "LAYOUT_APPENDIX",
     "LAYOUT_BULLETS",
+    "LAYOUT_CARDS",
     "LAYOUT_CHART",
+    "LAYOUT_CHART_CONCLUSION",
     "LAYOUT_CLOSING",
+    "LAYOUT_CODE",
     "LAYOUT_COMPARISON",
     "LAYOUT_CONTACT",
     "LAYOUT_COVER",
     "LAYOUT_IMAGE",
     "LAYOUT_METRICS",
+    "LAYOUT_PHOTO_COVER",
+    "LAYOUT_PHOTO_SECTION",
+    "LAYOUT_PROBLEM_SOLUTION",
+    "LAYOUT_PROCESS",
     "LAYOUT_QUOTE",
     "LAYOUT_SECTION",
+    "LAYOUT_TEAM",
+    "LAYOUT_TESTIMONIAL",
     "LAYOUT_TEXT",
     "LAYOUT_TIMELINE",
     "LAYOUT_TWO_COLUMN",
@@ -112,9 +165,11 @@ __all__ = [
     "new_slide",
     "new_template",
     "normalize_aspect",
+    "normalize_background",
     "normalize_decor",
     "normalize_hex",
     "normalize_image_fit",
+    "normalize_image_focus",
     "normalize_layout",
     "normalize_style",
     "palette_for_style",
@@ -148,61 +203,6 @@ ASPECT_DESIGN: Final[dict[str, tuple[int, int]]] = {
     ASPECT_16_9: (1280, 720),
     ASPECT_4_3: (960, 720),
 }
-
-# ---------------------------------------------------------------------- #
-# 内置布局
-# ---------------------------------------------------------------------- #
-LAYOUT_COVER: Final[str] = "cover"
-LAYOUT_AGENDA: Final[str] = "agenda"
-LAYOUT_SECTION: Final[str] = "section"
-LAYOUT_BULLETS: Final[str] = "bullets"
-LAYOUT_TWO_COLUMN: Final[str] = "two_column"
-LAYOUT_QUOTE: Final[str] = "quote"
-LAYOUT_METRICS: Final[str] = "metrics"
-LAYOUT_TIMELINE: Final[str] = "timeline"
-LAYOUT_CLOSING: Final[str] = "closing"
-LAYOUT_IMAGE: Final[str] = "image"
-LAYOUT_COMPARISON: Final[str] = "comparison"
-LAYOUT_CHART: Final[str] = "chart"
-LAYOUT_CONTACT: Final[str] = "contact"
-
-LAYOUTS: Final[tuple[str, ...]] = (
-    LAYOUT_COVER,
-    LAYOUT_AGENDA,
-    LAYOUT_SECTION,
-    LAYOUT_BULLETS,
-    LAYOUT_TWO_COLUMN,
-    LAYOUT_QUOTE,
-    LAYOUT_METRICS,
-    LAYOUT_TIMELINE,
-    LAYOUT_CLOSING,
-    LAYOUT_IMAGE,
-    LAYOUT_COMPARISON,
-    LAYOUT_CHART,
-    LAYOUT_CONTACT,
-)
-LAYOUT_TEXT: Final[dict[str, str]] = {
-    LAYOUT_COVER: "封面",
-    LAYOUT_AGENDA: "目录",
-    LAYOUT_SECTION: "章节",
-    LAYOUT_BULLETS: "要点",
-    LAYOUT_TWO_COLUMN: "双栏",
-    LAYOUT_QUOTE: "引用",
-    LAYOUT_METRICS: "数据",
-    LAYOUT_TIMELINE: "时间线",
-    LAYOUT_CLOSING: "结尾",
-    LAYOUT_IMAGE: "图片主视觉",
-    LAYOUT_COMPARISON: "对比矩阵",
-    LAYOUT_CHART: "图表",
-    LAYOUT_CONTACT: "联系方式",
-}
-# 封面、章节、结尾与联系页默认不编页码；可在模板里覆盖。
-DEFAULT_PAGE_NUMBER_HIDDEN: Final[tuple[str, ...]] = (
-    LAYOUT_COVER,
-    LAYOUT_SECTION,
-    LAYOUT_CLOSING,
-    LAYOUT_CONTACT,
-)
 
 # ---------------------------------------------------------------------- #
 # 装饰样式
@@ -259,6 +259,10 @@ class SlideSpec:
     accent: str = ""
     image: str = ""
     image_fit: str = IMAGE_FIT_COVER
+    image_alt: str = ""
+    image_caption: str = ""
+    image_focus: str = "center"
+    background: str = "inherit"
     chart_type: str = CHART_BAR
     unit: str = ""
     value_format: str = ""
@@ -354,6 +358,64 @@ def normalize_image_fit(value: object) -> str:
     return text
 
 
+IMAGE_FOCUS_CENTER: Final[str] = "center"
+IMAGE_FOCUS_TOP: Final[str] = "top"
+IMAGE_FOCUS_BOTTOM: Final[str] = "bottom"
+IMAGE_FOCUS_LEFT: Final[str] = "left"
+IMAGE_FOCUS_RIGHT: Final[str] = "right"
+IMAGE_FOCUSES: Final[tuple[str, ...]] = (
+    IMAGE_FOCUS_CENTER,
+    IMAGE_FOCUS_TOP,
+    IMAGE_FOCUS_BOTTOM,
+    IMAGE_FOCUS_LEFT,
+    IMAGE_FOCUS_RIGHT,
+)
+IMAGE_FOCUS_TEXT: Final[dict[str, str]] = {
+    IMAGE_FOCUS_CENTER: "居中",
+    IMAGE_FOCUS_TOP: "靠上",
+    IMAGE_FOCUS_BOTTOM: "靠下",
+    IMAGE_FOCUS_LEFT: "靠左",
+    IMAGE_FOCUS_RIGHT: "靠右",
+}
+
+BACKGROUND_INHERIT: Final[str] = "inherit"
+BACKGROUND_DARK: Final[str] = "dark"
+BACKGROUND_LIGHT: Final[str] = "light"
+BACKGROUND_IMAGE: Final[str] = "image"
+BACKGROUNDS: Final[tuple[str, ...]] = (
+    BACKGROUND_INHERIT,
+    BACKGROUND_DARK,
+    BACKGROUND_LIGHT,
+    BACKGROUND_IMAGE,
+)
+BACKGROUND_TEXT: Final[dict[str, str]] = {
+    BACKGROUND_INHERIT: "跟随主题",
+    BACKGROUND_DARK: "深色底板",
+    BACKGROUND_LIGHT: "浅色底板",
+    BACKGROUND_IMAGE: "图片铺底",
+}
+
+
+def normalize_image_focus(value: object) -> str:
+    """校验图片裁剪焦点（center / top / bottom / left / right）。"""
+    if value is None or value == "":
+        return IMAGE_FOCUS_CENTER
+    text = str(value).strip().lower()
+    if text not in IMAGE_FOCUSES:
+        raise ValueError(f"image_focus 需为 {' / '.join(IMAGE_FOCUSES)}：{value!r}")
+    return text
+
+
+def normalize_background(value: object) -> str:
+    """校验页面底板（inherit / dark / light / image）。"""
+    if value is None or value == "":
+        return BACKGROUND_INHERIT
+    text = str(value).strip().lower()
+    if text not in BACKGROUNDS:
+        raise ValueError(f"background 需为 {' / '.join(BACKGROUNDS)}：{value!r}")
+    return text
+
+
 def normalize_style(value: object) -> str:
     """校验风格名；``custom`` 表示用户自定义配色。"""
     text = str(value).strip().lower()
@@ -382,86 +444,9 @@ def layout_label(layout: str) -> str:
 # ---------------------------------------------------------------------- #
 def new_slide(layout: str) -> SlideSpec:
     """按布局生成一页带占位内容的示例页。"""
-    kind = normalize_layout(layout)
-    samples: dict[str, SlideSpec] = {
-        LAYOUT_COVER: SlideSpec(
-            kind,
-            title="让想法拥有舞台",
-            subtitle="品牌演示模板 · 2026",
-            note="封面：标题 + 副标题，适合品牌发布会与方案汇报。",
-        ),
-        LAYOUT_AGENDA: SlideSpec(
-            kind,
-            title="本次分享",
-            bullets=("项目背景与目标", "现状与挑战", "方案与亮点", "落地计划"),
-        ),
-        LAYOUT_SECTION: SlideSpec(
-            kind,
-            title="从问题出发",
-            subtitle="01",
-            bullets=("先定义真正要解决的问题，再讨论方案。",),
-        ),
-        LAYOUT_BULLETS: SlideSpec(
-            kind,
-            title="三个关键洞察",
-            bullets=(
-                "用户需要的不是更多功能，而是更短的路径。",
-                "设计的价值在于降低理解成本，而不是增加装饰。",
-                "可复用的模板，让每一次表达都保持一致的质感。",
-            ),
-        ),
-        LAYOUT_TWO_COLUMN: SlideSpec(
-            kind,
-            title="对照与取舍",
-            subtitle="现状|方案",
-            bullets=("信息分散，风格不统一", "模板集中管理，随时复用", "手工排版耗时且易错", "版式引擎自动完成排版"),
-        ),
-        LAYOUT_QUOTE: SlideSpec(
-            kind,
-            title="好的设计不是添加，而是删减到刚刚好。",
-            subtitle="— 设计原则",
-        ),
-        LAYOUT_METRICS: SlideSpec(
-            kind,
-            title="用数据说话",
-            bullets=("98%|交付准时率|+3pt", "4.9|客户满意度|+0.2", "120+|覆盖项目"),
-        ),
-        LAYOUT_TIMELINE: SlideSpec(
-            kind,
-            title="四步交付",
-            bullets=("01|调研", "02|设计", "03|实现", "04|交付"),
-        ),
-        LAYOUT_CLOSING: SlideSpec(
-            kind,
-            title="THANK YOU",
-            subtitle="期待与你一起，把下一次表达做得更好。",
-        ),
-        LAYOUT_IMAGE: SlideSpec(
-            kind,
-            title="让主视觉先说话",
-            subtitle="右侧留出大图区域，文字保持克制，适合品牌与产品发布。",
-            bullets=("主视觉占据右侧约一半版面", "标题与正文左对齐，层级清晰", "图文比例适合品牌与产品发布"),
-        ),
-        LAYOUT_COMPARISON: SlideSpec(
-            kind,
-            title="两种方案的取舍",
-            subtitle="现状|目标",
-            bullets=("响应速度|小时级|分钟级", "维护成本|较高|更低", "扩展能力|受限于插件|开放接口"),
-        ),
-        LAYOUT_CHART: SlideSpec(
-            kind,
-            title="关键指标走势",
-            bullets=("Q1|42", "Q2|68", "Q3|54", "Q4|86"),
-            unit="%",
-        ),
-        LAYOUT_CONTACT: SlideSpec(
-            kind,
-            title="让我们保持联系",
-            subtitle="期待下一次合作，也欢迎随时交流。",
-            bullets=("邮箱|hello@example.com", "电话|+86 138 0000 0000", "地址|上海市 · 徐汇区"),
-        ),
-    }
-    return samples[kind]
+    from fcmd.apps.pptmake._samples import sample_slides
+
+    return sample_slides()[normalize_layout(layout)]
 
 
 def default_slides() -> tuple[SlideSpec, ...]:
@@ -505,7 +490,11 @@ def default_template(*, style: str = STYLE_AURORA, aspect: str = ASPECT_16_9) ->
         name="品牌演示模板",
         style=style,
         aspect=aspect,
-        description="由 pptmake 生成的演示模板，覆盖封面、目录、章节、要点、双栏、引用、数据、时间线、结尾、图片、对比、图表与联系十三种版式。",
+        description=(
+            "由 pptmake 生成的演示模板，覆盖 24 种版式（封面、目录、章节、要点、双栏、引用、数据、"
+            "时间线、结尾、图片、对比、图表、联系、图片封面、图片章节、卡片、流程、问题与方案、"
+            "数据结论、团队、客户证言、代码、附录与目录页码）。"
+        ),
         author="pptmake",
     )
 
@@ -548,6 +537,10 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
                 "accent": slide.accent,
                 "image": slide.image,
                 "image_fit": slide.image_fit,
+                "image_alt": slide.image_alt,
+                "image_caption": slide.image_caption,
+                "image_focus": slide.image_focus,
+                "background": slide.background,
                 "chart_type": slide.chart_type,
                 "unit": slide.unit,
                 "value_format": slide.value_format,
@@ -596,6 +589,17 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         image_fit = normalize_image_fit(raw.get("image_fit", IMAGE_FIT_COVER))
     except ValueError as exc:
         raise TemplateError(str(exc)) from exc
+    alt_raw = raw.get("image_alt", "")
+    if alt_raw not in (None, "") and not isinstance(alt_raw, str):
+        raise TemplateError(f"slides[{index}].image_alt 需为字符串")
+    caption_raw = raw.get("image_caption", "")
+    if caption_raw not in (None, "") and not isinstance(caption_raw, str):
+        raise TemplateError(f"slides[{index}].image_caption 需为字符串")
+    try:
+        image_focus = normalize_image_focus(raw.get("image_focus", IMAGE_FOCUS_CENTER))
+        background = normalize_background(raw.get("background", BACKGROUND_INHERIT))
+    except ValueError as exc:
+        raise TemplateError(str(exc)) from exc
     try:
         charts = chart_options(raw, source=f"slides[{index}]")
     except ValueError as exc:
@@ -609,6 +613,10 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
         accent=accent,
         image=image,
         image_fit=image_fit,
+        image_alt=str(alt_raw or "").strip(),
+        image_caption=str(caption_raw or "").strip(),
+        image_focus=image_focus,
+        background=background,
         chart_type=charts.chart_type,
         unit=charts.unit,
         value_format=charts.value_format,

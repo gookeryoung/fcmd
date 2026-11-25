@@ -86,7 +86,7 @@ def test_inspect_prints_summary(tmp_path: Path, capsys: pytest.CaptureFixture[st
     pptmake.inspect_command(target)
     output = capsys.readouterr().out
     assert "品牌演示模板" in output
-    assert "页面：13 页" in output
+    assert f"页面：{len(core.LAYOUTS)} 页" in output
 
 
 def test_inspect_reports_load_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -212,7 +212,7 @@ def test_export_flat_writes_static_page_number(tmp_path: Path) -> None:
             if name.startswith("ppt/slides/slide") and name.endswith(".xml")
         )
     assert '<a:schemeClr val="bg1"/>' not in slides
-    assert "02 / 13" in slides
+    assert f"02 / {len(core.LAYOUTS)}" in slides
 
 
 def test_doctor_prints_environment(capsys: pytest.CaptureFixture[str]) -> None:

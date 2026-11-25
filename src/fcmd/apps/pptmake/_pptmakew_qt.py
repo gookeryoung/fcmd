@@ -26,7 +26,18 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QBrush,
+    QColor,
+    QFont,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -58,7 +69,17 @@ from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _office
 from fcmd.apps.pptmake import _preview as preview
 from fcmd.apps.pptmake import _tokens as tokens
-from fcmd.apps.pptmake._design import Chart, Line, Oval, Picture, Rect, Table, Text, build_draw_list
+from fcmd.apps.pptmake._design import (
+    Chart,
+    Line,
+    Oval,
+    Picture,
+    Rect,
+    Table,
+    Text,
+    build_draw_list,
+    picture_crop,
+)
 from fcmd.apps.pptmake._history import TemplateHistory
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.apps.pptmake.pptmakew import (
@@ -141,8 +162,18 @@ def _pen(color: str, width: float = 1.0) -> QPen:
     return pen
 
 
+def _picture_clip(target: QRectF, radius: float) -> QPainterPath:
+    """图片裁剪路径：圆角半径有效时用圆角矩形，否则按矩形裁剪。"""
+    path = QPainterPath()
+    if radius <= 0:
+        path.addRect(target)
+    else:
+        path.addRoundedRect(target, radius, radius)
+    return path
+
+
 def _paint_picture(painter: QPainter, primitive: Picture, view: preview.Viewport, ui: Any) -> None:
-    """按 cover / contain 把本地图片画进图元矩形；缺失时画占位提示。"""
+    """按 cover / contain 把本地图片画进图元矩形；支持焦点裁剪、圆角与压暗层。"""
     scale = view.scale
     x, y = view.to_canvas(primitive.x, primitive.y)
     width = primitive.w * scale
@@ -152,7 +183,7 @@ def _paint_picture(painter: QPainter, primitive: Picture, view: preview.Viewport
     target = QRectF(x, y, width, height)
     pixmap = QPixmap(primitive.path) if primitive.path else QPixmap()
     painter.save()
-    painter.setClipRect(target)
+    painter.setClipPath(_picture_clip(target, primitive.radius * scale))
     if pixmap.isNull():
         painter.setPen(QPen(QColor(ui.muted)))
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -174,15 +205,19 @@ def _paint_picture(painter: QPainter, primitive: Picture, view: preview.Viewport
         left = x + (width - scaled.width()) / 2
         top = y + (height - scaled.height()) / 2
         painter.drawPixmap(QRectF(left, top, scaled.width(), scaled.height()), scaled, QRectF(scaled.rect()))
-        painter.restore()
-        return
-    if image_ratio > box_ratio:
-        source_width = image_height * box_ratio
-        source = QRectF((image_width - source_width) / 2, 0, source_width, image_height)
     else:
-        source_height = image_width / box_ratio
-        source = QRectF(0, (image_height - source_height) / 2, image_width, source_height)
-    painter.drawPixmap(target, pixmap, source)
+        crop_left, crop_right, crop_top, crop_bottom = picture_crop(primitive.focus, image_ratio, box_ratio)
+        source = QRectF(
+            crop_left * image_width,
+            crop_top * image_height,
+            max((1 - crop_left - crop_right) * image_width, 1.0),
+            max((1 - crop_top - crop_bottom) * image_height, 1.0),
+        )
+        painter.drawPixmap(target, pixmap, source)
+    if primitive.overlay > 0:
+        overlay = QColor(primitive.overlay_color)
+        overlay.setAlphaF(min(max(primitive.overlay, 0.0), 1.0))
+        painter.fillRect(target, overlay)
     painter.restore()
 
 

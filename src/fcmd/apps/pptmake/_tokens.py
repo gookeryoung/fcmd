@@ -245,6 +245,7 @@ class DesignTokens:
     bullet: BulletScale = field(default_factory=BulletScale)
     density: str = DENSITY_COMFORTABLE
     decor_intensity: float = 1.0
+    image_scrim: float = 0.55
     font_fallback: tuple[str, ...] = DEFAULT_FONT_FALLBACK
     chart_palette: tuple[str, ...] = CHART_PALETTE_DEFAULT
     semantic: SemanticColors = field(default_factory=SemanticColors)
@@ -462,6 +463,13 @@ def tokens_from_mapping(raw: object, *, base: DesignTokens | None = None) -> Des
             maximum=1.0,
             default=fallback.decor_intensity,
         ),
+        image_scrim=_number(
+            raw.get("image_scrim"),
+            path="theme.tokens.图片压暗强度",
+            minimum=0.0,
+            maximum=0.8,
+            default=fallback.image_scrim,
+        ),
         font_fallback=_font_fallback(raw.get("font_fallback"), base=fallback.font_fallback),
         chart_palette=_chart_palette(raw.get("chart_palette"), base=fallback.chart_palette),
         semantic=_semantic(raw.get("semantic"), base=fallback.semantic),
@@ -473,6 +481,7 @@ def tokens_to_mapping(tokens: DesignTokens) -> dict[str, Any]:
     return {
         "density": tokens.density,
         "decor_intensity": tokens.decor_intensity,
+        "image_scrim": tokens.image_scrim,
         "type_scale": {name: getattr(tokens.type_scale, name) for name in _TYPE_FIELDS},
         "spacing": {name: getattr(tokens.spacing, name) for name in _SPACING_BOUNDS},
         "radius": {name: getattr(tokens.radius, name) for name in _RADIUS_LABELS},

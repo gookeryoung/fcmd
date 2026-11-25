@@ -12,12 +12,17 @@ from typing import Any
 
 from fcmd.apps.pptmake._core import (
     ASPECT_16_9,
+    LAYOUT_CHART_CONCLUSION,
     LAYOUT_CLOSING,
     LAYOUT_CONTACT,
     LAYOUT_COVER,
     LAYOUT_IMAGE,
+    LAYOUT_PHOTO_COVER,
+    LAYOUT_PHOTO_SECTION,
+    LAYOUT_PROBLEM_SOLUTION,
     LAYOUT_QUOTE,
     LAYOUT_SECTION,
+    LAYOUT_TESTIMONIAL,
     LAYOUT_TEXT,
     LAYOUT_TWO_COLUMN,
     SlideSpec,
@@ -86,7 +91,18 @@ def _heading(slide: SlideSpec, template: TemplateSpec) -> _Heading:  # noqa: PLR
             "left",
             "top",
         )
-    if slide.layout == LAYOUT_SECTION:
+    if slide.layout == LAYOUT_PHOTO_COVER:
+        return _Heading(
+            title or "在此输入演示标题",
+            scale.display if len(title) <= 18 else round(scale.display * 0.78),
+            theme.tokens.spacing.line_display,
+            subtitle or "副标题 / 团队 / 日期",
+            scale.heading,
+            theme.tokens.spacing.line_body,
+            "left",
+            "top",
+        )
+    if slide.layout in (LAYOUT_SECTION, LAYOUT_PHOTO_SECTION):
         body = slide.bullets[0] if slide.bullets else "一句话说明本章节要讲什么。"
         return _Heading(
             title or "章节标题",
@@ -144,13 +160,36 @@ def _heading(slide: SlideSpec, template: TemplateSpec) -> _Heading:  # noqa: PLR
             "left",
             "top",
         )
+    if slide.layout == LAYOUT_TESTIMONIAL:
+        quote = title or "它把我们最费时的排版，变成了一次点击。"
+        return _Heading(
+            quote,
+            round(scale.quote * (0.9 if len(quote) > 28 else 1.0)),
+            theme.tokens.spacing.line_body,
+            subtitle or "— 客户",
+            scale.subtitle,
+            theme.tokens.spacing.line_body,
+            "left",
+            "top",
+        )
+    if slide.layout in (LAYOUT_PROBLEM_SOLUTION, LAYOUT_CHART_CONCLUSION):
+        return _Heading(
+            title or LAYOUT_TEXT.get(slide.layout, "页面标题"),
+            scale.title,
+            theme.tokens.spacing.line_heading,
+            "",
+            scale.subtitle,
+            theme.tokens.spacing.line_heading,
+            "left",
+            "top",
+        )
     return _Heading(
         title or LAYOUT_TEXT.get(slide.layout, "页面标题"),
         scale.title,
         theme.tokens.spacing.line_heading,
         "" if slide.layout == LAYOUT_TWO_COLUMN else subtitle,
         scale.subtitle,
-        theme.tokens.spacing.line_body,
+        theme.tokens.spacing.line_heading,
         "left",
         "top",
     )

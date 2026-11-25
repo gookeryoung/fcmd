@@ -3,7 +3,7 @@
 子命令：
 
 - ``presets``：列出内置风格、布局与装饰样式；
-- ``init``：生成一份覆盖十三种版式的示例模板 JSON；
+- ``init``：生成一份覆盖二十四种版式的示例模板 JSON；
 - ``inspect``：查看模板摘要；
 - ``export``：把模板渲染为 ``.pptx``；
 - ``import``：把现有 ``.pptx`` 尽力转换为模板 JSON。
@@ -50,6 +50,7 @@ from fcmd.apps.pptmake._core import (
 from fcmd.apps.pptmake._design import Text, build_draw_list
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.apps.pptmake._preview import overflow_issues
+from fcmd.apps.pptmake._rules import check_template
 from fcmd.console import print_error
 
 __all__ = [
@@ -63,7 +64,7 @@ __all__ = [
     "validate_command",
 ]
 
-_DESCRIPTION = "PPT 模板生成器：内置十三种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿"
+_DESCRIPTION = "PPT 模板生成器：内置二十四种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿"
 
 StyleName = Literal["aurora", "porcelain", "graphite", "coral"]
 AspectName = Literal["16:9", "4:3"]
@@ -181,13 +182,16 @@ def validate_command(template: Path) -> None:
         _print_error(str(exc))
         return
     overflow, missing, small = _quality_issues(spec, verbose=True)
-    if overflow or missing or small:
+    rules = check_template(spec)
+    for page, issue in rules:
+        print(issue.describe(page))
+    if overflow or missing or small or rules:
         print(
-            f"共有 {overflow} 处文本溢出、{missing} 个缺失图片、{small} 处小于 {_MIN_FONT_PT:g}pt 的文字；"
-            "建议在 pptmakew 中精简文字 / 修正路径。"
+            f"共有 {overflow} 处文本溢出、{missing} 个缺失图片、{small} 处小于 {_MIN_FONT_PT:g}pt 的文字、"
+            f"{len(rules)} 处超出内容容量；建议在 pptmakew 中精简文字 / 修正路径。"
         )
         return
-    print(f"校验通过：{len(spec.slides)} 页，未发现文本溢出、缺失图片或过小字号。")
+    print(f"校验通过：{len(spec.slides)} 页，未发现文本溢出、缺失图片、过小字号或超限内容。")
 
 
 _MIN_FONT_PT: Final[float] = 12.0
