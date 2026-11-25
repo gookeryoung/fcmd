@@ -146,6 +146,9 @@ _LAYOUT_HINTS: dict[str, str] = {
 }
 _LAYOUT_HINT_DEFAULT = "切换布局后会保留标题、要点与备注内容；格式提示按布局变化。"
 
+_LAYOUT_GROUP_OF: dict[str, str] = {layout: group for group, layouts in LAYOUT_GROUPS for layout in layouts}
+"""版式 → 分类，供布局库下拉筛选使用。"""
+
 
 def _fill_layout_combo(combo: QComboBox) -> None:
     """按「封面 / 结构 / 内容 / 数据 / 图文 / 结束」分组填充版式下拉。
@@ -1205,9 +1208,15 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
         pages.body.addLayout(page_buttons)
         layout.addWidget(pages, 3)
 
-        layouts = Card("布局库（双击添加）", panel)
+        layouts = Card("布局库（分类筛选，双击添加）", panel)
+        self._layout_filter = QComboBox(layouts)
+        self._layout_filter.addItem("全部分类", "")
+        for group, group_layouts in LAYOUT_GROUPS:
+            self._layout_filter.addItem(f"{group}（{len(group_layouts)}）", group)
+        self._layout_filter.currentIndexChanged.connect(self._filter_layouts)
+        layouts.body.addWidget(self._layout_filter)
         self._layout_list = QListWidget(layouts)
-        self._layout_list.setMinimumHeight(110)
+        self._layout_list.setMinimumHeight(60)
         self._layout_list.setViewMode(QListView.ViewMode.IconMode)
         self._layout_list.setResizeMode(QListView.ResizeMode.Adjust)
         self._layout_list.setMovement(QListView.Movement.Static)
@@ -1219,12 +1228,30 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, value)
             self._layout_list.addItem(item)
-        self._layout_list.setCurrentRow(0)
         self._layout_list.itemDoubleClicked.connect(lambda _item: self._add_slide())
         self._refresh_layout_icons()
+        self._filter_layouts()
         layouts.body.addWidget(self._layout_list, 1)
         layout.addWidget(layouts, 2)
         return panel
+
+    def _filter_layouts(self) -> None:
+        """按分类筛选布局库：只显示所选类别的版式，并选中首个可见项。"""
+        group = self._layout_filter.currentData()
+        current = self._layout_list.currentItem()
+        first: QListWidgetItem | None = None
+        keep_current = False
+        for row in range(self._layout_list.count()):
+            item = self._layout_list.item(row)
+            layout = item.data(Qt.ItemDataRole.UserRole)
+            visible = not group or _LAYOUT_GROUP_OF.get(str(layout)) == group
+            item.setHidden(not visible)
+            if visible:
+                if first is None:
+                    first = item
+                keep_current = keep_current or item is current
+        if first is not None and not keep_current:
+            self._layout_list.setCurrentItem(first)
 
     def _build_preview_pane(self, parent: QWidget) -> QWidget:
         """设计页中栏：缩放工具栏 + 实时预览 + 页面缩略图。"""
@@ -2143,8 +2170,10 @@ class PptmakeQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循�
     # 页面动作
     # ------------------------------------------------------------------ #
     def _add_slide(self) -> None:
-        current = self._layout_list.currentRow()
-        layout = core.LAYOUT_BULLETS if current < 0 else LAYOUT_OPTIONS[current][1]
+        item = self._layout_list.currentItem()
+        layout = item.data(Qt.ItemDataRole.UserRole) if item is not None else core.LAYOUT_BULLETS
+        if not isinstance(layout, str):
+            layout = core.LAYOUT_BULLETS
         slide = core.new_slide(layout)
         self._commit(replace(self._template, slides=(*self._template.slides, slide)), "添加页面")
         self.selected = len(self._template.slides) - 1

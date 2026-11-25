@@ -25,7 +25,7 @@ from PySide6.QtWidgets import QListView, QWidget
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _pptmakew_qt, _pptmakew_tokens, _tokens
 from fcmd.apps.pptmake._pptmakew_qt import PptmakeQtWindow, _paint_slide
-from fcmd.apps.pptmake.pptmakew import LAYOUT_OPTIONS
+from fcmd.apps.pptmake.pptmakew import LAYOUT_GROUPS, LAYOUT_OPTIONS
 from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.app import create_application
@@ -111,6 +111,27 @@ def test_layout_combo_groups_and_capacity_hint(window: Any) -> None:
     assert window._image_ratio_combo.isEnabled()
     window._layout_combo.setCurrentIndex(combo.findData(core.LAYOUT_BULLETS))
     assert not window._image_ratio_combo.isEnabled()
+
+
+def test_layout_library_filters_by_category(window: Any) -> None:
+    """布局库分类下拉只显示所选类别的版式，且始终保留全部 24 项。"""
+    filter_combo = window._layout_filter
+    assert filter_combo.currentText() == "全部分类"
+    assert filter_combo.count() == len(LAYOUT_GROUPS) + 1
+    ordered = [value for _text, value in LAYOUT_OPTIONS]
+    groups = dict(LAYOUT_GROUPS)
+    for index in range(filter_combo.count()):
+        group = filter_combo.itemData(index)
+        filter_combo.setCurrentIndex(index)
+        visible = [
+            window._layout_list.item(row).data(Qt.ItemDataRole.UserRole)
+            for row in range(window._layout_list.count())
+            if not window._layout_list.item(row).isHidden()
+        ]
+        expected = [layout for layout in ordered if not group or layout in groups[group]]
+        assert visible == expected
+        assert window._layout_list.currentItem() is not None
+    assert window._layout_list.count() == len(LAYOUT_OPTIONS)
 
 
 def test_image_detail_controls_roundtrip(window: Any) -> None:
