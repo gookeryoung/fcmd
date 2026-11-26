@@ -447,7 +447,8 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   中文字体 / 完整中文字体 / 彩色 Emoji（**12 个独立项目**，每个只看
   自己那个工具是否就绪：Python 只看 `python3`，Kali、Ubuntu 这类自带 python3 的发行版直接显示
   已初始化，不会因为没装 uv 被误判；`uv` / `Bun` 各自成项，没装就单独出现在待初始化列表里；
-  Node.js 按 `node` + nvm 判定，apt 装的旧 `nodejs` 不算就绪），探测与安装都走
+  Node.js 按 `node` + nvm 判定，apt 装的旧 `nodejs` 不算就绪，**`/mnt/*` 下 Windows 侧的
+  `node.exe` 同样不算**），探测与安装都走
   `wsl.exe -d <实例> --exec bash -lc`（必须 `--exec`，否则 `$HOME` / `$(...)` 会被提前展开），
   `root=True` 的步骤加 `-u root`；长步骤（换源 / apt 装包）走 `SubprocessRunner.run_streaming`
   **边跑边把输出写进日志**（否则几分钟无回显会被当成卡死），stdin 接空字节避免脚本
@@ -500,6 +501,11 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   nvm 与 `~/.local/bin` 会以带标记的 rc 块写进 `~/.bashrc` /
   `~/.profile`（幂等、不重复追加），并把 node / npm / npx / bun 软链到 `~/.local/bin`，
   保证 `bash -lc`（只读 profile）也能测到 node / bun，同时 `nvm which default` 有值时不重装。
+  探测脚本先用 `fcmd_drop_windows_path`（`_interop.py`）把 PATH 里的 `/mnt/*` 摘掉：
+  WSL 默认把 Windows 的 PATH 追加进实例，不摘的话没装 Linux 版 Node.js 也会被
+  `command -v node` 判成已装，用户接着用那个 npm 装的 `pi` 落在 Windows 侧，实例里
+  启动只报找不到命令；摘下来的目录留在 `FCMD_WINDOWS_PATH`，只命中 Windows 侧时另报
+  `WSLMAN_NODE_WIN`，状态行写「未安装（Windows 侧 vX，实例内不可用）」。
   打开即后台探测实例环境并按探测结果回填：
   **已就绪的项目保持勾选但禁用，并标注绿色「已初始化」胶囊**（`StatusTag`
   `tone="success"`）；**未就绪项目显示红色「未初始化」胶囊**（`tone="danger"`），
@@ -734,7 +740,10 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
   - 智能检测按条目的可执行名与常见安装目录匹配（国内版与海外版可能同名不同路径，
     因此分条维护）；默认选中 VSCode / OpenCode；内置项可编辑 / 删除，也可自行添加。
     WSL 内探测在 `bash -lc` 之外显式补 `~/.opencode/bin`、`~/.bun/bin`、`~/.local/bin`
-    等用户级 bin 目录，避免安装脚本只写 `~/.bashrc` 时已装工具被漏掉。
+    等用户级 bin 目录，避免安装脚本只写 `~/.bashrc` 时已装工具被漏掉；随后用
+    `fcmd_drop_windows_path` 把 `/mnt/*` 从 PATH 摘掉，`/mnt/c/…` 的 Windows 侧 exe
+    （典型是没有 Linux node 就用 Windows npm 装的 `pi`）一律不算实例内已装，
+    `parse_detect` / `distro_opener_paths` 缓存读入时也做同一过滤。
   - 设置兼容：老 `wslmanw.json` 的 `openers` 列表若仍含任一内置条目，读入时把新版本
     新增的内置预设补到末尾（TRAE CN / QODER CN / DSH / Windows 变体不会因老设置
     永久缺席）；显式删除记录在 `openers.hidden`，迁移时跳过。显式空列表或只有自定义
@@ -752,7 +761,9 @@ GUI 与 CLI 的默认落盘位置统一到**工作目录**，默认值为 `${FCM
   不认；也不要 `/s`，它会拆掉带空格路径的首个引号对，实测 IDE CLI 直接退出 1）；
   WSL 内：先在实例内
   `bash -lc 'command -v <命令>'` 预检，再经终端 `wsl.exe -d <实例> --cd <目录>
-  --exec bash -lc <模板>`（`_terminal.build_command` 的 `run` 参数）启动。
+  --exec bash -lc <模板>`（`_terminal.build_command` 的 `run` 参数）启动。预检同样先摘
+  `/mnt/*`，只在 Windows 侧命中时脚本仍打印那个路径（退出码 1），弹窗据此提示
+  「先装实例内 Node.js 再 `npm install -g pi`」，而不是让终端里跑到一半才报错。
   启动成功后状态行写「已启动」并记任务日志，不再停在「正在打开」。
 - 工具未安装 / 启动失败都会弹窗并在文件页状态行写明原因与处理建议，不静默失败。
 

@@ -306,6 +306,29 @@ def test_probe_script_is_read_only_and_prefixed() -> None:
     assert "apt-get install" not in script
 
 
+def test_probe_script_ignores_windows_side_node() -> None:
+    """Windows 挂载点（/mnt）要从 PATH 摘掉，只命中 Windows node 时单独报出来。"""
+    script = _initenv.probe_script()
+    assert "fcmd_drop_windows_path" in script
+    assert "/mnt/*" in script
+    # 摘下来的 Windows 目录仍要能查一次版本，界面才能提示「只是 /mnt 里有」。
+    assert 'PATH="${FCMD_WINDOWS_PATH}" node --version' in script
+    assert "WSLMAN_NODE_WIN" in script
+
+
+def test_parse_status_reads_windows_side_node_and_hints_it() -> None:
+    status = _initenv.parse_status("WSLMAN_NODE_WIN=22.11.0\n")
+    assert status.node == ""
+    assert status.node_win == "22.11.0"
+    # 只有 Windows 侧 node 不算就绪，但要写清楚为什么 pi 装完跑不起来。
+    assert _initenv.present("node", status) is False
+    rows = {label: (value, ok) for label, value, ok in _initenv.status_rows(status)}
+    value, ok = rows["Node.js（nvm）"]
+    assert ok is False
+    assert "22.11.0" in value and "/mnt" not in value
+    assert value != "未安装"
+
+
 def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
     public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc me@host"
     encoded = base64.b64encode(public_key.encode("utf-8")).decode("ascii")

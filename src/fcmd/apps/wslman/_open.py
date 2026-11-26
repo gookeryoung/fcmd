@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument
+from fcmd.apps.wslman._interop import WINDOWS_PATH_VAR, drop_windows_path_lines, is_windows_mount
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -48,6 +49,8 @@ __all__ = [
     "detect_host",
     "detect_script",
     "detect_wsl",
+    "is_windows_mount",
+    "missing_tool_hint",
     "new_key",
     "parse_detect",
     "parse_mappings",
@@ -438,6 +441,9 @@ def detect_script() -> str:
             # 显式补上常见用户级 bin 目录，避免已经装好的 opencode / dsh 被漏掉。
             'PATH="$HOME/.opencode/bin:$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.cargo/bin:$PATH"',
             "export PATH",
+            # 再摘掉 /mnt：否则没装 Linux 版工具时 command -v 会命中 Windows 里的
+            # 同名 exe（例如 Windows 侧装的 pi），启动后才报错。
+            *drop_windows_path_lines(),
             f"for cmd in {' '.join(exes)}; do",
             '  p=$(command -v -- "$cmd" 2>/dev/null)',
             '  [ -n "$p" ] && printf "OPEN=%s|%s\\n" "$cmd" "$p"',
@@ -456,7 +462,8 @@ def parse_detect(text: str) -> dict[str, str]:
             continue
         exe, _, path = line[len("OPEN=") :].partition("|")
         exe, path = exe.strip(), path.strip()
-        if exe and path:
+        # /mnt 下的是 Windows 侧可执行文件，不能当成实例内已装（用它会启动失败）。
+        if exe and path and not is_windows_mount(path):
             found[exe] = path
     return found
 
@@ -550,10 +557,42 @@ def command_name(opener: Opener, *, dir: str, unc: str, distro: str, home: str) 
     return argv[0]
 
 
+def missing_tool_hint(name: str, exe: str, found: str) -> str:
+    """实例内找不到可执行文件时的提示文案。
+
+    ``found`` 非空表示 :func:`probe_script` 只在 Windows 侧（``/mnt/...``）命中：
+    那种 exe 实例里跑不起来（典型是没装 Linux node 就用 Windows npm 装了 pi），
+    提示要装的是实例内的运行时，而不是改命令模板。
+    """
+    if found and is_windows_mount(found):
+        return (
+            f"{exe} 只在 Windows 侧（{found}），不算实例内已安装；"
+            "先在实例里装好运行时（如「初始化环境 → Node.js」），再在实例里用 npm / bun 重新安装"
+        )
+    return f"先在实例里安装 {name}，或在「设置 → 打开方式」把命令模板改成实际可用的命令"
+
+
 def probe_script(opener: Opener, *, dir: str, unc: str, distro: str, home: str) -> str:
-    """``bash -lc`` 用的存在性探测：找到时输出路径，找不到时非零退出。"""
+    """``bash -lc`` 用的存在性探测：找到时输出路径，找不到时非零退出。
+
+    先摘掉 PATH 里的 ``/mnt/*``（Windows 互操作目录），再 ``command -v``：否则没装
+    Linux 版工具时会命中 Windows 侧的同名 exe，终端里跑到一半才报错。只在 Windows
+    侧命中时把那个路径打印出来（仍以 1 退出），调用方据此提示「在实例里重新安装」。
+    """
     exe = command_name(opener, dir=dir, unc=unc, distro=distro, home=home)
-    return f"command -v -- {shlex.quote(exe)}"
+    quoted = shlex.quote(exe)
+    return "\n".join(
+        (
+            *drop_windows_path_lines(),
+            f"if command -v -- {quoted} >/dev/null 2>&1; then",
+            f"    command -v -- {quoted}",
+            "    exit 0",
+            "fi",
+            f'hit="$(PATH="${{{WINDOWS_PATH_VAR}}}" command -v -- {quoted} 2>/dev/null)"',
+            '[ -n "$hit" ] && printf "%s\\n" "$hit"',
+            "exit 1",
+        )
+    )
 
 
 def wrap_windows_argv(argv: Sequence[str]) -> tuple[str, ...]:

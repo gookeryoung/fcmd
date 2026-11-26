@@ -116,7 +116,11 @@ def test_unknown_placeholder_is_left_for_user_to_fix() -> None:
 def test_probe_script_quotes_executable() -> None:
     opener = _open.Opener("p", "P", _open.KIND_AGENT, _open.HOST_WSL, '"my tool"')
     script = _open.probe_script(opener, dir="/p", unc=UNC, distro="U", home="/home/u")
-    assert script == "command -v -- 'my tool'"
+    # 先摘掉 /mnt 再探测：Windows 侧的同名 exe 不能被当成实例内已安装。
+    assert script.startswith("fcmd_drop_windows_path() {")
+    assert "command -v -- 'my tool'" in script
+    assert "PATH=\"${FCMD_WINDOWS_PATH}\" command -v -- 'my tool'" in script
+    assert script.rstrip().endswith("exit 1")
 
 
 def test_wrap_windows_argv_routes_cmd_through_cmd_exe() -> None:
@@ -375,6 +379,31 @@ def test_parse_detect_and_detect_wsl() -> None:
     assert "command -v" in script
     # 最后一项没找到时循环退出码为 1，必须显式归零，否则“找到一部分”会被当失败。
     assert script.rstrip().endswith("exit 0")
+    # Windows 互操作目录（/mnt）必须从 PATH 摘掉，否则会命中 Windows 侧装的同名工具。
+    assert "fcmd_drop_windows_path" in script
+    assert "/mnt/*" in script
+
+
+def test_parse_detect_drops_windows_side_paths() -> None:
+    """``/mnt/c/...`` 是 Windows 侧可执行文件：不算实例内已安装。"""
+    text = (
+        "OPEN=pi|/mnt/c/Users/me/AppData/Roaming/npm/pi\n"
+        "OPEN=dsh|c:/Users/me/.bun/bin/dsh.exe\n"
+        "OPEN=opencode|/usr/local/bin/opencode\n"
+    )
+    found = _open.parse_detect(text)
+    assert found == {"opencode": "/usr/local/bin/opencode"}
+    assert _open.detect_wsl("pi", found).found is False
+
+
+def test_missing_tool_hint_explains_windows_side_install() -> None:
+    """只命中 Windows 侧时提示「在实例里重装」，而非让用户改命令模板。"""
+    windows = _open.missing_tool_hint("PI", "pi", "/mnt/c/Users/me/AppData/Roaming/npm/pi")
+    assert "/mnt/c/" in windows
+    assert "Windows 侧" in windows
+    assert "命令模板" not in windows
+    plain = _open.missing_tool_hint("PI", "pi", "")
+    assert "命令模板" in plain
 
 
 def test_with_openers_updates_only_the_requested_kind() -> None:

@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from fcmd.apps.wslman._initenv import EnvStatus
+    from fcmd.apps.wslman._initenv_probe import EnvStatus
 
 __all__ = [
     "CJK_FONT_PACKAGES",

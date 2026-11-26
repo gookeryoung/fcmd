@@ -708,6 +708,13 @@ native 主题下是深色字压选中蓝底（几乎看不清），切到已启�
 
 ### 修复
 
+- `wslmanw` 实例环境探测 / 打开方式智能检测不再把 Windows 侧的 node、npm、pi 当成
+  实例内已装：探测前把 `/mnt/*`（Windows 盘挂载点，WSL 默认追加到 PATH）从 PATH
+  摘掉并单独留存，只有 Linux 侧命中才算就绪；只命中 Windows 侧时 Node.js 状态写
+  「未安装（Windows 侧 vX，实例内不可用）」，点「用 PI 打开」会提示「pi 只在 Windows
+  侧（/mnt/…），先装实例内 Node.js 再 `npm install -g pi`」。此前没装 Linux node 的实例
+  会被判成已装 Node.js，用它装的 pi 落到 Windows 侧，实例里启动只报找不到命令。
+  旧的 `distro_opener_paths` 缓存里 `/mnt/…` 路径读入时同样丢弃。
 - `wslmanw` 迁移配置文件时不再把 Windows 宿主的 `.bashrc` 当 Shell 配置迁进实例：
   Windows 家目录里那份是 Git for Windows 的脚手架（CRLF + 一行 `PIP_INDEX_URL`），
   整份覆盖会把发行版自己的 rc（含 fcmd 写的 nvm / `~/.local/bin` 块）顶没，出现

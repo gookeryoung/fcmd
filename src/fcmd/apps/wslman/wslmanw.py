@@ -556,14 +556,19 @@ def _config_restore_cache(raw: Any) -> dict[str, dict[str, str]]:
 
 
 def opener_paths_for(settings: WslmanwSettings, name: str) -> Mapping[str, str]:
-    """WSL 内智能检测上次找到的可执行文件路径；实例未运行时直接复用。"""
-    return settings.distro_opener_paths.get(name, {})
+    """WSL 内智能检测上次找到的可执行文件路径；实例未运行时直接复用。
+
+    旧版本缓存里可能存着 ``/mnt/c/...`` 的 Windows 侧路径（当时被误当成实例内已装），
+    读出来时过滤掉，否则界面仍会把 Windows 装的 pi 标成可用。
+    """
+    cached = settings.distro_opener_paths.get(name, {})
+    return {key: value for key, value in cached.items() if value and not _open.is_windows_mount(value)}
 
 
 def with_opener_paths(settings: WslmanwSettings, name: str, found: Mapping[str, str]) -> WslmanwSettings:
     """写入实例内 ``command -v`` 检测缓存。"""
     cached = dict(settings.distro_opener_paths)
-    values = {key: value for key, value in found.items() if key and value}
+    values = {key: value for key, value in found.items() if key and value and not _open.is_windows_mount(value)}
     if values:
         cached[name] = values
     else:
