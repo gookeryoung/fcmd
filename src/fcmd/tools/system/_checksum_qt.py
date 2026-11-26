@@ -17,7 +17,6 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -28,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, button, mono_font
+from fcmd.gui.widgets import Card, button, mono_font, pick_file
 from fcmd.tools.system.checksum import (
     ALGORITHMS,
     DEFAULT_ALGORITHM,
@@ -159,7 +158,7 @@ class ChecksumQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             self.compare_edit.clear()
 
     def _browse_file(self) -> None:  # pragma: no cover - 需要真实对话框
-        chosen, _ = QFileDialog.getOpenFileName(self, "选择文件")
+        chosen = pick_file(self, "选择文件")
         if chosen:
             self.file_edit.setText(chosen)
 

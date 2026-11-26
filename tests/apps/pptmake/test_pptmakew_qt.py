@@ -24,11 +24,14 @@ from PySide6.QtWidgets import QListView, QWidget
 
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _pptmakew_qt, _pptmakew_tokens, _tokens
-from fcmd.apps.pptmake._pptmakew_qt import PptmakeQtWindow, _paint_slide
+from fcmd.apps.pptmake._design import Picture
+from fcmd.apps.pptmake._pptmakew_qt import PptmakeQtWindow
 from fcmd.apps.pptmake.pptmakew import LAYOUT_GROUPS, LAYOUT_OPTIONS
+from fcmd.apps.pptmake.qt.paint import paint_slide, picture_file
 from fcmd.gui import style as _qt_theme
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.app import create_application
+from fcmd.gui.widgets import pickers
 
 
 @pytest.fixture()
@@ -380,12 +383,12 @@ def test_narrow_window_auto_collapses_inspector(window: Any) -> None:
 
 def test_picture_file_resolves_relative_to_base_dir() -> None:
     """相对图片路径按模板所在目录解析，绝对路径保持不变。"""
-    relative = _pptmakew_qt.Picture(0, 0, 10, 10, "hero.assets/a.png")
-    absolute = _pptmakew_qt.Picture(0, 0, 10, 10, str(Path("C:/abs/b.png")))
+    relative = Picture(0, 0, 10, 10, "hero.assets/a.png")
+    absolute = Picture(0, 0, 10, 10, str(Path("C:/abs/b.png")))
     base = Path("D:/deck")
-    assert Path(_pptmakew_qt._picture_file(relative, base)) == base / "hero.assets/a.png"
-    assert Path(_pptmakew_qt._picture_file(relative, None)) == Path("hero.assets/a.png")
-    assert Path(_pptmakew_qt._picture_file(absolute, base)) == Path("C:/abs/b.png")
+    assert Path(picture_file(relative, base)) == base / "hero.assets/a.png"
+    assert Path(picture_file(relative, None)) == Path("hero.assets/a.png")
+    assert Path(picture_file(absolute, base)) == Path("C:/abs/b.png")
 
 
 def test_import_pptx_writes_report_and_base_dir(window: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -402,7 +405,7 @@ def test_import_pptx_writes_report_and_base_dir(window: Any, tmp_path: Path, mon
     presentation.save(str(source))
 
     shown: list[str] = []
-    monkeypatch.setattr(_pptmakew_qt.QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(source), ""))
+    monkeypatch.setattr(pickers.QFileDialog, "getOpenFileName", lambda *args, **kwargs: (str(source), ""))
     monkeypatch.setattr(_pptmakew_qt.QMessageBox, "information", lambda *args, **kwargs: shown.append(args[-1]))
 
     window._import_file()
@@ -420,7 +423,7 @@ def test_export_template_packs_assets(window: Any, tmp_path: Path, monkeypatch: 
     window._set_template(template, base_dir=tmp_path)
     target = tmp_path / "out" / "演示.pptmtpl.json"
     target.parent.mkdir()
-    monkeypatch.setattr(_pptmakew_qt.QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(target), ""))
+    monkeypatch.setattr(pickers.QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(target), ""))
 
     assert window._export_template() is True
     saved = core.load_template(target)
@@ -494,7 +497,7 @@ def test_all_layouts_render_without_error(window: Any) -> None:
         pixmap = QPixmap(320, 180)
         painter = QPainter(pixmap)
         try:
-            _paint_slide(
+            paint_slide(
                 painter,
                 template,
                 slide,

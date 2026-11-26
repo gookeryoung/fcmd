@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
-    QMessageBox,
     QWidget,
 )
 
@@ -39,6 +38,7 @@ from fcmd.gui.widgets import (
     button,
     hint_label,
     link_button,
+    messages,
 )
 
 if TYPE_CHECKING:
@@ -293,7 +293,7 @@ class EngineCard(Card):  # pragma: no cover - Qt 控件
         try:
             self.config.use(tag)
         except (OSError, RuntimeError) as exc:  # 配置回调抛 ServeError 时给出提示
-            QMessageBox.critical(self, "切换引擎失败", str(exc))
+            messages.error(self, "切换引擎失败", str(exc))
             return
         self.refresh()
         self.changed.emit()

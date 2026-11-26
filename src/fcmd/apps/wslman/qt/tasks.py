@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.wslman._wslmanw_qt as _owner
+from fcmd.gui.widgets import messages
 
 from ._compat import (  # noqa: F401
     Any,
@@ -28,7 +29,7 @@ class TasksMixin:
 
     def _start(self, label: str, work: Any, *, quiet: bool = False) -> None:
         if self._busy:
-            _owner.QMessageBox.information(self, "请稍候", "已有任务在执行")
+            messages.info(self, "请稍候", "已有任务在执行")
             return
         self._busy = True
         self._label = label
@@ -78,7 +79,7 @@ class TasksMixin:
             if not quiet:
                 # 状态行要能读到失败原因：错误框可能被切走 / 忽略，日志也不是唯一入口。
                 self._set_task_status(f"{label}失败：{message}")
-                _owner.QMessageBox.critical(self, label, message)
+                messages.error(self, label, message)
             return
         self._log(f"[{label}] {message}")
         if not quiet:
@@ -95,7 +96,7 @@ class TasksMixin:
     def _task_error(self, label: str, message: str) -> None:
         self._log(f"[{label}] 失败：{message}")
         self._set_task_status(f"{label}失败：{message}")
-        _owner.QMessageBox.critical(self, label, message)
+        messages.error(self, label, message)
 
     def _quiet_error(self, label: str, message: str) -> None:
         """静默刷新失败：只记日志，不覆盖用户刚看到的任务结果。"""

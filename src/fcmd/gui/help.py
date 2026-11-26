@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QTableWidget,
-    QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -43,6 +42,7 @@ from fcmd.gui.widgets import (
     make_splitter,
     make_table,
     make_table_item,
+    make_tree,
     mono_font,
 )
 from fcmd.shared.helpdoc import HelpDoc, help_headings, help_outline
@@ -196,9 +196,8 @@ class HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
         header.addStretch(1)
         header.addWidget(hint_label(f"{len(self._headings)} 节", wrap=False))
         layout.addLayout(header)
-        self.toc = QTreeWidget(panel)
+        self.toc = make_tree((), parent=panel)
         self.toc.setObjectName("HelpToc")
-        self.toc.setHeaderHidden(True)
         self.toc.setRootIsDecorated(True)
         self.toc.setIndentation(14)
         self.toc.setAnimated(False)

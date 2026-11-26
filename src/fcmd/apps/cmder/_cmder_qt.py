@@ -17,7 +17,6 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
-    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -25,7 +24,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -33,22 +31,6 @@ from PySide6.QtWidgets import (
 
 from fcmd.apps.cmder import _archwrite
 from fcmd.apps.cmder import app as core
-from fcmd.apps.cmder._cmder_qt_dialogs import (
-    ArchiveOptionsDialog,
-    BookmarkDialog,
-    ColorRulesDialog,
-    CompareDialog,
-    DuplicateDialog,
-    FilterDialog,
-    MultiRenameDialog,
-    OpenWithDialog,
-    SearchDialog,
-    SplitDialog,
-    SyncDialog,
-    TextDiffDialog,
-    TransferQueueDialog,
-    UserCommandsDialog,
-)
 from fcmd.apps.cmder._cmder_qt_panels import FilePanelWidget, QuickView, color_subject
 from fcmd.apps.cmder._ops import (
     ITEM_CANCELLED,
@@ -66,10 +48,36 @@ from fcmd.apps.cmder._ops import (
 from fcmd.apps.cmder._queue import parallel_map
 from fcmd.apps.cmder._tabs import FilterDefinition
 from fcmd.apps.cmder._volumes import enumerate_volumes
+from fcmd.apps.cmder.qt import (
+    ArchiveOptionsDialog,
+    BookmarkDialog,
+    ColorRulesDialog,
+    CompareDialog,
+    DuplicateDialog,
+    FilterDialog,
+    MultiRenameDialog,
+    OpenWithDialog,
+    SearchDialog,
+    SplitDialog,
+    SyncDialog,
+    TextDiffDialog,
+    TransferQueueDialog,
+    UserCommandsDialog,
+)
 from fcmd.gui import geometry as _geometry
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.theme_menu import ThemeMenu
-from fcmd.gui.widgets import button, confirm, hint_label, make_splitter
+from fcmd.gui.widgets import (
+    button,
+    confirm,
+    hint_label,
+    make_splitter,
+    make_tree,
+    messages,
+    pick_dir,
+    pick_file,
+    save_file,
+)
 from fcmd.gui.window import restore_geometry
 from fcmd.gui.workers import submit
 
@@ -186,8 +194,7 @@ class CmderQtWindow(QMainWindow):
     def _build_tree(self) -> None:
         self.tree_dock = QDockWidget("目录树", self)
         self.tree_dock.setObjectName("DirectoryTree")
-        self.directory_tree = QTreeWidget(self.tree_dock)
-        self.directory_tree.setHeaderHidden(True)
+        self.directory_tree = make_tree((), parent=self.tree_dock)
         self.directory_tree.itemExpanded.connect(self._on_tree_expanded)
         self.directory_tree.itemDoubleClicked.connect(lambda item, _column: self._on_tree_open(item))
         self.directory_tree.itemSelectionChanged.connect(self._on_tree_select)
@@ -426,11 +433,11 @@ class CmderQtWindow(QMainWindow):
 
     def show_error(self, title: str, message: str) -> None:
         """错误提示（模态）。"""
-        QMessageBox.critical(self, title, message)
+        messages.error(self, title, message)
 
     def show_info(self, title: str, message: str) -> None:
         """信息提示（模态）。"""
-        QMessageBox.information(self, title, message)
+        messages.info(self, title, message)
 
     def show_text(self, title: str, text: str) -> None:
         """只读文本对话框（结果 / 预览 / 帮助）。"""
@@ -941,7 +948,7 @@ class CmderQtWindow(QMainWindow):
         if not paths:
             return
         default = self.active.state.path + "/" + core.default_archive_name(paths)
-        chosen, _ = QFileDialog.getSaveFileName(
+        chosen = save_file(
             self,
             "打包到",
             default,
@@ -968,7 +975,7 @@ class CmderQtWindow(QMainWindow):
         if archive is None:
             self.set_status("请选择压缩包或先进入包内浏览")
             return
-        destination, _ = QFileDialog.getExistingDirectory(
+        destination = pick_dir(
             self,
             "解压到",
             str(core.default_extract_dir(archive, Path(self.other_panel(self.active).state.path))),
@@ -988,7 +995,7 @@ class CmderQtWindow(QMainWindow):
         if self.active.archive is not None:
             target = self.active.archive
         else:
-            chosen, _ = QFileDialog.getOpenFileName(self, "选择压缩包", "", "压缩包 (*.zip *.tar *.tar.gz *.tgz)")
+            chosen = pick_file(self, "选择压缩包", "", "压缩包 (*.zip *.tar *.tar.gz *.tgz)")
             if not chosen:
                 return
             target = Path(chosen)
@@ -1082,7 +1089,7 @@ class CmderQtWindow(QMainWindow):
             self.show_error("生成失败", str(exc))
             return
         base = paths[0].parent
-        chosen, _ = QFileDialog.getSaveFileName(
+        chosen = save_file(
             self,
             "保存校验文件",
             str(base / _checksum.manifest_name(base, algorithm)),
@@ -1160,7 +1167,7 @@ class CmderQtWindow(QMainWindow):
         if not parts:
             self.set_status("请选择分卷文件")
             return
-        output, _ = QFileDialog.getSaveFileName(
+        output = save_file(
             self,
             "合并到",
             str(parts[0].parent / _split.default_merged_name(parts[0])),
@@ -1254,7 +1261,7 @@ class CmderQtWindow(QMainWindow):
             entries[0].path if entries and entries[0].path.suffix.casefold() in core.ARCHIVE_SUFFIXES else None
         )
         if archive is None:
-            chosen, _ = QFileDialog.getOpenFileName(self, "选择压缩包", "", "压缩包 (*.zip *.tar *.tar.gz *.tgz)")
+            chosen = pick_file(self, "选择压缩包", "", "压缩包 (*.zip *.tar *.tar.gz *.tgz)")
             if not chosen:
                 return
             archive = Path(chosen)

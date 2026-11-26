@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.llm._llmw_qt_center as _owner
+from fcmd.gui.widgets import messages, pick_dir
 
 from ._compat import (
     FolderInfo,
@@ -167,13 +168,13 @@ class ModelsInstalledMixin:
             self.refresh_installed()
 
     def _pick_model_folder(self) -> None:
-        path = _owner.QFileDialog.getExistingDirectory(self, "导入模型文件夹")
+        path = pick_dir(self, "导入模型文件夹")
         if not path:
             return
         try:
             info = _owner.inspect_folder(_owner.Path(path))
         except (OSError, ValueError) as exc:
-            _owner.QMessageBox.warning(self, "无法识别文件夹", str(exc))
+            messages.warn(self, "无法识别文件夹", str(exc))
             return
         proceed, convert = self._ask_folder_import(info)
         if proceed:
@@ -211,7 +212,7 @@ class ModelsInstalledMixin:
             plans = _owner.plan_import(sources, _owner._llmconfig.models_dir())
         except (OSError, ValueError) as exc:
             self.status(f"无法导入：{exc}")
-            _owner.QMessageBox.warning(self, "无法导入模型", str(exc))
+            messages.warn(self, "无法导入模型", str(exc))
             return
         if not plans:
             return
@@ -259,7 +260,7 @@ class ModelsInstalledMixin:
     def _import_error(self, message: str) -> None:
         self.status(f"导入失败：{message}")
         self._log(f"导入失败: {message}")
-        _owner.QMessageBox.warning(self, "导入失败", message)
+        messages.warn(self, "导入失败", message)
 
     def _import_finished(self) -> None:
         self._end_loading("import")

@@ -19,14 +19,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLineEdit,
-    QMessageBox,
     QSpinBox,
 )
 
 from fcmd import __version__
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, ElidedLabel, FormGrid, PathRow, ProgressRow, button, hint_label
+from fcmd.gui.widgets import Card, ElidedLabel, FormGrid, PathRow, ProgressRow, button, hint_label, messages
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.pdf.pdfcrypt import MIN_PASSWORD_LENGTH, collect_pdf_files, process_files, validate_password
 from fcmd.tools.pdf.pdfcryptw import (
@@ -217,19 +216,19 @@ class PdfCryptWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.log(event[1])
             self.set_status("没有待处理文件")
             self._finish()
-            QMessageBox.information(self, "提示", event[1])
+            messages.info(self, "提示", event[1])
         elif kind == "done":
             _, action, succeeded, failed = event
             self._progress.setValue(self._progress.maximum())
             self.set_status(f"{action}完成：成功 {succeeded}，失败 {failed}")
             self.log(f"{action}汇总：成功 {succeeded} 个，失败 {failed} 个")
             self._finish()
-            QMessageBox.information(self, f"{action}完成", f"成功 {succeeded} 个，失败 {failed} 个")
+            messages.info(self, f"{action}完成", f"成功 {succeeded} 个，失败 {failed} 个")
         elif kind == "error":
             self.log(f"错误：{event[1]}")
             self.set_status("处理失败")
             self._finish()
-            QMessageBox.critical(self, "处理失败", event[1])
+            messages.error(self, "处理失败", event[1])
 
     def _finish(self) -> None:
         """任务结束：恢复输入并释放信号桥。"""

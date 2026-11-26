@@ -28,7 +28,6 @@ from PySide6.QtGui import (
     QShowEvent,
 )
 from PySide6.QtWidgets import (
-    QFileDialog,
     QHBoxLayout,
     QMenu,
     QMessageBox,
@@ -54,6 +53,9 @@ from fcmd.gui.widgets import (
     apply_splitter_sizes,
     button,
     make_splitter,
+    messages,
+    pick_file,
+    save_file,
     splitter_sizes,
     tab_widget,
 )
@@ -195,7 +197,7 @@ class ParamcadWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 数据
     # ------------------------------------------------------------------ #
     def _choose_file(self) -> None:
-        selected, _ = QFileDialog.getOpenFileName(
+        selected = pick_file(
             self,
             "选择 dynacalc 模型文件",
             "",
@@ -236,7 +238,7 @@ class ParamcadWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._show_error("请先载入模型或示例")
             return
         suggested = f"{self._model.model_id}.yaml"
-        selected, _ = QFileDialog.getSaveFileName(
+        selected = save_file(
             self,
             "导出 dynacalc 模型",
             suggested,
@@ -257,14 +259,14 @@ class ParamcadWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._show_error(str(exc))
             return
         self.set_status(f"已导出：{target}")
-        QMessageBox.information(
+        messages.info(
             self,
             "导出完成",
             f"已写入\n{target}\n\n指纹：{_export.model_digest(self._model)}",
         )
 
     def _show_error(self, message: str) -> None:
-        QMessageBox.critical(self, "paramcad", message)
+        messages.error(self, "paramcad", message)
 
     # ------------------------------------------------------------------ #
     # 绘制

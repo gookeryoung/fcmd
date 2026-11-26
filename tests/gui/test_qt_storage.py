@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QFileDialog, QPushButton
 
 from fcmd.gui.widgets import (
     DiskGrid,
@@ -173,10 +173,9 @@ def test_disk_grid_resets_column_stretch_after_removing_roots() -> None:
 
 def test_storage_card_change_replaces_root_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
     """单目录「更改」：原位置替换目录，不改变顺序（主目录仍是首个）。"""
-    from fcmd.gui.widgets import storage as storage_module
 
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr(storage_module.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "E:/new")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "E:/new")
     card = StorageCard(
         [Path("D:/old"), Path("F:/keep")],
         add_text=None,
@@ -251,7 +250,6 @@ def test_storage_pair_card_renders_two_disk_tiles_with_placeholder(tmp_path: Pat
 
 def test_storage_pair_card_swap_and_change_emit(tmp_path: Path) -> None:
     """交换只换左右槽位；「更改」在对应槽位弹目录框并回填。"""
-    from fcmd.gui.widgets import storage as storage_module
 
     app = QApplication.instance() or QApplication([])
     monkeypatch = pytest.MonkeyPatch()
@@ -263,20 +261,19 @@ def test_storage_pair_card_swap_and_change_emit(tmp_path: Path) -> None:
         card.swapped.connect(lambda left, right: swapped.append((left, right)))
         app.processEvents()
         assert card.sides() == ("L", "R")
-
         card.swap()
         assert card.sides() == ("R", "L")
         assert changed[-1] == ("R", "L")
         assert swapped == [("R", "L")]
 
-        monkeypatch.setattr(storage_module.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "D:/picked")
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "D:/picked")
         card._change(1)
         assert card.sides() == ("R", "D:/picked")
         assert changed[-1] == ("R", "D:/picked")
         assert swapped == [("R", "L")]  # 只有 swap() 发 swapped
 
         # 取消选择不改变槽位，也不发 changed。
-        monkeypatch.setattr(storage_module.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "")
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "")
         before = list(changed)
         card._change(0)
         assert card.sides() == ("R", "D:/picked")
@@ -288,14 +285,12 @@ def test_storage_pair_card_swap_and_change_emit(tmp_path: Path) -> None:
 
 def test_storage_pair_card_change_button_targets_its_own_slot() -> None:
     """两张卡的「更改」各自绑定槽位，点右侧不会改到左侧。"""
-    from fcmd.gui.widgets import storage as storage_module
-
     app = QApplication.instance() or QApplication([])
     card = StoragePairCard("L", "R")
     monkeypatch = pytest.MonkeyPatch()
     try:
         app.processEvents()
-        monkeypatch.setattr(storage_module.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "D:/picked")
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "D:/picked")
         buttons = [btn for btn in card.right_tile.findChildren(QPushButton) if btn.text() == "更改"]
         assert len(buttons) == 1
         buttons[0].click()

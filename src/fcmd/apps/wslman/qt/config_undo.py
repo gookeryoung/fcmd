@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from fcmd.gui.widgets import messages
+
 from ._compat import Any, Sequence
 
 
@@ -112,7 +114,7 @@ class _ConfigUndoMixin:
         """把实例内已有的受管配置移进备份目录，回到「没有个人配置」的初始状态。"""
         paths = self._target_paths()
         if not paths:
-            _owner.QMessageBox.information(self, "没有可初始化的配置", "先点「扫描」确认实例内的受管配置。")
+            messages.info(self, "没有可初始化的配置", "先点「扫描」确认实例内的受管配置。")
             return
         listing = "\n".join(f"· {path}" for path in paths)
         text = (
@@ -175,7 +177,7 @@ class _ConfigUndoMixin:
         self._persist_restore()
         self._append_log(f"初始化失败：{message}")
         self.summary.setText("初始化失败")
-        _owner.QMessageBox.critical(self, "初始化失败", message)
+        messages.error(self, "初始化失败", message)
 
     def _initialize_finished(self) -> None:
         if self._closing:
@@ -238,7 +240,7 @@ class _ConfigUndoMixin:
         self._refresh_after_run = True
         self._append_log(f"还原失败：{message}")
         self.summary.setText("还原失败")
-        _owner.QMessageBox.critical(self, "还原失败", message)
+        messages.error(self, "还原失败", message)
 
     def _restore_finished(self) -> None:
         if self._closing:

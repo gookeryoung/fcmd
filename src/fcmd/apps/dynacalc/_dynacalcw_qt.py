@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QSpinBox,
     QWidget,
 )
@@ -51,6 +50,7 @@ from fcmd.gui.widgets import (
     button,
     make_table,
     make_table_item,
+    messages,
     tab_widget,
 )
 from fcmd.gui.workers import EventBridge, submit
@@ -58,6 +58,7 @@ from fcmd.gui.workers import EventBridge, submit
 __all__ = ["DynacalcWindow", "run_qt"]
 
 DEFAULT_SIZE = (1180, 780)
+
 MIN_SIZE = (980, 640)
 
 
@@ -478,7 +479,7 @@ class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _fail(self, exc: object) -> None:
         self.set_status(f"失败：{exc}")
-        QMessageBox.critical(self, "dynacalc", str(exc))
+        messages.error(self, "dynacalc", str(exc))
 
     # ------------------------------------------------------------------ #
     # 关闭

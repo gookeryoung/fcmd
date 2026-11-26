@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QLabel, Q
 from fcmd.apps.llm import _llmconfig
 from fcmd.apps.llm.llmbase import human_size
 from fcmd.apps.llm.llmdown import LocalModel, ModelToolError, delete_local_model, scan_local_models
-from fcmd.gui.widgets import Card, button, fit_dialog_to_content, hint_label, make_table, make_table_item
+from fcmd.gui.widgets import Card, button, fit_dialog_to_content, hint_label, make_table, make_table_item, messages
 from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
@@ -232,7 +232,7 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
                 failures.append(f"{model.repo}: {exc}")
         self._changed()
         if failures:
-            QMessageBox.critical(self, "部分模型移除失败", "\n".join(failures))
+            messages.error(self, "部分模型移除失败", "\n".join(failures))
         self.refresh()
 
     def _cleanup_partial(self) -> None:

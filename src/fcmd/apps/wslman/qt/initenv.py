@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.wslman._wslmanw_qt as _owner
-from fcmd.gui.widgets import Card
+from fcmd.gui.widgets import Card, messages
 
 from ._compat import Any, Distro, Sequence
 
@@ -507,7 +507,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         keys = [key for key, box in self.checks.items() if box.isChecked() and box.isEnabled()]
         needs_source = self._package_mirror_dirty
         if not keys and not needs_source:
-            _owner.QMessageBox.information(self, "未选择项目", "请至少勾选一项初始化内容。")
+            messages.info(self, "未选择项目", "请至少勾选一项初始化内容。")
             return
         state = self._current_state()
         if state != "running" and not _owner.confirm(
@@ -582,7 +582,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         self._refresh_after_run = True
         self._append_log(f"初始化失败：{message}")
         self.summary.setText("初始化失败")
-        _owner.QMessageBox.critical(self, "初始化失败", message)
+        messages.error(self, "初始化失败", message)
 
     def _run_finished(self) -> None:
         if self._closing:

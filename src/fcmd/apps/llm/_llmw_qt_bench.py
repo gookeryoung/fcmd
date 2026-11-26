@@ -20,10 +20,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QLineEdit,
-    QMessageBox,
     QSpinBox,
     QTableWidget,
     QVBoxLayout,
@@ -55,6 +53,8 @@ from fcmd.gui.widgets import (
     link_button,
     make_table,
     make_table_item,
+    messages,
+    save_file,
 )
 from fcmd.gui.workers import submit
 
@@ -312,7 +312,7 @@ class BenchDialog(QDialog):  # pragma: no cover - Qt 控件
             endpoint = self._bench_endpoint()
             repeat, timeout, max_tokens = self._bench_settings()
         except ServeError as exc:
-            QMessageBox.critical(self, "无法开始测试", str(exc))
+            messages.error(self, "无法开始测试", str(exc))
             return
         cancel = threading.Event()
         self._bench_cancel = cancel
@@ -383,7 +383,7 @@ class BenchDialog(QDialog):  # pragma: no cover - Qt 控件
         if not self._bench_rows:
             self._bench_status.setText("暂无结果可导出")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "导出测试结果", "llmw-bench.csv", "CSV (*.csv)")
+        path = save_file(self, "导出测试结果", "llmw-bench.csv", "CSV (*.csv)")
         if not path:
             return
         Path(path).write_text(format_result_csv(self._bench_rows), encoding="utf-8")

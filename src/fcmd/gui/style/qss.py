@@ -134,6 +134,9 @@ QFrame#AlarmReminderHero {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 $surface, stop:1 $surface_hover);
     border: 3px solid $danger; border-radius: 16px;
 }
+QFrame#AlarmReminderHero[tone="warning"] { border-color: $warning; }
+/* 放映窗口：全屏黑底，避免浅色主题下画布边缘发白。 */
+QWidget#PptmakePresenter { background: #000000; }
 QLabel#AlarmReminderTitle { color: $danger; background: transparent; font-size: 40pt; font-weight: 700; }
 QLabel#AlarmReminderTitle[tone="warning"] { color: $warning; }
 QLabel#AlarmReminderHint { color: $muted; background: transparent; font-size: ${font_body}pt; font-weight: 600; }

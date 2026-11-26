@@ -15,13 +15,12 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
 
 from fcmd.apps.pptmake import _tokens as tokens
-from fcmd.gui.widgets import tab_widget
+from fcmd.gui.widgets import messages, tab_widget
 
 __all__ = ["TokenDialog"]
 
@@ -163,7 +162,7 @@ class TokenDialog(QDialog):
         try:
             self._result = self.values()
         except tokens.TokenError as error:
-            QMessageBox.warning(self, "令牌无效", str(error))
+            messages.warn(self, "令牌无效", str(error))
             return
         super().accept()
 

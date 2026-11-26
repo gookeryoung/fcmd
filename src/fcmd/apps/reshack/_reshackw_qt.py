@@ -24,12 +24,10 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidgetItem,
     QMenu,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -81,7 +79,11 @@ from fcmd.gui.widgets import (
     StatusTag,
     button,
     confirm,
+    messages,
     mono_font,
+    pick_dir,
+    pick_file,
+    save_file,
     tab_widget,
 )
 from fcmd.gui.window import QtMainWindow
@@ -564,16 +566,16 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
     def _open_recent(self, value: str) -> None:
         path = Path(value).expanduser()
         if not is_pe_file(path):
-            QMessageBox.critical(self, "无法打开", f"文件不存在或不是有效的 PE 文件:\n{value}")
+            messages.error(self, "无法打开", f"文件不存在或不是有效的 PE 文件:\n{value}")
             return
         self._start_load(path)
 
     def _show_properties(self) -> None:
         resource = self._selected_resource()
         if resource is None:
-            QMessageBox.information(self, "未选择资源", "请先在资源页选择资源。")
+            messages.info(self, "未选择资源", "请先在资源页选择资源。")
             return
-        QMessageBox.information(
+        messages.info(
             self,
             "资源属性",
             f"类型: {resource.type_name} ({resource.type_id})\n"
@@ -603,7 +605,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
     # 打开 / 导出 / 替换
     # ------------------------------------------------------------------ #
     def _choose_file(self) -> None:
-        filename, _ = QFileDialog.getOpenFileName(
+        filename = pick_file(
             self,
             "打开 PE 文件",
             dialog_start(self._settings.last_open_dir),
@@ -617,7 +619,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
         if self._busy:
             return
         if not is_pe_file(path):
-            QMessageBox.critical(self, "无法打开", f"不是有效的 PE 文件:\n{path}")
+            messages.error(self, "无法打开", f"不是有效的 PE 文件:\n{path}")
             return
         self._set_busy(True)
         self._set_status(f"正在加载 {path.name}…")
@@ -648,7 +650,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
         self._bridge = None
         self._set_status("操作失败")
         self.log(f"错误：{message}")
-        QMessageBox.critical(self, "操作失败", message)
+        messages.error(self, "操作失败", message)
 
     def _apply_loaded(self, event: tuple[Any, ...]) -> None:
         _, pe, path, info, resources = event
@@ -680,7 +682,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
         self._set_status("资源替换完成")
         self._bridge = None
         self._set_busy(False)
-        QMessageBox.information(self, "替换完成", f"资源已写入，原文件备份在:\n{backup}")
+        messages.info(self, "替换完成", f"资源已写入，原文件备份在:\n{backup}")
 
     def _apply_exported(self, event: tuple[Any, ...]) -> None:
         _, directory, exported, total = event
@@ -688,12 +690,12 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
         self._set_status(f"已导出 {exported}/{total} 个资源")
         self._bridge = None
         self._set_busy(False)
-        QMessageBox.information(self, "导出完成", f"已导出 {exported}/{total} 个资源到:\n{directory}")
+        messages.info(self, "导出完成", f"已导出 {exported}/{total} 个资源到:\n{directory}")
 
     def _export_selected(self) -> None:
         resource = self._selected_resource()
         if resource is None:
-            QMessageBox.information(self, "未选择资源", "请先在资源页选择资源。")
+            messages.info(self, "未选择资源", "请先在资源页选择资源。")
             return
         self._export_resource(resource)
 
@@ -701,7 +703,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
         extension = resource_extension(resource.type_id)
         start = dialog_start(self._settings.last_save_dir)
         default_name = default_export_name(resource)
-        filename, _ = QFileDialog.getSaveFileName(
+        filename = save_file(
             self,
             "导出资源",
             str(Path(start) / default_name) if start else default_name,
@@ -715,7 +717,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(export_payload(resource))
         except OSError as exc:
-            QMessageBox.critical(self, "导出失败", str(exc))
+            messages.error(self, "导出失败", str(exc))
             return
         self.log(f"已导出 {resource.type_name} #{resource.name_id} -> {output}")
         self._set_status(f"已导出 {output.name}")
@@ -723,17 +725,17 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
     def _replace_selected(self) -> None:
         resource = self._selected_resource()
         if resource is None or self._pe is None:
-            QMessageBox.information(self, "未选择资源", "请先在资源页选择资源。")
+            messages.info(self, "未选择资源", "请先在资源页选择资源。")
             return
         self._replace_resource(resource)
 
     def _replace_resource(self, resource: Any) -> None:
         if self._pe is None:
-            QMessageBox.information(self, "未打开文件", "请先打开 PE 文件。")
+            messages.info(self, "未打开文件", "请先打开 PE 文件。")
             return
         if self._busy:
             return
-        filename, _ = QFileDialog.getOpenFileName(
+        filename = pick_file(
             self,
             "选择新的资源数据",
             dialog_start(self._settings.last_open_dir),
@@ -744,7 +746,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
         try:
             new_data = Path(filename).read_bytes()
         except OSError as exc:
-            QMessageBox.critical(self, "读取失败", str(exc))
+            messages.error(self, "读取失败", str(exc))
             return
         if not confirm(
             self,
@@ -764,11 +766,11 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
 
     def _export_all(self) -> None:
         if self._pe is None or self._current_file is None:
-            QMessageBox.information(self, "未打开文件", "请先打开 PE 文件。")
+            messages.info(self, "未打开文件", "请先打开 PE 文件。")
             return
         if self._busy:
             return
-        directory = QFileDialog.getExistingDirectory(
+        directory = pick_dir(
             self,
             "选择全部导出目录",
             dialog_start(self._settings.last_save_dir),
@@ -920,7 +922,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
             self.log("已复制预览图像到剪贴板")
             self._set_status("图像已复制到剪贴板")
         else:
-            QMessageBox.warning(self, "复制失败", "无法写入剪贴板（需要 Windows 并安装 Pillow）。")
+            messages.warn(self, "复制失败", "无法写入剪贴板（需要 Windows 并安装 Pillow）。")
 
     def _preview_default_name(self) -> str:
         """预览图像的默认保存文件名（PNG）。"""
@@ -934,7 +936,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
             return
         start = dialog_start(self._settings.last_save_dir)
         default_name = self._preview_default_name()
-        filename, _ = QFileDialog.getSaveFileName(
+        filename = save_file(
             self,
             "保存图像",
             str(Path(start) / default_name) if start else default_name,
@@ -948,7 +950,7 @@ class ReshackWindow(RowDetailMixin, QtMainWindow):  # pragma: no cover - 需要 
             output.parent.mkdir(parents=True, exist_ok=True)
             self._preview_image.save(output)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            messages.error(self, "保存失败", str(exc))
             return
         self.log(f"已保存预览图像 -> {output}")
         self._set_status(f"已保存 {output.name}")

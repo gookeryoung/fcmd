@@ -21,12 +21,10 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QSpinBox,
     QWidget,
 )
@@ -88,6 +86,11 @@ from fcmd.gui.widgets import (
     make_splitter,
     make_table,
     make_table_item,
+    messages,
+    pick_dir,
+    pick_file,
+    pick_files,
+    save_file,
 )
 from fcmd.shared.helpdoc import HelpDoc, load_help_doc
 
@@ -455,7 +458,7 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
             rule = self._rule_from_form()
             validate_rules([rule])
         except RuleError as exc:
-            QMessageBox.critical(self, "规则错误", str(exc))
+            messages.error(self, "规则错误", str(exc))
             return
         self._rules.append(rule)
         self._refresh_rule_tree()
@@ -469,7 +472,7 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
             rule = self._rule_from_form()
             validate_rules([rule])
         except RuleError as exc:
-            QMessageBox.critical(self, "规则错误", str(exc))
+            messages.error(self, "规则错误", str(exc))
             return
         self._rules[row] = rule
         self._refresh_rule_tree()
@@ -556,7 +559,7 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
         return list(unique_paths(expanded))
 
     def _add_files(self) -> None:
-        selected, _filter = QFileDialog.getOpenFileNames(
+        selected = pick_files(
             self,
             "选择待重命名文件",
             dialog_start(self._settings.last_open_dir),
@@ -568,7 +571,7 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
         self._refresh_preview()
 
     def _add_dir(self) -> None:
-        selected = QFileDialog.getExistingDirectory(
+        selected = pick_dir(
             self,
             "选择目录（按当前递归 / 包含目录选项展开）",
             dialog_start(self._settings.last_open_dir),
@@ -671,11 +674,11 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
         if preview is None:
             return
         if preview.error:
-            QMessageBox.critical(self, "规则错误", preview.error)
+            messages.error(self, "规则错误", preview.error)
             return
         plan = preview_to_plan(preview)
         if not plan.changes:
-            QMessageBox.information(self, "没有可执行项", "当前没有状态为「可执行」的改名。")
+            messages.info(self, "没有可执行项", "当前没有状态为「可执行」的改名。")
             return
         if not confirm(self, "确认改名", f"将改名 {len(plan.changes)} 项，继续？"):
             return
@@ -683,7 +686,7 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
         self._last_report = report
         renamed = dict(report.completed)
         self._selected = [renamed.get(path, path) for path in self._selected]
-        QMessageBox.information(
+        messages.info(
             self,
             "改名结果",
             f"成功 {len(report.completed)} 项，失败 {len(report.errors)} 项。",
@@ -692,13 +695,13 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
 
     def _undo(self) -> None:
         if self._last_report is None or not self._last_report.completed:
-            QMessageBox.information(self, "无法撤销", "没有本次运行可撤销的改名。")
+            messages.info(self, "无法撤销", "没有本次运行可撤销的改名。")
             return
         restored = {target: source for source, target in self._last_report.completed}
         report = undo_report(self._last_report)
         self._last_report = None
         self._selected = [restored.get(path, path) for path in self._selected]
-        QMessageBox.information(
+        messages.info(
             self,
             "撤销结果",
             f"已恢复 {len(report.completed)} 项，失败 {len(report.errors)} 项。",
@@ -709,7 +712,7 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
     # 规则文件 / 帮助
     # ------------------------------------------------------------------ #
     def _save_rules_file(self) -> None:
-        selected, _filter = QFileDialog.getSaveFileName(
+        selected = save_file(
             self,
             "保存规则",
             str(Path(start) / "rename-rules.json")
@@ -723,12 +726,12 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
         try:
             Path(selected).write_text(rules_to_text(self._rules), encoding="utf-8")
         except OSError as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            messages.error(self, "保存失败", str(exc))
             return
         self.set_status(f"规则已保存：{selected}")
 
     def _load_rules_file(self) -> None:
-        selected, _filter = QFileDialog.getOpenFileName(
+        selected = pick_file(
             self,
             "载入规则",
             dialog_start(self._settings.last_open_dir),
@@ -740,7 +743,7 @@ class RenamerWindow(HelpMenuMixin, QtToolWindow):  # pragma: no cover - 需要 Q
         try:
             self._rules = list(rules_from_text(Path(selected).read_text(encoding="utf-8")))
         except (OSError, RuleError) as exc:
-            QMessageBox.critical(self, "载入失败", str(exc))
+            messages.error(self, "载入失败", str(exc))
             return
         self._refresh_rule_tree()
         self._refresh_preview()

@@ -16,10 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtWidgets import (
-    QFileDialog,
     QHBoxLayout,
     QLineEdit,
-    QMessageBox,
     QRadioButton,
     QSpinBox,
     QWidget,
@@ -29,7 +27,18 @@ from fcmd import __version__
 from fcmd.gui.app import run_window
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, ElidedLabel, PathField, PathRow, ProgressRow, button, hint_label
+from fcmd.gui.widgets import (
+    Card,
+    ElidedLabel,
+    PathField,
+    PathRow,
+    ProgressRow,
+    button,
+    hint_label,
+    messages,
+    pick_file,
+    save_file,
+)
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.pdf.pdfsplit import split_by_parts, split_by_range, split_by_size
 from fcmd.tools.pdf.pdfsplitw import (
@@ -56,7 +65,7 @@ class _PdfInputRow(PathRow):  # pragma: no cover - Qt 控件
     """输入 PDF 行：浏览对话框限定 PDF 过滤器。"""
 
     def _pick(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "选择 PDF 文件", self.value(), _PDF_FILTER)
+        path = pick_file(self, "选择 PDF 文件", self.value(), _PDF_FILTER)
         if path:
             self.edit.setText(path)
 
@@ -85,7 +94,7 @@ class _OutputRow(PathField):  # pragma: no cover - Qt 控件
         self.hint.setText(shown)
 
     def _pick(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
+        path = save_file(
             self,
             "选择提取输出文件",
             self.value() or self._suggestion,
@@ -369,12 +378,12 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.set_status(f"完成：{count} 个输出")
             self.log(f"完成：{count} 个输出 -> {target}")
             self._finish()
-            QMessageBox.information(self, "分割完成", f"已生成 {count} 个输出：\n{target}")
+            messages.info(self, "分割完成", f"已生成 {count} 个输出：\n{target}")
         elif kind == "error":
             self.log(f"错误：{event[1]}")
             self.set_status("分割失败")
             self._finish()
-            QMessageBox.critical(self, "分割失败", event[1])
+            messages.error(self, "分割失败", event[1])
 
     def _finish(self) -> None:
         """任务结束：恢复输入并释放信号桥。"""

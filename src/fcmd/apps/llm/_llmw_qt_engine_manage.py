@@ -19,11 +19,9 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -31,7 +29,7 @@ from PySide6.QtWidgets import (
 from fcmd.apps.llm import llmengine, llmenv
 from fcmd.apps.llm._llmw_qt_engine_card import EngineOption
 from fcmd.apps.llm.llmbase import EngineInfo
-from fcmd.gui.widgets import Card, button, confirm, hint_label
+from fcmd.gui.widgets import Card, button, confirm, fit_dialog_to_content, hint_label, messages, save_file
 from fcmd.gui.workers import submit
 
 __all__ = ["EngineAdminConfig", "EngineManageDialog", "backup_default_path", "llama_engine_admin"]
@@ -110,7 +108,7 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         self.admin = admin or llama_engine_admin()
         self.setWindowTitle(self.admin.dialog_title)
         self.setModal(False)
-        self.resize(620, 420)
+        self.setMinimumWidth(620)
         self._home = home
         self._engines: list[EngineInfo] = []
         self._busy = False
@@ -177,6 +175,7 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         self.close_button.clicked.connect(self.close)
         footer.addWidget(self.close_button)
         layout.addLayout(footer)
+        fit_dialog_to_content(self, min_width=620)
 
         self.refresh()
 
@@ -254,7 +253,7 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
     def _error(self, title: str, message: str) -> None:
         self._set_busy(False)
         self._set_status(f"{title}：{message}")
-        QMessageBox.critical(self, title, message)
+        messages.error(self, title, message)
 
     # ------------------------------------------------------------------ #
     # 动作
@@ -264,9 +263,7 @@ class EngineManageDialog(QDialog):  # pragma: no cover - Qt 控件
         if not tag:
             return
         default = self.admin.root() / "backups" / f"{self.admin.backup_prefix}-{tag}.zip"
-        chosen, _filter = QFileDialog.getSaveFileName(
-            self, "备份引擎", str(default), "Zip 压缩包 (*.zip);;所有文件 (*.*)"
-        )
+        chosen = save_file(self, "备份引擎", str(default), "Zip 压缩包 (*.zip);;所有文件 (*.*)")
         if not chosen:
             return
         dest = Path(chosen)

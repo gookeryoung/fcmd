@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialog,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -34,7 +33,18 @@ from PySide6.QtWidgets import (
 
 from fcmd import __version__
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, button, hint_label, make_table, make_table_item, mono_font
+from fcmd.gui.widgets import (
+    Card,
+    button,
+    hint_label,
+    make_table,
+    make_table_item,
+    messages,
+    mono_font,
+    pick_dir,
+    pick_file,
+    save_file,
+)
 from fcmd.tools.system import envw
 from fcmd.tools.system.envw import (
     MIN_HEIGHT,
@@ -148,7 +158,7 @@ class PathEditorDialog(QDialog):  # pragma: no cover - 模态对话框
         self._list.setCurrentRow(len(self._entries) - 1)
 
     def _browse(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "选择目录")
+        directory = pick_dir(self, "选择目录")
         if not directory:
             return
         self._entries.append(directory)
@@ -286,15 +296,15 @@ class VariableDialog(QDialog):  # pragma: no cover - 模态对话框
         name = self._name_edit.text().strip()
         error = validate_name(name, platform=self._platform)
         if error is not None:
-            QMessageBox.warning(self, "变量名无效", error)
+            messages.warn(self, "变量名无效", error)
             return
         if name != self._original_name and name in self._names:
-            QMessageBox.warning(self, "变量名重复", f"变量 {name} 已存在")
+            messages.warn(self, "变量名重复", f"变量 {name} 已存在")
             return
         value = self._value_text.toPlainText()
         error = validate_value(value)
         if error is not None:
-            QMessageBox.warning(self, "变量值无效", error)
+            messages.warn(self, "变量值无效", error)
             return
         self.result = (name, value)
         self.accept()
@@ -525,7 +535,7 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         try:
             self._variables = read_scope(self._scope, platform=self._platform, profile_path=self._profile_path)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "读取失败", str(exc))
+            messages.error(self, "读取失败", str(exc))
             return
         self._original = dict(self._variables)
         self._refresh_table()
@@ -648,7 +658,7 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
                 profile_path=self._profile_path,
             )
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            messages.error(self, "保存失败", str(exc))
             return
         self._original = dict(self._variables)
         self._set_status("已保存")
@@ -662,11 +672,11 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             try:
                 scopes[scope] = read_scope(scope, platform=self._platform, profile_path=self._profile_path)
             except (OSError, ValueError) as exc:
-                QMessageBox.critical(self, "备份失败", str(exc))
+                messages.error(self, "备份失败", str(exc))
                 return
         if self._scope in scopes:
             scopes[self._scope] = dict(self._variables)
-        filename, _filter = QFileDialog.getSaveFileName(
+        filename = save_file(
             self,
             "导出环境变量备份",
             "env-backup.json",
@@ -677,12 +687,12 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         try:
             save_backup(Path(filename), scopes)
         except OSError as exc:
-            QMessageBox.critical(self, "备份失败", str(exc))
+            messages.error(self, "备份失败", str(exc))
             return
         self._set_status(f"已备份到 {filename}")
 
     def _restore(self) -> None:
-        filename, _filter = QFileDialog.getOpenFileName(
+        filename = pick_file(
             self,
             "选择环境变量备份",
             "",
@@ -693,11 +703,11 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         try:
             scopes = load_backup(Path(filename))
         except ValueError as exc:
-            QMessageBox.critical(self, "恢复失败", str(exc))
+            messages.error(self, "恢复失败", str(exc))
             return
         writable = [scope for scope in scopes if scope != SCOPE_PROCESS and scope in self._scopes]
         if not writable:
-            QMessageBox.critical(self, "恢复失败", "备份中没有当前平台可写入的作用域")
+            messages.error(self, "恢复失败", "备份中没有当前平台可写入的作用域")
             return
         if not self._ask(f"将覆盖 {len(writable)} 个作用域的环境变量，是否继续？"):
             return
@@ -716,9 +726,9 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
                 errors.append(f"{SCOPE_LABELS.get(scope, scope)}：{exc}")
         self._load_scope()
         if errors:
-            QMessageBox.critical(self, "部分恢复失败", "\n".join(errors))
+            messages.error(self, "部分恢复失败", "\n".join(errors))
         else:
-            QMessageBox.information(self, "恢复完成", f"已恢复 {len(writable)} 个作用域")
+            messages.info(self, "恢复完成", f"已恢复 {len(writable)} 个作用域")
 
     # ------------------------------------------------------------------ #
     # 生命周期

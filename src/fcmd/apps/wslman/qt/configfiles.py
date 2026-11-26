@@ -8,7 +8,7 @@ Windows 宿主家目录，也可以是任一其它已安装 WSL 实例的 ``$HOM
 from __future__ import annotations
 
 import fcmd.apps.wslman._wslmanw_qt as _owner
-from fcmd.gui.widgets import Card
+from fcmd.gui.widgets import Card, messages
 
 from ._compat import Any, Distro, Sequence
 from .config_undo import _ConfigUndoMixin, _host_path
@@ -641,10 +641,10 @@ class _ConfigMigrateSection(_ConfigUndoMixin, Card):  # pragma: no cover - Qt �
     def _migrate_selected(self) -> None:
         paths = self._checked_paths()
         if not paths:
-            _owner.QMessageBox.information(self, "未选择配置", "请先勾选要迁移的配置文件。")
+            messages.info(self, "未选择配置", "请先勾选要迁移的配置文件。")
             return
         if self._target is None:
-            _owner.QMessageBox.information(self, "尚未扫描", "先点「扫描」确认来源目录与实例现状。")
+            messages.info(self, "尚未扫描", "先点「扫描」确认来源目录与实例现状。")
             return
         overwrite = set(_owner._configfiles.conflicts(paths, self._target))
         if overwrite:
@@ -774,7 +774,7 @@ class _ConfigMigrateSection(_ConfigUndoMixin, Card):  # pragma: no cover - Qt �
         self._persist_restore()
         self._append_log(f"迁移失败：{message}")
         self.summary.setText("迁移失败")
-        _owner.QMessageBox.critical(self, "迁移失败", message)
+        messages.error(self, "迁移失败", message)
 
     def _migrate_finished(self) -> None:
         if self._closing:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.wslman._wslmanw_qt as _owner
+from fcmd.gui.widgets import messages
 
 from ._compat import (  # noqa: F401
     Any,
@@ -29,7 +30,7 @@ class ImagesManageMixin:
     def _open_image_manager(self) -> None:
         """「管理镜像」：导出 / 删除本地镜像包，并清理清单缓存与未完成下载。"""
         if self._busy:
-            _owner.QMessageBox.information(self, "请稍候", "已有任务在执行")
+            messages.info(self, "请稍候", "已有任务在执行")
             return
         dialog = _owner._ImageManagerDialog(self, self._download_dir_path(), self._catalog_entries())
         self._restore_dialog_geometry("image_manager", dialog)
@@ -48,7 +49,7 @@ class ImagesManageMixin:
     def _install_local(self) -> None:
         """安装磁盘上已有的镜像包：扫描下载目录或手动选包，确认信息后走 ``wsl --import``。"""
         if self._busy:
-            _owner.QMessageBox.information(self, "请稍候", "已有任务在执行")
+            messages.info(self, "请稍候", "已有任务在执行")
             return
         dialog = _owner._InstallLocalDialog(self, self._catalog_entries())
         self._restore_dialog_geometry("install_local", dialog)

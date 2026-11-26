@@ -151,7 +151,6 @@ def test_shared_only_imports_stdlib() -> None:
 #: 历史遗留的大文件白名单：只减不增。新增模块超过预算请拆分，而不是往这里加。
 LEGACY_LARGE = {
     "apps/cmder/_cmder_qt.py",
-    "apps/cmder/_cmder_qt_dialogs.py",
     "apps/cmder/_cmder_qt_panels.py",
     "apps/cmder/_ops.py",
     "apps/cmder/app.py",

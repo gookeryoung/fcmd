@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.wslman._wslmanw_qt as _owner
+from fcmd.gui.widgets import messages, pick_files, save_file
 
 from ._compat import (  # noqa: F401
     Any,
@@ -326,7 +327,7 @@ class FilesMixin:
         directory = self._files_dir
         opener = _owner.w.selected_opener(self.settings, kind)
         if opener is None:
-            _owner.QMessageBox.information(
+            messages.info(
                 self,
                 f"尚未配置{_owner._open.KIND_LABELS[kind]}打开方式",
                 f"到「设置 → 打开方式」添加或选中一个{_owner._open.KIND_LABELS[kind]}条目后再试。",
@@ -339,7 +340,7 @@ class FilesMixin:
             try:
                 root = _owner._files.pick_unc_root(distro)
             except _owner.WslmanError as exc:
-                _owner.QMessageBox.critical(self, "打开失败", _owner.w._error_text(exc))
+                messages.error(self, "打开失败", _owner.w._error_text(exc))
                 return
             self._files_roots[distro] = root
         unc = str(_owner._files.to_local(root, directory))
@@ -425,7 +426,7 @@ class FilesMixin:
         except (_owner.WslmanError, _owner.LaunchError, OSError) as exc:
             message = _owner.w._error_text(exc)
             self._set_files_status(f"{label}失败：{message}")
-            _owner.QMessageBox.critical(self, label, message)
+            messages.error(self, label, message)
             return
         self._set_files_status(f"{label}：已启动 {opener.name}（{distro}:{directory}）")
         self._log(f"[文件] 用 {opener.name} 打开 {distro}:{directory}")
@@ -436,7 +437,7 @@ class FilesMixin:
         ok, message = payload
         if not ok:
             self._set_files_status(f"{label}失败：{message}")
-            _owner.QMessageBox.critical(self, label, message)
+            messages.error(self, label, message)
             return
         self._set_files_status(f"{label}完成：{message}")
         self._log(f"[文件] {message}")
@@ -455,7 +456,7 @@ class FilesMixin:
         try:
             target = _owner._files.normalize_path(text, self._files_home or "/")
         except _owner.WslmanError as exc:
-            _owner.QMessageBox.warning(self, "路径不可用", _owner.w._error_text(exc))
+            messages.warn(self, "路径不可用", _owner.w._error_text(exc))
             return
         self._files_load(self._files_loaded, target)
 
@@ -510,7 +511,7 @@ class FilesMixin:
         ok, message = payload
         if not ok:
             self._set_files_status(f"{label}失败：{message}")
-            _owner.QMessageBox.critical(self, label, message)
+            messages.error(self, label, message)
             return
         self._set_files_status(f"{label}完成：{message}")
         self._log(f"[文件] {message}")
@@ -532,7 +533,7 @@ class FilesMixin:
         try:
             clean = _owner._files.check_name(name)
         except _owner.WslmanError as exc:
-            _owner.QMessageBox.warning(self, "名称不可用", _owner.w._error_text(exc))
+            messages.warn(self, "名称不可用", _owner.w._error_text(exc))
             return
         root, directory = self._files_root, self._files_dir
         home = self._files_home
@@ -554,7 +555,7 @@ class FilesMixin:
         try:
             clean = _owner._files.check_name(new_name)
         except _owner.WslmanError as exc:
-            _owner.QMessageBox.warning(self, "名称不可用", _owner.w._error_text(exc))
+            messages.warn(self, "名称不可用", _owner.w._error_text(exc))
             return
         if clean == entry.name:
             return
@@ -585,7 +586,7 @@ class FilesMixin:
     def _files_upload(self) -> None:
         if self._files_busy or self._files_loading or not self._files_dir:
             return
-        paths, _ = _owner.QFileDialog.getOpenFileNames(
+        paths = pick_files(
             self,
             f"上传到 {self.files_path.text() or self._files_dir}",
             "",
@@ -610,13 +611,13 @@ class FilesMixin:
             return
         path, entry = selected
         if entry.is_dir:
-            _owner.QMessageBox.information(
+            messages.info(
                 self,
                 "暂不支持下载文件夹",
                 "文件夹下载暂不支持；请进入文件夹后选择具体文件。",
             )
             return
-        target, _ = _owner.QFileDialog.getSaveFileName(self, f"下载 {entry.name}", str(_owner.Path.home() / entry.name))
+        target = save_file(self, f"下载 {entry.name}", str(_owner.Path.home() / entry.name))
 
         if not target:
             return

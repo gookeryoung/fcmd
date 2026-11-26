@@ -24,12 +24,10 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QSpinBox,
     QWidget,
 )
@@ -38,7 +36,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, ProgressRow, StatusTag, button, confirm, hint_label
+from fcmd.gui.widgets import Card, ProgressRow, StatusTag, button, confirm, hint_label, messages, pick_dir, pick_file
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
@@ -288,7 +286,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
     def _browse_input(self) -> None:
         """选择输入视频文件，并把输出目录同步到它所在目录。"""
         patterns = " ".join(f"*{item}" for item in SUPPORTED_INPUT_FORMATS)
-        filename, _ = QFileDialog.getOpenFileName(
+        filename = pick_file(
             self,
             "选择输入视频",
             _parent_dir(self._input_edit.text()),
@@ -301,13 +299,13 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _browse_output_dir(self) -> None:
         """选择输出目录。"""
-        directory = QFileDialog.getExistingDirectory(self, "选择输出目录", self._output_edit.text())
+        directory = pick_dir(self, "选择输出目录", self._output_edit.text())
         if directory:
             self._output_edit.setText(directory)
 
     def _browse_audio_file(self) -> None:
         """选择用于替换/合并的外部音频文件。"""
-        filename, _ = QFileDialog.getOpenFileName(
+        filename = pick_file(
             self,
             "选择音频文件",
             _parent_dir(self._audio_edit.text()),
@@ -365,24 +363,24 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
         raw_input = self._input_edit.text().strip()
         if not raw_input:
-            QMessageBox.warning(self, "提示", "请选择要转换的视频文件")
+            messages.warn(self, "提示", "请选择要转换的视频文件")
             return
         input_path = Path(raw_input).expanduser()
         if not input_path.is_file():
-            QMessageBox.critical(self, "错误", f"输入文件不存在：\n{input_path}")
+            messages.error(self, "错误", f"输入文件不存在：\n{input_path}")
             return
         if input_path.suffix.lower() not in SUPPORTED_INPUT_FORMATS:
-            QMessageBox.critical(self, "错误", f"不支持的输入格式：{input_path.suffix or '(无扩展名)'}")
+            messages.error(self, "错误", f"不支持的输入格式：{input_path.suffix or '(无扩展名)'}")
             return
 
         try:
             options = self._collect_options()
         except (ValueError, TypeError) as exc:
-            QMessageBox.critical(self, "参数错误", str(exc))
+            messages.error(self, "参数错误", str(exc))
             return
 
         if options.audio_file is not None and not options.remove_audio and not options.audio_file.is_file():
-            QMessageBox.critical(self, "错误", f"外部音频文件不存在：\n{options.audio_file}")
+            messages.error(self, "错误", f"外部音频文件不存在：\n{options.audio_file}")
             return
 
         raw_output_dir = self._output_edit.text().strip()
@@ -438,11 +436,11 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._progress.setValue(100)
             self._set_status("✓ 转换成功", "Success")
             self.log(f"转换成功：{output_path}")
-            QMessageBox.information(self, "转换完成", f"视频已生成：\n{output_path}")
+            messages.info(self, "转换完成", f"视频已生成：\n{output_path}")
         else:
             self._set_status("✗ 转换失败或已取消", "Danger")
             self.log("转换失败或已取消，详见日志")
-            QMessageBox.warning(self, "转换失败", "转换失败或已取消，详见日志与命令行输出")
+            messages.warn(self, "转换失败", "转换失败或已取消，详见日志与命令行输出")
 
     def _stop_conversion(self) -> None:
         """请求中止后台转换。"""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.wslman._wslmanw_qt as _owner
+from fcmd.gui.widgets import messages, pick_dir
 
 from ._compat import (  # noqa: F401
     Any,
@@ -428,7 +429,7 @@ class SettingsMixin:
         try:
             _owner.w.save_settings(self.settings, self._own_settings_path)
         except OSError as exc:
-            _owner.QMessageBox.warning(self, "保存失败", f"打开方式已生效，但写入设置文件失败：\n{exc}")
+            messages.warn(self, "保存失败", f"打开方式已生效，但写入设置文件失败：\n{exc}")
 
     def _on_opener_selected(self, kind: str) -> None:
         key = self.opener_combos[kind].currentData() or ""
@@ -517,7 +518,7 @@ class SettingsMixin:
         try:
             _owner.w.save_settings(self.settings, self._own_settings_path)
         except OSError as exc:
-            _owner.QMessageBox.warning(self, "保存失败", f"工作目录已生效，但写入设置文件失败：\n{exc}")
+            messages.warn(self, "保存失败", f"工作目录已生效，但写入设置文件失败：\n{exc}")
             return
         self.set_page_status("settings", message)
         self._log(f"[设置] {message}")
@@ -525,9 +526,7 @@ class SettingsMixin:
     def _add_work_dir(self) -> None:
         """添加一个工作目录（重复目录不重复添加）。"""
         roots = list(_owner.w.work_dir_paths(self.settings))
-        chosen = _owner.QFileDialog.getExistingDirectory(
-            self, "添加工作目录", str(roots[0] if roots else _owner.Path.home())
-        )
+        chosen = pick_dir(self, "添加工作目录", str(roots[0] if roots else _owner.Path.home()))
         if not chosen:
             return
         if any(_owner.w.same_dir(chosen, item) for item in roots):
@@ -574,6 +573,6 @@ class SettingsMixin:
         try:
             target.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            _owner.QMessageBox.critical(self, "打开失败", f"无法创建目录：{target}\n{exc}")
+            messages.error(self, "打开失败", f"无法创建目录：{target}\n{exc}")
             return
         _owner.QDesktopServices.openUrl(_owner.QUrl.fromLocalFile(str(target)))

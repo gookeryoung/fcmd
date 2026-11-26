@@ -228,7 +228,7 @@ def test_reminder_dialog_matches_main_theme(window: Any) -> None:
         assert dialog.objectName() == "AlarmReminderDialog"
         assert dialog.hero.objectName() == "AlarmReminderHero"
         assert dialog.label.objectName() == "AlarmReminderTitle"
-        assert "border-color" in dialog.hero.styleSheet()
+        assert dialog.hero.property("tone") in ("danger", "warning")
         assert dialog.close_button.objectName() == "Primary"
         settings_card = next(card for card in window.findChildren(Card) if card.title() == "闹钟设置")
         assert settings_card.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed

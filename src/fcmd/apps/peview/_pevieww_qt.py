@@ -19,17 +19,14 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
-    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
-    QMessageBox,
     QPlainTextEdit,
     QScrollArea,
     QTabWidget,
-    QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -58,7 +55,10 @@ from fcmd.gui.widgets import (
     button,
     hint_label,
     make_splitter,
+    make_tree,
+    messages,
     mono_font,
+    pick_file,
     splitter_sizes,
     tab_widget,
 )
@@ -154,16 +154,16 @@ class _EditDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
                 if parsed != self._original[name]:
                     edits[name] = parsed
         except PEError as exc:
-            QMessageBox.critical(self, "字段值无效", str(exc))
+            messages.error(self, "字段值无效", str(exc))
             return
         if not edits:
-            QMessageBox.information(self, "没有修改", "所有字段都与当前值相同。")
+            messages.info(self, "没有修改", "所有字段都与当前值相同。")
             return
         if apply and not self._confirm.isChecked():
-            QMessageBox.warning(self, "需要确认", "请先勾选「我已确认风险：写入前自动备份」。")
+            messages.warn(self, "需要确认", "请先勾选「我已确认风险：写入前自动备份」。")
             return
         if apply and self._pe.signature.present and not self._signature.isChecked():
-            QMessageBox.warning(self, "需要确认", "文件带 Authenticode 签名，请勾选「我已知晓签名将失效」。")
+            messages.warn(self, "需要确认", "文件带 Authenticode 签名，请勾选「我已知晓签名将失效」。")
             return
         try:
             result = _edit.apply_edits(
@@ -173,18 +173,18 @@ class _EditDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
                 allow_signature_break=True if not apply else self._signature.isChecked(),
             )
         except PEError as exc:
-            QMessageBox.critical(self, "编辑失败", str(exc))
+            messages.error(self, "编辑失败", str(exc))
             return
         lines = [f"{change.name}: 0x{change.old:X} → 0x{change.new:X}" for change in result.changes]
         if apply:
             lines.append(f"备份: {result.backup}")
             lines.append("写入后已重新解析校验通过。")
-            QMessageBox.information(self, "写入完成", "\n".join(lines))
+            messages.info(self, "写入完成", "\n".join(lines))
             self.accept()
             self._window.reload_current()
         else:
             lines.append("预演完成：未修改文件。")
-            QMessageBox.information(self, "预演结果", "\n".join(lines))
+            messages.info(self, "预演结果", "\n".join(lines))
 
 
 class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
@@ -235,9 +235,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.add(toolbar)
 
         self._splitter = make_splitter(Qt.Orientation.Horizontal, parent=self)
-        self._tree = QTreeWidget(self._splitter)
-        self._tree.setHeaderHidden(True)
-        self._tree.setUniformRowHeights(True)
+        self._tree = make_tree((), parent=self._splitter)
         self._tree.setMinimumWidth(240)
         self._tree.itemSelectionChanged.connect(self._on_select)
         self._splitter.addWidget(self._tree)
@@ -313,7 +311,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 加载与展示
     # ------------------------------------------------------------------ #
     def _choose_file(self) -> None:
-        chosen, _ = QFileDialog.getOpenFileName(
+        chosen = pick_file(
             self,
             "选择 PE 文件",
             dialog_start(self._settings.last_open_dir),
@@ -335,7 +333,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _open_editor(self) -> None:
         if self._pe is None or self._current_file is None:
-            QMessageBox.information(self, "尚未打开文件", "请先打开一个 PE 文件再编辑。")
+            messages.info(self, "尚未打开文件", "请先打开一个 PE 文件再编辑。")
             return
         _EditDialog(self, self._pe, self._current_file).exec()
 
@@ -344,7 +342,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         try:
             pe = load_pe(path)
         except PEError as exc:
-            QMessageBox.critical(self, "无法打开 PE 文件", str(exc))
+            messages.error(self, "无法打开 PE 文件", str(exc))
             self.set_status(f"打开失败：{exc}")
             return
         self._pe = pe
@@ -412,10 +410,10 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         try:
             offset = int(text, 16) if text.lower().startswith("0x") else int(text, 10)
         except ValueError:
-            QMessageBox.critical(self, "偏移无效", f"请输入十进制或 0x 开头的十六进制偏移：{text}")
+            messages.error(self, "偏移无效", f"请输入十进制或 0x 开头的十六进制偏移：{text}")
             return
         if offset < 0 or offset >= self._pe.size:
-            QMessageBox.critical(
+            messages.error(
                 "偏移超出范围",
                 f"偏移 0x{offset:X} 不在 0 - 0x{self._pe.size:X} 之间",
             )

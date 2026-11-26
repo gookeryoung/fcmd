@@ -18,10 +18,8 @@ from typing import Any
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QHBoxLayout,
     QLineEdit,
-    QMessageBox,
     QSpinBox,
 )
 
@@ -29,7 +27,18 @@ from fcmd import __version__
 from fcmd.gui.app import run_window
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, ElidedLabel, FormGrid, ProgressRow, button, hint_label
+from fcmd.gui.widgets import (
+    Card,
+    ElidedLabel,
+    FormGrid,
+    ProgressRow,
+    button,
+    hint_label,
+    messages,
+    pick_dir,
+    pick_file,
+    save_file,
+)
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.pdf.img2pdf import collect_pdf_images, images_to_pdf, resolve_pdf_output
 from fcmd.tools.pdf.img2pdfw import (
@@ -201,12 +210,12 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 选择路径
     # ------------------------------------------------------------------ #
     def _browse_input_file(self) -> None:
-        filename, _ = QFileDialog.getOpenFileName(self, "选择输入图片", self._input.text(), _IMAGE_FILTER)
+        filename = pick_file(self, "选择输入图片", self._input.text(), _IMAGE_FILTER)
         if filename:
             self._input.setText(filename)
 
     def _browse_input_dir(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "选择输入目录", self._input.text())
+        directory = pick_dir(self, "选择输入目录", self._input.text())
         if directory:
             self._input.setText(directory)
 
@@ -217,7 +226,7 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         suggested = (
             default_output_path(input_path) if input_path is not None and input_path.exists() else Path("output.pdf")
         )
-        filename, _ = QFileDialog.getSaveFileName(
+        filename = save_file(
             self,
             "选择输出 PDF",
             str(suggested) if suggested.parent.exists() else suggested.name,
@@ -313,12 +322,12 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.log(f"完成：{total} 页 -> {output}")
             self.set_status(f"完成：{total} 页")
             self._finish()
-            QMessageBox.information(self, "转换完成", f"已生成 PDF：\n{output}")
+            messages.info(self, "转换完成", f"已生成 PDF：\n{output}")
         elif kind == "error":
             self.log(f"错误：{event[1]}")
             self.set_status("转换失败")
             self._finish()
-            QMessageBox.critical(self, "转换失败", event[1])
+            messages.error(self, "转换失败", event[1])
 
     def _finish(self) -> None:
         """任务结束：恢复控件并释放信号桥。"""

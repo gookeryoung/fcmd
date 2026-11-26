@@ -16,17 +16,26 @@ from typing import Any
 
 from PySide6.QtWidgets import (
     QComboBox,
-    QFileDialog,
     QHBoxLayout,
     QLineEdit,
-    QMessageBox,
 )
 
 from fcmd import __version__
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
 from fcmd.gui.uistate import dialog_remember, dialog_start
-from fcmd.gui.widgets import Card, ElidedLabel, FormGrid, ProgressRow, button, hint_label
+from fcmd.gui.widgets import (
+    Card,
+    ElidedLabel,
+    FormGrid,
+    ProgressRow,
+    button,
+    hint_label,
+    messages,
+    pick_dir,
+    pick_file,
+    save_file,
+)
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.media.img2icow import (
     QUALITY_CHOICES,
@@ -197,13 +206,13 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # ------------------------------------------------------------------ #
     def _browse_input_file(self) -> None:
         start = dialog_start(self._last_open_dir) or self._input.text()
-        filename, _ = QFileDialog.getOpenFileName(self, "选择输入图像", start, _IMAGE_FILTER)
+        filename = pick_file(self, "选择输入图像", start, _IMAGE_FILTER)
         if filename:
             self._last_open_dir = dialog_remember(filename)
             self._input.setText(filename)
 
     def _browse_input_dir(self) -> None:
-        directory = QFileDialog.getExistingDirectory(
+        directory = pick_dir(
             self,
             "选择输入目录",
             dialog_start(self._last_open_dir) or self._input.text(),
@@ -217,7 +226,7 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         raw_input = self._input.text().strip()
         input_path = Path(raw_input).expanduser() if raw_input else None
         if input_path is not None and input_path.is_dir():
-            directory = QFileDialog.getExistingDirectory(
+            directory = pick_dir(
                 self,
                 "选择输出目录",
                 dialog_start(self._last_save_dir) or self._output.text(),
@@ -231,7 +240,7 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             str(input_path.parent) if input_path is not None and input_path.parent.exists() else ""
         )
         initial_file = f"{input_path.stem}.ico" if input_path is not None else "icon.ico"
-        filename, _ = QFileDialog.getSaveFileName(
+        filename = save_file(
             self,
             "选择输出图标",
             str(Path(initial_dir) / initial_file) if initial_dir else initial_file,
@@ -313,12 +322,12 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.log(f"完成：{len(outputs)} 个图标，{len(used_sizes)} 种尺寸")
             self.set_status(f"完成：{len(outputs)} 个图标")
             self._finish()
-            QMessageBox.information(self, "转换完成", f"已生成 {len(outputs)} 个图标文件。")
+            messages.info(self, "转换完成", f"已生成 {len(outputs)} 个图标文件。")
         elif kind == "error":
             self.log(f"错误：{event[1]}")
             self.set_status("转换失败")
             self._finish()
-            QMessageBox.critical(self, "转换失败", event[1])
+            messages.error(self, "转换失败", event[1])
 
     def _finish(self) -> None:
         """任务结束：恢复控件并释放信号桥。"""

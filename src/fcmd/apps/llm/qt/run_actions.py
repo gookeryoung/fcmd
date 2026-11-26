@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.llm._llmw_qt_run as _owner
+from fcmd.gui.widgets import messages
 
 from .run_compat import (
     Any,
@@ -368,7 +369,7 @@ class RunActionsMixin:
         self.status(f"已带入推荐配置：{recommendation.model.path.name} · {recommendation.config_text}")
 
     def _error(self, title: str, message: str) -> None:
-        _owner.QMessageBox.critical(self, title, message)
+        messages.error(self, title, message)
 
     def update_service_and_fit(self) -> None:
         """外部（启动 / 停止 / 显存采样）变化后刷新按钮状态。"""

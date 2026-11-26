@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -44,6 +43,7 @@ from fcmd.gui.widgets import (
     ResponsiveLabel,
     button,
     fit_flow_widths,
+    messages,
 )
 from fcmd.tools.system.alarmclock import (
     BLINK_BG_COLORS,
@@ -122,7 +122,9 @@ class _ReminderDialog(QDialog):  # pragma: no cover - 模态提醒窗口
 
     def _apply_color(self) -> None:
         """只闪烁主题强调色边框与标题，背景保持主界面卡片风格。"""
-        self.hero.setStyleSheet(f"QFrame#AlarmReminderHero {{ border-color: {self._color}; }}")
+        self.hero.setProperty("tone", "warning" if self._color == self._accents[1] else "danger")
+        self.hero.style().unpolish(self.hero)
+        self.hero.style().polish(self.hero)
         self.label.setProperty("tone", "warning" if self._color == self._accents[1] else "danger")
         self.label.style().unpolish(self.label)
         self.label.style().polish(self.label)
@@ -374,7 +376,7 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         try:
             clock = parse_clock(self.time_edit.text())
         except ValueError as exc:
-            QMessageBox.critical(self, "时间无效", str(exc))
+            messages.error(self, "时间无效", str(exc))
             return
         self._state.repeat = self.repeat.isChecked()
         target = self._state.arm(clock, datetime.now())

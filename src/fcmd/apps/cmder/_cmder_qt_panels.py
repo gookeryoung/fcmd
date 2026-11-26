@@ -41,7 +41,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd._compat import override
 from fcmd.apps.cmder import app as core
 from fcmd.apps.cmder._ops import (
     COLUMN_SORT,
@@ -59,7 +58,7 @@ from fcmd.apps.cmder._ops import (
 )
 from fcmd.apps.cmder._tabs import tab_bar_label
 from fcmd.apps.cmder._volumes import enumerate_volumes
-from fcmd.gui.widgets import button, hint_label, mono_font
+from fcmd.gui.widgets import ImagePreviewLabel, button, hint_label, mono_font
 from fcmd.gui.workers import submit
 
 if TYPE_CHECKING:
@@ -89,8 +88,7 @@ class QuickView(QWidget):
         self.stack.addWidget(self.text)
         self.image_scroll = QScrollArea(self)
         self.image_scroll.setWidgetResizable(True)
-        self.image = QLabel(self.image_scroll)
-        self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image = ImagePreviewLabel(self.image_scroll)
         self.image_scroll.setWidget(self.image)
         self.stack.addWidget(self.image_scroll)
         self.note = QLabel("", self)
@@ -98,15 +96,13 @@ class QuickView(QWidget):
         self.note.setObjectName("Hint")
         self.stack.addWidget(self.note)
         layout.addWidget(self.stack, 1)
-        self._pixmap: QPixmap | None = None
 
     def clear(self) -> None:
         """清空并显示占位提示。"""
         self.title.setText("快速查看（Ctrl+Q）")
         self.text.clear()
-        self.image.clear()
+        self.image.clear_source()
         self.note.setText("")
-        self._pixmap = None
         self.stack.setCurrentWidget(self.note)
 
     def show_note(self, title: str, message: str) -> None:
@@ -128,29 +124,8 @@ class QuickView(QWidget):
             self.show_note(title, "图片解码失败")
             return
         self.title.setText(title)
-        self._pixmap = pixmap
-        self._apply_pixmap()
+        self.image.set_source(pixmap)
         self.stack.setCurrentWidget(self.image_scroll)
-
-    def _apply_pixmap(self) -> None:
-        if self._pixmap is None:
-            return
-        available = self.image_scroll.viewport().size()
-        if available.width() > 4 and available.height() > 4:
-            scaled = self._pixmap.scaled(
-                available,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        else:
-            scaled = self._pixmap
-        self.image.setPixmap(scaled)
-
-    @override
-    def resizeEvent(self, event: Any) -> None:
-        super().resizeEvent(event)
-        if self.stack.currentWidget() is self.image_scroll:
-            self._apply_pixmap()
 
 
 class FilePanelWidget(QWidget):

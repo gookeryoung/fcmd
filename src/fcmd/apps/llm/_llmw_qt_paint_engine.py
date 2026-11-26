@@ -14,11 +14,21 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QComboBox, QDialog, QFileDialog, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QVBoxLayout, QWidget
 
 from fcmd.apps.llm import _llmpaint_engine, llmengine
 from fcmd.apps.llm.llmbase import human_size
-from fcmd.gui.widgets import Card, HintLabel, LoadingBar, ProgressRow, button, fit_dialog_to_content, hint_label
+from fcmd.gui.widgets import (
+    Card,
+    HintLabel,
+    LoadingBar,
+    ProgressRow,
+    button,
+    fit_dialog_to_content,
+    hint_label,
+    pick_dir,
+    pick_files,
+)
 from fcmd.gui.workers import ProgressBridge, submit_daemon
 from fcmd.infras.download import SpeedMeter, format_eta, format_speed
 
@@ -294,7 +304,7 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
     def _install_local(self) -> None:
         if self._installing:
             return
-        chosen, _filter = QFileDialog.getOpenFileNames(
+        chosen = pick_files(
             self,
             "选择 sd.cpp 引擎包（可同时选引擎 + cudart）",
             "",
@@ -310,7 +320,7 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
     def _install_directory(self) -> None:
         if self._installing:
             return
-        chosen = QFileDialog.getExistingDirectory(self, "选择 sd.cpp 引擎目录")
+        chosen = pick_dir(self, "选择 sd.cpp 引擎目录")
         if not chosen:
             return
         self._set_status(f"正在注册引擎目录 {Path(chosen).name}…")

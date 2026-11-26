@@ -19,17 +19,15 @@ from typing import Any
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QHBoxLayout,
     QLineEdit,
-    QMessageBox,
     QWidget,
 )
 
 from fcmd import __version__
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, FormGrid, PathField, button, hint_label
+from fcmd.gui.widgets import Card, FormGrid, PathField, button, hint_label, messages, pick_file, save_file
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.office.docdiff import (
     COMPARE_MODES,
@@ -82,14 +80,14 @@ class _FileRow(PathField):  # pragma: no cover - Qt 控件
         """浏览：保存模式选目标文件，其余选已有文档。"""
         if self._save:
             title = self._title_provider() if self._title_provider is not None else DEFAULT_TITLE
-            filename, _ = QFileDialog.getSaveFileName(
+            filename = save_file(
                 self,
                 "选择对比结果",
                 output_filename(title),
                 "Word 文档 (*.docx);;所有文件 (*.*)",
             )
         else:
-            filename, _ = QFileDialog.getOpenFileName(self, "选择文档", self.value(), _WORD_FILTER)
+            filename = pick_file(self, "选择文档", self.value(), _WORD_FILTER)
         if filename:
             self.edit.setText(filename)
 
@@ -286,12 +284,12 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.log(f"对比完成：{target}")
             self.set_status("对比完成")
             self._finish()
-            QMessageBox.information(self, "对比完成", f"已生成对比文档：\n{target}")
+            messages.info(self, "对比完成", f"已生成对比文档：\n{target}")
         elif kind == "error":
             self.log(f"错误：{event[1]}")
             self.set_status("对比失败")
             self._finish()
-            QMessageBox.critical(self, "对比失败", event[1])
+            messages.error(self, "对比失败", event[1])
 
     def _finish(self) -> None:
         """任务结束：恢复控件并释放信号桥。"""

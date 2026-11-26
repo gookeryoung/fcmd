@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.llm._llmw_qt_center as _owner
+from fcmd.gui.widgets import messages, pick_files
 
 from ._compat import (
     ModelSummary,
@@ -132,7 +133,7 @@ class ModelsBrowseMixin:
         except _owner.ModelToolError as exc:
             self._log(f"删除模型失败 {repo}: {exc}")
             self.status(f"删除失败：{exc}")
-            _owner.QMessageBox.critical(self, "删除失败", str(exc))
+            messages.error(self, "删除失败", str(exc))
             return
         key = repo.casefold()
         for mapping in (
@@ -219,7 +220,7 @@ class ModelsBrowseMixin:
         menu.exec(_owner.QCursor.pos())
 
     def _pick_gguf_files(self) -> None:
-        paths, _selected = _owner.QFileDialog.getOpenFileNames(
+        paths = pick_files(
             self,
             "导入 GGUF 模型",
             "",

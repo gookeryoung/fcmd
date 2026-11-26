@@ -43,14 +43,14 @@
 | [0035](0035-cmder-filesync-compare-unify.md) | 目录比较 / 同步引擎统一：cmderw 与 filesync 共用 filesync `_core`，分 P0–P3 独立实施 | 设计中（独立阶段，未实施） |
 | [0036](0036-python310-pyside2.md) | Python 3.10 支持与 PySide2 兼容：按版本选择 Qt 绑定、运行时兼容层与 CI/tox 矩阵 | 已落地 |
 | [0037](0037-unified-result-envelope.md) | 统一结果信封（`--json`）：框架用法错误机读化、MCP 白名单对齐、只读工具分期接入 | P0 / P1 已落地（P2 / P3 待办） |
-| [0038](0038-shared-qt-widget-boundaries.md) | Qt 共享控件的抽象边界：可展开行卡骨架 `ItemRow`、不做 TaskDialog，ChoiceCard / StatusTag / LogDialog / ProgressRow 的适用范围 | 生效（边界已确定） |
+| [0038](0038-shared-qt-widget-boundaries.md) | Qt 共享控件的抽象边界：可展开行卡骨架 `ItemRow`、不做 TaskDialog，ChoiceCard / StatusTag / LogDialog / ProgressRow / messages / pickers / DialogShell / EmptyState / make_tree / zoom 的适用范围 | 生效（边界已确定） |
 | [0040](0040-llmw-paint-in-chat.md) | llmw 画图并入对话：取消独立画图页，对话页「画图」开关 + 画图配置合并进对话配置窗口，画图引擎安装 / 状态移到运行页 | 已落地 |
 | [0041](0041-cli-progress-output.md) | CLI 执行过程输出用户化：内部任务名不外泄、命令回显改 `$ …`、单行步骤结果 + 一行收尾，移除任务汇总表 | 已落地 |
 | [0042](0042-shared-gui-shell-and-theme.md) | 通用 GUI 组件与主题整合：窗口外壳 mixin、页面基类 `AppPage` / `PageSpec`、主题 `Metrics` 与按窗口覆盖 | 已落地 |
 | [0043](0043-llmw-multi-model-dirs.md) | llmw 多模型目录：`models_dirs` 列表 + 首个主目录，设置页参考 Steam 并排展示盘符 / 文件系统 / 剩余空间的磁盘卡片 | 已落地 |
 | [0044](0044-llmw-workflow.md) | llmw 工作流：类型化节点 + DAG 执行 + 模板化工作流页（C1 / C2 落地，C3 画布 / C4 ComfyUI 导入待办） | C1 / C2 已落地 |
 | [0045](0045-fx-tool-execution-primitives.md) | `fx.tool` 执行原语：前置断言 `preconditions`、有序步骤 `steps`、显式聚合 `aggregate`；`gittool` 的 `a` / `i` 改为步骤声明，内部开关不再泄漏到 CLI | 已落地 |
-| [0046](0046-large-qt-app-split.md) | 大型 Qt 应用拆分：wslman / llmw 页面化与窗口瘦身；`apps/<app>/qt/` 布局例外、状态归属、P0–P5 分期与行数守卫 | 已落地（wslman + llmw 模型/运行页拆分；chat/paint 按触达再迁） |
+| [0046](0046-large-qt-app-split.md) | 大型 Qt 应用拆分：wslman / llmw / cmder / pptmake / filescan 的页面化与窗口瘦身；`apps/<app>/qt/` 布局例外、状态归属、P0–P6 分期与行数守卫 | 已落地（wslman + llmw 页面拆分、cmder 对话框包、pptmake 绘制层、filescan 对话框包已拆出；chat/paint 按触达再迁） |
 | [0047](0047-confirm-gate-and-filetime.md) | 破坏性写操作的确认闸门（`requires_confirmation` + `--confirm`）与 `filetime` 工具（mtime/atime 读/写）；schema 增加 `json` / `requires_confirmation` 标记 | 已落地 |
 | [0048](0048-config-format-convert.md) | 配置格式跨转换：`tomltool convert`（TOML → JSON/YAML）与 `yamtool convert`（YAML → JSON/TOML），自实现 `to_toml` 写方向序列化 | 已落地 |
 | [0049](0049-small-readonly-gaps.md) | 小型只读能力补齐：`env --vars [--prefix]`、`pathtool join` / `kind`、`completion powershell`、`txttool count` 字节数、`stattool percentile` | 已落地 |

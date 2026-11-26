@@ -16,7 +16,6 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -31,6 +30,7 @@ from fcmd.gui import icons as _icons
 from fcmd.gui.widgets.buttons import ButtonStateMixin, button, confirm
 from fcmd.gui.widgets.cards import Card
 from fcmd.gui.widgets.metrics import ProgressBar
+from fcmd.gui.widgets.pickers import pick_dir
 from fcmd.gui.widgets.text import ElidedLabel, StatusTag, hint_label
 from fcmd.shared.formatting import format_bytes
 
@@ -428,7 +428,7 @@ class StoragePairCard(Card):  # pragma: no cover - Qt 控件
 
     def _change(self, index: int) -> None:
         start = self._sides[index] or str(Path.home())
-        chosen = QFileDialog.getExistingDirectory(self, self._dialog_title, start)
+        chosen = pick_dir(self, self._dialog_title, start)
         if not chosen:
             return
         self._sides[index] = chosen
@@ -673,7 +673,7 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
         if index < 0:
             self.message.emit(f"目录不在列表中：{path}")
             return
-        chosen = QFileDialog.getExistingDirectory(self, self._dialog_title, str(roots[index]))
+        chosen = pick_dir(self, self._dialog_title, str(roots[index]))
         if not chosen:
             return
         new_path = Path(chosen).expanduser()
@@ -685,7 +685,7 @@ class StorageCard(Card):  # pragma: no cover - Qt 控件
         self._notify(f"已更改目录：{chosen}")
 
     def _add(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, self._dialog_title, str(Path.home()))
+        chosen = pick_dir(self, self._dialog_title, str(Path.home()))
         if not chosen:
             return
         if not self._roots.add(chosen):

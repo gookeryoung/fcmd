@@ -31,7 +31,12 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D11 | 侧边栏条目列表统一用 `SidebarList`（`SidebarEntry` + 自绘 delegate）：圆角选中底、标题省略、可选副标题 / 右侧摘要 / 分组标题；不再为每个窗口单写 QListWidget QSS | `gui/widgets/sidebar_list.py`、llmw 对话历史 |
 | D12 | 分页窗口不再在页标题下渲染 `PageSpec.hint`（提示保留在侧边栏 tooltip）；`SidebarList` 支持 `highlight_background=False`，只保留文字强调、不画整行底色；`SidebarActionButton` 与列表条目同宽同圆角，底色更实、边框更深 | `gui/window.py`、`gui/widgets/sidebar_list.py`、llmw 对话历史 / 新对话 |
 | D8 | 底部状态栏统一用 `WindowStatusBar`：单行高度（文字与页内补充都是 `ElidedLabel`，加载条用 `compact`），文字 / 页内补充按分页隔离，任务消息写回「发起任务的那一页」 | `gui/statusbar.py`、`QtMainWindow`、wslmanw |
-
+| D13 | 消息提示统一走 `gui/widgets/messages.py` 的 `error` / `warn` / `info` / `confirm` / `ask`：内部仍调 `QMessageBox` 静态方法（测试的类级 monkeypatch 继续生效），业务侧不再直接写 `QMessageBox.critical/warning/information` | `gui/widgets/messages.py`、各 `*w` 窗口与 `qt/` 对话框 |
+| D14 | 文件 / 目录选择统一走 `gui/widgets/pickers.py` 的 `pick_file` / `pick_files` / `pick_dir` / `save_file`：取消一律返回空串或空列表，过滤器缺「所有文件」时自动补兜底；`PathInputMixin` 内部同样改走这里 | `gui/widgets/pickers.py`、`forms.py`、各窗口 |
+| D15 | 对话框骨架用 `gui/widgets/dialogs.py`：`DialogShell`（边距 / 内容容器 / `add_hint` / `finish`）与 `FormDialog`（内置 `FormGrid`）；只做**布局与按钮接线**，校验与任务执行仍留在子类，D2「不做通用 `TaskDialog`」的边界不变 | `gui/widgets/dialogs.py`、wslman `qt/`、cmder `qt/` 对话框 |
+| D16 | 列表 / 表格空态用 `EmptyState`（标题 + 说明 + 可选动作按钮），不再为每个列表私有 `_XxxEmptyRow`；`RowListWidget` 与 `make_table` 之外的空态一律用它 | `gui/widgets/empty.py`、filescanw 任务列表 |
+| D17 | 树控件统一走 `make_tree` / `make_tree_item`（只读、整行选中、交替行色、`uniformRowHeights`）；需要表头时传 `headers`，纯目录 / 目录树传空元组隐藏表头 | `gui/widgets/tables.py`、`gui/help.py`、peview、cmder 目录树 |
+| D18 | 图像缩放的倍率计算统一用 `gui/widgets/zoom.py` 的 `clamp_zoom` / `zoom_in` / `zoom_out` / `fit_zoom`；「按窗口适配、不放大」的只读预览直接用 `ImagePreviewLabel`，需要滚轮缩放 / 拖动定位的画布仍各自实现，只复用纯函数。reshack 的自有口径（0.1–16）保留，不强行合并 | `gui/widgets/zoom.py`、cmder 快速查看、reshack |
 ### D9 为什么占位文字用应用级过滤器
 
 `QPlainTextEdit` 在输入法组合串（preedit）显示时仍会画占位文字：preedit 不在文档里，

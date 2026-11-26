@@ -19,12 +19,10 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QWidget,
 )
 
@@ -32,7 +30,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, PathField, ProgressBar, button, confirm
+from fcmd.gui.widgets import Card, PathField, ProgressBar, button, confirm, messages, pick_dir, pick_files
 from fcmd.gui.workers import EventBridge, submit
 from fcmd.tools.media.ncmconvertw import (
     MIN_HEIGHT,
@@ -78,7 +76,7 @@ class _OutputRow(PathField):  # pragma: no cover - Qt 控件
 
     def _pick(self) -> None:
         """选择输出目录并写回输入框。"""
-        directory = QFileDialog.getExistingDirectory(self, "选择输出目录", self.value())
+        directory = pick_dir(self, "选择输出目录", self.value())
         if directory:
             self.edit.setText(directory)
 
@@ -217,7 +215,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
     # ------------------------------------------------------------------ #
     def _add_files(self) -> None:
         """选择一个或多个 NCM 文件加入列表。"""
-        filenames, _ = QFileDialog.getOpenFileNames(
+        filenames = pick_files(
             self,
             "选择 NCM 文件",
             self._last_dir,
@@ -230,7 +228,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _import_dir(self) -> None:
         """导入目录下（不递归）的全部 NCM 文件。"""
-        directory = QFileDialog.getExistingDirectory(self, "选择包含 NCM 文件的目录", self._last_dir)
+        directory = pick_dir(self, "选择包含 NCM 文件的目录", self._last_dir)
         if not directory:
             return
         self._last_dir = directory
@@ -238,7 +236,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             found = collect_ncm_files(Path(directory).expanduser())
         except NcmError as exc:
             self.log(f"错误：{exc}")
-            QMessageBox.critical(self, "导入失败", str(exc))
+            messages.error(self, "导入失败", str(exc))
             return
         if not found:
             self.log(f"目录中没有 .ncm 文件：{directory}")
@@ -316,16 +314,16 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         if self._running:
             return
         if not self._files:
-            QMessageBox.warning(self, "提醒", "没有输入的文件")
+            messages.warn(self, "提醒", "没有输入的文件")
             return
         raw_output = self._output_row.value()
         output_dir = Path(raw_output).expanduser() if raw_output else None
         if output_dir is not None:
             if not output_dir.exists():
-                QMessageBox.critical(self, "错误", "输出目录不存在")
+                messages.error(self, "错误", "输出目录不存在")
                 return
             if not output_dir.is_dir():
-                QMessageBox.critical(self, "错误", "不是目录")
+                messages.error(self, "错误", "不是目录")
                 return
 
         self._cancel = threading.Event()
@@ -386,11 +384,11 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         if failed:
             self.set_status(f"完成：成功 {succeeded}，失败 {failed}")
             self.log(f"转换结束：成功 {succeeded}，失败 {failed}，共 {total} 个")
-            QMessageBox.warning(self, "完成", f"解锁已完成，但 {failed} 个文件失败，详见日志。")
+            messages.warn(self, "完成", f"解锁已完成，但 {failed} 个文件失败，详见日志。")
         else:
             self.set_status("✓ 全部完成")
             self.log(f"转换结束：全部成功，共 {succeeded} 个")
-            QMessageBox.information(self, "完成", "解锁已完成")
+            messages.info(self, "完成", "解锁已完成")
 
     def _finish_busy(self) -> None:
         """恢复控件并释放信号桥。"""

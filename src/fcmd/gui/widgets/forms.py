@@ -6,7 +6,6 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -15,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui.widgets.buttons import button
+from fcmd.gui.widgets.pickers import pick_dir, pick_file
 from fcmd.gui.widgets.text import ElidedLabel
 
 __all__ = ["FormGrid", "PathField", "PathInputMixin", "PathRow"]
@@ -33,10 +33,14 @@ class FormGrid(QWidget):  # pragma: no cover - Qt 控件
         self.grid.setColumnStretch(3, 1)
         self._row = 0
 
-    def add_row(self, label: str, widget: QWidget) -> None:
-        """整行：标签在 0 列，控件跨 1–3 列。"""
+    def add_row(self, label: str, widget: QWidget, action: QWidget | None = None) -> None:
+        """整行：标签在 0 列，控件跨 1–3 列；``action`` 放在第 4 列（如「选择…」）。"""
         self.grid.addWidget(QLabel(label), self._row, 0, Qt.AlignmentFlag.AlignRight)
-        self.grid.addWidget(widget, self._row, 1, 1, 3)
+        if action is None:
+            self.grid.addWidget(widget, self._row, 1, 1, 3)
+        else:
+            self.grid.addWidget(widget, self._row, 1)
+            self.grid.addWidget(action, self._row, 2)
         self._row += 1
 
     def add_pair(
@@ -85,9 +89,9 @@ class PathInputMixin:
     def _choose_path(self) -> str:  # pragma: no cover - 需要真实对话框
         """按目录 / 文件模式弹出选择框；取消时返回空串。"""
         if self._directory:
-            return QFileDialog.getExistingDirectory(self, self._title, self.value())
+            return pick_dir(self, self._title, self.value())
         filters = f"{self._pattern};;所有文件 (*.*)" if self._pattern else "所有文件 (*.*)"
-        chosen, _ = QFileDialog.getOpenFileName(self, self._title, self.value(), filters)
+        chosen = pick_file(self, self._title, self.value(), filters)
         return chosen
 
 

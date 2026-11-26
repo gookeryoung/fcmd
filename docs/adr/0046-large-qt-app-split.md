@@ -1,6 +1,6 @@
 # 0046 大型 Qt 应用拆分：wslman / llmw 的页面化与窗口瘦身（立项）
 
-- 状态：P0–P5 已落地（wslman Qt 拆分 + llmw 模型页/运行页拆分；chat/paint 按触达再迁）
+- 状态：P0–P6 已落地（wslman / llmw 页面化，cmder 对话框包、pptmake 绘制层、filescan 对话框包已拆出；chat/paint 按触达再迁）
 - 日期：2026-11-26
 - 关联：[0003](0003-package-layout.md)（布局不变量）、[0034](0034-qt-full-gui-migration.md)（Qt 迁移）、
   [0038](0038-shared-qt-widget-boundaries.md)（共享控件边界）、[0042](0042-shared-gui-shell-and-theme.md)（窗口外壳 / 页面基类）
@@ -154,6 +154,14 @@ MAX_DIR_LEVELS = {"apps": 3, "default": 2}
   签名仍由运行时测试覆盖。
 - P5：`_wslmanw_qt.py`、`_llmw_qt_center.py`、`_llmw_qt_run.py` 均已移出行数白名单；
   `gui/style.py` / `infras/media.py` 等过期白名单项已清理；chat/paint 页面按 D5 在触达时再迁。
+- P6：`apps/cmder/_cmder_qt_dialogs.py`（1.8k 行、15 个对话框）按功能拆到
+  `apps/cmder/qt/{rename,search,attrs,queue,diff,sync,commands,openers}.py` + `qt/_common.py`；
+  统一从 `apps/cmder/qt/__init__.py` import，`_cmder_qt.py` 只 import 包入口；白名单删除该项。
+- P6：`apps/pptmake/_pptmakew_qt.py` 的画布绘制助手（`_brush` / `_pen` / `_paint_*` /
+  `draw_overflow_badge` / `paint_message` / `paint_slide` 等）拆到 `apps/pptmake/qt/paint.py`，
+  主模块 2.6k → 2.1k 行；`paint_slide` / `picture_file` 成为可单独测试的公开入口。
+- P6：`apps/filescan/_filescanw_qt.py` 的三个模态对话框（白名单类型 / 规则 / 组合式）与
+  多行输入辅助拆到 `apps/filescan/qt/{dialogs,_common}.py`，主模块 3.2k → 2.4k 行。
 
 ## 交接
 

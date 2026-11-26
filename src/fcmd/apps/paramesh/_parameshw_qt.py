@@ -18,7 +18,6 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPaintEvent, QPen, QWheelEvent
 from PySide6.QtWidgets import (
     QComboBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -57,6 +56,9 @@ from fcmd.gui.widgets import (
     apply_splitter_sizes,
     button,
     make_splitter,
+    messages,
+    pick_dir,
+    pick_file,
     splitter_sizes,
 )
 
@@ -229,7 +231,7 @@ class ParameshWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 数据
     # ------------------------------------------------------------------ #
     def _choose_model(self) -> None:
-        selected, _ = QFileDialog.getOpenFileName(
+        selected = pick_file(
             self,
             "选择 dynacalc 模型文件",
             "",
@@ -239,7 +241,7 @@ class ParameshWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._load_path(Path(selected))
 
     def _choose_config(self) -> None:
-        selected, _ = QFileDialog.getOpenFileName(
+        selected = pick_file(
             self,
             "选择 paramesh 网格配置",
             "",
@@ -432,7 +434,7 @@ class ParameshWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         if self._model is None:
             self._show_error("请先载入模型或示例")
             return
-        selected = QFileDialog.getExistingDirectory(self, "选择网格包输出目录")
+        selected = pick_dir(self, "选择网格包输出目录")
         if not selected:
             return
         target = Path(selected)
@@ -456,13 +458,13 @@ class ParameshWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._show_error(str(exc))
             return
         self.set_status(f"已导出 {len(paths)} 档网格到 {target}")
-        QMessageBox.information(self, "导出完成", "已写入：\n" + "\n".join(str(path) for path in paths))
+        messages.info(self, "导出完成", "已写入：\n" + "\n".join(str(path) for path in paths))
 
     # ------------------------------------------------------------------ #
     # 其它
     # ------------------------------------------------------------------ #
     def _show_error(self, message: str) -> None:
-        QMessageBox.critical(self, "paramesh", message)
+        messages.error(self, "paramesh", message)
 
     def _persist(self, geometry: str) -> None:
         """关闭时写回 geometry、上次模型 / 配置、档位与分栏比例。"""

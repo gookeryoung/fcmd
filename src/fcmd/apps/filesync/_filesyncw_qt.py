@@ -23,13 +23,11 @@ from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
-    QMessageBox,
     QTableWidgetItem,
 )
 
@@ -80,6 +78,9 @@ from fcmd.gui.widgets import (
     button,
     confirm,
     make_table,
+    messages,
+    pick_file,
+    save_file,
 )
 from fcmd.gui.window import QtMainWindow
 from fcmd.gui.workers import EventBridge, submit
@@ -379,10 +380,10 @@ class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         left = Path(left_text).expanduser()
         right = Path(right_text).expanduser()
         if not left.is_dir() or not right.is_dir():
-            QMessageBox.critical(self, "路径无效", "请选择存在的左侧和右侧文件夹。")
+            messages.error(self, "路径无效", "请选择存在的左侧和右侧文件夹。")
             return None
         if left.resolve() == right.resolve():
-            QMessageBox.critical(self, "路径无效", "左右目录不能相同。")
+            messages.error(self, "路径无效", "左右目录不能相同。")
             return None
         return left, right, self._collect_options()
 
@@ -484,7 +485,7 @@ class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.set_page_status("results", "操作失败")
             self.set_page_status("compare", "操作失败")
             self._finish()
-            QMessageBox.critical(self, "操作失败", message)
+            messages.error(self, "操作失败", message)
 
     def _apply_result(self, result: CompareResult, plan: SyncPlan) -> None:
         """缓存比较结果与计划并刷新表格。"""
@@ -556,7 +557,7 @@ class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # ------------------------------------------------------------------ #
     def _load_profile(self) -> None:
         """从 JSON 文件载入左右目录与选项。"""
-        selected, _ = QFileDialog.getOpenFileName(
+        selected = pick_file(
             self,
             "载入配置",
             dialog_start(self._settings.last_open_dir),
@@ -567,7 +568,7 @@ class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._settings.last_open_dir = dialog_remember(selected)
         raw = _guiconfig.read_settings(Path(selected))
         if raw is None:
-            QMessageBox.critical(self, "载入配置", "配置文件无法解析。")
+            messages.error(self, "载入配置", "配置文件无法解析。")
             return
         loaded = settings_from_mapping(raw)
         self._pair_card.set_sides(loaded.left, loaded.right)
@@ -582,7 +583,7 @@ class FilesyncWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _save_profile(self) -> None:
         """把当前左右目录与选项保存到 JSON 文件。"""
         start = dialog_start(self._settings.last_save_dir)
-        selected, _ = QFileDialog.getSaveFileName(
+        selected = save_file(
             self,
             "保存配置",
             str(Path(start) / "filesync.json") if start else "filesync.json",

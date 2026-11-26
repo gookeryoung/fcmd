@@ -17,13 +17,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QSpinBox,
     QWidget,
 )
@@ -55,6 +53,10 @@ from fcmd.gui.widgets import (
     confirm,
     hint_label,
     link_button,
+    messages,
+    pick_dir,
+    pick_file,
+    pick_files,
 )
 
 if TYPE_CHECKING:
@@ -131,7 +133,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         try:
             _llmconfig.set_models_dirs(paths)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            messages.error(self, "保存失败", str(exc))
             self.storage_card.set_roots([location.path for location in _llmw_storage.locations()])
             return
         # 移除最后一个目录会回落默认目录：把卡片同步到当前生效列表，
@@ -310,21 +312,21 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         script = Path(script_text).expanduser() if script_text else None
         archs = llmconvert.supported_architectures(script, tag=self._convert_tag_text() or None)
         if not archs:
-            QMessageBox.information(
+            messages.info(
                 self,
                 "暂无法读取架构列表",
                 "尚未获取到 llama.cpp 源码，或当前转换脚本是未解压的 zip。\n",
                 "先执行一次转换让源码就绪，或在「转换脚本」中选择源码目录 / convert_hf_to_gguf.py。",
             )
             return
-        QMessageBox.information(
+        messages.info(
             self,
             "转换脚本支持的架构",
             f"当前脚本共注册 {len(archs)} 个架构：\n\n" + "、".join(archs),
         )
 
     def _pick_convert_script(self) -> None:
-        chosen, _ = QFileDialog.getOpenFileName(
+        chosen = pick_file(
             self,
             "选择转换脚本或 llama.cpp 源码包",
             "",
@@ -480,7 +482,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         try:
             resolved = settings_logic.apply_path(key, value or None)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "保存失败", str(exc))
+            messages.error(self, "保存失败", str(exc))
             return
         label = "模型目录" if key == "models_dir" else "引擎目录"
         self.state.log(f"已自动保存{label}: {resolved}")
@@ -499,7 +501,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         try:
             chosen = settings_logic.select_engine(tag)
         except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "切换失败", str(exc))
+            messages.error(self, "切换失败", str(exc))
             return
         self.state.log(f"默认引擎已切换为 {chosen.tag} · {chosen.exe}")
         self.status(f"默认引擎：{chosen.tag}")
@@ -531,9 +533,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
             return None
         tag = text.strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]+", tag):
-            QMessageBox.warning(
-                self, "标签不合法", "标签只能包含字母、数字、点、下划线和短横线，且不能包含路径分隔符。"
-            )
+            messages.warn(self, "标签不合法", "标签只能包含字母、数字、点、下划线和短横线，且不能包含路径分隔符。")
             return None
         return tag
 
@@ -542,7 +542,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         try:
             settings_logic.select_engine(info.tag)
         except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "切换失败", str(exc))
+            messages.error(self, "切换失败", str(exc))
             return
         self.state.log(f"{action}引擎 {info.tag} · {info.exe}")
         self._set_engine_hint(f"{action}引擎：{info.tag} · {info.exe}")
@@ -566,7 +566,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
 
     def _import_engine_dir(self) -> None:
         """选择已编译 llama.cpp 目录，复制到引擎目录并设为默认引擎。"""
-        chosen = QFileDialog.getExistingDirectory(self, "选择 llama.cpp 目录")
+        chosen = pick_dir(self, "选择 llama.cpp 目录")
         if not chosen:
             return
         source = Path(chosen)
@@ -576,13 +576,13 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         try:
             info, _actual = settings_logic.install_offline(tag, source, copy_directory=True)
         except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "导入失败", str(exc))
+            messages.error(self, "导入失败", str(exc))
             return
         self._after_engine_install(info, "已导入")
 
     def _import_engine_archive(self) -> None:
         """本地 zip：引擎包安装为引擎，源码包导入为转换源码（不安装成引擎）。"""
-        paths, _selected = QFileDialog.getOpenFileNames(
+        paths = pick_files(
             self,
             "选择 llama.cpp 压缩包",
             "",
@@ -596,12 +596,12 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
             for archive in archives:
                 inspections.extend(settings_logic.inspect_offline(archive))
         except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "导入失败", str(exc))
+            messages.error(self, "导入失败", str(exc))
             return
         sources = [item for item in inspections if item.kind == "source"]
         engines = [item for item in inspections if item.kind != "source"]
         if sources and engines:
-            QMessageBox.information(
+            messages.info(
                 self,
                 "请分开导入",
                 "选择中同时包含引擎包与 llama.cpp 源码包；请先导入引擎包，再单独导入源码包。",
@@ -617,14 +617,14 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         try:
             info = settings_logic.install_archives(tag, archives)
         except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "导入失败", str(exc))
+            messages.error(self, "导入失败", str(exc))
             return
         self._after_engine_install(info, "已导入")
 
     def _import_convert_source(self, sources: list[llmengine.ZipInspection]) -> None:
         """把源码 zip 复制到引擎根并设为转换源码；不产生引擎条目。"""
         if len(sources) > 1:
-            QMessageBox.information(self, "一次一个源码包", "一次只能导入一个 llama.cpp 源码包；请分开选择。")
+            messages.info(self, "一次一个源码包", "一次只能导入一个 llama.cpp 源码包；请分开选择。")
             return
         source = sources[0]
         if not confirm(
@@ -636,7 +636,7 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         try:
             dest = llmconvert.import_source_archive(source.path)
         except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "导入失败", str(exc))
+            messages.error(self, "导入失败", str(exc))
             return
         self.convert_script.setText(str(dest))
         self._save_convert()

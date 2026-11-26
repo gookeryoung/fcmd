@@ -32,6 +32,7 @@ from fcmd.gui.widgets import (
     button,
     fit_dialog_to_content,
     hint_label,
+    messages,
 )
 from fcmd.gui.workers import ProgressBridge, submit_daemon
 
@@ -87,7 +88,7 @@ def build_vllm_engine_card(
         try:
             _llmvllm.use_engine(tag)
         except Exception as exc:
-            QMessageBox.warning(parent, "切换失败", str(exc))
+            messages.warn(parent, "切换失败", str(exc))
             return
         card.refresh()
 
@@ -108,7 +109,7 @@ def build_vllm_engine_card(
                 return
             latest = _llmvllm.detect_platform(use_cache=False, allow_start=True)
         if not latest.ready:
-            QMessageBox.warning(card_widget, "无法安装", latest.reason)
+            messages.warn(card_widget, "无法安装", latest.reason)
             return
         dialog = VllmInstallDialog(card_widget, platform=latest)
         dialog.installed.connect(lambda _tag: card_widget.refresh())
@@ -119,7 +120,7 @@ def build_vllm_engine_card(
         try:
             settings_logic.apply_path("vllm_engines_root", value)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(parent, "保存失败", str(exc))
+            messages.error(parent, "保存失败", str(exc))
             return
         root_row.set_value(str(_llmvllm.engines_root()))
         card.refresh()
@@ -271,11 +272,11 @@ class VllmInstallDialog(QDialog):  # pragma: no cover - Qt 控件
             return
         tag = self.version_combo.currentText().strip()
         if not tag:
-            QMessageBox.warning(self, "缺少版本", "请选择或输入 vLLM 版本号")
+            messages.warn(self, "缺少版本", "请选择或输入 vLLM 版本号")
             return
         interpreter = self.interpreter_combo.currentData()
         if not isinstance(interpreter, _llmvllm.VllmInterpreter):
-            QMessageBox.warning(self, "缺少目标", "没有可用的 Python 解释器")
+            messages.warn(self, "缺少目标", "没有可用的 Python 解释器")
             return
 
         def work() -> _llmvllm.VllmEngine:
@@ -300,7 +301,7 @@ class VllmInstallDialog(QDialog):  # pragma: no cover - Qt 控件
     def _on_install_failed(self, message: str) -> None:
         self.status_label.setText("安装失败，详见日志")
         self.log_view.appendPlainText(f"\n[失败] {message}")
-        QMessageBox.critical(self, "安装失败", message)
+        messages.error(self, "安装失败", message)
 
     def _set_busy(self, busy: bool, note: str | None = None) -> None:
         self._busy = busy

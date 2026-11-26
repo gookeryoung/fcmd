@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QPlainTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QPlainTextEdit, QVBoxLayout, QWidget
 
 from fcmd.gui.widgets.buttons import button
+from fcmd.gui.widgets.pickers import save_file
 from fcmd.gui.widgets.text import mono_font
 
 __all__ = ["LogView"]
@@ -68,7 +69,7 @@ class LogView(QWidget):  # pragma: no cover - Qt 控件
             clipboard.setText(self.text())
 
     def _export(self) -> None:  # pragma: no cover - 需要真实对话框
-        path, _ = QFileDialog.getSaveFileName(self, "导出日志", "llmw.log", "日志 (*.log);;所有文件 (*.*)")
+        path = save_file(self, "导出日志", "llmw.log", "日志 (*.log);;所有文件 (*.*)")
         if not path:
             return
         from pathlib import Path

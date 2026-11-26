@@ -179,12 +179,12 @@ def test_rules_enable_and_expression_list(home: Path) -> None:
 
 def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
     """类型切换只显示对应字段；大小写默认值按类型记忆，保存时只带当前类型内容。"""
-    from fcmd.apps.filescan._filescanw_qt import _RuleDialog
     from fcmd.apps.filescan._rules import MATCH_KEYWORD, MATCH_REGEX
+    from fcmd.apps.filescan.qt.dialogs import RuleDialog
 
     window = _window()
     try:
-        dialog = _RuleDialog(window, None)
+        dialog = RuleDialog(window, None)
         try:
             assert dialog._kind.currentData() == MATCH_KEYWORD
             assert dialog._text.isHidden() is False
@@ -223,7 +223,7 @@ def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
             dialog.deleteLater()
 
         rule = Rule(id="r", name="R", matcher=Matcher(kind=MATCH_REGEX, pattern=r"\d+"))
-        dialog = _RuleDialog(window, rule)
+        dialog = RuleDialog(window, rule)
         try:
             assert dialog._kind.currentData() == MATCH_REGEX
             assert dialog._pattern.toPlainText() == r"\d+"
@@ -246,12 +246,12 @@ def test_rule_dialog_switches_fields_by_matcher_type(home: Path) -> None:
 
 def test_rule_dialog_time_type_switches_fields(home: Path) -> None:
     """时间类型只显示时间字段 / 条件 / 时间值；介于才显示结束时间，提交回填一致。"""
-    from fcmd.apps.filescan._filescanw_qt import _RuleDialog
     from fcmd.apps.filescan._rules import MATCH_TIME, TIME_AFTER, TIME_BETWEEN, TIME_CREATED
+    from fcmd.apps.filescan.qt.dialogs import RuleDialog
 
     window = _window()
     try:
-        dialog = _RuleDialog(window, None)
+        dialog = RuleDialog(window, None)
         try:
             dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_TIME))
             assert dialog._text.isHidden() is True
@@ -287,7 +287,7 @@ def test_rule_dialog_time_type_switches_fields(home: Path) -> None:
             name="旧文件",
             matcher=Matcher(kind=MATCH_TIME, target=TIME_CREATED, compare=TIME_AFTER, value="2026-01-01"),
         )
-        dialog = _RuleDialog(window, rule)
+        dialog = RuleDialog(window, rule)
         try:
             assert dialog._kind.currentData() == MATCH_TIME
             assert dialog._time_field.currentData() == TIME_CREATED
@@ -302,12 +302,12 @@ def test_rule_dialog_time_type_switches_fields(home: Path) -> None:
 
 def test_rule_dialog_size_validator_and_thresholds(home: Path) -> None:
     """大小类型只显示大小字段；正则显示校验器；阈值随规则提交。"""
-    from fcmd.apps.filescan._filescanw_qt import _RuleDialog
     from fcmd.apps.filescan._rules import MATCH_REGEX, MATCH_SIZE, SIZE_BETWEEN, TARGET_PATH
+    from fcmd.apps.filescan.qt.dialogs import RuleDialog
 
     window = _window()
     try:
-        dialog = _RuleDialog(window, None)
+        dialog = RuleDialog(window, None)
         try:
             dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_SIZE))
             assert dialog._text.isHidden() is True
@@ -331,7 +331,7 @@ def test_rule_dialog_size_validator_and_thresholds(home: Path) -> None:
         finally:
             dialog.deleteLater()
 
-        dialog = _RuleDialog(window, None)
+        dialog = RuleDialog(window, None)
         try:
             dialog._kind.setCurrentIndex(dialog._kind.findData(MATCH_REGEX))
             assert dialog._validator.isHidden() is False
@@ -386,7 +386,7 @@ def test_scan_worker_masks_context(home: Path, sample: Path) -> None:
 
 def test_expression_dialog_inserts_rule_and_expression_ids(home: Path) -> None:
     """组合式对话框可插入规则 / 组合式 id，并默认生成不冲突的 id。"""
-    from fcmd.apps.filescan._filescanw_qt import _ExpressionDialog
+    from fcmd.apps.filescan.qt.dialogs import ExpressionDialog
 
     window = _window()
     try:
@@ -395,7 +395,7 @@ def test_expression_dialog_inserts_rule_and_expression_ids(home: Path) -> None:
             window.ruleset.replace_expression(Expression(id="base", name="基础", expression=rule_id)),
             message="ok",
         )
-        dialog = _ExpressionDialog(window, window.ruleset)
+        dialog = ExpressionDialog(window, window.ruleset)
         try:
             assert dialog._id.text() == "expr"
             dialog._insert_source.setCurrentIndex(0)

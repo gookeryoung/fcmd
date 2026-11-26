@@ -18,7 +18,12 @@
 - :mod:`fcmd.gui.widgets.log`：只读日志区 + 工具条；
 - :mod:`fcmd.gui.widgets.storage`：通用磁盘 / 目录卡片网格（Steam 式多根目录管理）
   与左右成对目录卡（`StoragePairCard`，filesyncw 文件夹对）；
-- :mod:`fcmd.gui.widgets.splitter`：分栏容器与尺寸持久化。
+- :mod:`fcmd.gui.widgets.splitter`：分栏容器与尺寸持久化；
+- :mod:`fcmd.gui.widgets.messages`：错误 / 警告 / 信息提示与确认框（统一走 QMessageBox）；
+- :mod:`fcmd.gui.widgets.pickers`：文件 / 目录选择（取消返回空串，不用解元组）；
+- :mod:`fcmd.gui.widgets.dialogs`：对话框外壳（边距 / 表单 / 按钮行）与按内容自适应；
+- :mod:`fcmd.gui.widgets.zoom`：缩放倍率纯函数与按窗口等比缩放的图像预览标签；
+- :mod:`fcmd.gui.widgets.empty`：列表 / 表格无数据时的居中空态。
 
 约定：
 
@@ -55,9 +60,12 @@ from fcmd.gui.widgets.cards import (
     PageScroll,
     fit_dialog_to_content,
 )
+from fcmd.gui.widgets.dialogs import DialogShell, FormDialog, action_row, dialog_footer
+from fcmd.gui.widgets.empty import EmptyState
 from fcmd.gui.widgets.forms import FormGrid, PathField, PathInputMixin, PathRow
 from fcmd.gui.widgets.layouts import FlowLayout
 from fcmd.gui.widgets.log import LogView
+from fcmd.gui.widgets.messages import ask, error, info, warn
 from fcmd.gui.widgets.metrics import (
     KeyValueGrid,
     LoadingBar,
@@ -68,6 +76,7 @@ from fcmd.gui.widgets.metrics import (
     segment_band,
     segment_fill,
 )
+from fcmd.gui.widgets.pickers import pick_dir, pick_file, pick_files, save_file
 from fcmd.gui.widgets.responsive import ContentHeightGuard, ResponsiveLabel, fit_flow_widths
 from fcmd.gui.widgets.rows import ItemRow, RowDetailMixin, RowListWidget, SelectionRow
 from fcmd.gui.widgets.sidebar_list import SidebarActionButton, SidebarEntry, SidebarList
@@ -82,7 +91,7 @@ from fcmd.gui.widgets.storage import (
     StorageRoots,
     default_disk_locations,
 )
-from fcmd.gui.widgets.tables import make_table, make_table_item
+from fcmd.gui.widgets.tables import make_table, make_table_item, make_tree, make_tree_item
 from fcmd.gui.widgets.tabs import PillTabBar, badge_text, pill_tabs, tab_widget
 from fcmd.gui.widgets.text import (
     ElidedLabel,
@@ -98,6 +107,7 @@ from fcmd.gui.widgets.text import (
     mono_label,
     value_label,
 )
+from fcmd.gui.widgets.zoom import ImagePreviewLabel, clamp_zoom, fit_zoom, zoom_in, zoom_out
 
 __all__ = [
     "Button",
@@ -107,15 +117,19 @@ __all__ = [
     "ChoiceGroup",
     "Collapsible",
     "ContentHeightGuard",
+    "DialogShell",
     "DiskAddTile",
     "DiskGrid",
     "DiskLocation",
     "DiskTile",
     "ElidedLabel",
+    "EmptyState",
     "FlowLayout",
+    "FormDialog",
     "FormGrid",
     "HintLabel",
     "IconButton",
+    "ImagePreviewLabel",
     "ItemRow",
     "KeyValueGrid",
     "LinkButton",
@@ -148,22 +162,35 @@ __all__ = [
     "ToggleChip",
     "ToneLabelMixin",
     "ValueLabel",
+    "action_row",
     "apply_splitter_sizes",
+    "ask",
     "badge_text",
     "button",
+    "clamp_zoom",
     "confirm",
     "default_disk_locations",
+    "dialog_footer",
+    "error",
     "fit_dialog_to_content",
     "fit_flow_widths",
+    "fit_zoom",
     "hint_label",
     "icon_button",
+    "info",
     "link_button",
     "make_splitter",
     "make_table",
     "make_table_item",
+    "make_tree",
+    "make_tree_item",
     "mono_font",
     "mono_label",
+    "pick_dir",
+    "pick_file",
+    "pick_files",
     "pill_tabs",
+    "save_file",
     "segment_band",
     "segment_fill",
     "set_button_icon",
@@ -173,4 +200,7 @@ __all__ = [
     "splitter_sizes",
     "tab_widget",
     "value_label",
+    "warn",
+    "zoom_in",
+    "zoom_out",
 ]

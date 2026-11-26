@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.wslman._wslmanw_qt as _owner
+from fcmd.gui.widgets import messages
 
 from ._compat import (  # noqa: F401
     Any,
@@ -259,7 +260,7 @@ class DistrosMixin:
             opener = _owner.w.selected_opener(self.settings, kind)
         if opener is None:
             name = "PI" if key == "pi" else _owner._open.KIND_LABELS[kind]
-            _owner.QMessageBox.information(
+            messages.info(
                 self,
                 f"尚未配置{name}打开方式",
                 f"到「设置 → 打开方式」添加或选中一个{name}条目后再试。",
@@ -314,10 +315,8 @@ class DistrosMixin:
             found = _owner.decode_console(probe.stdout + probe.stderr).strip()
             exe = _owner._open.command_name(opener, dir=target, unc=unc, distro=distro.name, home=home)
             if probe.returncode != 0 or not found:
-                raise _owner.runtime_error(
-                    f"{distro.name} 里找不到 {exe}",
-                    hint=f"先在实例里安装 {opener.name}，或在「设置 → 打开方式」把命令模板改成实际可用的命令",
-                )
+                hint = _owner._open.missing_tool_hint(opener.name, exe, found)
+                raise _owner.runtime_error(f"{distro.name} 里找不到 {exe}", hint=hint)
             command = _owner.build_command(
                 wsl_path=wsl_path,
                 distro=distro.name,

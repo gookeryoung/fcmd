@@ -18,11 +18,11 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QLabel, QMainWindow, QMenu, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QMainWindow, QMenu, QVBoxLayout, QWidget
 
 from fcmd.gui.logdialog import LogChannelMixin
 from fcmd.gui.shell import WindowShellMixin, WindowSpec
-from fcmd.gui.widgets import PageScroll
+from fcmd.gui.widgets import PageScroll, messages
 from fcmd.gui.window import about_version_text
 
 if TYPE_CHECKING:
@@ -141,7 +141,7 @@ class QtToolWindow(LogChannelMixin, WindowShellMixin, QMainWindow):  # pragma: n
 
     def _show_about(self) -> None:
         """关于对话框：程序 / 解释器 / Qt 绑定版本、设置文件与当前主题。"""
-        QMessageBox.information(
+        messages.info(
             self,
             "关于",
             f"{about_version_text()}\n设置文件：{self._settings_path}\n主题：{self._theme.label}",

@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QRadioButton,
     QWidget,
 )
@@ -55,7 +54,7 @@ from fcmd.apps.envdev.mirrortoolw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.app import run_window
 from fcmd.gui.toolwindow import QtToolWindow
-from fcmd.gui.widgets import Card, ElidedLabel, ProgressRow, button, make_table, make_table_item
+from fcmd.gui.widgets import Card, ElidedLabel, ProgressRow, button, make_table, make_table_item, messages
 from fcmd.gui.workers import EventBridge, submit
 
 if TYPE_CHECKING:
@@ -396,7 +395,7 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._bridge = None
         self.log(f"错误：{message}")
         self.set_status("操作失败")
-        QMessageBox.critical(self, "操作失败", message)
+        messages.error(self, "操作失败", message)
 
     # ------------------------------------------------------------------ #
     # 结果渲染

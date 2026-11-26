@@ -7,6 +7,17 @@
 
 ### 变更
 
+- 新增 GUI 共享组件并统一调用点（ADR 0038 D13–D18）：`messages`（`error` / `warn` /
+  `info` / `confirm` / `ask`，内部仍走 `QMessageBox` 静态方法）、`pickers`（`pick_file` /
+  `pick_files` / `pick_dir` / `save_file`，取消返回空值）、`dialogs`（`DialogShell` /
+  `FormDialog`，只做布局与按钮接线）、`empty`（`EmptyState`）、`zoom`（倍率纯函数 +
+  `ImagePreviewLabel`）与 `make_tree` / `make_tree_item`；全仓 195 处消息框、86 处文件
+  对话框改为走共享入口，`FormGrid.add_row` 支持行内动作控件。
+- 按 ADR 0046 拆分三个大文件：`cmder` 的 15 个对话框拆到 `apps/cmder/qt/`（旧
+  `_cmder_qt_dialogs.py` 删除并移出行数白名单）、`pptmake` 的画布绘制层拆到
+  `apps/pptmake/qt/paint.py`、`filescan` 的三个模态对话框拆到 `apps/filescan/qt/`；
+  filescan 任务列表空态、peview / help / cmder 目录树、`cmder` 快速查看预览改用共享
+  的 `EmptyState` / `make_tree` / `ImagePreviewLabel`。
 - `llmw` / `wslmanw` 冷启动提速（ADR 0057）：平台探测移到后台并合并 WSL 探测子进程，
   模型扫描加进程内缓存、`find_model` 一次扫全部根目录；`wslmanw` 入口不再顶层导入
   安装 / WSLUI 重模块，镜像缓存行卡渲染与实例标注推到首帧之后；服务状态刷新后台化，

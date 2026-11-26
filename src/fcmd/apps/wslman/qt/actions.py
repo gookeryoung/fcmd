@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcmd.apps.wslman._wslmanw_qt as _owner
+from fcmd.gui.widgets import messages, save_file
 
 from ._compat import (  # noqa: F401
     Any,
@@ -42,7 +43,7 @@ class ActionsMixin:
             )
             self.launcher.launch(command)
         except (_owner.LaunchError, _owner.WslmanError) as exc:
-            _owner.QMessageBox.critical(self, "打开失败", _owner.w._error_text(exc))
+            messages.error(self, "打开失败", _owner.w._error_text(exc))
             return
         self._log(f"[打开] 已启动 {distro.name}")
 
@@ -109,7 +110,7 @@ class ActionsMixin:
         distro = self._selected()
         if distro is None:
             return
-        target, _ = _owner.QFileDialog.getSaveFileName(
+        target = save_file(
             self,
             f"导出实例 {distro.name}",
             str(self._backup_dir_path() / f"{distro.name}.tar"),
@@ -207,7 +208,7 @@ class ActionsMixin:
         if distro is None:
             return
         if distro.state == "running":
-            _owner.QMessageBox.information(
+            messages.info(
                 self,
                 "请先停止实例",
                 f"{distro.name} 正在运行。迁移会导出并重新导入整个实例，请先点「停止」再迁移。",
@@ -217,7 +218,7 @@ class ActionsMixin:
         current_root = _owner.w.work_dir_of(self.settings, distro.base_path)
         targets = [item for item in roots if current_root is None or not _owner.w.same_dir(item, current_root)]
         if not targets:
-            _owner.QMessageBox.information(
+            messages.info(
                 self,
                 "没有其他工作目录",
                 "先在设置页添加另一个工作目录，再迁移实例。",

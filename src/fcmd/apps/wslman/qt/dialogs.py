@@ -16,12 +16,10 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -35,19 +33,23 @@ from fcmd.apps.wslman._errors import WslmanError
 from fcmd.apps.wslman._images import ImageEntry
 from fcmd.apps.wslman._transfer import sha256_file
 from fcmd.gui.widgets import (
-    FormGrid,
+    FormDialog,
     button,
     fit_dialog_to_content,
     hint_label,
     make_table,
     make_table_item,
+    messages,
+    pick_dir,
+    pick_file,
+    save_file,
 )
 
 from .._wslmanw_qt import WslmanQtWindow
 from .config_dialog import _DistroConfigDialog  # noqa: F401 - 对外保持旧导入路径
 
 
-class _OpenerDialog(QDialog):  # pragma: no cover - 模态对话框
+class _OpenerDialog(FormDialog):  # pragma: no cover - 模态对话框
     """新增 / 编辑打开方式：名称、运行位置与命令模板。
 
     模板在这里就做语法与占位符校验（Windows 侧必须带 ``{dir}`` 或 ``{unc}``），
@@ -55,63 +57,44 @@ class _OpenerDialog(QDialog):  # pragma: no cover - 模态对话框
     """
 
     def __init__(self, parent: QWidget, kind: str, opener: _open.Opener | None = None) -> None:
-        super().__init__(parent)
+        super().__init__(
+            parent,
+            title=f"{'编辑' if opener else '添加'}{_open.KIND_LABELS[kind]}打开方式",
+            margins=(18, 16, 18, 14),
+        )
+        self.setModal(True)
         self._kind = kind
         self._values = (
             opener.name if opener else "",
             opener.host if opener else _open.HOST_WINDOWS,
             opener.command if opener else "",
         )
-        self.setWindowTitle(f"{'编辑' if opener else '添加'}{_open.KIND_LABELS[kind]}打开方式")
-        self.setModal(True)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 14)
-        layout.setSpacing(8)
-
-        form = FormGrid(self)
-        self.name = QLineEdit(self._values[0], self)
+        self.name = self.add_row("名称", QLineEdit(self._values[0], self))
         self.name.setPlaceholderText(f"例如 {_open.KIND_LABELS[kind]} 名称")
-        form.add_row("名称", self.name)
-        self.host = QComboBox(self)
+        self.host = self.add_row("运行位置", QComboBox(self))
         for value, label in _open.HOST_LABELS.items():
             self.host.addItem(label, value)
         index = self.host.findData(self._values[1])
         self.host.setCurrentIndex(index if index >= 0 else 0)
         self.host.setToolTip("Windows 宿主机里的 GUI 程序，或要在 WSL 实例内启动的终端程序")
-        form.add_row("运行位置", self.host)
-        self.command = QLineEdit(self._values[2], self)
+        self.command = self.add_row("命令模板", QLineEdit(self._values[2], self))
         self.command.setPlaceholderText('code --remote wsl+{distro} "{dir}"')
         self.command.setToolTip("可执行命令；引号内的空格会保留")
-        form.add_row("命令模板", self.command)
-        layout.addWidget(form)
-
         if opener is not None and opener.note:
-            layout.addWidget(hint_label(opener.note))
-        layout.addWidget(
-            hint_label(
-                "占位符：{dir} 实例内绝对路径、{unc} Windows UNC 路径、{distro} 实例名、{home} 家目录。"
-                "Windows 宿主机条目必须包含 {dir} 或 {unc}；WSL 内条目以当前目录启动，可不写占位符。"
-            )
+            self.add_hint(opener.note)
+        self.add_hint(
+            "占位符：{dir} 实例内绝对路径、{unc} Windows UNC 路径、{distro} 实例名、{home} 家目录。"
+            "Windows 宿主机条目必须包含 {dir} 或 {unc}；WSL 内条目以当前目录启动，可不写占位符。"
         )
 
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.addStretch(1)
-        cancel = button("取消")
-        cancel.clicked.connect(self.reject)
-        actions.addWidget(cancel)
-        save = button("保存", kind="primary")
-        save.clicked.connect(self._on_save)
-        actions.addWidget(save)
-        layout.addLayout(actions)
-        fit_dialog_to_content(self)
+        self.finish(cancel_text="取消", ok_text="保存", on_ok=self._on_save)
         self.name.setFocus()
 
     def _on_save(self) -> None:
         try:
             self._values = _open.validate_opener(self.name.text(), self.host.currentData(), self.command.text())
         except WslmanError as exc:
-            QMessageBox.warning(self, "命令模板不可用", w._error_text(exc))
+            messages.warn(self, "命令模板不可用", w._error_text(exc))
             return
         self.accept()
 
@@ -177,7 +160,7 @@ class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
         self.confirm.setEnabled(w.unregister_confirm_enabled(self.typed.text(), self._distro.name))
 
     def _choose_backup(self) -> None:  # pragma: no cover - 需要真实对话框
-        chosen, _ = QFileDialog.getSaveFileName(
+        chosen = save_file(
             self,
             "选择备份文件",
             str(self._owner._backup_dir_path() / f"{self._distro.name}.tar"),
@@ -345,7 +328,7 @@ class _ImageManagerDialog(QDialog):  # pragma: no cover - 模态对话框
         if archive is None or not archive[3]:
             self.status.setText("未完成的 .part 不能导出；请先下载完成")
             return
-        chosen = QFileDialog.getExistingDirectory(self, "导出镜像包到目录", str(self.directory))
+        chosen = pick_dir(self, "导出镜像包到目录", str(self.directory))
         if not chosen:
             return
         target = Path(chosen) / archive[0].name
@@ -357,7 +340,7 @@ class _ImageManagerDialog(QDialog):  # pragma: no cover - 模态对话框
         try:
             shutil.copy2(archive[0], target)
         except OSError as exc:
-            QMessageBox.critical(self, "导出失败", f"无法复制镜像包：\n{exc}")
+            messages.error(self, "导出失败", f"无法复制镜像包：\n{exc}")
             return
         self.status.setText(f"已导出到 {target}")
 
@@ -370,7 +353,7 @@ class _ImageManagerDialog(QDialog):  # pragma: no cover - 模态对话框
         try:
             archive[0].unlink()
         except OSError as exc:
-            QMessageBox.critical(self, "删除失败", f"无法删除镜像包：\n{exc}")
+            messages.error(self, "删除失败", f"无法删除镜像包：\n{exc}")
             return
         self.changed = True
         self.status.setText(f"已删除 {archive[0].name}")
@@ -406,7 +389,7 @@ class _ImageManagerDialog(QDialog):  # pragma: no cover - 模态对话框
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            QMessageBox.critical(self, "打开失败", f"无法创建下载目录：\n{exc}")
+            messages.error(self, "打开失败", f"无法创建下载目录：\n{exc}")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.directory)))
 
@@ -439,9 +422,9 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         top.addWidget(QLabel("扫描目录"))
         self.directory = QLineEdit(owner._local_start_dir(), self)
         top.addWidget(self.directory, 1)
-        pick_file = button("选择文件…")
-        pick_file.clicked.connect(self._add_file)
-        top.addWidget(pick_file)
+        pick_button = button("选择文件…")
+        pick_button.clicked.connect(self._add_file)
+        top.addWidget(pick_button)
         rescan = button("重新扫描")
         rescan.clicked.connect(self._scan)
         top.addWidget(rescan)
@@ -537,7 +520,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         self._archives[row] = archive
 
     def _add_file(self) -> None:  # pragma: no cover - 需要真实对话框
-        chosen, _ = QFileDialog.getOpenFileName(
+        chosen = pick_file(
             self,
             "选择本地镜像包",
             self.directory.text(),
@@ -550,7 +533,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         self.table.selectRow(self.table.rowCount() - 1)
 
     def _choose_dir(self) -> None:  # pragma: no cover - 需要真实对话框
-        chosen = QFileDialog.getExistingDirectory(self, "选择安装目录（必须为空）")
+        chosen = pick_dir(self, "选择安装目录（必须为空）")
         if chosen:
             self.target.setText(chosen)
 
@@ -582,22 +565,22 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
     def _start(self) -> None:
         archive = self._current()
         if archive is None:
-            QMessageBox.critical(self, "安装镜像", "请先选择一个镜像包")
+            messages.error(self, "安装镜像", "请先选择一个镜像包")
             return
         name = self.name.text().strip()
         target_text = self.target.text().strip()
         if not name:
-            QMessageBox.critical(self, "安装镜像", "请填写实例名称")
+            messages.error(self, "安装镜像", "请填写实例名称")
             return
         if not target_text:
-            QMessageBox.critical(self, "安装镜像", "请选择安装目录")
+            messages.error(self, "安装镜像", "请选择安装目录")
             return
         replace = self.replace.isChecked()
         if replace and not _owner.confirm(self, "替换实例", f"替换 {name} 会先删除现有实例（运行中会先停止），继续？"):
             return
         backup: Path | None = None
         if replace and _owner.load_config().require_backup_on_replace:
-            chosen, _ = QFileDialog.getSaveFileName(
+            chosen = save_file(
                 self,
                 "替换前先备份到",
                 str(self._owner._backup_dir_path() / f"{name}.tar"),

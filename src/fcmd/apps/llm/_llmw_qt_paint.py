@@ -24,11 +24,9 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPlainTextEdit,
     QSpinBox,
     QVBoxLayout,
@@ -49,6 +47,9 @@ from fcmd.gui.widgets import (
     ToggleChip,
     button,
     hint_label,
+    messages,
+    pick_dir,
+    pick_files,
 )
 from fcmd.gui.workers import submit, submit_daemon
 
@@ -1137,7 +1138,7 @@ class PaintSampleSection(QWidget):  # pragma: no cover - Qt 控件
         self.save_to_button.setToolTip(f"更改输出目录（当前：{path}）")
 
     def _pick_output_dir(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "选择出图目录", str(output_dir(self._settings)))
+        chosen = pick_dir(self, "选择出图目录", str(output_dir(self._settings)))
         if not chosen:
             return
         self._settings["output_dir"] = chosen
@@ -1150,7 +1151,7 @@ class PaintSampleSection(QWidget):  # pragma: no cover - Qt 控件
             target.mkdir(parents=True, exist_ok=True)
             open_path(target)
         except OSError as exc:
-            QMessageBox.critical(self, "打开失败", f"无法打开目录：{target}\n{exc}")
+            messages.error(self, "打开失败", f"无法打开目录：{target}\n{exc}")
 
 
 def build_paint_engine_card(
@@ -1195,7 +1196,7 @@ def build_paint_engine_card(
         card.refresh()
 
     def import_archives(card: EngineCard) -> None:
-        paths, _filter = QFileDialog.getOpenFileNames(
+        paths = pick_files(
             card,
             "选择 sd.cpp 引擎包（可同时选引擎 + cudart）",
             "",
@@ -1210,7 +1211,7 @@ def build_paint_engine_card(
         submit_daemon(
             work,
             on_done=lambda _engine: (card.refresh(), card.changed.emit()),
-            on_error=lambda message: QMessageBox.critical(card, "导入失败", message),
+            on_error=lambda message: messages.error(card, "导入失败", message),
         )
 
     def manage(card: EngineCard) -> None:
@@ -1245,7 +1246,7 @@ def build_paint_engine_card(
         try:
             settings_logic.apply_path("sd_engines_root", text or None)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(parent, "保存失败", str(exc))
+            messages.error(parent, "保存失败", str(exc))
             return
         if "card" in holder:
             holder["card"].refresh()
