@@ -1178,7 +1178,9 @@ def test_images_cache_render_waits_for_first_frame(home: Path, monkeypatch: pyte
         assert len(window.image_entries) == 2
         assert rendered == []
         assert "正在载入本地缓存" in window.images_status.fullText()
-        QTest.qWait(1)  # 让 0 ms 定时器触发（等价首帧之后的下一轮事件循环）
+        # 让 0 ms 定时器触发（等价首帧之后的下一轮事件循环）；
+        # 不用 QTest.qWait：PySide2 的 QtTest 没有该方法（3.10 CI 会 AttributeError）。
+        QApplication.processEvents()
         assert rendered == [1]
     finally:
         window._poll.stop()  # type: ignore[union-attr]
