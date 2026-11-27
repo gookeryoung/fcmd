@@ -65,7 +65,7 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         header.setSpacing(6)
         self.collapsed_hint = _owner.hint_label("尚未检测环境。", wrap=False)
         header.addWidget(self.collapsed_hint)
-        # 状态标签单独一行用 FlowLayout 换行：12 个项目并排时窗口一窄就会被裁掉。
+        # 状态标签单独一行用 FlowLayout 换行：14 个项目并排时窗口一窄就会被裁掉。
         self.tags_row = _owner.QWidget(self)
         self.tags_layout = _owner.FlowLayout(self.tags_row, h_spacing=6, v_spacing=2)
         for task in _owner._initenv.TASKS:

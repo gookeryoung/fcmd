@@ -443,8 +443,8 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   显示「已备份」胶囊（tooltip 写清判定来源），镜像行的「已备份」胶囊与筛选也立即生效，
   不必等下次拉清单。
 - 实例配置对话框内嵌「初始化环境」卡片（纯逻辑在 `_initenv.py`）：
-  勾选国内系统源 / SSH 密钥 / Python / uv / auto-uv-env / Node.js / Bun / Rust / 显示依赖库 /
-  中文字体 / 完整中文字体 / 彩色 Emoji（**12 个独立项目**，每个只看
+  勾选国内系统源 / SSH 密钥 / Python / uv / auto-uv-env / Node.js / Bun / Rust / Docker /
+  Docker 镜像加速 / 显示依赖库 / 中文字体 / 完整中文字体 / 彩色 Emoji（**14 个独立项目**，每个只看
   自己那个工具是否就绪：Python 只看 `python3`，Kali、Ubuntu 这类自带 python3 的发行版直接显示
   已初始化，不会因为没装 uv 被误判；`uv` / `Bun` 各自成项，没装就单独出现在待初始化列表里；
   Node.js 按 `node` + nvm 判定，apt 装的旧 `nodejs` 不算就绪，**`/mnt/*` 下 Windows 侧的
@@ -478,6 +478,20 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   clone 自 gitee 镜像、`NVM_NODEJS_ORG_MIRROR` 指 npmmirror），不再用 apt 里版本较旧的
   `nodejs`；Bun 用 `npm i -g bun` 装（二进制随 `@oven/bun-linux-x64` 从 npmmirror 分发，
   不走 GitHub Releases），Bun 项自带 nvm 引导，单独勾选也能装成；Rust 沿用 rsproxy。
+  Docker 拆成两项：**安装 Docker** 用 apt 装发行版的 `docker.io`（走已换好的系统源，
+  不引 Docker 官方 apt 源），随后补 `docker-compose-v2`（发行版无此包时回退
+  `docker-compose`）、把实例默认用户加入 `docker` 组并启动服务——默认用户从
+  `/etc/wsl.conf` 的 `[user] default` 读，取不到才退回 `/etc/passwd` 里第一个
+  uid≥1000 的用户（root 下 `$USER` / `id -un` 恒为 root，不能用）；WSL 默认不带
+  systemd，有 `/run/systemd/system` 才 `systemctl enable/start docker`，否则退回
+  `service docker start`，两者都失败只提示不中断。**Docker 镜像加速** 单独成项：把国内
+  Docker Hub 加速候选（daocloud / 1ms.run / xuanyuan / 1panel）写入
+  `/etc/docker/daemon.json` 的 `registry-mirrors`——与其它项目同口径，**不做运行时测速
+  选优**，候选写全由 dockerd 拉取时按顺序回退，全部不可用仍回官方源；已有
+  `daemon.json`（data-root / log-driver 等）先备份 `.bak`，有 python3 时按 JSON 合并
+  只替换 `registry-mirrors`，没有则整体覆写；写完后重启 docker（同上管 systemd /
+  `service`）。就绪判定分别是 `docker --version` 与 `daemon.json` 里第一个
+  `registry-mirrors` 地址，状态行写作「Docker」「Docker 镜像加速」。
   显示依赖库项用 APT 补装 WSLg 下跑 Qt / GTK 窗口所需的 `libegl1` / `libgl1` /
   `libxcb-*` / `libwayland-cursor0` / `libfontconfig1` 等系统库（PySide6 的 wheel 自带
   Qt 库，但缺这些库时窗口只会报「Qt 前端已安装但加载失败」）；中文字体项默认只装
@@ -515,9 +529,9 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   「检测环境」「复制 SSH 公钥」「开始初始化」三个动作固定在卡片内，
   不随详情收起，收起态下也能直接操作；全选 / 全不选也放在这条常显动作行。
   展开后复用标题行显示一行摘要（收起行与摘要行互斥，不额外占高），正文是
-  左右两栏（左：12 个勾选项；右：状态值一行一项，13 项：系统镜像源 / SSH 密钥 / Python /
-  uv / auto-uv-env / Node.js（nvm）/ Bun / Rust / pip&uv 镜像 / npm&bun 镜像 /
-  显示依赖库 / 中文字体 / 可选字体）+ 日志
+  左右两栏（左：14 个勾选项；右：状态值一行一项，15 项：系统镜像源 / SSH 密钥 / Python /
+  uv / auto-uv-env / Node.js（nvm）/ Bun / Rust / Docker / Docker 镜像加速 /
+  pip&uv 镜像 / npm&bun 镜像 / 显示依赖库 / 中文字体 / 可选字体）+ 日志
   （经 `EventBridge` 增量回填），状态值单行省略、完整内容进 tooltip，说明文字
   收在卡片 tooltip 里，展开高度只随内容增长。每个实例的勾选与软件包源分别写入 `wslmanw.json`
   的 `distro_init_tasks` / `distro_package_mirrors`，下次打开沿用；展开 / 收起后下个事件循环再 `adjustSize`，

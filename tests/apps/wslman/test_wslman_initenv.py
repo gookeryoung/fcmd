@@ -19,6 +19,8 @@ def test_tasks_cover_required_items() -> None:
         "node",
         "bun",
         "rust",
+        "docker",
+        "docker_mirror",
         "gui",
         "fonts",
         "noto",
@@ -28,6 +30,8 @@ def test_tasks_cover_required_items() -> None:
     assert _initenv.task_by_key("uv") is not None
     assert _initenv.task_by_key("auto_uv_env") is not None
     assert _initenv.task_by_key("bun") is not None
+    assert _initenv.task_by_key("docker") is not None
+    assert _initenv.task_by_key("docker_mirror") is not None
     assert _initenv.task_by_key("gui") is not None
     assert _initenv.task_by_key("fonts") is not None
     assert _initenv.task_by_key("noto") is not None
@@ -45,6 +49,8 @@ def test_short_label_covers_all_tasks_and_falls_back() -> None:
         "Node.js",
         "Bun",
         "Rust",
+        "Docker",
+        "Docker 镜像",
         "显示库",
         "字体",
         "Noto",
@@ -140,6 +146,29 @@ def test_language_scripts_use_domestic_mirrors() -> None:
     assert "-g bun --registry https://registry.npmmirror.com" in bun_steps[1].script
     assert "rsproxy.cn" in rust_steps[1].script
     assert "crates-io" in rust_steps[1].script
+
+
+def test_docker_scripts_use_domestic_sources() -> None:
+    """Docker：包走 apt 系统源，镜像拉取写国内 registry-mirrors，组与启动都不硬依赖 systemd。"""
+    docker_steps = _initenv.steps_for(["docker"])
+    assert "docker.io" in docker_steps[0].script
+    assert docker_steps[0].root is True
+    setup = docker_steps[1].script
+    # root 下 $USER/$(id -un) 恒为 root：要从 wsl.conf / passwd 找实例默认用户。
+    assert "user" in setup and "/etc/wsl.conf" in setup
+    assert "usermod -aG docker" in setup
+    assert "/run/systemd/system" in setup
+    assert "service docker start" in setup
+
+    mirror_steps = _initenv.steps_for(["docker_mirror"])
+    script = mirror_steps[0].script
+    assert mirror_steps[0].root is True
+    assert "/etc/docker/daemon.json" in script
+    assert "daemon.json.bak" in script
+    for url in _initenv._DOCKER_REGISTRY_MIRRORS:
+        assert url in script
+    assert "registry-mirrors" in script
+    assert "systemctl restart docker" in script
 
 
 def test_uv_script_installs_uv_without_github_and_updates_existing_index() -> None:
@@ -347,6 +376,8 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
             "WSLMAN_NVM=yes",
             "WSLMAN_BUN=1.2.0",
             "WSLMAN_RUST=1.80.0",
+            "WSLMAN_DOCKER=27.3.1",
+            "WSLMAN_DOCKER_MIRROR=https://docker.m.daocloud.io",
             "WSLMAN_GUI_LIBS=ok",
             "WSLMAN_CJK_FONT=Noto Sans CJK SC",
             "WSLMAN_NOTO_CJK=yes",
@@ -371,6 +402,8 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
     assert status.nvm == "yes"
     assert status.bun == "1.2.0"
     assert status.rust == "1.80.0"
+    assert status.docker == "27.3.1"
+    assert status.docker_mirror == "https://docker.m.daocloud.io"
     assert status.gui_libs == "ok"
     assert status.cjk_font == "Noto Sans CJK SC"
     assert status.noto_cjk == "yes"
@@ -417,6 +450,8 @@ def test_present_and_default_checked() -> None:
         nvm="yes",
         bun="1.2.0",
         rust="1.80.0",
+        docker="27.3.1",
+        docker_mirror="https://docker.m.daocloud.io",
         gui_libs="ok",
         cjk_font="Noto Sans CJK SC",
         noto_cjk="yes",
@@ -437,6 +472,9 @@ def test_present_and_default_checked() -> None:
     assert _initenv.present("node", _initenv.EnvStatus(node="20.11.0")) is False
     assert _initenv.present("node", _initenv.EnvStatus(node="20.11.0", nvm="yes")) is True
     assert _initenv.present("bun", _initenv.EnvStatus(node="20.11.0", nvm="yes")) is False
+    assert _initenv.present("docker", _initenv.EnvStatus()) is False
+    assert _initenv.present("docker", _initenv.EnvStatus(docker="27.3.1")) is True
+    assert _initenv.present("docker_mirror", _initenv.EnvStatus(docker="27.3.1")) is False
     assert _initenv.status_from_mapping(_initenv.status_to_mapping(kali)) == kali
 
 
@@ -467,12 +505,14 @@ def test_status_rows_and_summary_reflect_state() -> None:
     assert rows["Node.js（nvm）"] == ("未安装", False)
     assert rows["Bun"] == ("未安装", False)
     assert rows["Rust"] == ("未安装", False)
+    assert rows["Docker"] == ("未安装", False)
+    assert rows["Docker 镜像加速"] == ("未配置", False)
     assert rows["pip / uv 镜像"] == ("未配置", False)
     assert rows["npm / bun 镜像"] == ("未配置", False)
     assert rows["显示依赖库"] == ("未检测", False)
     assert rows["中文字体"] == ("未安装", False)
     assert rows["可选字体"] == ("Noto CJK ✗ · Emoji ✗", False)
-    assert len(rows) == 13
+    assert len(rows) == 15
 
     summary = _initenv.summary_text(status)
     assert "镜像源 ✗" in summary
@@ -557,7 +597,7 @@ def test_status_rows_distinguish_nvm_and_merge_mirrors() -> None:
     assert _initenv.status_rows(nvm_status)[5] == ("Node.js（nvm）", "20.11.0（nvm）", True)
 
     split = _initenv.EnvStatus(pip_index="https://a/simple", uv_index="https://b/simple")
-    assert _initenv.status_rows(split)[8] == ("pip / uv 镜像", "https://a/simple · https://b/simple", True)
+    assert _initenv.status_rows(split)[10] == ("pip / uv 镜像", "https://a/simple · https://b/simple", True)
 
 
 def test_ssh_key_short_truncates() -> None:

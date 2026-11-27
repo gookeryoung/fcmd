@@ -19,7 +19,10 @@ linuxmirrors，pip / uv / npm / bun / cargo 走国内镜像），但这里通过
   apt 里那个版本很老的 ``nodejs``；
 - Bun：走 ``npm i -g bun``（二进制随 ``@oven/bun-linux-x64`` 从 npmmirror 分发），
   不走 bun.sh 的 GitHub Releases；
-- Rust：rustup 与 cargo 都走 rsproxy.cn。
+- Rust：rustup 与 cargo 都走 rsproxy.cn；
+- Docker：apt 装发行版的 ``docker.io``（走已换好的系统源），镜像拉取走
+  ``/etc/docker/daemon.json`` 的 ``registry-mirrors``（写入固定的国内加速候选，
+  由 dockerd 按顺序回退，不做运行时测速选优）。
 
 探测前会把 ``/mnt/*``（Windows 盘挂载点）从 PATH 摘掉：WSL 默认把 Windows 的
 PATH 追加进实例，不摘的话没装 Linux 版 Node.js 也会被 ``command -v node`` 判成
@@ -104,6 +107,18 @@ _NODE_MIRROR = "https://npmmirror.com/mirrors/node"
 _NVM_GIT = "https://gitee.com/mirrors/nvm.git"
 _NVM_GIT_FALLBACK = "https://github.com/nvm-sh/nvm.git"
 """国内加速用的固定镜像地址：nvm 源码走 gitee，node 二进制与 bun 走 npmmirror。"""
+
+_DOCKER_REGISTRY_MIRRORS: tuple[str, ...] = (
+    "https://docker.m.daocloud.io",
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me",
+    "https://docker.1panel.live",
+)
+"""Docker Hub 国内加速候选：按实测可用性从快到慢，dockerd 会按顺序回退。
+
+初始化不做可达性探测（与其它项目口径一致）：写全量候选，拉不到的镜像源自动跳过，
+全部不可用时 dockerd 仍回退官方 registry-1.docker.io。
+"""
 
 _AUTO_UV_ENV_INSTALL = "https://auto-uv-env.ashwch.com/install.sh"
 _AUTO_UV_ENV_INSTALL_FALLBACK = "https://raw.githubusercontent.com/ashwch/auto-uv-env/main/docs/install.sh"
@@ -312,6 +327,113 @@ def _rust_script() -> str:
     )
 
 
+def _instance_user_lines() -> tuple[str, ...]:
+    """写入 shell 变量 ``target_user``：实例的默认用户（非 root）。
+
+    初始化步骤以 root 执行，``$USER`` 恒为 root，不能用它往 docker 组里加人。这里
+    优先读 ``/etc/wsl.conf`` 的 ``[user] default``，取不到时退回第一个 uid≥1000 的普通
+    用户（WSL 新建实例的唯一普通用户）。
+    """
+    return (
+        'target_user=""',
+        "if [ -r /etc/wsl.conf ]; then",
+        "    target_user=\"$(sed -n '/^\\[user\\]/,/^\\[/ s/^[[:space:]]*default[[:space:]]*="
+        "[[:space:]]*\\([^[:space:]]*\\).*/\\1/p' /etc/wsl.conf | head -1)\"",
+        "fi",
+        'if [ -z "$target_user" ]; then',
+        "    target_user=\"$(awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd)\"",
+        "fi",
+    )
+
+
+def _docker_script() -> str:
+    """装 Docker 后的收尾（以 root 执行）：compose 插件、docker 组、启动服务。
+
+    WSL 默认不带 systemd：有 systemd（``/run/systemd/system`` 存在）就 ``systemctl
+    enable --now``，否则退回 ``service docker start``；两者都失败只提示，不中断初始化
+    （某些精简镜像根本没有 init 脚本，用户仍可手工 ``dockerd`` 起）。
+    """
+    return "\n".join(
+        (
+            "set -e",
+            "export DEBIAN_FRONTEND=noninteractive",
+            *_instance_user_lines(),
+            "if ! command -v docker >/dev/null 2>&1; then",
+            '    echo "docker 未安装，请先执行「安装 Docker」" >&2',
+            "    exit 1",
+            "fi",
+            "if ! docker compose version >/dev/null 2>&1; then",
+            '    echo "安装 docker compose 插件（发行版无对应包时跳过）…"',
+            f"    apt-get install -y --no-install-recommends -o Acquire::Retries=3 {_APT_LOCK_TIMEOUT} "
+            "docker-compose-v2 >/dev/null 2>&1 || "
+            f"    apt-get install -y --no-install-recommends -o Acquire::Retries=3 {_APT_LOCK_TIMEOUT} "
+            "docker-compose >/dev/null 2>&1 || "
+            '    echo "未装 docker compose 插件（发行版无对应包）"',
+            "fi",
+            'if [ -n "$target_user" ]; then',
+            '    usermod -aG docker "$target_user"',
+            '    echo "已把 $target_user 加入 docker 组（重新登录实例后生效）"',
+            "fi",
+            "if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then",
+            "    systemctl enable docker >/dev/null 2>&1 || true",
+            '    systemctl start docker >/dev/null 2>&1 || echo "Docker 服务未能通过 systemd 启动，可稍后执行 sudo service docker start"',
+            "elif command -v service >/dev/null 2>&1; then",
+            '    service docker start >/dev/null 2>&1 || echo "Docker 服务未能启动，可稍后执行 sudo service docker start"',
+            "fi",
+            'echo "Docker $(docker --version 2>/dev/null) 已就绪"',
+        )
+    )
+
+
+def _docker_mirror_script() -> str:
+    """写 ``/etc/docker/daemon.json`` 的 ``registry-mirrors`` 并重启 docker。
+
+    已有 ``daemon.json``（data-root、log-driver 等）先备份再合并：装了 python3 就按 JSON
+    合并只替换 ``registry-mirrors``，否则整体覆写（最坏情况只是丢别的键，备份仍在）。
+    """
+    mirrors = ", ".join(f'"{url}"' for url in _DOCKER_REGISTRY_MIRRORS)
+    return "\n".join(
+        (
+            "set -e",
+            "mkdir -p /etc/docker",
+            "if [ -f /etc/docker/daemon.json ]; then",
+            "    cp /etc/docker/daemon.json /etc/docker/daemon.json.bak",
+            "fi",
+            "if command -v python3 >/dev/null 2>&1; then",
+            "    python3 - <<'FCMD_DOCKER_JSON'",
+            "import json",
+            "import pathlib",
+            "",
+            'path = pathlib.Path("/etc/docker/daemon.json")',
+            "try:",
+            "    data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}",
+            "except (OSError, ValueError):",
+            "    data = {}",
+            "if not isinstance(data, dict):",
+            "    data = {}",
+            f"data['registry-mirrors'] = [{mirrors}]",
+            "path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\\n', encoding='utf-8')",
+            "FCMD_DOCKER_JSON",
+            "else",
+            "    cat > /etc/docker/daemon.json <<'FCMD_DOCKER_JSON_RAW'",
+            "{",
+            f'  "registry-mirrors": [{mirrors}]',
+            "}",
+            "FCMD_DOCKER_JSON_RAW",
+            "fi",
+            'echo "Docker 镜像加速已写入 /etc/docker/daemon.json"',
+            "if command -v docker >/dev/null 2>&1; then",
+            "    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then",
+            "        systemctl restart docker >/dev/null 2>&1 || true",
+            "    elif command -v service >/dev/null 2>&1; then",
+            "        service docker restart >/dev/null 2>&1 || true",
+            "    fi",
+            "fi",
+            f'echo "Docker 镜像源：{", ".join(_DOCKER_REGISTRY_MIRRORS)}"',
+        )
+    )
+
+
 def _auto_uv_env_rc_lines() -> tuple[str, ...]:
     """把 auto-uv-env 的 shell 集成幂等写进 rc 文件。
 
@@ -441,6 +563,23 @@ TASKS: tuple[InitTask, ...] = (
             InitStep("安装 Rust 工具链", _rust_script()),
         ),
     ),
+    InitTask(
+        "docker",
+        "安装 Docker",
+        "用 apt 装发行版的 docker.io（走已换好的国内系统源），装 docker compose 插件、"
+        "把默认用户加入 docker 组并启动服务（有 systemd 用 systemctl，否则 service docker start）。",
+        (
+            InitStep("安装 Docker 软件包", _apt_script("docker.io"), root=True),
+            InitStep("配置 Docker 用户组与服务", _docker_script(), root=True),
+        ),
+    ),
+    InitTask(
+        "docker_mirror",
+        "配置 Docker 镜像加速",
+        "把国内 Docker Hub 加速候选写入 /etc/docker/daemon.json 的 registry-mirrors"
+        "（已有配置先备份并合并），随后重启 docker；拉取时按顺序回退，全部不可用仍走官方源。",
+        (InitStep("配置 Docker 镜像加速", _docker_mirror_script(), root=True, timeout_s=300.0),),
+    ),
     *_display_tasks(apt_script=_apt_script, step=InitStep, task=InitTask),
 )
 
@@ -458,6 +597,8 @@ _TASK_SHORT: dict[str, str] = {
     "node": "Node.js",
     "bun": "Bun",
     "rust": "Rust",
+    "docker": "Docker",
+    "docker_mirror": "Docker 镜像",
     "gui": "显示库",
     "fonts": "字体",
     "noto": "Noto",

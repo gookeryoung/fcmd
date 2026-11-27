@@ -68,6 +68,10 @@ class EnvStatus:
     nvm: str = ""
     bun: str = ""
     rust: str = ""
+    docker: str = ""
+    """``docker --version`` 的版本号；空串表示未安装。"""
+    docker_mirror: str = ""
+    """``/etc/docker/daemon.json`` 里第一个 ``registry-mirrors`` 地址。"""
     gui_libs: str = ""
     """``ok`` 表示显示依赖库齐全；否则为缺失的库名（空格分隔）。"""
     cjk_font: str = ""
@@ -126,6 +130,12 @@ def probe_script() -> str:
             '[ -z "$bun_bin" ] && [ -x "$HOME/.local/bin/bun" ] && bun_bin="$HOME/.local/bin/bun"',
             'printf "WSLMAN_BUN=%s\\n" "$([ -n "$bun_bin" ] && "$bun_bin" --version 2>/dev/null)"',
             'printf "WSLMAN_RUST=%s\\n" "$(rustc --version 2>/dev/null | awk \'{print $2}\')"',
+            'printf "WSLMAN_DOCKER=%s\\n" "$(docker --version 2>/dev/null | sed \'s/^Docker version \\([^,]*\\).*/\\1/\')"',
+            'docker_mirror=""',
+            "if [ -r /etc/docker/daemon.json ]; then",
+            "    docker_mirror=\"$(grep -A8 'registry-mirrors' /etc/docker/daemon.json 2>/dev/null | grep -o 'https://[^\"]*' | head -1)\"",
+            "fi",
+            'printf "WSLMAN_DOCKER_MIRROR=%s\\n" "$docker_mirror"',
             *probe_lines(),
             'pip_index=""',
             'for f in /etc/pip.conf "$HOME/.pip/pip.conf" "$HOME/.config/pip/pip.conf"; do',
@@ -175,6 +185,8 @@ def parse_status(text: str) -> EnvStatus:
         nvm=values.get("NVM", ""),
         bun=values.get("BUN", ""),
         rust=values.get("RUST", ""),
+        docker=values.get("DOCKER", ""),
+        docker_mirror=values.get("DOCKER_MIRROR", ""),
         gui_libs=values.get("GUI_LIBS", ""),
         cjk_font=values.get("CJK_FONT", ""),
         noto_cjk=values.get("NOTO_CJK", ""),
@@ -200,6 +212,8 @@ _STATUS_FIELDS: tuple[str, ...] = (
     "nvm",
     "bun",
     "rust",
+    "docker",
+    "docker_mirror",
     "gui_libs",
     "cjk_font",
     "noto_cjk",
@@ -257,6 +271,10 @@ def present(key: str, status: EnvStatus, package_mirror: str = PACKAGE_MIRROR_AU
         return bool(status.bun)
     if key == "rust":
         return bool(status.rust)
+    if key == "docker":
+        return bool(status.docker)
+    if key == "docker_mirror":
+        return bool(status.docker_mirror)
     display = display_present(key, status)
     return display if display is not None else False
 
@@ -312,6 +330,8 @@ def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
         ("Node.js（nvm）", node_value, node_ready),
         ("Bun", status.bun or "未安装", bool(status.bun)),
         ("Rust", status.rust or "未安装", bool(status.rust)),
+        ("Docker", status.docker or "未安装", bool(status.docker)),
+        ("Docker 镜像加速", status.docker_mirror or "未配置", bool(status.docker_mirror)),
         (
             "pip / uv 镜像",
             _pair_value(status.pip_index, status.uv_index),
@@ -338,6 +358,7 @@ def summary_text(status: EnvStatus) -> str:
         f"Python {python}",
         f"Node.js {node}",
         f"Rust {status.rust or '✗'}",
+        f"Docker {status.docker or '✗'}",
         *display_summary_parts(status),
     ]
     return " · ".join(parts)

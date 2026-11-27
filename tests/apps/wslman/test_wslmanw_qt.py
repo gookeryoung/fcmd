@@ -2397,6 +2397,8 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
                 nvm="yes",
                 bun="1.2.0",
                 rust="1.80.0",
+                docker="27.3.1",
+                docker_mirror="https://docker.m.daocloud.io",
                 gui_libs="ok",
                 cjk_font="Noto Sans CJK SC",
                 noto_cjk="yes",
@@ -2449,7 +2451,7 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         assert section.status_tags["python"].isHidden() is False
         assert section.status_tags["python"].text() == "已初始化"
         assert section.status_tags["python"].tone() == "success"
-        for key in ("mirror", "ssh", "uv", "auto_uv_env", "node", "bun", "rust"):
+        for key in ("mirror", "ssh", "uv", "auto_uv_env", "node", "bun", "rust", "docker", "docker_mirror"):
             assert section.checks[key].isEnabled() is True
             assert section.checks[key].isChecked() is True
             assert section.status_tags[key].isHidden() is False
@@ -2458,7 +2460,8 @@ def test_init_env_section_defaults_status_copy_and_execute(home: Path, monkeypat
         section._set_all(False)
         assert section.checks["python"].isChecked() is True
         assert not any(
-            section.checks[key].isChecked() for key in ("mirror", "ssh", "uv", "auto_uv_env", "node", "bun", "rust")
+            section.checks[key].isChecked()
+            for key in ("mirror", "ssh", "uv", "auto_uv_env", "node", "bun", "rust", "docker", "docker_mirror")
         )
 
         section._apply_status(_initenv.EnvStatus())
@@ -2862,6 +2865,8 @@ def test_init_env_package_mirror_mismatch_reruns_config_only(home: Path, monkeyp
                 nvm="yes",
                 bun="1.2.0",
                 rust="1.80.0",
+                docker="27.3.1",
+                docker_mirror="https://docker.m.daocloud.io",
                 gui_libs="ok",
                 cjk_font="Noto Sans CJK SC",
                 noto_cjk="yes",
@@ -2913,6 +2918,8 @@ def test_init_env_package_mirror_change_reruns_system_source(home: Path, monkeyp
                 nvm="yes",
                 bun="1.2.0",
                 rust="1.80.0",
+                docker="27.3.1",
+                docker_mirror="https://docker.m.daocloud.io",
                 gui_libs="ok",
                 cjk_font="Noto Sans CJK SC",
                 noto_cjk="yes",
@@ -4620,7 +4627,7 @@ def test_distro_config_content_fits_narrow_width(home: Path, monkeypatch: pytest
         viewport = dialog.scroll.viewport().width()
         # 内容最小宽度必须能塞进视口，否则 QScrollArea 不横向滚动时会直接裁掉右侧。
         assert dialog.scroll.widget().minimumSizeHint().width() <= viewport
-        # 12 个状态标签放在 FlowLayout 里，宽度不够时换行而不是被挤掉。
+        # 全部状态标签放在 FlowLayout 里，宽度不够时换行而不是被挤掉。
         assert dialog.init_env.tags_row.layout().count() == len(_initenv.TASKS)
         for tag in dialog.init_env._collapsed_tags.values():
             assert dialog.init_env.tags_row.isAncestorOf(tag)
