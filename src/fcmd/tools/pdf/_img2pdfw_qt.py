@@ -1,7 +1,7 @@
 """img2pdfw 的 Qt 主窗口与入口。
 
 窗口负责收集输入 / 输出、页面尺寸、DPI 与 EXIF 校正，转换仍由
-:mod:`fcmd.tools.pdf.img2pdf` 完成；批量转换放进 ``QThreadPool``，进度经
+:mod:`fcmd.tools.pdf.img2pdf` 完成；批量转换放进守护线程池（``submit``），进度经
 信号桥排队回 GUI 线程。
 
 布局口径：输入 / 输出 / 选项三张卡片，路径输入整行拉伸并在下方用

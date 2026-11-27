@@ -944,7 +944,9 @@ def test_prebuilt_pages_stay_hidden_until_shown(home: Path) -> None:
 def test_image_catalog_load_uses_daemon_thread(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """镜像页拉清单走守护线程：关窗时不能被 ``wsl --list --online`` / 网络下载卡住进程退出。
 
-    回归 ``QThreadPool`` 版本：窗口能关，但进程要等任务结束才退（网络卡住时等同退不出）。
+    回归历史版本：``submit`` 曾走 ``QThreadPool``（worker 非守护），窗口能关，但进程要
+    等任务结束才退（网络卡住时等同退不出）。现在 ``submit`` / ``submit_daemon`` 都跑在
+    守护线程上，本用例守住「拉清单不进非守护线程」这条口径。
     """
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     started = threading.Event()

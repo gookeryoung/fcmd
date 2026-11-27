@@ -18,7 +18,7 @@
 每个页面是 :class:`~fcmd.gui.page.AppPage` 子类，状态栏文字按页隔离：扫描进度
 写到扫描页，筛选 / 导出结果写到结果页，规则增删改写到规则页，白名单 / 缓存 / 配置
 操作写到设置页，切页后各自恢复。
-扫描在 ``QThreadPool`` 中执行，一次只跑一个任务，进度经信号回投主线程；行内按钮
+扫描在守护线程池中执行（``submit`` / ``submit_daemon``），一次只跑一个任务，进度经信号回投主线程；行内按钮
 开始后切换为「停止扫描」，点击置位 :class:`CancelToken`，关窗时同样置位取消并等待
 线程池收尾。扫描结果按任务 id 落盘（``ui/filescanw-results.json``），退出应用后
 重开仍能恢复，结果页与任务行都能重新进入查看。
@@ -2542,11 +2542,10 @@ class FilescanQtWindow(RowDetailMixin, HelpMenuMixin, QtMainWindow):  # pragma: 
 
     def _on_close(self) -> bool:
         if self._token is not None:
+            # 标记取消即可：扫描跑在守护线程池里，子进程批次边界会读到取消标记；
+            # 关窗后进程不必等最后一批读完（旧版在这里 waitForDone(3000)，
+            # 扫描卡在子进程时会把「关窗」拖成最长 3 s 的卡顿）。
             self._token.cancel()
-        if self._worker_running:
-            from PySide6.QtCore import QThreadPool
-
-            QThreadPool.globalInstance().waitForDone(3000)
         return True
 
     def show_page(self, key: str) -> None:

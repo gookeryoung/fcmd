@@ -719,6 +719,14 @@ native 主题下是深色字压选中蓝底（几乎看不清），切到已启�
 
 ### 修复
 
+- `wslmanw` 关闭窗口后进程长时间不结束（任务管理器残留数十秒到几分钟）：后台任务原先跑在
+  ``QThreadPool`` 与 ``concurrent.futures.ThreadPoolExecutor`` 上，两者都是非守护线程，
+  事件循环退出后解释器还要 ``join`` 它们，镜像清单 / `wsl --list --online`、镜像源测速、
+  实例刷新卡在网络或 `wsl.exe` 子进程上时窗口关了进程仍在。新增 `fcmd.shared.pool.DaemonPool`
+  （守护线程 + 队列，返回标准 Future，`submit` / `map` / `shutdown` 语义对齐
+  `ThreadPoolExecutor`），`gui.workers.submit` 改走它，镜像清单、镜像 / 加速源测速、
+  URL 探测、重复文件哈希、cmderw 拷贝队列、filescan 线程扫描一并切换；`filescanw` 关窗
+  不再 `waitForDone(3000)`（只置取消标记）。复现脚本下同场景进程退出 20.3 s → 0.5 s（ADR 0058）。
 - `wslmanw` 实例环境探测 / 打开方式智能检测不再把 Windows 侧的 node、npm、pi 当成
   实例内已装：探测前把 `/mnt/*`（Windows 盘挂载点，WSL 默认追加到 PATH）从 PATH
   摘掉并单独留存，只有 Linux 侧命中才算就绪；只命中 Windows 侧时 Node.js 状态写

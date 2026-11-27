@@ -1,7 +1,7 @@
 """pdfcryptw 的 Qt 主窗口与入口。
 
 窗口只负责「选目录 / 填密码 / 起任务 / 展示进度与日志」，加解密本身仍在
-:mod:`fcmd.tools.pdf.pdfcrypt`。批量处理放进 ``QThreadPool``，进度事件经
+:mod:`fcmd.tools.pdf.pdfcrypt`。批量处理放进守护线程池（``submit``），进度事件经
 信号桥排队回 GUI 线程，界面不阻塞。
 
 布局口径：内容放进 :class:`PageScroll`（窗口变矮时滚动而不是压扁控件），

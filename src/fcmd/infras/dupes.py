@@ -96,13 +96,17 @@ def _hash_candidates(
     ``hashlib`` 在计算时释放 GIL，线程池即可获得接近线性的多核提速；进度
     回调仍在调用线程（主线程）触发，``done`` 单调递增、``total`` 与串行一致。
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import as_completed
+
+    from fcmd.shared.pool import DaemonPool
 
     total = len(files)
     workers = max(1, min(_MAX_HASH_WORKERS, os.cpu_count() or 1, total))
     digests: dict[Path, str] = {}
     done = 0
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    # 守护线程池：cmderw 的「查找重复」常在关窗时才进行到一半，非守护线程会让
+    # 进程等所有哈希读完才退（大目录上就是几十秒的「关不掉」）。
+    with DaemonPool(workers) as pool:
         futures = {pool.submit(hashing.compute_file_hash, path, algorithm): path for path in files}
         for future in as_completed(futures):
             file_path = futures[future]

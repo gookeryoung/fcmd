@@ -18,7 +18,6 @@ import json
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -27,6 +26,7 @@ from fcmd.apps.wslman._decode import OnlineRow
 from fcmd.apps.wslman._errors import runtime_error
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.shared.paths import cache_path as _cache_path
+from fcmd.shared.pool import DaemonPool
 
 __all__ = [
     "ARCHIVE_SUFFIXES",
@@ -424,8 +424,9 @@ def collect_images(  # noqa: PLR0913 - 两个源函数、时钟、缓存、fatal
     manifest_entries: tuple[ImageEntry, ...] | None = None
     cli_error: Exception | None = None
     # 两个源互不依赖：并发拉。``wsl --list --online`` 自己也要联网，单次 1～15 s，
-    # 和清单下载串行时刷新时间就是两者相加，并发后只取较慢的那个。
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="images-fetch") as pool:
+    # 和清单下载串行时刷新时间就是两者相加，并发后只取较慢的那个。用守护线程池：
+    # 拉清单常在关窗时才进行到一半，非守护线程会把进程拖到网络超时才退。
+    with DaemonPool(2, thread_name_prefix="images-fetch") as pool:
         cli_future = pool.submit(lambda: tuple(fetch_cli()))
         manifest_future = pool.submit(lambda: tuple(fetch_manifest()))
         try:

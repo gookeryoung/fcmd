@@ -62,3 +62,4 @@
 | [0055](0055-pptmake-editing-experience.md) | pptmake 布局设计与编辑体验升级：缩略图排序器 / 撤销 / 内容模型 v3 / 导出生态（S0–S3） | S0 已落地，S1–S3 待办 |
 | [0056](0056-help-doc-rendering.md) | 帮助文档渲染层 `gui/docview`：markdown-it-py + Pygments 代码高亮 / 复制、HelpView 搜索与定位，`help.py` 只留窗口编排 | 已落地（P0 / P1） |
 | [0057](0057-llmw-wslmanw-startup-fast.md) | llmw / wslmanw 冷启动：平台探测后台化 + 合并探测子进程、模型扫描缓存、入口导入瘦身、镜像渲染延后、图标位图缓存 | 已落地 |
+| [0058](0058-daemon-thread-pool.md) | 进程退出不再等待后台任务：`shared/pool.DaemonPool` 守护线程池替代 `QThreadPool` / `ThreadPoolExecutor`，修 `wslmanw` 关窗后进程长时间不退 | 已落地 |

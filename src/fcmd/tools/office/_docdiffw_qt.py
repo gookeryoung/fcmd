@@ -1,7 +1,7 @@
 """docdiffw 的 Qt 主窗口与入口。
 
 窗口负责收集旧 / 新文档、输出、标题与对比模式，实际对比仍由
-:class:`fcmd.tools.office.docdiff.DocDiffCommand` 执行，放进 ``QThreadPool``
+:class:`fcmd.tools.office.docdiff.DocDiffCommand` 执行，放进守护线程池（``submit``）
 避免阻塞界面。
 
 布局口径：文档三行（旧 / 新 / 输出）各带「输入 + 浏览」，输入框下方用

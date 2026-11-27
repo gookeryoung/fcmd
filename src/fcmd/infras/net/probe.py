@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
+
+from fcmd.shared.pool import DaemonPool
 
 __all__ = [
     "UrlProbe",
@@ -70,8 +71,8 @@ def check_urls(
     """并发探测多个 URL 并按访问速度排序。"""
     if not urls:
         return []
-    with ThreadPoolExecutor(max_workers=min(workers, len(urls))) as pool:
-        results = list(pool.map(lambda u: (u, *check_url(u, timeout)), urls))
+    with DaemonPool(min(workers, len(urls))) as pool:
+        results = pool.map(lambda u: (u, *check_url(u, timeout)), urls)
     return sorted(results, key=lambda r: (not r[1], r[2]))
 
 
@@ -202,14 +203,14 @@ def probe_mirrors(  # noqa: PLR0913, PLR0917
     """
     if not urls:
         return []
-    with ThreadPoolExecutor(max_workers=min(workers, len(urls))) as pool:
-        quick = list(pool.map(lambda u: _probe_download(u, timeout, user_agent, _PROBE_QUICK_BYTES, allow_html), urls))
+    with DaemonPool(min(workers, len(urls))) as pool:
+        quick = pool.map(lambda u: _probe_download(u, timeout, user_agent, _PROBE_QUICK_BYTES, allow_html), urls)
 
     failed_urls = [p.url for p in quick if not p.ok]
     if failed_urls:
-        with ThreadPoolExecutor(max_workers=min(workers, len(failed_urls))) as pool:
-            retried = list(
-                pool.map(lambda u: _probe_download(u, timeout, user_agent, _PROBE_QUICK_BYTES, allow_html), failed_urls)
+        with DaemonPool(min(workers, len(failed_urls))) as pool:
+            retried = pool.map(
+                lambda u: _probe_download(u, timeout, user_agent, _PROBE_QUICK_BYTES, allow_html), failed_urls
             )
         quick = [next((r for r in retried if r.url == p.url and r.ok), p) for p in quick]
 

@@ -1,7 +1,7 @@
 """pdfsplitw 的 Qt 主窗口与入口。
 
 窗口负责收集输入 / 输出、分割模式与参数，实际切分仍由
-:mod:`fcmd.tools.pdf.pdfsplit` 执行；任务放进 ``QThreadPool``，进度事件经
+:mod:`fcmd.tools.pdf.pdfsplit` 执行；任务放进守护线程池（``submit``），进度事件经
 信号桥排队回 GUI 线程，界面不阻塞。
 
 布局口径：内容放进 :class:`PageScroll`（窗口变矮时滚动而不是压扁控件），

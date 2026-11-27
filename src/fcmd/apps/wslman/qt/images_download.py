@@ -145,8 +145,7 @@ class ImagesDownloadMixin:
         # 它自身还要走两个外部接口，慢 / 不可达时不能拖住整份清单。
         self._load_wslui_catalog(force)
         # 拉清单要跑 ``wsl --list --online`` 再下载官方 JSON，网络不好时会长时间阻塞；
-        # 放进 ``QThreadPool`` 会让进程在关窗后仍等任务结束（窗口关了进程却退不出），
-        # 因此走守护线程：结果回来前关窗，进程可以直接退出。
+        # 用 ``submit_daemon`` 单开守护线程：结果回来前关窗，进程可以直接退出。
         _owner.submit_daemon(
             lambda: self._images_worker(force),
             on_done=self._apply_images,

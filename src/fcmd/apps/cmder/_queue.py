@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, TypeVar
+
+from fcmd.shared.pool import DaemonPool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -62,7 +63,8 @@ def parallel_map(items: Sequence[T], worker: Callable[[T], None], *, parallel: i
         for item in items:
             worker(item)
         return
-    with ThreadPoolExecutor(max_workers=limit) as pool:
+    # 守护线程：复制 / 移动队列常在关窗时才跑一半，不能拖住进程退出。
+    with DaemonPool(limit) as pool:
         futures = [pool.submit(worker, item) for item in items]
         for future in futures:
             future.result()

@@ -566,7 +566,7 @@ src/fcmd/
   tools/         # 业务实现（自动发现）
     archive/ calc/ crypto/ data/ dev/ media/ net/ office/ pdf/ system/ text/
   help/          # 包内帮助文档（完整说明唯一来源，GUI「使用帮助」直接渲染）
-  shared/        # 跨层纯标准库基础件（helpdoc / paths / formatting）
+  shared/        # 跨层纯标准库基础件（helpdoc / paths / formatting / pool：守护线程池）
   console.py     # rich 控制台薄封装
 ```
 

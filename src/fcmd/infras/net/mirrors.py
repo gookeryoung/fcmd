@@ -7,10 +7,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from fcmd.shared.pool import DaemonPool
 
 __all__ = [
     "Candidate",
@@ -153,15 +154,19 @@ def rank_candidates(
     latency: Callable[[str], float],
     workers: int = 12,
 ) -> tuple[Any, ...]:
-    """并发测速排序：有吞吐时按吞吐，全部失败时回退 TCP 延迟。"""
+    """并发测速排序：有吞吐时按吞吐，全部失败时回退 TCP 延迟。
+
+    用守护线程池：测速常发生在下载动作里，满速 / 被限速时一次探测可能要十几秒，
+    关窗时不能让进程等它跑完。
+    """
     if len(candidates) <= 1:
         return tuple(candidates)
-    with ThreadPoolExecutor(max_workers=min(workers, len(candidates)), thread_name_prefix="mirror-probe") as pool:
-        measured = list(pool.map(lambda item: (item, probe(item.url)), candidates))
+    with DaemonPool(min(workers, len(candidates)), thread_name_prefix="mirror-probe") as pool:
+        measured = pool.map(lambda item: (item, probe(item.url)), candidates)
     if any(speed > 0 for _item, speed in measured):
         measured.sort(key=lambda pair: pair[1], reverse=True)
         return tuple(item for item, _speed in measured)
-    with ThreadPoolExecutor(max_workers=min(workers, len(candidates)), thread_name_prefix="mirror-latency") as pool:
-        timed = list(pool.map(lambda item: (item, latency(item.url)), candidates))
+    with DaemonPool(min(workers, len(candidates)), thread_name_prefix="mirror-latency") as pool:
+        timed = pool.map(lambda item: (item, latency(item.url)), candidates)
     timed.sort(key=lambda pair: pair[1])
     return tuple(item for item, _latency in timed)

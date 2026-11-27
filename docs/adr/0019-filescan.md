@@ -168,7 +168,8 @@ bcrypt / argon2、GitHub 令牌、Slack 令牌、阿里云 AccessKey ID）、
 调度分两级（结果与排序完全一致，只是并行单元不同）：
 
 - **线程池**：小目录（文件数 < `PROCESS_MIN_FILES` 且总字节 < `PROCESS_MIN_BYTES`，
-  即小规模扫描）走 `ThreadPoolExecutor`，取消在每个文件前检查 `CancelToken`；
+  即小规模扫描）走守护线程池 `shared/pool.DaemonPool`（见 [0058](0058-daemon-thread-pool.md)），
+  取消在每个文件前检查 `CancelToken`；
 - **进程池**：达到阈值且有多个并发时走 `ProcessPoolExecutor`（`spawn`），
   遍历、统计、排序留在主进程，子进程只做「读 + 解码 + 逐行匹配」，按批分发
   （批大小 `len(files) // (workers * 8)`，上限 64）。进程数不超过 CPU 核数。

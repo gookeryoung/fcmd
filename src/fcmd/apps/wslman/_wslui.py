@@ -21,7 +21,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -30,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from fcmd.apps.wslman._mirrors import Candidate
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.shared.paths import cache_path as _cache_path
+from fcmd.shared.pool import DaemonPool
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -446,19 +446,20 @@ def rank_items(
     """并发测速后按最快到最慢排序；全部失败时回退 TCP 延迟。
 
     ``items`` 只需带 ``url`` 属性，因此 WSLUI 源与国内镜像候选可以共用同一套
-    探测逻辑（:func:`fcmd.apps.wslman._mirrors.rank_candidates`）。
+    探测逻辑（:func:`fcmd.apps.wslman._mirrors.rank_candidates`）。探测跑在守护
+    线程池里：单次吞吐探测最长 2.5 s，关窗时不能让它拖住进程退出。
     """
     if len(items) <= 1:
         return tuple(items)
     probe = probe or probe_throughput
     latency = latency or probe_tcp_latency
-    with ThreadPoolExecutor(max_workers=min(_PROBE_WORKERS, len(items)), thread_name_prefix="wslui-probe") as pool:
-        measured = list(pool.map(lambda item: (item, probe(item.url)), items))
+    with DaemonPool(min(_PROBE_WORKERS, len(items)), thread_name_prefix="wslui-probe") as pool:
+        measured = pool.map(lambda item: (item, probe(item.url)), items)
     if any(speed > 0 for _item, speed in measured):
         measured.sort(key=lambda pair: pair[1], reverse=True)
         return tuple(item for item, _speed in measured)
-    with ThreadPoolExecutor(max_workers=min(_PROBE_WORKERS, len(items)), thread_name_prefix="wslui-latency") as pool:
-        timed = list(pool.map(lambda item: (item, latency(item.url)), items))
+    with DaemonPool(min(_PROBE_WORKERS, len(items)), thread_name_prefix="wslui-latency") as pool:
+        timed = pool.map(lambda item: (item, latency(item.url)), items)
     timed.sort(key=lambda pair: pair[1])
     return tuple(item for item, _latency in timed)
 

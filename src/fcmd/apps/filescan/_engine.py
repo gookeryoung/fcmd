@@ -23,7 +23,7 @@ import stat
 import threading
 import time
 import unicodedata
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -67,6 +67,7 @@ from fcmd.apps.filescan._timeutil import format_time_value
 from fcmd.apps.filescan._validators import validate_value
 from fcmd.infras.system import format_bytes
 from fcmd.infras.textio import detect_encoding, has_text_bom
+from fcmd.shared.pool import DaemonPool
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -1747,7 +1748,8 @@ def _scan_in_threads(
     outcomes: list[_Outcome] = []
     total = len(files)
     done = 0
-    executor = ThreadPoolExecutor(max_workers=workers)
+    # 守护线程池：扫描可能在关窗后才结束，不能把进程拖到最后一批读完。
+    executor = DaemonPool(workers)
     try:
         futures = [
             (path, executor.submit(scan_file, path, context, size)) for path, size in zip(files, sizes, strict=True)
