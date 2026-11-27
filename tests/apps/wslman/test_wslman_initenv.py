@@ -171,6 +171,29 @@ def test_docker_scripts_use_domestic_sources() -> None:
     assert "systemctl restart docker" in script
 
 
+def test_docker_scripts_detect_client_only_install() -> None:
+    """回归：只装了 docker-cli（无 dockerd）时不能当成装好了。
+
+    Kali 把 ``docker-cli`` / ``docker-compose`` 与 ``docker.io``（含守护进程）拆包，
+    只装客户端时 ``docker --version`` 能过但 ``/var/run/docker.sock`` 不存在，
+    构建直接报 “Cannot connect to the Docker daemon”。
+    """
+    setup = _initenv.steps_for(["docker"])[1].script
+    assert "command -v dockerd" in setup
+    assert "补装 docker.io" in setup
+    # 启动失败不能只提示 systemctl：WSL 默认没 systemd，要逐级回退到直接起 dockerd。
+    assert "service docker start" in setup
+    assert "nohup dockerd" in setup
+    assert "docker info" in setup
+
+    mirror = _initenv.steps_for(["docker_mirror"])[0].script
+    # daemon.json 只在启动时读：写完要 restart，而不是 start。
+    assert "command -v dockerd" in mirror
+    assert "service docker restart" in mirror
+    assert "nohup dockerd" in mirror
+    assert "docker info" in mirror
+
+
 def test_uv_script_installs_uv_without_github_and_updates_existing_index() -> None:
     script = _initenv.steps_for(["uv"])[1].script
     assert "pip install --user" in script
@@ -377,6 +400,7 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
             "WSLMAN_BUN=1.2.0",
             "WSLMAN_RUST=1.80.0",
             "WSLMAN_DOCKER=27.3.1",
+            "WSLMAN_DOCKER_DAEMON=yes",
             "WSLMAN_DOCKER_MIRROR=https://docker.m.daocloud.io",
             "WSLMAN_GUI_LIBS=ok",
             "WSLMAN_CJK_FONT=Noto Sans CJK SC",
@@ -403,6 +427,7 @@ def test_parse_status_reads_prefixed_lines_and_ignores_banners() -> None:
     assert status.bun == "1.2.0"
     assert status.rust == "1.80.0"
     assert status.docker == "27.3.1"
+    assert status.docker_daemon == "yes"
     assert status.docker_mirror == "https://docker.m.daocloud.io"
     assert status.gui_libs == "ok"
     assert status.cjk_font == "Noto Sans CJK SC"
@@ -451,6 +476,7 @@ def test_present_and_default_checked() -> None:
         bun="1.2.0",
         rust="1.80.0",
         docker="27.3.1",
+        docker_daemon="yes",
         docker_mirror="https://docker.m.daocloud.io",
         gui_libs="ok",
         cjk_font="Noto Sans CJK SC",
@@ -473,8 +499,11 @@ def test_present_and_default_checked() -> None:
     assert _initenv.present("node", _initenv.EnvStatus(node="20.11.0", nvm="yes")) is True
     assert _initenv.present("bun", _initenv.EnvStatus(node="20.11.0", nvm="yes")) is False
     assert _initenv.present("docker", _initenv.EnvStatus()) is False
-    assert _initenv.present("docker", _initenv.EnvStatus(docker="27.3.1")) is True
-    assert _initenv.present("docker_mirror", _initenv.EnvStatus(docker="27.3.1")) is False
+    # 只装了 docker-cli（无守护进程）不算就绪：构建会报无法连接 daemon。
+    client_only = _initenv.EnvStatus(docker="27.3.1")
+    assert _initenv.present("docker", client_only) is False
+    assert _initenv.present("docker", _initenv.EnvStatus(docker="27.3.1", docker_daemon="yes")) is True
+    assert _initenv.present("docker_mirror", client_only) is False
     assert _initenv.status_from_mapping(_initenv.status_to_mapping(kali)) == kali
 
 

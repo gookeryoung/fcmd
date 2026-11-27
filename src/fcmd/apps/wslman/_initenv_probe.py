@@ -69,7 +69,14 @@ class EnvStatus:
     bun: str = ""
     rust: str = ""
     docker: str = ""
-    """``docker --version`` 的版本号；空串表示未安装。"""
+    """``docker --version`` 的版本号；空串表示未安装。
+
+    只有版本号不说明能用：Kali 等发行版把 ``docker-cli`` 与 ``docker.io``（守护进程）
+    拆包，客户端装上了也没有 ``/var/run/docker.sock``，构建会报无法连接 daemon。
+    因此「已就绪」判定要同时看 :attr:`docker_daemon`。
+    """
+    docker_daemon: str = ""
+    """``yes`` 表示 ``docker info`` 成功（守护进程在跑）。"""
     docker_mirror: str = ""
     """``/etc/docker/daemon.json`` 里第一个 ``registry-mirrors`` 地址。"""
     gui_libs: str = ""
@@ -131,6 +138,7 @@ def probe_script() -> str:
             'printf "WSLMAN_BUN=%s\\n" "$([ -n "$bun_bin" ] && "$bun_bin" --version 2>/dev/null)"',
             'printf "WSLMAN_RUST=%s\\n" "$(rustc --version 2>/dev/null | awk \'{print $2}\')"',
             'printf "WSLMAN_DOCKER=%s\\n" "$(docker --version 2>/dev/null | sed \'s/^Docker version \\([^,]*\\).*/\\1/\')"',
+            'printf "WSLMAN_DOCKER_DAEMON=%s\\n" "$(docker info >/dev/null 2>&1 && echo yes)"',
             'docker_mirror=""',
             "if [ -r /etc/docker/daemon.json ]; then",
             "    docker_mirror=\"$(grep -A8 'registry-mirrors' /etc/docker/daemon.json 2>/dev/null | grep -o 'https://[^\"]*' | head -1)\"",
@@ -186,6 +194,7 @@ def parse_status(text: str) -> EnvStatus:
         bun=values.get("BUN", ""),
         rust=values.get("RUST", ""),
         docker=values.get("DOCKER", ""),
+        docker_daemon=values.get("DOCKER_DAEMON", ""),
         docker_mirror=values.get("DOCKER_MIRROR", ""),
         gui_libs=values.get("GUI_LIBS", ""),
         cjk_font=values.get("CJK_FONT", ""),
@@ -213,6 +222,7 @@ _STATUS_FIELDS: tuple[str, ...] = (
     "bun",
     "rust",
     "docker",
+    "docker_daemon",
     "docker_mirror",
     "gui_libs",
     "cjk_font",
@@ -272,7 +282,7 @@ def present(key: str, status: EnvStatus, package_mirror: str = PACKAGE_MIRROR_AU
     if key == "rust":
         return bool(status.rust)
     if key == "docker":
-        return bool(status.docker)
+        return bool(status.docker) and status.docker_daemon == "yes"
     if key == "docker_mirror":
         return bool(status.docker_mirror)
     display = display_present(key, status)
@@ -312,6 +322,15 @@ def _pair_value(primary: str, secondary: str) -> str:
     return primary or secondary or "未配置"
 
 
+def _docker_value(status: EnvStatus) -> str:
+    """Docker 状态文案：客户端装了但守护进程没跑时要明确说是哪一半缺。"""
+    if not status.docker:
+        return "未安装"
+    if status.docker_daemon == "yes":
+        return status.docker
+    return f"{status.docker}（守护进程未运行）"
+
+
 def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
     """环境详情区逐项 ``(字段, 值, 是否就绪)``，供界面统一着色。"""
     node_ready = bool(status.node) and status.nvm == "yes"
@@ -330,7 +349,7 @@ def status_rows(status: EnvStatus) -> tuple[tuple[str, str, bool], ...]:
         ("Node.js（nvm）", node_value, node_ready),
         ("Bun", status.bun or "未安装", bool(status.bun)),
         ("Rust", status.rust or "未安装", bool(status.rust)),
-        ("Docker", status.docker or "未安装", bool(status.docker)),
+        ("Docker", _docker_value(status), bool(status.docker) and status.docker_daemon == "yes"),
         ("Docker 镜像加速", status.docker_mirror or "未配置", bool(status.docker_mirror)),
         (
             "pip / uv 镜像",
@@ -358,7 +377,7 @@ def summary_text(status: EnvStatus) -> str:
         f"Python {python}",
         f"Node.js {node}",
         f"Rust {status.rust or '✗'}",
-        f"Docker {status.docker or '✗'}",
+        f"Docker {_docker_value(status)}",
         *display_summary_parts(status),
     ]
     return " · ".join(parts)

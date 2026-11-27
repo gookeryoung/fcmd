@@ -479,19 +479,26 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   `nodejs`；Bun 用 `npm i -g bun` 装（二进制随 `@oven/bun-linux-x64` 从 npmmirror 分发，
   不走 GitHub Releases），Bun 项自带 nvm 引导，单独勾选也能装成；Rust 沿用 rsproxy。
   Docker 拆成两项：**安装 Docker** 用 apt 装发行版的 `docker.io`（走已换好的系统源，
-  不引 Docker 官方 apt 源），随后补 `docker-compose-v2`（发行版无此包时回退
+  不引 Docker 官方 apt 源）——Kali 等发行版把 `docker-cli` / `docker-compose`（只有客户端）
+  与 `docker.io`（含守护进程 `dockerd`）拆成不同包，只装客户端时 `docker --version` 能过、
+  `/var/run/docker.sock` 却不存在，构建会直接报 “Cannot connect to the Docker daemon”，
+  所以判断「装好没有」以 **`command -v dockerd`** 为准，缺了先补装 `docker.io`；
+  随后补 `docker-compose-v2`（发行版无此包时回退
   `docker-compose`）、把实例默认用户加入 `docker` 组并启动服务——默认用户从
   `/etc/wsl.conf` 的 `[user] default` 读，取不到才退回 `/etc/passwd` 里第一个
-  uid≥1000 的用户（root 下 `$USER` / `id -un` 恒为 root，不能用）；WSL 默认不带
-  systemd，有 `/run/systemd/system` 才 `systemctl enable/start docker`，否则退回
-  `service docker start`，两者都失败只提示不中断。**Docker 镜像加速** 单独成项：把国内
+  uid≥1000 的用户（root 下 `$USER` / `id -un` 恒为 root，不能用）；启动按
+  `systemctl`（需 `/run/systemd/system`）→ `service docker` → 后台 `nohup dockerd`
+  三级回退，最后用 `docker info` 验证守护进程真的在跑，失败只提示不中断。
+  **Docker 镜像加速** 单独成项：把国内
   Docker Hub 加速候选（daocloud / 1ms.run / xuanyuan / 1panel）写入
   `/etc/docker/daemon.json` 的 `registry-mirrors`——与其它项目同口径，**不做运行时测速
   选优**，候选写全由 dockerd 拉取时按顺序回退，全部不可用仍回官方源；已有
   `daemon.json`（data-root / log-driver 等）先备份 `.bak`，有 python3 时按 JSON 合并
-  只替换 `registry-mirrors`，没有则整体覆写；写完后重启 docker（同上管 systemd /
-  `service`）。就绪判定分别是 `docker --version` 与 `daemon.json` 里第一个
-  `registry-mirrors` 地址，状态行写作「Docker」「Docker 镜像加速」。
+  只替换 `registry-mirrors`，没有则整体覆写；`daemon.json` 只在启动时读，所以写完后走
+  `restart` 而不是 `start`（同样三级回退）。就绪判定：Docker 看 `docker --version`
+  **且** `docker info` 成功（只装客户端不算就绪，状态行写「X（守护进程未运行）」），
+  镜像加速看 `daemon.json` 里第一个 `registry-mirrors` 地址；状态行写作
+  「Docker」「Docker 镜像加速」。
   显示依赖库项用 APT 补装 WSLg 下跑 Qt / GTK 窗口所需的 `libegl1` / `libgl1` /
   `libxcb-*` / `libwayland-cursor0` / `libfontconfig1` 等系统库（PySide6 的 wheel 自带
   Qt 库，但缺这些库时窗口只会报「Qt 前端已安装但加载失败」）；中文字体项默认只装

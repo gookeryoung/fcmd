@@ -346,22 +346,64 @@ def _instance_user_lines() -> tuple[str, ...]:
     )
 
 
-def _docker_script() -> str:
-    """装 Docker 后的收尾（以 root 执行）：compose 插件、docker 组、启动服务。
+def _docker_service_lines(action: str = "start") -> tuple[str, ...]:
+    """启动 / 重启 docker 服务，写成函数供装完后与写镜像源后复用。
 
-    WSL 默认不带 systemd：有 systemd（``/run/systemd/system`` 存在）就 ``systemctl
-    enable --now``，否则退回 ``service docker start``；两者都失败只提示，不中断初始化
-    （某些精简镜像根本没有 init 脚本，用户仍可手工 ``dockerd`` 起）。
+    WSL 默认没开 systemd（``/run/systemd/system`` 不存在），此时 ``systemctl`` 只会报
+    “System has not been booted with systemd”，所以要退回 ``service docker``；连 init
+    脚本都没有的精简镜像直接后台起 ``dockerd``。
     """
+    return (
+        "fcmd_docker_service() {",
+        "    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then",
+        "        systemctl enable docker >/dev/null 2>&1 || true",
+        f"        systemctl {action} docker >/dev/null 2>&1 && return 0",
+        "    fi",
+        "    if command -v service >/dev/null 2>&1; then",
+        f"        service docker {action} >/dev/null 2>&1 && return 0",
+        "    fi",
+        "    if command -v dockerd >/dev/null 2>&1; then",
+        "        pkill -x dockerd >/dev/null 2>&1 || true",
+        "        sleep 1",
+        "        nohup dockerd >/var/log/dockerd.log 2>&1 &",
+        "        sleep 3",
+        "        return 0",
+        "    fi",
+        "    return 1",
+        "}",
+        'fcmd_docker_service || echo "Docker 服务未能启动：可执行 sudo service docker start（或启用 WSL systemd 后重跑）"',
+    )
+
+
+def _docker_daemon_lines() -> tuple[str, ...]:
+    """确认 ``dockerd`` 存在：只装了 docker-cli（客户端）时补装 ``docker.io``。
+
+    Kali 等发行版把 ``docker.io``（含守护进程）与 ``docker-cli`` / ``docker-compose``
+    拆成不同包，用户可能只装了客户端；此时 ``docker --version`` 能过但
+    ``/var/run/docker.sock`` 不存在，构建会报 “Cannot connect to the Docker daemon”。
+    """
+    return (
+        "if ! command -v dockerd >/dev/null 2>&1; then",
+        '    echo "未检测到 Docker 守护进程（dockerd），补装 docker.io（含守护进程）…"',
+        f"    apt-get install -y --no-install-recommends -o Acquire::Retries=3 {_APT_LOCK_TIMEOUT} "
+        "docker.io || "
+        f"    apt-get install -y -o Acquire::Retries=3 {_APT_LOCK_TIMEOUT} docker.io",
+        "fi",
+        "if ! command -v dockerd >/dev/null 2>&1; then",
+        '    echo "Docker 守护进程仍不可用：确认系统源可用后重跑「安装 Docker」" >&2',
+        "    exit 1",
+        "fi",
+    )
+
+
+def _docker_script() -> str:
+    """装 Docker 后的收尾（以 root 执行）：守护进程、compose 插件、docker 组、启动服务。"""
     return "\n".join(
         (
             "set -e",
             "export DEBIAN_FRONTEND=noninteractive",
             *_instance_user_lines(),
-            "if ! command -v docker >/dev/null 2>&1; then",
-            '    echo "docker 未安装，请先执行「安装 Docker」" >&2',
-            "    exit 1",
-            "fi",
+            *_docker_daemon_lines(),
             "if ! docker compose version >/dev/null 2>&1; then",
             '    echo "安装 docker compose 插件（发行版无对应包时跳过）…"',
             f"    apt-get install -y --no-install-recommends -o Acquire::Retries=3 {_APT_LOCK_TIMEOUT} "
@@ -374,13 +416,12 @@ def _docker_script() -> str:
             '    usermod -aG docker "$target_user"',
             '    echo "已把 $target_user 加入 docker 组（重新登录实例后生效）"',
             "fi",
-            "if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then",
-            "    systemctl enable docker >/dev/null 2>&1 || true",
-            '    systemctl start docker >/dev/null 2>&1 || echo "Docker 服务未能通过 systemd 启动，可稍后执行 sudo service docker start"',
-            "elif command -v service >/dev/null 2>&1; then",
-            '    service docker start >/dev/null 2>&1 || echo "Docker 服务未能启动，可稍后执行 sudo service docker start"',
+            *_docker_service_lines("start"),
+            "if docker info >/dev/null 2>&1; then",
+            '    echo "Docker $(docker --version 2>/dev/null) 已就绪（守护进程运行中）"',
+            "else",
+            '    echo "Docker 客户端已装，但守护进程未响应：sudo service docker start（或启用 WSL systemd）后重试"',
             "fi",
-            'echo "Docker $(docker --version 2>/dev/null) 已就绪"',
         )
     )
 
@@ -422,12 +463,16 @@ def _docker_mirror_script() -> str:
             "FCMD_DOCKER_JSON_RAW",
             "fi",
             'echo "Docker 镜像加速已写入 /etc/docker/daemon.json"',
-            "if command -v docker >/dev/null 2>&1; then",
-            "    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then",
-            "        systemctl restart docker >/dev/null 2>&1 || true",
-            "    elif command -v service >/dev/null 2>&1; then",
-            "        service docker restart >/dev/null 2>&1 || true",
+            "if command -v dockerd >/dev/null 2>&1; then",
+            # daemon.json 只在启动时读：用 restart 而不是 start，否则旧进程还跑着旧配置。
+            *("    " + line for line in _docker_service_lines("restart")),
+            "    if docker info >/dev/null 2>&1; then",
+            '        echo "Docker 守护进程已按新镜像源重启"',
+            "    else",
+            '        echo "镜像源已写入，但守护进程未响应：sudo service docker start 后再验证"',
             "    fi",
+            "else",
+            '    echo "未装 Docker 守护进程：先执行「安装 Docker」"',
             "fi",
             f'echo "Docker 镜像源：{", ".join(_DOCKER_REGISTRY_MIRRORS)}"',
         )
@@ -566,8 +611,9 @@ TASKS: tuple[InitTask, ...] = (
     InitTask(
         "docker",
         "安装 Docker",
-        "用 apt 装发行版的 docker.io（走已换好的国内系统源），装 docker compose 插件、"
-        "把默认用户加入 docker 组并启动服务（有 systemd 用 systemctl，否则 service docker start）。",
+        "用 apt 装发行版的 docker.io（含守护进程 dockerd，走已换好的国内系统源）；只装了 "
+        "docker-cli 客户端的实例会被补装 docker.io，随后装 docker compose 插件、把默认用户加入 "
+        "docker 组并启动服务（有 systemd 用 systemctl，否则 service docker start，再不行直接后台 dockerd）。",
         (
             InitStep("安装 Docker 软件包", _apt_script("docker.io"), root=True),
             InitStep("配置 Docker 用户组与服务", _docker_script(), root=True),
