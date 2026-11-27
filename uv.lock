@@ -583,7 +583,7 @@ wheels = [
 
 [[package]]
 name = "fcmd"
-version = "0.3.16"
+version = "0.3.17"
 source = { editable = "." }
 dependencies = [
     { name = "markdown-it-py" },
